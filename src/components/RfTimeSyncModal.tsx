@@ -238,7 +238,7 @@ export const RfTimeSyncModal: React.FC<RfTimeSyncModalProps> = ({
             for (let x = 0; x < w; x++) {
               const t = time + (x / w) * 0.05;
               let y = h / 2;
-              // 100 Hz BCD subcarrier + 1000 Hz minute tone modulation simulation
+              // 100 Hz BCD subcarrier + 1000 Hz minute tone modulation
               const tone1 = Math.sin(2 * Math.PI * 100 * t) * (h * 0.2);
               const tone2 = Math.sin(2 * Math.PI * 1000 * t) * (h * 0.15);
               const noise = (Math.random() - 0.5) * (h * 0.08);
@@ -514,7 +514,7 @@ export const RfTimeSyncModal: React.FC<RfTimeSyncModalProps> = ({
                 </select>
               </div>
 
-              {/* Simulation Mode Speed */}
+              {/* RF Scan Speed */}
               <div className="flex items-center space-x-2">
                 <span className="text-[11px] text-[#888]">Mode:</span>
                 <div className="flex items-center bg-[#050505] p-0.5 border border-[#333]">

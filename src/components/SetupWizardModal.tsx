@@ -81,7 +81,6 @@ export const RIG_CATALOG = [
   { name: 'QRP Labs QDX Digital Transceiver', id: 3092 },
   { name: 'FlexRadio 6xxx Series (SmartSDR)', id: 1014 },
   { name: 'Hamlib NET rigctl Client (Remote Daemon)', id: 2 },
-  { name: 'Dummy / Simulated Rig (Testing)', id: 1 },
 ];
 
 export const SERIAL_PORTS = [
@@ -272,21 +271,42 @@ export const SetupWizardModal: React.FC<SetupWizardModalProps> = ({
         return;
       }
     }
-    if (isAudioTesting) toggleAudioTest();
+    if (audioAnimRef.current) {
+      cancelAnimationFrame(audioAnimRef.current);
+      audioAnimRef.current = null;
+    }
+    setIsAudioTesting(false);
     if (isPttTesting) setIsPttTesting(false);
     setCurrentStep((prev) => Math.min(3, prev + 1));
   };
 
   const handleBack = () => {
     setErrorMsg('');
-    if (isAudioTesting) toggleAudioTest();
+    if (audioAnimRef.current) {
+      cancelAnimationFrame(audioAnimRef.current);
+      audioAnimRef.current = null;
+    }
+    setIsAudioTesting(false);
     if (isPttTesting) setIsPttTesting(false);
     setCurrentStep((prev) => Math.max(0, prev - 1));
   };
 
-  const handleFinish = () => {
-    if (isAudioTesting) toggleAudioTest();
+  const handleFinish = async () => {
+    if (audioAnimRef.current) {
+      cancelAnimationFrame(audioAnimRef.current);
+      audioAnimRef.current = null;
+    }
+    setIsAudioTesting(false);
     if (isPttTesting) setIsPttTesting(false);
+
+    try {
+      localStorage.setItem('z30_wizard_completed', 'true');
+    } catch {
+      // ignore
+    }
+
+    // Keep/activate the selected audio receiver stream running for the station
+    await audioEngine.enableMicrophone(form.audioInputDevice);
     onSaveConfig(form);
     onClose();
   };

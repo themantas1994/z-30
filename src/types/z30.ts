@@ -76,16 +76,6 @@ export interface StationConfig {
   appTimeOffsetMs?: number;
 }
 
-export interface RfChannelParams {
-  snrDb: number; // -35 dB to +10 dB
-  fadingModel: 'AWGN' | 'RAYLEIGH_MILD' | 'RAYLEIGH_MODERATE' | 'RICIAN';
-  dopplerDriftHzPerSec: number;
-  enableCoChannelInterference: boolean;
-  interfererSnrDb: number;
-  interfererDeltaFreqHz: number;
-  simulatedNoise: boolean;
-}
-
 export interface BandDef {
   name: string;
   dialFreqHz: number;

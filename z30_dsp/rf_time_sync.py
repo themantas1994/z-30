@@ -725,7 +725,7 @@ class TimeSyncSettingsManager:
     @staticmethod
     def update_app_time_offset(delta_ms: float, config_path: str = "config.json") -> bool:
         """
-        Updates \`app_time_offset_ms\` in \`config.json\` without requiring
+        Updates `app_time_offset_ms` in `config.json` without requiring
         Administrator / root OS privileges.
         """
         data: Dict[str, Any] = {}
@@ -1169,7 +1169,7 @@ def run_self_test() -> bool:
     5. Delta t time offset computation
     6. Thread lifecycle and cancellation
     """
-    print("\\n" + "=" * 65)
+    print("\n" + "=" * 65)
     print("  z-30 RF TIME SYNCHRONIZATION ENGINE — UNIT TEST HARNESS")
     print("=" * 65)
 
@@ -1234,7 +1234,7 @@ def run_self_test() -> bool:
     print(f"      -> {res.summary()}")
     print("=" * 65)
     print("  ALL 5 DSP & TIME SYNC UNIT TESTS PASSED SUCCESSFULLY! ✓")
-    print("=" * 65 + "\\n")
+    print("=" * 65 + "\n")
     return True
 
 

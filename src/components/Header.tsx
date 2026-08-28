@@ -56,9 +56,21 @@ export const Header: React.FC<HeaderProps> = ({
   cycleProgressSec,
 }) => {
   const [utcTimeStr, setUtcTimeStr] = useState<string>('00:00:00');
-  const [isMuted, setIsMuted] = useState<boolean>(false);
-  const [micEnabled, setMicEnabled] = useState<boolean>(false);
+  const [isMuted, setIsMuted] = useState<boolean>(() => audioEngine.getIsMuted());
+  const [micEnabled, setMicEnabled] = useState<boolean>(() => audioEngine.getIsMicrophoneActive());
   const [isFullscreen, setIsFullscreen] = useState<boolean>(false);
+
+  // Synchronize mic and mute state with audioEngine
+  useEffect(() => {
+    setMicEnabled(audioEngine.getIsMicrophoneActive());
+    setIsMuted(audioEngine.getIsMuted());
+
+    const unsubscribe = audioEngine.subscribe(() => {
+      setMicEnabled(audioEngine.getIsMicrophoneActive());
+      setIsMuted(audioEngine.getIsMuted());
+    });
+    return unsubscribe;
+  }, []);
 
   const slotInfo = evaluateSlotTiming((txSlot || 'EVEN') as TxSlot);
 
@@ -115,14 +127,8 @@ export const Header: React.FC<HeaderProps> = ({
   const handleToggleMic = async () => {
     if (micEnabled) {
       audioEngine.disableMicrophone();
-      setMicEnabled(false);
     } else {
-      const devices = await audioEngine.getSystemAudioDevices();
-      const matchingInput = devices.inputs.find(
-        (d) => d.label === config.audioInputDevice || d.deviceId === config.audioInputDevice
-      );
-      const ok = await audioEngine.enableMicrophone(matchingInput?.deviceId);
-      setMicEnabled(ok);
+      await audioEngine.enableMicrophone(config.audioInputDevice);
     }
   };
 

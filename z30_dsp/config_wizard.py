@@ -83,7 +83,7 @@ class StationConfig:
 class SettingsManager:
     """
     Manages loading, validating, caching, and persisting configuration data
-    to a local config.json file with full backward compatibility and fallbacks.
+    to a local `config.json` file with full backward compatibility and fallbacks.
     """
     DEFAULT_CONFIG_PATH = "config.json"
 
@@ -366,7 +366,7 @@ class Step1OperatorPage(WizardBasePage):
         # Header Info Banner
         header = ttk.Label(
             self,
-            text="Step 1: Operator Station Identification\\n"
+            text="Step 1: Operator Station Identification\n"
                  "Please enter your official amateur radio callsign and Maidenhead grid locator.",
             font=("Fira Code", 10, "bold"),
             foreground="#00FF41"
@@ -416,8 +416,8 @@ class Step1OperatorPage(WizardBasePage):
         note_box.grid(row=7, column=0, columnspan=3, sticky="ew", padx=10, pady=(15, 5))
         ttk.Label(
             note_box,
-            text="The z-30 digital mode encodes operator callsigns and Maidenhead grid squares into a\\n"
-                 "63-bit structured payload protected by a (216, 77) LDPC error-correction code.\\n"
+            text="The z-30 digital mode encodes operator callsigns and Maidenhead grid squares into a\n"
+                 "63-bit structured payload protected by a (216, 77) LDPC error-correction code.\n"
                  "Standard format ensures complete global inter-compatibility across the 50 Hz channel.",
             font=("Fira Code", 8),
             foreground="#AAAAAA"
@@ -437,6 +437,7 @@ class Step1OperatorPage(WizardBasePage):
     def _on_grid_change(self, event=None) -> None:
         """Formats grid square (e.g. FN31pr) and updates geographic preview."""
         raw = self.grid_var.get().strip()
+        # Auto-format: First 2 uppercase, next 2 numbers, last 2 lowercase
         formatted = ""
         for i, char in enumerate(raw):
             if i < 2:
@@ -503,7 +504,7 @@ class Step2AudioPage(WizardBasePage):
         # Header Info Banner
         header = ttk.Label(
             self,
-            text="Step 2: Sound Card & Audio DSP Configuration\\n"
+            text="Step 2: Sound Card & Audio DSP Configuration\n"
                  "Select soundcard input (Rx Receiver Audio) and output (Tx Transmit Audio).",
             font=("Fira Code", 10, "bold"),
             foreground="#00FF41"
@@ -555,11 +556,15 @@ class Step2AudioPage(WizardBasePage):
         self.vu_label = ttk.Label(test_frame, text="0.0 dB", font=("Fira Code", 9, "bold"), width=8)
         self.vu_label.grid(row=0, column=2, padx=8, pady=8)
 
+        # Initial device population
         self._populate_devices()
 
     def _populate_devices(self) -> None:
         """Enumerates sound devices and populates dropdown lists."""
         inputs, outputs = AudioHardwareDetector.get_devices()
+        self.raw_inputs = inputs
+        self.raw_outputs = outputs
+
         in_values = [item[1] for item in inputs]
         out_values = [item[1] for item in outputs]
 
@@ -567,6 +572,7 @@ class Step2AudioPage(WizardBasePage):
         self.out_combo["values"] = out_values
 
         if in_values:
+            # Match existing config or pick first
             matched = False
             for v in in_values:
                 if str(self.config.audio_input_index) in v or self.config.audio_input_device in v:
@@ -609,8 +615,11 @@ class Step2AudioPage(WizardBasePage):
         sim_phase = 0.0
         while self.is_testing_audio:
             sim_phase += 0.15
+            # Synthesize realistic background noise level around -42 dB to -18 dB
             val = math.sin(sim_phase) * 0.4 + math.cos(sim_phase * 2.3) * 0.2 + 0.35
             val = max(0.05, min(1.0, val))
+
+            # Schedule UI update on main thread
             self.after(0, self._draw_vu_level, val)
             time.sleep(0.05)
 
@@ -628,6 +637,7 @@ class Step2AudioPage(WizardBasePage):
         db_val = 20 * math.log10(max(level, 0.001))
         self.vu_label.config(text=f"{db_val:.1f} dB")
 
+        # Color segments
         green_w = min(fill_w, int(w * 0.7))
         yellow_w = min(max(0, fill_w - int(w * 0.7)), int(w * 0.2))
         red_w = max(0, fill_w - int(w * 0.9))
@@ -674,7 +684,7 @@ class Step3RadioCatPage(WizardBasePage):
         # Header Info Banner
         header = ttk.Label(
             self,
-            text="Step 3: Transceiver CAT & PTT Control Configuration\\n"
+            text="Step 3: Transceiver CAT & PTT Control Configuration\n"
                  "Configure Hamlib / serial rig connection, RTS/DTR PTT keying, and pin polarity.",
             font=("Fira Code", 10, "bold"),
             foreground="#00FF41"
@@ -705,7 +715,7 @@ class Step3RadioCatPage(WizardBasePage):
         self.port_refresh_btn = ttk.Button(port_box, text="↻ Refresh", width=9, command=self._populate_ports)
         self.port_refresh_btn.pack(side="left")
 
-        # Serial Parameters
+        # Serial Parameters (Baud, Data, Stop, Handshake)
         params_frame = ttk.Frame(self)
         params_frame.grid(row=4, column=0, columnspan=3, sticky="ew", padx=10, pady=4)
 
@@ -729,6 +739,7 @@ class Step3RadioCatPage(WizardBasePage):
         self.hs_combo.set(self.config.handshake)
         self.hs_combo.pack(side="left")
 
+        # Separator
         ttk.Separator(self, orient="horizontal").grid(row=5, column=0, columnspan=3, sticky="ew", padx=10, pady=8)
 
         # PTT Method & Pin Polarity Controls
@@ -741,6 +752,7 @@ class Step3RadioCatPage(WizardBasePage):
         self.ptt_method_combo.set(self.config.ptt_method)
         self.ptt_method_combo.grid(row=0, column=1, sticky="w", padx=6, pady=4)
 
+        # Pin Polarity Selector
         ttk.Label(ptt_group, text="Pin Polarity:").grid(row=1, column=0, sticky="w", padx=8, pady=4)
         polarity_box = ttk.Frame(ptt_group)
         polarity_box.grid(row=1, column=1, columnspan=2, sticky="w", padx=6, pady=4)
@@ -760,7 +772,7 @@ class Step3RadioCatPage(WizardBasePage):
             value="ACTIVE_LOW"
         ).pack(anchor="w")
 
-        # Interactive Test Section
+        # Interactive Test CAT & PTT Section
         test_frame = ttk.LabelFrame(self, text=" Hardware Verification & Safety Test ")
         test_frame.grid(row=7, column=0, columnspan=3, sticky="ew", padx=10, pady=(6, 5))
 
@@ -805,7 +817,7 @@ class Step3RadioCatPage(WizardBasePage):
         self.test_result_label.config(text="Status: Querying Rig CAT VFO...", foreground="#EAB308")
         
         def bg_test():
-            time.sleep(0.6)
+            time.sleep(0.6)  # Simulate serial handshake
             port = self.port_combo.get()
             rig = self.rig_combo.get()
             self.after(0, lambda: self.test_result_label.config(
@@ -834,6 +846,7 @@ class Step3RadioCatPage(WizardBasePage):
             foreground="#EF4444"
         )
 
+        # Safety auto-release after 3.0 seconds
         self.after(3000, lambda: self._release_ptt() if self.is_ptt_keyed else None)
 
     def _release_ptt(self) -> None:
@@ -858,6 +871,7 @@ class Step3RadioCatPage(WizardBasePage):
             self.config.cat_method = "None"
 
         self.config.rig_model_name = self.rig_combo.get()
+        # Find matching model id
         for name, mid in HamlibRigCatalog.RIGS:
             if name == self.config.rig_model_name:
                 self.config.rig_model_id = mid
@@ -890,15 +904,17 @@ class Step4SummaryPage(WizardBasePage):
     def _build_ui(self) -> None:
         self.columnconfigure(0, weight=1)
 
+        # Header Info Banner
         header = ttk.Label(
             self,
-            text="Step 4: Configuration Review & Verification\\n"
+            text="Step 4: Configuration Review & Verification\n"
                  "Review your station parameters before saving to config.json and launching z-30.",
             font=("Fira Code", 10, "bold"),
             foreground="#00FF41"
         )
         header.grid(row=0, column=0, sticky="w", padx=10, pady=(10, 10))
 
+        # Review Treeview Table
         table_frame = ttk.Frame(self)
         table_frame.grid(row=1, column=0, sticky="nsew", padx=10, pady=5)
         table_frame.columnconfigure(0, weight=1)
@@ -910,6 +926,7 @@ class Step4SummaryPage(WizardBasePage):
         self.tree.column("Value", width=340)
         self.tree.pack(fill="both", expand=True)
 
+        # Destination notice
         self.file_label = ttk.Label(
             self,
             text=f"Target File: {os.path.abspath(self.wizard.settings_mgr.config_path)}",
@@ -974,6 +991,7 @@ class ConfigWizardDialog(tk.Toplevel):
         self._build_container()
         self._show_step(0)
 
+        # Center on screen
         self.update_idletasks()
         x = (self.winfo_screenwidth() - self.winfo_width()) // 2
         y = (self.winfo_screenheight() - self.winfo_height()) // 2
@@ -988,14 +1006,16 @@ class ConfigWizardDialog(tk.Toplevel):
         style.configure("TButton", font=("Fira Code", 9, "bold"))
 
     def _build_container(self) -> None:
+        # Main Layout: Left Sidebar + Right Content Area
         self.columnconfigure(1, weight=1)
         self.rowconfigure(0, weight=1)
 
-        # Left Sidebar
+        # Left Sidebar (Step Indicators)
         self.sidebar = tk.Frame(self, bg="#080808", width=200, bd=1, relief="solid")
         self.sidebar.grid(row=0, column=0, sticky="ns", padx=(6, 0), pady=6)
         self.sidebar.pack_propagate(False)
 
+        # Logo / Title
         tk.Label(
             self.sidebar,
             text="z-30 SETUP",
@@ -1012,6 +1032,7 @@ class ConfigWizardDialog(tk.Toplevel):
             bg="#080808"
         ).pack(anchor="w", padx=12, pady=(0, 20))
 
+        # Step Labels in Sidebar
         self.step_labels: List[tk.Label] = []
         step_names = [
             "1. Operator Info",
@@ -1031,12 +1052,13 @@ class ConfigWizardDialog(tk.Toplevel):
             lbl.pack(fill="x", padx=12, pady=6)
             self.step_labels.append(lbl)
 
-        # Right Content Area
+        # Right Content Area (Pages)
         self.content_frame = tk.Frame(self, bg="#0F0F0F")
         self.content_frame.grid(row=0, column=1, sticky="nsew", padx=6, pady=6)
         self.content_frame.columnconfigure(0, weight=1)
         self.content_frame.rowconfigure(0, weight=1)
 
+        # Initialize Page Instances
         self.pages: List[WizardBasePage] = [
             Step1OperatorPage(self.content_frame, self),
             Step2AudioPage(self.content_frame, self),
@@ -1046,13 +1068,14 @@ class ConfigWizardDialog(tk.Toplevel):
         for page in self.pages:
             page.grid(row=0, column=0, sticky="nsew")
 
-        # Bottom Control Bar
+        # Bottom Navigation Control Bar
         nav_bar = tk.Frame(self, bg="#080808", height=45, bd=1, relief="solid")
         nav_bar.grid(row=1, column=0, columnspan=2, sticky="ew", padx=6, pady=(0, 6))
 
         self.error_label = tk.Label(nav_bar, text="", font=("Fira Code", 9), fg="#EF4444", bg="#080808")
         self.error_label.pack(side="left", padx=12)
 
+        # Buttons on Right
         self.cancel_btn = ttk.Button(nav_bar, text="Cancel", command=self._on_cancel)
         self.cancel_btn.pack(side="right", padx=6, pady=8)
 
@@ -1076,6 +1099,7 @@ class ConfigWizardDialog(tk.Toplevel):
         self.current_step_idx = step_idx
         self.error_label.config(text="")
 
+        # Update sidebar indicators
         for idx, lbl in enumerate(self.step_labels):
             if idx == step_idx:
                 lbl.config(fg="#00FF41", font=("Fira Code", 10, "bold"))
@@ -1084,6 +1108,7 @@ class ConfigWizardDialog(tk.Toplevel):
             else:
                 lbl.config(fg="#555555", font=("Fira Code", 9))
 
+        # Show target page
         for idx, page in enumerate(self.pages):
             if idx == step_idx:
                 page.tkraise()
@@ -1139,12 +1164,13 @@ class ConfigWizardDialog(tk.Toplevel):
 
         current_page.on_leave()
 
+        # Save to disk
         success = self.settings_mgr.save_config(self.config)
         if success:
             messagebox.showinfo(
                 "Setup Complete",
-                f"Configuration successfully saved to {self.settings_mgr.config_path}!\\n"
-                f"Station Callsign: {self.config.callsign} ({self.config.grid})\\n"
+                f"Configuration successfully saved to {self.settings_mgr.config_path}!\n"
+                f"Station Callsign: {self.config.callsign} ({self.config.grid})\n"
                 "z-30 Transceiver is ready to operate.",
                 parent=self
             )

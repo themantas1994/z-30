@@ -16,7 +16,7 @@ import os
 import queue
 import sqlite3
 import threading
-from typing import Optional, List, Callable
+from typing import Optional, List, Callable, Tuple
 
 @dataclass
 class QsoLogRecord:

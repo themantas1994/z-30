@@ -16,7 +16,7 @@ import React, { useRef, useEffect, useState, useCallback } from 'react';
 import { ColorPaletteName, DecodedSignal, BandDef } from '../types/z30';
 import { Z30_SPECS, HAM_BANDS } from '../dsp/z30Constants';
 import { audioEngine } from '../dsp/audioEngine';
-import { rigctl } from '../dsp/rigctlSimulator';
+import { rigctl } from '../dsp/catController';
 import {
   Palette,
   ZoomIn,
@@ -63,71 +63,85 @@ export type FreqRangePreset =
   | 'EXT_0_4000'
   | 'CUSTOM';
 
-// 10 Vectorized Color Palette Functions
+// 10 Vectorized Color Palette Functions with optimized dynamic range & deep floor
 function getPaletteColor(val: number, palette: ColorPaletteName): [number, number, number] {
   const norm = Math.max(0, Math.min(1, val));
 
   switch (palette) {
     case 'turbo': {
-      // Turbo rainbow colormap
+      // Turbo rainbow colormap with dark blue/black floor
+      if (norm <= 0.03) return [5, 6, 18];
       const r = Math.sin(norm * Math.PI * 1.5 - 0.5) * 127 + 128;
       const g = Math.sin(norm * Math.PI) * 200 + 40;
       const b = Math.cos(norm * Math.PI * 1.2) * 200 + 55;
-      return [Math.max(0, Math.min(255, r)), Math.max(0, Math.min(255, g)), Math.max(0, Math.min(255, b))];
+      return [
+        Math.max(0, Math.min(255, Math.round(r * (norm < 0.2 ? norm * 5 : 1)))),
+        Math.max(0, Math.min(255, Math.round(g * (norm < 0.2 ? norm * 5 : 1)))),
+        Math.max(0, Math.min(255, Math.round(b))),
+      ];
     }
     case 'inferno': {
-      // Inferno thermal
+      // Inferno thermal: black -> dark purple -> magenta -> orange -> yellow
+      if (norm <= 0.02) return [0, 0, 0];
       const r = Math.pow(norm, 0.7) * 255;
       const g = Math.pow(norm, 1.8) * 230;
       const b = Math.sin(norm * Math.PI * 0.8) * 180 + (norm > 0.8 ? 150 : 0);
-      return [Math.min(255, r), Math.min(255, g), Math.min(255, b)];
+      return [Math.min(255, Math.round(r)), Math.min(255, Math.round(g)), Math.min(255, Math.round(b))];
     }
     case 'viridis': {
-      // Viridis standard
+      // Viridis standard: deep indigo -> teal -> green -> yellow
+      if (norm <= 0.02) return [8, 4, 20];
       const r = norm < 0.5 ? norm * 100 : (norm - 0.5) * 400 + 50;
       const g = norm * 220 + 30;
       const b = (1 - norm) * 180 + 70;
-      return [Math.min(255, r), Math.min(255, g), Math.min(255, b)];
+      return [Math.min(255, Math.round(r)), Math.min(255, Math.round(g)), Math.min(255, Math.round(b))];
     }
     case 'plasma': {
       // Plasma perceptually uniform
+      if (norm <= 0.02) return [10, 4, 26];
       const r = Math.pow(norm, 0.6) * 240 + 15;
       const g = Math.sin(norm * Math.PI * 0.9) * 180;
       const b = Math.cos(norm * Math.PI * 0.7) * 220 + 30;
-      return [Math.min(255, Math.max(0, r)), Math.min(255, Math.max(0, g)), Math.min(255, Math.max(0, b))];
+      return [Math.min(255, Math.max(0, Math.round(r))), Math.min(255, Math.max(0, Math.round(g))), Math.min(255, Math.max(0, Math.round(b)))];
     }
     case 'magma': {
       // Magma dark-to-bright violet/orange
+      if (norm <= 0.02) return [4, 4, 12];
       const r = norm < 0.3 ? norm * 300 : norm * 200 + 55;
       const g = Math.pow(norm, 2.2) * 240;
       const b = Math.sin(norm * Math.PI * 0.7) * 190 + (norm > 0.9 ? 65 : 10);
-      return [Math.min(255, r), Math.min(255, g), Math.min(255, b)];
+      return [Math.min(255, Math.round(r)), Math.min(255, Math.round(g)), Math.min(255, Math.round(b))];
     }
     case 'wsjtx': {
       // Classic WSJT-X Blue-White
-      if (norm < 0.2) return [10, 20, Math.round(norm * 400)];
-      if (norm < 0.6) return [Math.round((norm - 0.2) * 200), Math.round((norm - 0.2) * 350), 220];
-      return [255, 255, Math.round((norm - 0.6) * 600)];
+      if (norm < 0.05) return [5, 8, 22];
+      if (norm < 0.3) return [Math.round(norm * 40), Math.round(norm * 80), Math.round(60 + norm * 500)];
+      if (norm < 0.7) return [Math.round((norm - 0.3) * 350), Math.round((norm - 0.3) * 450), 240];
+      return [255, 255, Math.round(180 + (norm - 0.7) * 250)];
     }
     case 'nightGreen': {
       // Night vision phosphorescent green
+      if (norm <= 0.02) return [0, 4, 0];
       return [Math.round(norm * 30), Math.round(norm * 255), Math.round(norm * 70)];
     }
     case 'amber': {
       // Amber monochrome
+      if (norm <= 0.02) return [6, 3, 0];
       return [Math.round(norm * 255), Math.round(norm * 170), Math.round(norm * 30)];
     }
     case 'highContrast': {
       // High-Contrast Black & White
+      if (norm <= 0.02) return [0, 0, 0];
       const gray = Math.round(Math.pow(norm, 1.2) * 255);
       return [gray, gray, gray];
     }
     case 'spectral': {
       // Spectral Heatmap
+      if (norm <= 0.03) return [5, 5, 25];
       const r = Math.sin(norm * Math.PI - Math.PI / 2) * 127 + 128;
       const g = Math.sin(norm * Math.PI) * 255;
       const b = Math.cos(norm * Math.PI / 2) * 255;
-      return [Math.min(255, Math.max(0, r)), Math.min(255, Math.max(0, g)), Math.min(255, Math.max(0, b))];
+      return [Math.min(255, Math.max(0, Math.round(r))), Math.min(255, Math.max(0, Math.round(g))), Math.min(255, Math.max(0, Math.round(b)))];
     }
     default:
       return [Math.round(norm * 255), Math.round(norm * 255), Math.round(norm * 255)];
@@ -159,17 +173,28 @@ export const WaterfallDisplay: React.FC<WaterfallDisplayProps> = ({
   // Transmitted Audio Power / ALC state in dB (0 dB = 100%, -30 dB = minimum)
   const [txPowerDb, setTxPowerDb] = useState<number>(0);
 
-  // Live S-Meter state
-  const [sMeterDb, setSMeterDb] = useState<number>(-95);
+  // Live S-Meter state (calibrated HF RF S-meter power in dBm and S-Units)
+  const [sMeterInfo, setSMeterInfo] = useState<{
+    rfDb: number;
+    sUnit: string;
+    sMeterPercent: number;
+    audioDb: number;
+  }>({
+    rfDb: -115,
+    sUnit: 'S2',
+    sMeterPercent: 13,
+    audioDb: -80,
+  });
 
   useEffect(() => {
     const timer = setInterval(() => {
-      setSMeterDb(rigctl.getSmeterDb());
-    }, 120);
+      setSMeterInfo(rigctl.getSmeterInfo(rxFreqHz));
+    }, 100);
     return () => clearInterval(timer);
-  }, []);
+  }, [rxFreqHz]);
 
-  const sMeterPercent = Math.max(5, Math.min(100, ((sMeterDb + 130) / 100) * 100));
+  const sMeterDb = sMeterInfo.rfDb;
+  const sMeterPercent = isTransmitting || isTuning ? 100 : sMeterInfo.sMeterPercent;
 
   const handlePowerChange = (val: number) => {
     setPowerDb(val);
@@ -393,22 +418,38 @@ export const WaterfallDisplay: React.FC<WaterfallDisplayProps> = ({
           const bin = Math.floor((freqAtX / nyquist) * binCount);
 
           // Real FFT audio spectrum value from audio engine (soundcard / mic / VAC / receiver)
-          let magnitude = 0.02;
+          let magnitude = 0.0;
 
           if (fftData && bin >= 0 && bin < fftData.length) {
-            magnitude = Math.max(magnitude, fftData[bin] / 255.0);
+            magnitude = fftData[bin] / 255.0;
           }
 
-          // Transmitting or Tuning Carrier Marker
-          if (isTransmitting || isTuning) {
+          // Transmitting 16-MFSK Tone Window or Tuning Carrier Marker
+          if (isTransmitting) {
+            const txDist = freqAtX - txFreqHz;
+            if (txDist >= -2 && txDist <= Z30_SPECS.TOTAL_BANDWIDTH_HZ + 2) {
+              magnitude = Math.max(magnitude, 0.72 * signalBoost);
+            }
+          } else if (isTuning) {
             const txDist = Math.abs(freqAtX - txFreqHz);
-            if (txDist < 8.0) {
-              magnitude = Math.max(magnitude, 0.65);
+            if (txDist <= 4.0) {
+              magnitude = Math.max(magnitude, 0.85 * signalBoost);
             }
           }
 
-          // Color scale normalization
-          const adjusted = Math.pow(Math.min(1.0, magnitude * (gainDb / 11)), contrast / 50);
+          // Active signal tones trace enhancement for decoded signals in current cycle
+          if (decodes && decodes.length > 0) {
+            for (const sig of decodes) {
+              const sigDist = freqAtX - sig.freq;
+              if (sigDist >= 0 && sigDist <= Z30_SPECS.TOTAL_BANDWIDTH_HZ) {
+                const snrNormalized = Math.max(0.12, Math.min(1.0, (sig.snr + 30) / 45));
+                magnitude = Math.max(magnitude, snrNormalized * 0.5 * signalBoost);
+              }
+            }
+          }
+
+          // Color scale normalization with Gain, Contrast, and Palette
+          const adjusted = Math.pow(Math.min(1.0, Math.max(0, magnitude * (gainDb / 11))), contrast / 50);
           const [r, g, b] = getPaletteColor(adjusted, palette);
 
           const idx = x * 4;
@@ -429,13 +470,13 @@ export const WaterfallDisplay: React.FC<WaterfallDisplayProps> = ({
 
       // 3. Live Power Spectrum Density (PSD) Overlay
       if (showSpectrum && fftData) {
-        ctx.beginPath();
-        ctx.strokeStyle = 'rgba(0, 255, 65, 0.75)';
-        ctx.lineWidth = 1.5;
-
         const binCount = analyser ? analyser.frequencyBinCount : 2048;
         const sampleRate = audioEngine.getAudioContext()?.sampleRate || 48000;
         const nyquist = sampleRate / 2;
+
+        // Path for spectrum line and filled area
+        ctx.beginPath();
+        const pts: { x: number; y: number }[] = [];
 
         for (let x = 0; x < width; x += 2) {
           const f = canvasXToFreq(x, width);
@@ -452,11 +493,39 @@ export const WaterfallDisplay: React.FC<WaterfallDisplayProps> = ({
             }
           }
 
-          const y = height * 0.35 - val * height * 0.3;
+          if (isTransmitting && Math.abs(f - (txFreqHz + 25)) <= 30) {
+            val = Math.max(val, 0.85);
+          } else if (isTuning && Math.abs(f - txFreqHz) <= 8) {
+            val = Math.max(val, 0.9);
+          }
+
+          const y = height * 0.32 - val * height * 0.28;
+          pts.push({ x, y });
           if (x === 0) ctx.moveTo(x, y);
           else ctx.lineTo(x, y);
         }
+
+        // Stroke line
+        ctx.strokeStyle = isTransmitting ? 'rgba(239, 68, 68, 0.85)' : 'rgba(0, 255, 65, 0.8)';
+        ctx.lineWidth = 1.5;
         ctx.stroke();
+
+        // Subtle gradient area under curve
+        if (pts.length > 0) {
+          const grad = ctx.createLinearGradient(0, 0, 0, height * 0.32);
+          grad.addColorStop(0, isTransmitting ? 'rgba(239, 68, 68, 0.25)' : 'rgba(0, 255, 65, 0.2)');
+          grad.addColorStop(1, 'rgba(0, 0, 0, 0.0)');
+          ctx.beginPath();
+          ctx.moveTo(pts[0].x, pts[0].y);
+          for (let i = 1; i < pts.length; i++) {
+            ctx.lineTo(pts[i].x, pts[i].y);
+          }
+          ctx.lineTo(pts[pts.length - 1].x, height * 0.32);
+          ctx.lineTo(pts[0].x, height * 0.32);
+          ctx.closePath();
+          ctx.fillStyle = grad;
+          ctx.fill();
+        }
       }
 
       // 4. Frequency Gridlines
@@ -1161,6 +1230,8 @@ export const WaterfallDisplay: React.FC<WaterfallDisplayProps> = ({
                 ? 'text-red-400'
                 : isTuning
                 ? 'text-yellow-400'
+                : sMeterPercent > 57
+                ? 'text-yellow-400'
                 : 'text-[#00FF41]'
             }`}
           >
@@ -1168,7 +1239,7 @@ export const WaterfallDisplay: React.FC<WaterfallDisplayProps> = ({
               ? `TX 100% (${fwdWatts.toFixed(1)}W • SWR ${swr.toFixed(2)})`
               : isTuning
               ? `TUNE CW (${fwdWatts.toFixed(1)}W)`
-              : `S${Math.min(9, Math.max(1, Math.round(sMeterPercent / 10)))} (${sMeterDb.toFixed(0)} dBm)`}
+              : `${sMeterInfo.sUnit} (${sMeterDb.toFixed(0)} dBm)`}
           </span>
         </div>
 
@@ -1178,27 +1249,27 @@ export const WaterfallDisplay: React.FC<WaterfallDisplayProps> = ({
             <div
               className={`h-full transition-all duration-100 ${
                 isTransmitting
-                  ? 'bg-red-500'
+                  ? 'bg-red-500 shadow-[0_0_8px_rgba(239,68,68,0.6)]'
                   : isTuning
                   ? 'bg-yellow-500'
-                  : sMeterPercent > 60
+                  : sMeterPercent > 57
                   ? 'bg-gradient-to-r from-[#00FF41] via-yellow-400 to-red-500'
                   : 'bg-[#00FF41]'
               }`}
-              style={{ width: `${isTransmitting || isTuning ? 100 : sMeterPercent}%` }}
+              style={{ width: `${sMeterPercent}%` }}
             />
           </div>
-          {/* S-Meter Graduations */}
-          <div className="flex justify-between text-[8px] text-[#666] font-mono px-0.5 leading-none">
-            <span>S1</span>
-            <span>S3</span>
-            <span>S5</span>
-            <span>S7</span>
-            <span className="text-[#00FF41] font-semibold">S9</span>
-            <span className="text-yellow-400">+10</span>
-            <span className="text-yellow-500">+20</span>
-            <span className="text-red-400">+30</span>
-            <span className="text-red-500 font-bold">+40</span>
+          {/* S-Meter Calibrated Graduations */}
+          <div className="relative w-full h-3 text-[8px] font-mono leading-none">
+            <span className="absolute -translate-x-1/2 text-[#666]" style={{ left: '6.4%' }}>S1</span>
+            <span className="absolute -translate-x-1/2 text-[#666]" style={{ left: '19.1%' }}>S3</span>
+            <span className="absolute -translate-x-1/2 text-[#666]" style={{ left: '31.9%' }}>S5</span>
+            <span className="absolute -translate-x-1/2 text-[#666]" style={{ left: '44.7%' }}>S7</span>
+            <span className="absolute -translate-x-1/2 text-[#00FF41] font-bold" style={{ left: '57.4%' }}>S9</span>
+            <span className="absolute -translate-x-1/2 text-yellow-400" style={{ left: '68.1%' }}>+10</span>
+            <span className="absolute -translate-x-1/2 text-yellow-500" style={{ left: '78.7%' }}>+20</span>
+            <span className="absolute -translate-x-1/2 text-red-400" style={{ left: '89.4%' }}>+30</span>
+            <span className="absolute -translate-x-1/2 text-red-500 font-bold" style={{ left: '98%' }}>+40</span>
           </div>
         </div>
 

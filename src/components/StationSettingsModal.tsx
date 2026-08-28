@@ -136,16 +136,26 @@ export const StationSettingsModal: React.FC<StationSettingsModalProps> = ({
 
   if (!isOpen) return null;
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (isAudioTesting) stopAudioTest();
+    if (audioAnimRef.current) {
+      cancelAnimationFrame(audioAnimRef.current);
+      audioAnimRef.current = null;
+    }
+    setIsAudioTesting(false);
     if (isPttTesting) setIsPttTesting(false);
+    // Keep/activate the selected audio receiver stream running for the station
+    await audioEngine.enableMicrophone(form.audioInputDevice);
     onSaveConfig(form);
     onClose();
   };
 
   const handleLaunchWizard = () => {
-    if (isAudioTesting) stopAudioTest();
+    if (audioAnimRef.current) {
+      cancelAnimationFrame(audioAnimRef.current);
+      audioAnimRef.current = null;
+    }
+    setIsAudioTesting(false);
     if (isPttTesting) setIsPttTesting(false);
     onClose();
     if (onOpenWizard) {

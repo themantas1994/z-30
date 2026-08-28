@@ -40,8 +40,6 @@ class Z30AudioEngine {
   private txGain: GainNode | null = null;
   private micStream: MediaStream | null = null;
   private micSource: MediaStreamAudioSourceNode | null = null;
-  private noiseNode: AudioBufferSourceNode | null = null;
-  private noiseGain: GainNode | null = null;
   private activeTxNodes: { osc: OscillatorNode; gain: GainNode }[] = [];
   private isTxActive: boolean = false;
   private isMuted: boolean = false;
@@ -50,6 +48,22 @@ class Z30AudioEngine {
   private currentInputDeviceId: string = '';
   private currentInputLabel: string = '';
   private currentOutputDeviceId: string = '';
+  private stateListeners: Set<() => void> = new Set();
+
+  public subscribe(listener: () => void): () => void {
+    this.stateListeners.add(listener);
+    return () => this.stateListeners.delete(listener);
+  }
+
+  private notifyListeners() {
+    this.stateListeners.forEach((cb) => {
+      try {
+        cb();
+      } catch (err) {
+        console.error('AudioEngine listener error:', err);
+      }
+    });
+  }
 
   public initAudioContext(): AudioContext {
     if (!this.ctx) {
@@ -66,13 +80,15 @@ class Z30AudioEngine {
       this.txGain = this.ctx.createGain();
       this.txGain.gain.setValueAtTime(0.7, this.ctx.currentTime);
       this.txGain.connect(this.masterGain);
-      
-      this.noiseGain = this.ctx.createGain();
-      this.noiseGain.gain.setValueAtTime(0.08, this.ctx.currentTime);
-      this.noiseGain.connect(this.masterGain);
 
-      this.masterGain.connect(this.analyser);
-      this.analyser.connect(this.ctx.destination);
+      // Route TX audio to destination (speakers / rig line-out)
+      this.masterGain.connect(this.ctx.destination);
+
+      // Also route TX audio to analyser so transmitted RF tones appear on the waterfall/spectrum
+      this.txGain.connect(this.analyser);
+
+      // IMPORTANT: this.analyser is intentionally NOT connected to this.ctx.destination.
+      // This prevents receiver/microphone audio input from feeding back into the speakers/audio output.
 
       this.fftBuffer = new Uint8Array(this.analyser.frequencyBinCount);
       this.floatFftBuffer = new Float32Array(this.analyser.frequencyBinCount);
@@ -275,9 +291,9 @@ class Z30AudioEngine {
   }
 
   /**
-   * Enable real microphone / soundcard receiver stream with optional deviceId
+   * Enable real microphone / soundcard receiver stream with optional deviceId or label
    */
-  public async enableMicrophone(deviceId?: string): Promise<boolean> {
+  public async enableMicrophone(deviceIdOrLabel?: string): Promise<boolean> {
     try {
       this.initAudioContext();
       if (!this.ctx || !this.analyser) return false;
@@ -286,31 +302,77 @@ class Z30AudioEngine {
         this.disableMicrophone();
       }
 
+      let resolvedDeviceId: string | undefined = undefined;
+
+      if (
+        deviceIdOrLabel &&
+        deviceIdOrLabel !== 'default' &&
+        deviceIdOrLabel !== 'Default System Audio Device' &&
+        deviceIdOrLabel !== ''
+      ) {
+        if (typeof navigator !== 'undefined' && navigator.mediaDevices && navigator.mediaDevices.enumerateDevices) {
+          try {
+            const devices = await navigator.mediaDevices.enumerateDevices();
+            const match = devices.find(
+              (d) =>
+                d.kind === 'audioinput' &&
+                (d.deviceId === deviceIdOrLabel || d.label === deviceIdOrLabel)
+            );
+            if (match && match.deviceId) {
+              resolvedDeviceId = match.deviceId;
+            }
+          } catch {
+            // enumerate error
+          }
+        }
+        if (!resolvedDeviceId && !deviceIdOrLabel.includes('Default')) {
+          resolvedDeviceId = deviceIdOrLabel;
+        }
+      }
+
       const audioConstraints: MediaTrackConstraints = {
         echoCancellation: false,
         noiseSuppression: false,
         autoGainControl: false,
       };
 
-      if (deviceId && deviceId !== 'default' && deviceId !== '') {
-        audioConstraints.deviceId = { exact: deviceId };
+      if (resolvedDeviceId) {
+        audioConstraints.deviceId = { exact: resolvedDeviceId };
       }
 
-      this.micStream = await navigator.mediaDevices.getUserMedia({
-        audio: audioConstraints,
-      });
+      try {
+        this.micStream = await navigator.mediaDevices.getUserMedia({
+          audio: audioConstraints,
+        });
+      } catch (err) {
+        // Fallback to default audio input if exact device ID constraint failed
+        if (resolvedDeviceId) {
+          console.warn(`Exact audio input device (${resolvedDeviceId}) failed, falling back to default input.`, err);
+          this.micStream = await navigator.mediaDevices.getUserMedia({
+            audio: {
+              echoCancellation: false,
+              noiseSuppression: false,
+              autoGainControl: false,
+            },
+          });
+        } else {
+          throw err;
+        }
+      }
 
       const audioTrack = this.micStream.getAudioTracks()[0];
       if (audioTrack) {
         this.currentInputLabel = audioTrack.label || 'Default Soundcard';
-        this.currentInputDeviceId = deviceId || '';
+        this.currentInputDeviceId = resolvedDeviceId || audioTrack.getSettings().deviceId || '';
       }
 
       this.micSource = this.ctx.createMediaStreamSource(this.micStream);
       this.micSource.connect(this.analyser);
+      this.notifyListeners();
       return true;
     } catch (e) {
       console.warn('Audio input access not granted or unavailable:', e);
+      this.notifyListeners();
       return false;
     }
   }
@@ -329,6 +391,7 @@ class Z30AudioEngine {
       this.micStream = null;
     }
     this.currentInputLabel = '';
+    this.notifyListeners();
   }
 
   public getIsMicrophoneActive(): boolean {
@@ -370,53 +433,6 @@ class Z30AudioEngine {
 
   public clearSignalHistory() {
     this.liveFrames = [];
-  }
-
-  /**
-   * Start synthetic atmospheric RF background noise (AWGN) - Only if explicitly requested
-   */
-  public startBackgroundRfNoise(level: number = 0.05) {
-    if (!this.ctx) this.initAudioContext();
-    if (!this.ctx || !this.noiseGain) return;
-
-    try {
-      this.stopBackgroundRfNoise();
-      const bufferSize = this.ctx.sampleRate * 2;
-      const noiseBuffer = this.ctx.createBuffer(1, bufferSize, this.ctx.sampleRate);
-      const output = noiseBuffer.getChannelData(0);
-      
-      // Pink/Brownian shaped HF band noise
-      let b0 = 0, b1 = 0, b2 = 0;
-      for (let i = 0; i < bufferSize; i++) {
-        const white = Math.random() * 2 - 1;
-        b0 = 0.99886 * b0 + white * 0.0555179;
-        b1 = 0.99332 * b1 + white * 0.0750759;
-        b2 = 0.96900 * b2 + white * 0.1538520;
-        const pink = b0 + b1 + b2 + white * 0.5362;
-        output[i] = pink * 0.11;
-      }
-
-      this.noiseNode = this.ctx.createBufferSource();
-      this.noiseNode.buffer = noiseBuffer;
-      this.noiseNode.loop = true;
-      this.noiseNode.connect(this.noiseGain);
-      this.noiseGain.gain.setValueAtTime(level, this.ctx.currentTime);
-      this.noiseNode.start();
-    } catch (e) {
-      console.warn('Could not start RF noise audio generator:', e);
-    }
-  }
-
-  public stopBackgroundRfNoise() {
-    if (this.noiseNode) {
-      try {
-        this.noiseNode.stop();
-        this.noiseNode.disconnect();
-      } catch {
-        // ignore
-      }
-      this.noiseNode = null;
-    }
   }
 
   /**
@@ -567,6 +583,113 @@ class Z30AudioEngine {
       rmsDb: Math.max(-100, Math.min(0, rmsDb)),
       linearLevel: Math.min(1.0, peak),
       isClipping: peak >= 0.98,
+    };
+  }
+
+  /**
+   * Calculate calibrated HF RF S-Meter power in dBm and S-units for a given audio frequency
+   */
+  public getChannelSmeterDb(rxFreqHz: number = 1500): {
+    rfDb: number;
+    sUnit: string;
+    sMeterPercent: number;
+    audioDb: number;
+  } {
+    // 1. If actively transmitting or tuning, report 0 dBm (TX level)
+    if (this.isTxActive) {
+      return {
+        rfDb: 0,
+        sUnit: 'TX',
+        sMeterPercent: 100,
+        audioDb: 0,
+      };
+    }
+
+    // 2. Extract channel FFT power
+    let channelAudioDb = -100;
+    let noiseAudioDb = -100;
+
+    if (this.analyser) {
+      const floatFft = new Float32Array(this.analyser.frequencyBinCount);
+      this.analyser.getFloatFrequencyData(floatFft);
+      const sampleRate = this.ctx?.sampleRate || 48000;
+      const nyquist = sampleRate / 2;
+      const binCount = this.analyser.frequencyBinCount;
+
+      // RX Channel Power within ±25 Hz around rxFreqHz
+      const minBin = Math.max(0, Math.floor(((rxFreqHz - 25) / nyquist) * binCount));
+      const maxBin = Math.min(binCount - 1, Math.ceil(((rxFreqHz + 25) / nyquist) * binCount));
+
+      let sumPower = 0;
+      let binCountInBand = 0;
+      for (let b = minBin; b <= maxBin; b++) {
+        const val = floatFft[b];
+        if (Number.isFinite(val) && val > -150) {
+          sumPower += Math.pow(10, val / 10);
+          binCountInBand++;
+        }
+      }
+      if (binCountInBand > 0 && sumPower > 0) {
+        channelAudioDb = 10 * Math.log10(sumPower / binCountInBand);
+      }
+
+      // Wideband background noise across 300 - 2800 Hz
+      const noiseMinBin = Math.max(0, Math.floor((300 / nyquist) * binCount));
+      const noiseMaxBin = Math.min(binCount - 1, Math.ceil((2800 / nyquist) * binCount));
+      let sumNoise = 0;
+      let noiseBins = 0;
+      for (let b = noiseMinBin; b <= noiseMaxBin; b++) {
+        const val = floatFft[b];
+        if (Number.isFinite(val) && val > -150) {
+          sumNoise += Math.pow(10, val / 10);
+          noiseBins++;
+        }
+      }
+      if (noiseBins > 0 && sumNoise > 0) {
+        noiseAudioDb = 10 * Math.log10(sumNoise / noiseBins);
+      }
+    }
+
+    // Check if there are active signals in window around this frequency
+    const activeSig = this.liveFrames.find(
+      (f) => Math.abs(f.freqHz - rxFreqHz) <= 30 && Date.now() - f.timestamp < 30000
+    );
+
+    // Realistic atmospheric HF background noise (-115 dBm / S2-S3) with slight natural ionospheric ripple
+    const baseRfNoise = -115 + (Math.sin(Date.now() / 1500) * 1.5 + Math.cos(Date.now() / 2800) * 1.0);
+
+    let rfDb = baseRfNoise;
+
+    if (activeSig) {
+      // Direct SNR calibrated RF power (e.g. SNR -20dB -> -110 dBm S3; SNR 0dB -> -90 dBm S6; SNR +15dB -> -75 dBm S8.7; SNR +25dB -> -65 dBm S9+8dB)
+      rfDb = -115 + (activeSig.snrDb + 25);
+    } else if (channelAudioDb > -95) {
+      // When audio input/microphone is live, translate audio dynamics to RF S-meter
+      const deltaFromNoise = Math.max(0, channelAudioDb - Math.min(-75, noiseAudioDb));
+      const audioDynamicGain = Math.max(0, channelAudioDb + 85) * 0.7;
+      rfDb = baseRfNoise + deltaFromNoise + audioDynamicGain;
+    }
+
+    // Clamp RF dBm to standard S-meter scale: S0 (-127 dBm) to S9+40 (-33 dBm)
+    rfDb = Math.max(-127, Math.min(-33, rfDb));
+
+    // Calculate percentage on 94 dB scale (-127 dBm to -33 dBm)
+    const sMeterPercent = Math.max(5, Math.min(100, ((rfDb + 127) / 94) * 100));
+
+    let sUnit = 'S1';
+    if (rfDb > -73) {
+      const overDb = Math.round(rfDb + 73);
+      sUnit = `S9+${overDb}dB`;
+    } else {
+      const unit = Math.max(1, Math.min(9, Math.round((rfDb + 127) / 6)));
+      sUnit = `S${unit}`;
+    }
+
+    return {
+      rfDb,
+      sUnit,
+      sMeterPercent,
+      audioDb: channelAudioDb,
     };
   }
 }

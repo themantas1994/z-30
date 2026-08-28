@@ -4,7 +4,7 @@
 
 import React, { useState } from 'react';
 import { HAM_BANDS } from '../dsp/z30Constants';
-import { rigctl } from '../dsp/rigctlSimulator';
+import { rigctl } from '../dsp/catController';
 import { StationConfig } from '../types/z30';
 import { Radio, Terminal, Cpu, Activity, Zap, Check, AlertCircle } from 'lucide-react';
 

@@ -7,7 +7,7 @@
 import React, { useState } from 'react';
 import { HAM_BANDS, DEFAULT_BANDS } from '../dsp/z30Constants';
 import { StationConfig } from '../types/z30';
-import { rigctl } from '../dsp/rigctlSimulator';
+import { rigctl } from '../dsp/catController';
 import { Radio, RotateCcw, Check, Save, X, Cpu, Sparkles, ExternalLink, Sliders } from 'lucide-react';
 
 interface BandManagerModalProps {

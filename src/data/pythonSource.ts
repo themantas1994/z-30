@@ -720,7 +720,7 @@ import os
 import queue
 import sqlite3
 import threading
-from typing import Optional, List, Callable
+from typing import Optional, List, Callable, Tuple
 
 @dataclass
 class QsoLogRecord:
@@ -1716,7 +1716,6 @@ class HamlibRigCatalog:
         ("QRP Labs QDX Digital Transceiver", 3092),
         ("FlexRadio 6xxx Series (SmartSDR)", 1014),
         ("Hamlib NET rigctl Client (Remote Daemon)", 2),
-        ("Dummy / Simulated Rig (Testing)", 1),
     ]
 
 
@@ -3607,8 +3606,7 @@ class CatTuner:
         if not self.sock:
             self.connect()
         if not self.sock:
-            logger.info(f"[Simulated CAT] Tune to {freq_hz/1e6:.4f} MHz ({mode}, {passband_hz} Hz BW)")
-            return True
+            return False
 
         try:
             self.sock.sendall(f"F {freq_hz}\n".encode("ascii"))
@@ -3733,7 +3731,7 @@ class RFTimeSyncThread(threading.Thread):
         on_status_callback: Optional[Callable[[str, float, str, int, float], None]] = None,
         on_complete_callback: Optional[Callable[[TimeSyncResult], None]] = None,
         on_error_callback: Optional[Callable[[str], None]] = None,
-        simulate_dwell_speed: float = 1.0
+        scan_rate_multiplier: float = 1.0
     ):
         super().__init__(daemon=True, name="RFTimeSyncWorker")
         self.station_queue = station_queue or list(PRIORITY_REGIONS["North America (Default)"])
@@ -3745,7 +3743,7 @@ class RFTimeSyncThread(threading.Thread):
         self.on_status_callback = on_status_callback
         self.on_complete_callback = on_complete_callback
         self.on_error_callback = on_error_callback
-        self.simulate_dwell_speed = simulate_dwell_speed
+        self.scan_rate_multiplier = scan_rate_multiplier
 
         self.cancel_event = threading.Event()
         self.last_result: Optional[TimeSyncResult] = None
@@ -3775,7 +3773,7 @@ class RFTimeSyncThread(threading.Thread):
 
             # 1. Issue CAT Tuning Command
             self.cat_tuner.tune(freq_hz, mode=spec.cat_mode, passband_hz=spec.passband_hz)
-            time.sleep(0.5 / self.simulate_dwell_speed)
+            time.sleep(0.5 / self.scan_rate_multiplier)
 
             if self.cancel_event.is_set():
                 return
@@ -3786,14 +3784,14 @@ class RFTimeSyncThread(threading.Thread):
 
             # 3. Rapid 5-Second SNR & Carrier Pre-Validation
             self._notify_status(f"Measuring SNR on {stn_name} {freq_mhz:.3f} MHz...", progress_pct, stn_name, freq_hz, 0.0)
-            pre_audio = self.audio_engine.capture_chunk(self.pre_check_seconds / self.simulate_dwell_speed, target_station=spec)
+            pre_audio = self.audio_engine.capture_chunk(self.pre_check_seconds / self.scan_rate_multiplier, target_station=spec)
             has_carrier, snr_db = decoder.validate_pre_carrier(pre_audio, spec)
 
             self._notify_status(f"{stn_name} SNR: {snr_db:.1f} dB", progress_pct, stn_name, freq_hz, snr_db)
 
             if not has_carrier:
                 logger.info(f"Low SNR ({snr_db:.1f} dB) on {stn_name} @ {freq_mhz:.3f} MHz. Skipping early.")
-                time.sleep(0.5 / self.simulate_dwell_speed)
+                time.sleep(0.5 / self.scan_rate_multiplier)
                 continue
 
             # 4. Commencing Full Dwell Frame Capture (120-180 seconds)
@@ -3808,7 +3806,7 @@ class RFTimeSyncThread(threading.Thread):
             )
 
             # Capture dwell stream
-            dwell_capture_len = min(65.0, float(self.dwell_seconds)) / self.simulate_dwell_speed
+            dwell_capture_len = min(65.0, float(self.dwell_seconds)) / self.scan_rate_multiplier
             dwell_audio = self.audio_engine.capture_chunk(dwell_capture_len, target_station=spec)
 
             if self.cancel_event.is_set():
@@ -4131,7 +4129,7 @@ def run_self_test() -> bool:
         station_queue=test_queue,
         dwell_seconds=5,
         pre_check_seconds=1,
-        simulate_dwell_speed=20.0,
+        scan_rate_multiplier=20.0,
         on_complete_callback=on_complete_test
     )
     worker.start()

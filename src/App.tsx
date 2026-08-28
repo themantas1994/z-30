@@ -11,7 +11,7 @@ import { packZ30Message } from './dsp/z30Codec';
 import { sicDecoderEngine } from './dsp/sicDecoder';
 import { qsoEngine, QsoState } from './dsp/qsoEngine';
 import { qsoLogger } from './dsp/qsoLogger';
-import { rigctl } from './dsp/rigctlSimulator';
+import { rigctl } from './dsp/catController';
 
 import { Header } from './components/Header';
 import { WaterfallDisplay } from './components/WaterfallDisplay';
@@ -28,8 +28,19 @@ import { BandManagerModal } from './components/BandManagerModal';
 import { RfTimeSyncModal } from './components/RfTimeSyncModal';
 
 export default function App() {
-  // Station & Hardware Config
-  const [config, setConfig] = useState<StationConfig>(DEFAULT_STATION_CONFIG);
+  // Station & Hardware Config (Initialized from LocalStorage if available)
+  const [config, setConfig] = useState<StationConfig>(() => {
+    try {
+      const saved = localStorage.getItem('z30_station_config');
+      if (saved) {
+        return { ...DEFAULT_STATION_CONFIG, ...JSON.parse(saved) };
+      }
+    } catch {
+      // fallback
+    }
+    return DEFAULT_STATION_CONFIG;
+  });
+
   const [currentBandIdx, setCurrentBandIdx] = useState<number>(5); // 20m default (14.076 MHz)
   const [dialFreqHz, setDialFreqHz] = useState<number>(HAM_BANDS[5].dialFreqHz);
   const [timeOffsetMs, setTimeOffsetMs] = useState<number>(0);
@@ -40,13 +51,37 @@ export default function App() {
   // Active View Tab (Production Transceiver & Python Source Code)
   const [activeView, setActiveView] = useState<'TRANSCEIVER' | 'PYTHON_SOURCE'>('TRANSCEIVER');
 
-  // Modals
+  // Modals (Setup Wizard opens automatically on first startup if not configured yet)
   const [isLogbookOpen, setIsLogbookOpen] = useState<boolean>(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState<boolean>(false);
-  const [isWizardOpen, setIsWizardOpen] = useState<boolean>(false);
+  const [isWizardOpen, setIsWizardOpen] = useState<boolean>(() => {
+    try {
+      const isCompleted = localStorage.getItem('z30_wizard_completed');
+      const saved = localStorage.getItem('z30_station_config');
+      return !isCompleted && !saved;
+    } catch {
+      return true;
+    }
+  });
   const [isSpecsOpen, setIsSpecsOpen] = useState<boolean>(false);
   const [isBandManagerOpen, setIsBandManagerOpen] = useState<boolean>(false);
   const [isTimeSyncOpen, setIsTimeSyncOpen] = useState<boolean>(false);
+
+  // Auto-connect audio receiver if system permission was already granted
+  useEffect(() => {
+    if (typeof navigator !== 'undefined' && navigator.permissions && navigator.permissions.query) {
+      navigator.permissions
+        .query({ name: 'microphone' as PermissionName })
+        .then((res) => {
+          if (res.state === 'granted' && !audioEngine.getIsMicrophoneActive()) {
+            audioEngine.enableMicrophone(config.audioInputDevice);
+          }
+        })
+        .catch(() => {
+          // ignore
+        });
+    }
+  }, [config.audioInputDevice]);
 
   // QSOs, Logs & Band Activity Filter
   const [activityFilter, setActivityFilter] = useState<'ALL' | 'CQ' | 'MYCALL' | 'SIC'>('ALL');
@@ -295,6 +330,18 @@ export default function App() {
     setActivityFilter('MYCALL');
   }, []);
 
+  const handleSaveStationConfig = useCallback((newCfg: StationConfig) => {
+    setConfig(newCfg);
+    try {
+      localStorage.setItem('z30_station_config', JSON.stringify(newCfg));
+      localStorage.setItem('z30_wizard_completed', 'true');
+    } catch {
+      // ignore
+    }
+    // Reconnect/activate the audio receiver stream with the chosen soundcard input
+    audioEngine.enableMicrophone(newCfg.audioInputDevice);
+  }, []);
+
   const handleUpdateConfig = useCallback((partial: Partial<StationConfig>) => {
     setConfig((prev) => {
       const next = { ...prev, ...partial };
@@ -484,7 +531,7 @@ export default function App() {
         isOpen={isSettingsOpen}
         onClose={() => setIsSettingsOpen(false)}
         config={config}
-        onSaveConfig={(newCfg) => setConfig(newCfg)}
+        onSaveConfig={handleSaveStationConfig}
         onOpenWizard={() => {
           setIsSettingsOpen(false);
           setIsWizardOpen(true);
@@ -495,7 +542,7 @@ export default function App() {
         isOpen={isWizardOpen}
         onClose={() => setIsWizardOpen(false)}
         config={config}
-        onSaveConfig={(newCfg) => setConfig(newCfg)}
+        onSaveConfig={handleSaveStationConfig}
       />
 
       <SpecsModal
