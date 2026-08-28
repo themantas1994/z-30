@@ -181,7 +181,7 @@ export const CrossPlatformBuildModal: React.FC<CrossPlatformBuildModalProps> = (
                   </span>
                   <button
                     onClick={() => copyToClipboard(
-                      'curl -sSL https://raw.githubusercontent.com/z30mode/z30-transceiver/main/install_android_termux.sh | bash',
+                      'curl -sSL https://raw.githubusercontent.com/themantas1994/z-30/main/install_android_termux.sh | bash',
                       'termux_curl'
                     )}
                     className="flex items-center gap-1 text-[11px] bg-[#222] hover:bg-[#333] text-[#00FF41] px-2.5 py-1 rounded transition-colors"
@@ -196,7 +196,7 @@ export const CrossPlatformBuildModal: React.FC<CrossPlatformBuildModalProps> = (
                 <div className="bg-[#0A0A0A] p-3 rounded border border-[#222222] font-mono text-[11px] text-[#00FF41]">
                   pkg update && pkg install -y python python-numpy python-scipy clang fftw libportaudio<br />
                   pip install sounddevice pyserial<br />
-                  curl -O https://raw.githubusercontent.com/z30mode/z30-transceiver/main/install_android_termux.sh<br />
+                  curl -O https://raw.githubusercontent.com/themantas1994/z-30/main/install_android_termux.sh<br />
                   bash install_android_termux.sh
                 </div>
               </div>

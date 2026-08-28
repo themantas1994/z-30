@@ -3883,6 +3883,93 @@ if __name__ == "__main__":
 `
   },
   {
+    filename: 'pyproject.toml',
+    path: 'pyproject.toml',
+    description: 'PEP 621 / PEP 517 standard package configuration for pip and build tools.',
+    code: `[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "z30-transceiver"
+version = "1.0.0"
+description = "Amateur Radio 16-MFSK Weak-Signal Digital Transceiver & DSP Suite (z-30 protocol)"
+readme = "README.md"
+authors = [{ name = "Paulo Mantas", email = "paulomantas2009@gmail.com" }]
+license = { text = "MIT" }
+requires-python = ">=3.9"
+dependencies = [
+    "numpy>=1.22.0",
+    "scipy>=1.8.0",
+    "sounddevice>=0.4.5",
+    "cffi>=1.15.0",
+    "pyserial>=3.5",
+    "requests>=2.28.0"
+]
+
+[project.urls]
+Homepage = "https://github.com/themantas1994/z-30"
+Repository = "https://github.com/themantas1994/z-30.git"
+Issues = "https://github.com/themantas1994/z-30/issues"
+
+[project.optional-dependencies]
+audio = ["pyaudio>=0.2.13"]
+plots = ["matplotlib>=3.5.0"]
+
+[project.scripts]
+z30 = "z30_dsp.main:main"
+z30-gui = "z30_dsp.gui:main"
+z30-wizard = "config_wizard:main"
+z30-sync = "rf_time_sync:main"
+z30-bands = "band_manager:main"
+
+[tool.setuptools]
+packages = ["z30_dsp"]
+`
+  },
+  {
+    filename: 'setup.py',
+    path: 'setup.py',
+    description: 'Setuptools setup script with console_scripts entrypoints for z30 CLI and GUI tools.',
+    code: `#!/usr/bin/env python3
+from setuptools import setup, find_packages
+import sys
+
+install_requires = [
+    'numpy>=1.22.0',
+    'scipy>=1.8.0',
+    'sounddevice>=0.4.5',
+    'pyserial>=3.5',
+    'requests>=2.28.0',
+]
+
+if sys.platform.startswith('win'):
+    install_requires.append('windows-curses>=2.3.0')
+
+setup(
+    name='z30-transceiver',
+    version='1.0.0',
+    description='16-MFSK Weak-Signal Digital Mode Transceiver, LDPC-SIC Decoder, CAT Controller, and DSP Suite',
+    author='Paulo Mantas (z-30 Digital Mode Working Group)',
+    author_email='paulomantas2009@gmail.com',
+    url='https://github.com/themantas1994/z-30',
+    packages=find_packages(),
+    py_modules=['config_wizard', 'rf_time_sync', 'band_manager'],
+    install_requires=install_requires,
+    python_requires='>=3.9',
+    entry_points={
+        'console_scripts': [
+            'z30=z30_dsp.main:main',
+            'z30-transceiver=z30_dsp.main:main',
+            'z30-wizard=config_wizard:main',
+            'z30-sync=rf_time_sync:main',
+            'z30-bands=band_manager:main',
+        ],
+    },
+)
+`
+  },
+  {
     filename: 'install_ubuntu.sh',
     path: 'install_ubuntu.sh',
     description: 'Automated APT installation and systemd/desktop launcher for Ubuntu 20.04/22.04/24.04 and Debian 11/12.',
