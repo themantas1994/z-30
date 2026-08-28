@@ -155,7 +155,7 @@ Compatible with **Ubuntu 20.04 LTS, 22.04 LTS, 24.04 LTS**, **Debian 11/12**, **
 
 #### Automated One-Line Setup
 ```bash
-git clone (https://github.com/themantas1994/z30.git
+git clone https://github.com/themantas1994/z30.git
 cd z30-transceiver
 chmod +x install_ubuntu.sh
 ./install_ubuntu.sh
@@ -192,7 +192,7 @@ Arch Linux provides pre-compiled vector libraries with native AVX2/AVX-512 optim
 
 #### Automated Pacman & PKGBUILD Build
 ```bash
-git clone (https://github.com/themantas1994/z30.git
+git clone https://github.com/themantas1994/z30.git
 cd z30-transceiver
 
 # Install via automated installer
@@ -213,7 +213,7 @@ Compatible with Windows 10 (64-bit) and Windows 11 using native WASAPI sound dev
 1. Install **Python 3.9+** from [python.org](https://www.python.org/) (ensure **"Add python.exe to PATH"** is checked).
 2. Clone or download the repository:
    ```cmd
-   git clone (https://github.com/themantas1994/z30.git
+   git clone https://github.com/themantas1994/z30.git
    cd z30-transceiver
    ```
 3. Double-click `run_windows.bat` (this automatically creates the virtual environment, installs dependencies, and launches the application).
@@ -241,7 +241,7 @@ For portable SOTA/POTA operations connecting USB OTG audio soundcards (SignaLink
 ```bash
 # 1. In Termux, fetch and execute the field installer:
 pkg update && pkg install -y git curl
-git clone (https://github.com/themantas1994/z30.git
+git clone https://github.com/themantas1994/z30.git
 cd z30-transceiver
 chmod +x install_android_termux.sh
 ./install_android_termux.sh
