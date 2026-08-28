@@ -7,9 +7,14 @@ name = "z30-transceiver"
 version = "1.0.0"
 description = "Amateur Radio 16-MFSK Weak-Signal Digital Transceiver & DSP Suite (z-30 protocol)"
 readme = "README.md"
-authors = [{ name = "z-30 Working Group", email = "dev@z30mode.org" }]
+authors = [{ name = "Paulo Mantas", email = "paulomantas2009@gmail.com" }]
 license = { text = "MIT" }
 requires-python = ">=3.9"
+
+[project.urls]
+Homepage = "https://github.com/themantas1994/z-30"
+Repository = "https://github.com/themantas1994/z-30.git"
+Issues = "https://github.com/themantas1994/z-30/issues"
 dependencies = [
     "numpy>=1.22.0",
     "scipy>=1.8.0",
