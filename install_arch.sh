@@ -20,7 +20,6 @@ sudo pacman -Syu --needed --noconfirm \
     python-pip \
     python-numpy \
     python-scipy \
-    python-sounddevice \
     python-pyserial \
     python-cffi \
     portaudio \
