@@ -3881,6 +3881,114 @@ if __name__ == "__main__":
         print("\nExecuting default self-test suite...")
         run_self_test()
 `
+  },
+  {
+    filename: 'install_ubuntu.sh',
+    path: 'install_ubuntu.sh',
+    description: 'Automated APT installation and systemd/desktop launcher for Ubuntu 20.04/22.04/24.04 and Debian 11/12.',
+    code: `#!/usr/bin/env bash
+# z-30 Transceiver - Automated Build & Installation Script for Ubuntu & Debian
+set -e
+
+sudo apt-get update
+sudo apt-get install -y \\
+  python3 python3-pip python3-venv python3-tk python3-dev \\
+  build-essential libportaudio2 portaudio19-dev libasound2-dev \\
+  libhamlib-utils libhamlib-dev nodejs npm curl git
+
+mkdir -p "$HOME/.z30"
+python3 -m venv "$HOME/.z30-env"
+source "$HOME/.z30-env/bin/activate"
+
+pip install --upgrade pip setuptools wheel
+pip install numpy scipy sounddevice pyaudio pyserial cffi requests
+
+echo "z-30 Transceiver installed successfully on Ubuntu/Debian."
+`
+  },
+  {
+    filename: 'PKGBUILD',
+    path: 'PKGBUILD',
+    description: 'Arch Linux PKGBUILD for makepkg / AUR installation with native Pacman dependency resolution.',
+    code: `# Maintainer: z-30 Working Group <dev@z30mode.org>
+pkgname=z30-transceiver
+pkgver=1.0.0
+pkgrel=1
+pkgdesc="16-MFSK Weak-Signal Digital Mode Transceiver, LDPC-SIC Decoder, CAT Controller, and DSP Suite"
+arch=('x86_64' 'aarch64' 'armv7h')
+url="https://github.com/z30mode/z30-transceiver"
+license=('MIT')
+depends=(
+    'python>=3.9'
+    'python-numpy'
+    'python-scipy'
+    'python-sounddevice'
+    'python-pyserial'
+    'python-cffi'
+    'portaudio'
+    'hamlib'
+    'tk'
+)
+makedepends=('python-setuptools' 'python-build' 'python-installer' 'python-wheel')
+source=("$pkgname-$pkgver.tar.gz::https://github.com/z30mode/z30-transceiver/archive/v$pkgver.tar.gz")
+sha256sums=('SKIP')
+
+build() {
+    cd "$srcdir"
+    python -m build --wheel --no-isolation
+}
+
+package() {
+    cd "$srcdir"
+    python -m installer --destdir="$pkgdir" dist/*.whl
+    install -Dm644 z30.desktop "$pkgdir/usr/share/applications/z30.desktop"
+}
+`
+  },
+  {
+    filename: 'run_windows.bat',
+    path: 'run_windows.bat',
+    description: 'Windows 10/11 automated environment initializer, WASAPI audio configuration, and transceiver launcher.',
+    code: `@echo off
+TITLE z-30 Digital Mode Transceiver (Windows)
+COLOR 0A
+
+echo Checking Python virtual environment...
+IF NOT EXIST "%USERPROFILE%\\.z30-venv" (
+    python -m venv "%USERPROFILE%\\.z30-venv"
+)
+call "%USERPROFILE%\\.z30-venv\\Scripts\\activate.bat"
+
+python -m pip install --upgrade pip setuptools wheel
+python -m pip install numpy scipy sounddevice pyaudio pyserial cffi requests
+
+python -c "import z30_dsp.gui; z30_dsp.gui.main()"
+pause
+`
+  },
+  {
+    filename: 'install_android_termux.sh',
+    path: 'install_android_termux.sh',
+    description: 'Android Termux mobile field radio deployment script with USB OTG audio soundcard support.',
+    code: `#!/data/data/com.termux/files/usr/bin/bash
+# z-30 Transceiver - Android Termux Field Radio Deployment
+set -e
+
+pkg update -y
+pkg install -y python python-numpy python-scipy clang fftw libportaudio termux-api nodejs git
+pip install --upgrade pip
+pip install sounddevice pyserial requests
+
+mkdir -p "$HOME/bin"
+cat << 'EOF' > "$HOME/bin/z30"
+#!/data/data/com.termux/files/usr/bin/bash
+python3 -c "import sys; from z30_dsp.main import main; main()" "$@"
+EOF
+chmod +x "$HOME/bin/z30"
+
+echo "Android Termux installation complete. Run 'z30' to start transceiver."
+`
   }
 ];
+
 

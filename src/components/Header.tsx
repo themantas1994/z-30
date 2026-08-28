@@ -6,7 +6,7 @@ import React, { useEffect, useState } from 'react';
 import { StationConfig, TxSlot } from '../types/z30';
 import { Z30_SPECS, evaluateSlotTiming } from '../dsp/z30Constants';
 import { audioEngine } from '../dsp/audioEngine';
-import { Radio, Mic, MicOff, Volume2, VolumeX, BookOpen, Code2, Settings, HelpCircle, Sparkles, Activity, Play, Cpu, Square, Zap, Clock, Wand2 } from 'lucide-react';
+import { Radio, Mic, MicOff, Volume2, VolumeX, BookOpen, Code2, Settings, HelpCircle, Sparkles, Activity, Play, Cpu, Square, Zap, Clock, Wand2, Package } from 'lucide-react';
 
 interface HeaderProps {
   config: StationConfig;
@@ -23,6 +23,7 @@ interface HeaderProps {
   onOpenSettings: () => void;
   onOpenWizard?: () => void;
   onOpenSpecs: () => void;
+  onOpenPlatforms?: () => void;
   onOpenTimeSync?: () => void;
   timeOffsetMs?: number;
   onTriggerDecode: () => void;
@@ -48,6 +49,7 @@ export const Header: React.FC<HeaderProps> = ({
   onOpenSettings,
   onOpenWizard,
   onOpenSpecs,
+  onOpenPlatforms,
   onOpenTimeSync,
   timeOffsetMs = 0,
   onTriggerDecode,
@@ -339,6 +341,19 @@ export const Header: React.FC<HeaderProps> = ({
             <BookOpen className="w-3.5 h-3.5 text-cyan-400" />
             <span className="hidden md:inline text-[11px]">Logbook</span>
           </button>
+
+          {/* Cross-Platform Build & Installer Hub */}
+          {onOpenPlatforms && (
+            <button
+              id="open-platforms-btn"
+              onClick={onOpenPlatforms}
+              title="Cross-Platform Builds & Installers (Android, Windows, Ubuntu, Arch Linux, Generic)"
+              className="p-1.5 bg-[#00FF41]/10 hover:bg-[#00FF41]/20 text-[#00FF41] hover:text-[#00FF41] border border-[#00FF41]/40 text-xs flex items-center space-x-1"
+            >
+              <Package className="w-3.5 h-3.5 text-[#00FF41]" />
+              <span className="hidden lg:inline text-[11px] font-bold">Platforms</span>
+            </button>
+          )}
 
           {/* Setup Wizard */}
           {onOpenWizard && (

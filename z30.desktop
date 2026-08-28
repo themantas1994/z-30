@@ -1,0 +1,13 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=z-30 Digital Transceiver
+GenericName=Amateur Radio 16-MFSK Transceiver
+Comment=Weak-signal digital mode transceiver, LDPC-SIC decoder, and DSP spectrum analyzer
+Exec=z30
+Icon=z30
+Terminal=false
+Categories=HamRadio;AudioVideo;Audio;Science;Engineering;
+Keywords=HamRadio;DigitalMode;MFSK;WSJTX;FT8;JS8Call;DSP;Transceiver;
+StartupNotify=true
+MimeType=application/x-z30-log;
