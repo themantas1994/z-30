@@ -155,7 +155,7 @@ Compatible with **Ubuntu 20.04 LTS, 22.04 LTS, 24.04 LTS**, **Debian 11/12**, **
 
 #### Automated One-Line Setup
 ```bash
-git clone https://github.com/themantas1994/z-30
+git clone https://github.com/themantas1994/z-30.git
 cd z-30
 chmod +x install_ubuntu.sh
 ./install_ubuntu.sh
@@ -186,21 +186,52 @@ python3 -c "from z30_dsp.gui import main; main()"
 
 ---
 
-### Arch Linux & Manjaro
+### Arch Linux, Manjaro & EndeavourOS
 
-Arch Linux provides pre-compiled vector libraries with native AVX2/AVX-512 optimization.
+Arch Linux users benefit from official Pacman pre-compiled vector libraries with native AVX2/AVX-512 optimization.
 
-#### Automated Pacman & PKGBUILD Build
+#### Method 1: Automated Script (Handles PEP 668 & Pacman dependencies)
+Modern Arch Linux manages the system Python environment (`EXTERNALLY-MANAGED`). The automated script installs all packages cleanly via Pacman and sets up a dedicated environment with `--system-site-packages`:
+
 ```bash
-git clone https://github.com/themantas1994/z-30
+git clone https://github.com/themantas1994/z-30.git
 cd z-30
-
-# Install via automated installer
 chmod +x install_arch.sh
 ./install_arch.sh
+```
 
-# Or build the native Arch package directly:
+#### Method 2: Native Arch Package Build (`makepkg`)
+You can compile and install the package using the provided `PKGBUILD`:
+
+```bash
+# 1. Install Arch base build tools & Python packaging tools
+sudo pacman -Syu --needed base-devel git python-setuptools python-build python-installer python-wheel
+
+# 2. Clone and build the package
+git clone https://github.com/themantas1994/z-30.git
+cd z-30
 makepkg -si
+```
+
+#### Method 3: Manual Pacman + Virtual Environment Setup
+```bash
+# 1. Install all runtime dependencies via Pacman
+sudo pacman -Syu --needed \
+    python python-numpy python-scipy python-sounddevice python-pyserial \
+    python-cffi python-requests portaudio hamlib tk nodejs npm git
+
+# 2. Create an environment that uses Pacman system packages
+python -m venv ~/.z30-env --system-site-packages
+source ~/.z30-env/bin/activate
+
+# 3. Build & install z-30
+python -m build --wheel --no-isolation
+pip install --no-deps dist/*.whl --force-reinstall
+
+# 4. Launch Transceiver
+z30
+# Or launch the Python GUI directly:
+python -c "import z30_dsp.gui; z30_dsp.gui.main()"
 ```
 
 ---
@@ -213,7 +244,7 @@ Compatible with Windows 10 (64-bit) and Windows 11 using native WASAPI sound dev
 1. Install **Python 3.9+** from [python.org](https://www.python.org/) (ensure **"Add python.exe to PATH"** is checked).
 2. Clone or download the repository:
    ```cmd
-   git clone https://github.com/themantas1994/z-30
+   git clone https://github.com/themantas1994/z-30.git
    cd z-30
    ```
 3. Double-click `run_windows.bat` (this automatically creates the virtual environment, installs dependencies, and launches the application).
@@ -241,7 +272,7 @@ For portable SOTA/POTA operations connecting USB OTG audio soundcards (SignaLink
 ```bash
 # 1. In Termux, fetch and execute the field installer:
 pkg update && pkg install -y git curl
-git clone https://github.com/themantas1994/z30.git
+git clone https://github.com/themantas1994/z-30.git
 cd z-30
 chmod +x install_android_termux.sh
 ./install_android_termux.sh
