@@ -8,7 +8,16 @@ import { AutoReplyPriority, StationConfig, TxSlot } from '../types/z30';
 import { QsoState } from '../dsp/qsoEngine';
 import { buildQsoMacros } from '../dsp/z30Codec';
 import { AUTO_REPLY_OPTIONS, evaluateSlotTiming } from '../dsp/z30Constants';
-import { Radio, Power, Zap, Send, Sparkles, Square, MessageSquareText, SlidersHorizontal } from 'lucide-react';
+import {
+  Radio,
+  Power,
+  Zap,
+  Send,
+  Sparkles,
+  Square,
+  MessageSquareText,
+  SlidersHorizontal,
+} from 'lucide-react';
 
 interface QsoMacrosTransmitPanelProps {
   qsoState: QsoState;
@@ -220,7 +229,7 @@ export const QsoMacrosTransmitPanel: React.FC<QsoMacrosTransmitPanelProps> = ({
           </div>
         </div>
 
-        {/* 3. Primary PTT Controls: START TX, STOP TX, AUTO-SEQ, TUNE (CW) */}
+        {/* 4. Primary PTT Controls: START TX, STOP TX, AUTO-SEQ, TUNE (CW) */}
         <div className="space-y-1.5 pt-0.5">
           {/* Main Action Buttons */}
           <div className="grid grid-cols-2 gap-2">
@@ -308,3 +317,4 @@ export const QsoMacrosTransmitPanel: React.FC<QsoMacrosTransmitPanelProps> = ({
     </div>
   );
 };
+

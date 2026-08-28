@@ -26,6 +26,7 @@ export interface DecodedSignal {
   id: string;
   timestamp: string; // HH:MM:SS
   utcSeconds: number;
+  receivedAtMs: number; // Epoch timestamp for 60-second automatic age-out expiration
   snr: number; // dB in 2500 Hz reference bandwidth (-32 dB to +15 dB)
   dt: number; // Time offset in seconds (-1.5s to +1.5s)
   freq: number; // Audio frequency in Hz (200 - 3000 Hz)

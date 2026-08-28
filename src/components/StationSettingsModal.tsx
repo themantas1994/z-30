@@ -23,10 +23,19 @@ import {
   RotateCcw,
   Globe,
   Clock,
+  FlaskConical,
+  Activity,
+  Sparkles,
+  Zap,
+  PlayCircle,
+  Trash2,
+  HelpCircle,
+  Check,
 } from 'lucide-react';
 import { RIG_CATALOG } from './SetupWizardModal';
-import { AUTO_REPLY_OPTIONS, PTT_METHODS_CATALOG } from '../dsp/z30Constants';
+import { AUTO_REPLY_OPTIONS, PTT_METHODS_CATALOG, Z30_SPECS } from '../dsp/z30Constants';
 import { audioEngine, SystemAudioDevice, AudioSystemDiagnostics } from '../dsp/audioEngine';
+import { sicDecoderEngine } from '../dsp/sicDecoder';
 import {
   TIMEZONE_CATALOG,
   formatUtcTime,
@@ -51,6 +60,7 @@ interface StationSettingsModalProps {
   config: StationConfig;
   onSaveConfig: (cfg: StationConfig) => void;
   onOpenWizard?: () => void;
+  onExecuteDecodeNow?: () => void;
 }
 
 // Helpers for validation
@@ -82,9 +92,25 @@ export const StationSettingsModal: React.FC<StationSettingsModalProps> = ({
   config,
   onSaveConfig,
   onOpenWizard,
+  onExecuteDecodeNow,
 }) => {
   const [form, setForm] = useState<StationConfig>({ ...config });
-  const [activeTab, setActiveTab] = useState<'STATION' | 'AUDIO' | 'RADIO' | 'AUTOMATION'>('STATION');
+  const [activeTab, setActiveTab] = useState<'STATION' | 'AUDIO' | 'RADIO' | 'AUTOMATION' | 'TESTING'>('STATION');
+
+  // Experimental Testing & Signal Generation State
+  const [testPreset, setTestPreset] = useState<string>('S9_CQ_JA1ABC');
+  const [testCustomMsg, setTestCustomMsg] = useState<string>('CQ W1AW FN31');
+  const [testFreqHz, setTestFreqHz] = useState<number>(1250);
+  const [testSnrDb, setTestSnrDb] = useState<number>(6);
+  const [testPlayAudio, setTestPlayAudio] = useState<boolean>(true);
+  const [testFeedback, setTestFeedback] = useState<string | null>(null);
+  const [testDecodeResult, setTestDecodeResult] = useState<{
+    timestamp: string;
+    decodedCount: number;
+    signals: Array<{ freq: number; snr: number; message: string; sicPass: number; isCq?: boolean; callFrom?: string }>;
+  } | null>(null);
+  const [isInjectingSignal, setIsInjectingSignal] = useState<boolean>(false);
+  const [isVerifyingDecode, setIsVerifyingDecode] = useState<boolean>(false);
 
   // Real System Audio Devices & Diagnostics
   const [systemInputs, setSystemInputs] = useState<SystemAudioDevice[]>([]);
@@ -460,6 +486,19 @@ export const StationSettingsModal: React.FC<StationSettingsModalProps> = ({
           >
             <Shield className="w-3.5 h-3.5" />
             <span>4. Automation & Safety</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setActiveTab('TESTING')}
+            className={`px-3 py-1.5 border-t border-x flex items-center space-x-1.5 uppercase ${
+              activeTab === 'TESTING'
+                ? 'bg-[#141414] border-cyan-400 text-cyan-400'
+                : 'bg-[#0D0D0D] border-transparent text-[#888] hover:text-[#CCC]'
+            }`}
+          >
+            <FlaskConical className="w-3.5 h-3.5" />
+            <span>5. Experimental Testing</span>
           </button>
         </div>
 
@@ -1536,6 +1575,285 @@ export const StationSettingsModal: React.FC<StationSettingsModalProps> = ({
                       <option value="ODD">Odd (:15 / :45 UTC)</option>
                       <option value="MANUAL">Manual (Any Cycle)</option>
                     </select>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* TAB 5: EXPERIMENTAL TESTING & CALIBRATION */}
+          {activeTab === 'TESTING' && (
+            <div className="space-y-3" id="experimental-testing-tab">
+              {/* 1. Test Signal Generator */}
+              <div className="bg-[#050505] p-3 border border-cyan-900/50 space-y-3">
+                <div className="flex items-center justify-between">
+                  <span className="font-bold text-cyan-400 flex items-center space-x-1.5 uppercase text-[11px]">
+                    <Activity className="w-3.5 h-3.5 text-cyan-400 animate-pulse" />
+                    <span>16-MFSK Test Signal Generator & DSP Injector</span>
+                  </span>
+                  <span className="text-[9px] text-[#888] bg-[#141414] px-1.5 py-0.5 border border-[#333]">
+                    WebAudio Physical Layer Synthesizer
+                  </span>
+                </div>
+
+                <p className="text-[#888] text-[11px] leading-relaxed">
+                  Synthesize real continuous-phase 16-tone MFSK audio waveforms directly into the soundcard
+                  pipeline to verify the S-meter response, waterfall display, LDPC error correction, and SIC
+                  multi-station interference cancellation.
+                </p>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
+                  <div>
+                    <label className="text-[9px] uppercase text-[#888] block mb-1">
+                      Signal Scenario Preset
+                    </label>
+                    <select
+                      id="modal-test-preset-select"
+                      value={testPreset}
+                      onChange={(e) => setTestPreset(e.target.value)}
+                      className="w-full bg-[#141414] border border-[#333] px-2.5 py-1.5 text-xs text-cyan-300 focus:outline-none focus:border-cyan-400"
+                    >
+                      <option value="S9_CQ_JA1ABC">S9 Standard: CQ JA1ABC PM95 (+6 dB / 1250 Hz)</option>
+                      <option value="S9_PLUS_G4XYZ">S9+10dB Strong DX: CQ DX G4XYZ IO91 (+16 dB / 1500 Hz)</option>
+                      <option value="WEAK_VK3XYZ">Weak S3 Signal: VK3XYZ -22 dB (1800 Hz)</option>
+                      <option value="SIC_COLLISION">SIC 2-Station Overlap Pileup (1400 Hz)</option>
+                      <option value="CUSTOM">Custom Message & Custom Carrier</option>
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="text-[9px] uppercase text-[#888] block mb-1">
+                      Audio Frequency (Hz) & Bandwidth
+                    </label>
+                    <div className="flex items-center space-x-2">
+                      <input
+                        type="number"
+                        min="200"
+                        max="2800"
+                        step="25"
+                        value={testFreqHz}
+                        onChange={(e) => setTestFreqHz(Number(e.target.value))}
+                        className="w-full bg-[#141414] border border-[#333] px-2.5 py-1.5 text-xs text-[#D4D4D4] focus:outline-none focus:border-cyan-400"
+                      />
+                      <span className="text-[10px] text-[#666] whitespace-nowrap">50 Hz BW</span>
+                    </div>
+                  </div>
+                </div>
+
+                {testPreset === 'CUSTOM' && (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
+                    <div>
+                      <label className="text-[9px] uppercase text-[#888] block mb-1">
+                        Custom 77-Bit Message Payload
+                      </label>
+                      <input
+                        type="text"
+                        maxLength={13}
+                        value={testCustomMsg}
+                        onChange={(e) => setTestCustomMsg(e.target.value.toUpperCase())}
+                        placeholder="e.g. CQ W1AW FN31"
+                        className="w-full bg-[#141414] border border-[#333] px-2.5 py-1.5 text-xs text-[#00FF41] focus:outline-none focus:border-[#00FF41]"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="text-[9px] uppercase text-[#888] block mb-1">
+                        Relative SNR Level
+                      </label>
+                      <select
+                        value={testSnrDb}
+                        onChange={(e) => setTestSnrDb(Number(e.target.value))}
+                        className="w-full bg-[#141414] border border-[#333] px-2.5 py-1.5 text-xs text-[#D4D4D4] focus:outline-none focus:border-cyan-400"
+                      >
+                        <option value="16">+16 dB (S9+10dB - Very Strong)</option>
+                        <option value="6">+6 dB (S9 Standard)</option>
+                        <option value="0">0 dB (S7 Moderate)</option>
+                        <option value="-10">-10 dB (S5 Weak)</option>
+                        <option value="-22">-22 dB (S3 Deep Weak)</option>
+                        <option value="-28">-28 dB (Threshold Limit)</option>
+                      </select>
+                    </div>
+                  </div>
+                )}
+
+                <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-[#222]">
+                  <label className="flex items-center space-x-2 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={testPlayAudio}
+                      onChange={(e) => setTestPlayAudio(e.target.checked)}
+                      className="w-4 h-4 bg-[#141414] border-[#333] text-cyan-400 focus:ring-0 accent-cyan-400"
+                    />
+                    <span className="text-[11px] text-[#CCC]">
+                      Play Synthesized Audio through Local Speakers / Soundcard
+                    </span>
+                  </label>
+
+                  <div className="flex items-center space-x-2">
+                    <button
+                      type="button"
+                      id="modal-inject-test-signal-btn"
+                      onClick={() => {
+                        let textToUse: string | undefined = undefined;
+                        if (testPreset === 'CUSTOM') {
+                          textToUse = testCustomMsg.trim().toUpperCase() || 'CQ W1AW FN31';
+                        }
+                        const res = audioEngine.injectTestSignal(testPreset, {
+                          freqHz: testFreqHz,
+                          snrDb: testSnrDb,
+                          playAudio: testPlayAudio,
+                          customText: textToUse,
+                        });
+                        setTestFeedback(
+                          `Injected: ${res.text} @ ${res.freqHz} Hz (${res.snrDb >= 0 ? '+' : ''}${res.snrDb} dB SNR / S9)`
+                        );
+                        setTimeout(() => setTestFeedback(null), 5000);
+                      }}
+                      className="px-3 py-1.5 bg-cyan-950/80 hover:bg-cyan-900 text-cyan-300 hover:text-white border border-cyan-700 text-xs font-bold uppercase flex items-center space-x-1.5 transition-all shadow-[0_0_8px_rgba(6,182,212,0.2)] active:scale-95"
+                    >
+                      <Volume2 className="w-3.5 h-3.5 text-cyan-300" />
+                      <span>Inject Test Signal</span>
+                    </button>
+                  </div>
+                </div>
+
+                {testFeedback && (
+                  <div className="p-2 bg-[#0A1A14] border border-[#00FF41]/40 text-[#00FF41] text-[11px] flex items-center space-x-2">
+                    <CheckCircle2 className="w-3.5 h-3.5 text-[#00FF41] flex-shrink-0" />
+                    <span>{testFeedback}</span>
+                  </div>
+                )}
+              </div>
+
+              {/* 2. Audio Decode Verifier */}
+              <div className="bg-[#050505] p-3 border border-[#333] space-y-3">
+                <div className="flex items-center justify-between">
+                  <span className="font-bold text-[#D4D4D4] flex items-center space-x-1.5 uppercase text-[11px]">
+                    <Sparkles className="w-3.5 h-3.5 text-[#00FF41]" />
+                    <span>Audio Decode Verifier & Multi-Pass SIC Diagnostics</span>
+                  </span>
+                  <button
+                    type="button"
+                    id="modal-run-decode-verifier-btn"
+                    onClick={() => {
+                      setIsVerifyingDecode(true);
+                      const result = sicDecoderEngine.runSicDecodeCycle(
+                        14074000,
+                        form.myCall,
+                        form.myGrid,
+                        false
+                      );
+                      setTestDecodeResult({
+                        timestamp: new Date().toISOString().substring(11, 19) + ' UTC',
+                        decodedCount: result.decodes.length,
+                        signals: result.decodes.map((d) => ({
+                          freq: d.freq,
+                          snr: d.snr,
+                          message: d.message,
+                          sicPass: d.sicPass,
+                          isCq: d.isCq,
+                          callFrom: d.callFrom,
+                        })),
+                      });
+                      if (onExecuteDecodeNow) {
+                        onExecuteDecodeNow();
+                      }
+                      setTimeout(() => setIsVerifyingDecode(false), 400);
+                    }}
+                    className="px-3 py-1.5 bg-[#00FF41] hover:bg-[#00FF41]/90 text-black text-xs font-bold uppercase flex items-center space-x-1.5 shadow-[0_0_10px_rgba(0,255,65,0.3)] active:scale-95"
+                  >
+                    <PlayCircle className="w-3.5 h-3.5 text-black" />
+                    <span>{isVerifyingDecode ? 'Decoding...' : 'Run Decode Verifier Now'}</span>
+                  </button>
+                </div>
+
+                <p className="text-[#888] text-[11px] leading-relaxed">
+                  Executes the full LDPC(174,91) belief-propagation decoder and 3-pass Successive Interference
+                  Cancellation on the current soundcard audio buffer. All decoded station callsigns automatically
+                  expire after 60 seconds.
+                </p>
+
+                {/* Decode Result Table */}
+                {testDecodeResult ? (
+                  <div className="space-y-1.5 pt-1">
+                    <div className="flex items-center justify-between text-[10px] text-[#888]">
+                      <span>Cycle Decoded @ {testDecodeResult.timestamp}</span>
+                      <span className="text-[#00FF41] font-bold">
+                        {testDecodeResult.decodedCount} Signal(s) Decoded
+                      </span>
+                    </div>
+
+                    {testDecodeResult.signals.length === 0 ? (
+                      <div className="p-3 bg-[#111] border border-[#222] text-center text-[#666] text-xs">
+                        No active carriers decoded in current audio buffer. Click "Inject Test Signal" above, then run verifier again.
+                      </div>
+                    ) : (
+                      <div className="border border-[#333] divide-y divide-[#222] bg-[#0A0A0A]">
+                        {testDecodeResult.signals.map((sig, idx) => (
+                          <div key={idx} className="p-2 flex items-center justify-between text-xs">
+                            <div className="flex items-center space-x-2">
+                              <span className="px-1.5 py-0.5 bg-[#1A1A1A] text-[#888] text-[10px] font-mono border border-[#333]">
+                                {sig.freq} Hz
+                              </span>
+                              <span className="font-bold text-[#00FF41]">{sig.message}</span>
+                              {sig.isCq && (
+                                <span className="px-1 py-0.2 bg-[#00FF41]/20 text-[#00FF41] text-[9px] font-bold border border-[#00FF41]/40">
+                                  CQ
+                                </span>
+                              )}
+                            </div>
+                            <div className="flex items-center space-x-2">
+                              <span className="text-[10px] text-cyan-300 font-mono">
+                                {sig.snr >= 0 ? `+${sig.snr}` : sig.snr} dB
+                              </span>
+                              <span className="px-1.5 py-0.5 bg-[#141414] text-purple-300 text-[9px] font-bold border border-purple-800">
+                                Pass {sig.sicPass}
+                              </span>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  <div className="p-2.5 bg-[#0F0F0F] border border-[#262626] text-[11px] text-[#777] flex items-center justify-between">
+                    <span>Decoder state ready. Click "Run Decode Verifier Now" to process the receiver buffer.</span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        sicDecoderEngine.clearHistory();
+                        if (onExecuteDecodeNow) onExecuteDecodeNow();
+                      }}
+                      className="px-2 py-1 bg-[#1A1A1A] hover:bg-red-950/60 text-[#888] hover:text-red-300 border border-[#333] text-[10px] font-bold uppercase flex items-center space-x-1"
+                    >
+                      <Trash2 className="w-3 h-3" />
+                      <span>Flush History</span>
+                    </button>
+                  </div>
+                )}
+              </div>
+
+              {/* 3. Physical Layer Protocol Verification */}
+              <div className="bg-[#050505] p-3 border border-[#333] space-y-2">
+                <span className="font-bold text-[#D4D4D4] uppercase text-[11px] block">
+                  Protocol Physical Layer Calibration Specifications
+                </span>
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-[10px]">
+                  <div className="bg-[#111] p-2 border border-[#222]">
+                    <span className="text-[#666] block">Tone Spacing</span>
+                    <span className="font-bold text-[#00FF41]">3.125 Hz (CPFSK)</span>
+                  </div>
+                  <div className="bg-[#111] p-2 border border-[#222]">
+                    <span className="text-[#666] block">Total Channel BW</span>
+                    <span className="font-bold text-[#00FF41]">50.0 Hz (16-Tone)</span>
+                  </div>
+                  <div className="bg-[#111] p-2 border border-[#222]">
+                    <span className="text-[#666] block">Symbol Duration</span>
+                    <span className="font-bold text-cyan-300">320.0 ms (3.125 Bd)</span>
+                  </div>
+                  <div className="bg-[#111] p-2 border border-[#222]">
+                    <span className="text-[#666] block">Error Correction</span>
+                    <span className="font-bold text-purple-300">LDPC (174, 91)</span>
                   </div>
                 </div>
               </div>

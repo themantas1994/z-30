@@ -46,7 +46,7 @@ export const Z30_SPECS = {
   SAMPLE_RATE: 12000, // 12 kHz standard audio sample rate
   SAMPLES_PER_SYMBOL: 12000 * 0.320, // 3840 samples per symbol at 12 kHz
   FFT_SIZE: 4096, // High resolution FFT for sub-Hz tone binning
-  WATERFALL_MIN_FREQ: 200, // Hz
+  WATERFALL_MIN_FREQ: 0, // Hz
   WATERFALL_MAX_FREQ: 3000, // Hz
   DEFAULT_AUDIO_FREQ: 1250, // Hz default center frequency
 };

@@ -7,7 +7,7 @@ import { StationConfig, TxSlot } from '../types/z30';
 import { Z30_SPECS, evaluateSlotTiming } from '../dsp/z30Constants';
 import { audioEngine } from '../dsp/audioEngine';
 import { formatUtcTime, formatTimeInTimezone } from '../dsp/timeUtils';
-import { Radio, Mic, MicOff, Volume2, VolumeX, BookOpen, Code2, Settings, HelpCircle, Sparkles, Activity, Play, Cpu, Square, Zap, Clock, Wand2, Maximize2, Minimize2, Globe } from 'lucide-react';
+import { Radio, Mic, MicOff, Volume2, VolumeX, BookOpen, Settings, HelpCircle, Sparkles, Activity, Play, Cpu, Square, Zap, Clock, Wand2, Maximize2, Minimize2, Globe } from 'lucide-react';
 
 interface HeaderProps {
   config: StationConfig;
@@ -17,8 +17,6 @@ interface HeaderProps {
   isTuning?: boolean;
   txEnabled?: boolean;
   txSlot?: TxSlot;
-  activeView: 'TRANSCEIVER' | 'PYTHON_SOURCE';
-  setActiveView: (view: 'TRANSCEIVER' | 'PYTHON_SOURCE') => void;
   onOpenLogbook: () => void;
   onOpenSettings: () => void;
   onOpenWizard?: () => void;
@@ -41,8 +39,6 @@ export const Header: React.FC<HeaderProps> = ({
   isTuning = false,
   txEnabled = false,
   txSlot = 'EVEN',
-  activeView,
-  setActiveView,
   onOpenLogbook,
   onOpenSettings,
   onOpenWizard,
@@ -320,35 +316,6 @@ export const Header: React.FC<HeaderProps> = ({
             >
               <Zap className="w-3 h-3" />
               <span>{isTuning ? 'TUNING...' : 'TUNE (CW)'}</span>
-            </button>
-          </div>
-
-          <span className="text-[#444]">|</span>
-
-          {/* Navigation Pill Group */}
-          <div className="flex items-center bg-[#050505] p-0.5 border border-[#333] text-xs">
-            <button
-              id="view-transceiver-tab"
-              onClick={() => setActiveView('TRANSCEIVER')}
-              className={`px-2.5 py-1 transition-colors uppercase text-[11px] font-bold ${
-                activeView === 'TRANSCEIVER'
-                  ? 'bg-[#00FF41] text-black shadow-[0_0_10px_rgba(0,255,65,0.4)]'
-                  : 'text-[#888] hover:text-[#D4D4D4] hover:bg-[#1A1A1A]'
-              }`}
-            >
-              Transceiver
-            </button>
-            <button
-              id="view-python-source-tab"
-              onClick={() => setActiveView('PYTHON_SOURCE')}
-              className={`px-2.5 py-1 transition-colors flex items-center space-x-1 uppercase text-[11px] font-bold ${
-                activeView === 'PYTHON_SOURCE'
-                  ? 'bg-cyan-600 text-black shadow-[0_0_10px_rgba(6,182,212,0.4)]'
-                  : 'text-[#888] hover:text-[#D4D4D4] hover:bg-[#1A1A1A]'
-              }`}
-            >
-              <Code2 className="w-3 h-3" />
-              <span>Python Source</span>
             </button>
           </div>
 

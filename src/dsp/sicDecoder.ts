@@ -56,10 +56,10 @@ export class Z30SicDecoderEngine {
       return { decodes: [], steps };
     }
 
-    // Collect actual received signals registered in the audio window (excluding local TX frames)
+    // 1. Collect actual received signals registered in the audio window (excluding local TX frames)
     const recordedSignals = audioEngine.getActiveSignalsInWindow(false);
 
-    // Candidates array populated ONLY from received RF signals
+    // Candidates array populated ONLY from received RF signals in window
     const rawCandidates: {
       call: string;
       grid: string;
@@ -71,7 +71,7 @@ export class Z30SicDecoderEngine {
       packed: ReturnType<typeof packZ30Message>;
     }[] = [];
 
-    // 1. Process active incoming signals heard in the audio window
+    // Process recorded/injected signals
     for (const sig of recordedSignals) {
       const packed = packZ30Message(sig.text);
       const callFrom = (packed.callFrom || 'STATION').toUpperCase();
@@ -85,7 +85,7 @@ export class Z30SicDecoderEngine {
         call: callFrom,
         grid: packed.grid || 'FN31',
         freq: sig.freqHz,
-        snr: sig.snrDb || -12,
+        snr: sig.snrDb !== undefined ? sig.snrDb : 6,
         dt: 0.05,
         message: sig.text,
         isCq: packed.type === 'CQ',
@@ -97,12 +97,13 @@ export class Z30SicDecoderEngine {
     if (rawCandidates.length === 0) {
       steps.push({
         passNumber: 1,
-        description: 'Pass 1 (Direct LDPC): Passband scanned (200 - 3000 Hz). No external carrier peaks detected above noise floor.',
+        description: 'Pass 1 (Direct LDPC): Passband scanned (200 - 3000 Hz). No external carriers received.',
         residualPowerDb: -35.0,
         signalsFound: [],
       });
       this.lastIterationSteps = steps;
       this.currentCycleDecodes = [];
+      this.pruneHistory();
       return { decodes: [], steps };
     }
 
@@ -114,6 +115,8 @@ export class Z30SicDecoderEngine {
     // ==========================================
     const pass1Signals: DecodedSignal[] = [];
     const uncancelledCandidates: typeof rawCandidates = [];
+
+    const nowMs = Date.now();
 
     for (const cand of rawCandidates) {
       const threshold = Z30_SPECS.SNR_THRESHOLD_RAYLEIGH;
@@ -127,6 +130,7 @@ export class Z30SicDecoderEngine {
           id: `dec-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
           timestamp: timeStr,
           utcSeconds: utcSec,
+          receivedAtMs: nowMs,
           snr: cand.snr,
           dt: cand.dt,
           freq: Math.round(cand.freq),
@@ -167,6 +171,7 @@ export class Z30SicDecoderEngine {
           id: `dec-sic2-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
           timestamp: timeStr,
           utcSeconds: utcSec,
+          receivedAtMs: nowMs,
           snr: cand.snr,
           dt: cand.dt,
           freq: Math.round(cand.freq),
@@ -198,15 +203,22 @@ export class Z30SicDecoderEngine {
       });
     }
 
-    // Update internal histories
+    // Update internal histories and prune older than 60s
     this.lastIterationSteps = steps;
     this.currentCycleDecodes = cycleDecodes;
-    this.decodedHistory = [...cycleDecodes, ...this.decodedHistory].slice(0, 150);
+    this.decodedHistory = [...cycleDecodes, ...this.decodedHistory];
+    this.pruneHistory();
 
     return { decodes: cycleDecodes, steps };
   }
 
+  public pruneHistory() {
+    const cutoff = Date.now() - 60000; // 60 seconds age-out
+    this.decodedHistory = this.decodedHistory.filter(d => (d.receivedAtMs || 0) >= cutoff);
+  }
+
   public getHistory(): DecodedSignal[] {
+    this.pruneHistory();
     return this.decodedHistory;
   }
 

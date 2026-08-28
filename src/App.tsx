@@ -19,7 +19,6 @@ import { ActivityLogTable } from './components/ActivityLogTable';
 import { QsoController } from './components/QsoController';
 import { QsoMacrosTransmitPanel } from './components/QsoMacrosTransmitPanel';
 import { RigControlPanel } from './components/RigControlPanel';
-import { PythonSourceViewer } from './components/PythonSourceViewer';
 import { LogbookModal } from './components/LogbookModal';
 import { StationSettingsModal } from './components/StationSettingsModal';
 import { SetupWizardModal } from './components/SetupWizardModal';
@@ -47,9 +46,6 @@ export default function App() {
 
   // QSO State Machine
   const [qsoState, setQsoState] = useState<QsoState>(qsoEngine.getState());
-
-  // Active View Tab (Production Transceiver & Python Source Code)
-  const [activeView, setActiveView] = useState<'TRANSCEIVER' | 'PYTHON_SOURCE'>('TRANSCEIVER');
 
   // Modals (Setup Wizard opens automatically on first startup if not configured yet)
   const [isLogbookOpen, setIsLogbookOpen] = useState<boolean>(false);
@@ -401,8 +397,6 @@ export default function App() {
         isTuning={isTuning}
         txEnabled={qsoState.txEnabled}
         txSlot={qsoState.txSlot}
-        activeView={activeView}
-        setActiveView={setActiveView}
         onOpenLogbook={() => setIsLogbookOpen(true)}
         onOpenSettings={() => setIsSettingsOpen(true)}
         onOpenWizard={() => setIsWizardOpen(true)}
@@ -419,111 +413,102 @@ export default function App() {
 
       {/* Main Workspace */}
       <main className="flex-1 overflow-hidden p-1.5 sm:p-2 w-full flex flex-col min-h-0">
-        {activeView === 'TRANSCEIVER' && (
-          <div className="flex flex-col h-full space-y-1.5 sm:space-y-2 min-h-0 flex-1 overflow-hidden">
-            {/* Top: 60 FPS Spectral Waterfall & Spectrogram */}
-            <div className="flex-shrink-0">
-              <WaterfallDisplay
-                rxFreqHz={qsoState.rxFreqHz}
-                txFreqHz={qsoState.txFreqHz}
-                onSetRxFreq={handleSetRxFreq}
-                onSetTxFreq={handleSetTxFreq}
-                onDoubleClickSignal={handleSelectSignal}
-                onArmTxAtFreq={handleArmTxAtFreq}
-                isTransmitting={isTransmitting}
-                isTuning={isTuning}
+        <div className="flex flex-col h-full space-y-1.5 sm:space-y-2 min-h-0 flex-1 overflow-hidden">
+          {/* Top: 60 FPS Spectral Waterfall & Spectrogram */}
+          <div className="flex-shrink-0">
+            <WaterfallDisplay
+              rxFreqHz={qsoState.rxFreqHz}
+              txFreqHz={qsoState.txFreqHz}
+              onSetRxFreq={handleSetRxFreq}
+              onSetTxFreq={handleSetTxFreq}
+              onDoubleClickSignal={handleSelectSignal}
+              onArmTxAtFreq={handleArmTxAtFreq}
+              isTransmitting={isTransmitting}
+              isTuning={isTuning}
+              decodes={decodes}
+              currentBand={HAM_BANDS[currentBandIdx]}
+              dialFreqHz={dialFreqHz}
+              onBandChange={handleBandChange}
+              onOpenBandManager={() => setIsBandManagerOpen(true)}
+              fwdWatts={fwdWatts}
+              swr={swr}
+            />
+          </div>
+
+          {/* Bottom Grid: 3 Dedicated Windows (Activity Decodes, QSO Macros/PTT Sequencer, DX Target & CAT Rig) */}
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-1.5 sm:gap-2 flex-1 min-h-0 overflow-hidden">
+            {/* Window 1 (lg:col-span-5): Band Activity & Multi-Pass SIC Decodes (Scrollable) */}
+            <div className="lg:col-span-5 h-full min-h-[220px] lg:min-h-0 flex flex-col overflow-hidden">
+              <ActivityLogTable
                 decodes={decodes}
-                currentBand={HAM_BANDS[currentBandIdx]}
-                dialFreqHz={dialFreqHz}
-                onBandChange={handleBandChange}
-                onOpenBandManager={() => setIsBandManagerOpen(true)}
-                fwdWatts={fwdWatts}
-                swr={swr}
+                myCall={config.myCall}
+                filterType={activityFilter}
+                onFilterChange={setActivityFilter}
+                onSelectSignal={handleSelectSignal}
+                onClearHistory={() => {
+                  sicDecoderEngine.clearHistory();
+                  setDecodes([]);
+                }}
               />
             </div>
 
-            {/* Bottom Grid: 3 Dedicated Windows (Activity Decodes, QSO Macros/PTT Sequencer, DX Target & CAT Rig) */}
-            <div className="grid grid-cols-1 lg:grid-cols-12 gap-1.5 sm:gap-2 flex-1 min-h-0 overflow-hidden">
-              {/* Window 1 (lg:col-span-5): Band Activity & Multi-Pass SIC Decodes (Scrollable) */}
-              <div className="lg:col-span-5 h-full min-h-[220px] lg:min-h-0 flex flex-col overflow-hidden">
-                <ActivityLogTable
-                  decodes={decodes}
-                  myCall={config.myCall}
-                  filterType={activityFilter}
-                  onFilterChange={setActivityFilter}
-                  onSelectSignal={handleSelectSignal}
-                  onClearHistory={() => {
-                    sicDecoderEngine.clearHistory();
-                    setDecodes([]);
-                  }}
-                />
-              </div>
+            {/* Window 2 (lg:col-span-4): Standard QSO Macros, Auto-Reply Rule & PTT Action Sequencer */}
+            <div className="lg:col-span-4 h-full min-h-[240px] lg:min-h-0 flex flex-col overflow-y-auto">
+              <QsoMacrosTransmitPanel
+                qsoState={qsoState}
+                config={config}
+                currentBand={HAM_BANDS[currentBandIdx].name}
+                isTransmitting={isTransmitting}
+                isTuning={isTuning}
+                onUpdateState={handleUpdateQsoState}
+                onUpdateConfig={handleUpdateConfig}
+                onCallingCq={handleCallingCq}
+                onToggleTx={handleToggleTx}
+                onStartTx={handleStartTx}
+                onStopTx={handleStopTx}
+                onStartTune={handleStartTune}
+                onStopTune={handleStopTune}
+              />
+            </div>
 
-              {/* Window 2 (lg:col-span-4): Standard QSO Macros, Auto-Reply Rule & PTT Action Sequencer */}
-              <div className="lg:col-span-4 h-full min-h-[240px] lg:min-h-0 flex flex-col overflow-y-auto">
-                <QsoMacrosTransmitPanel
+            {/* Window 3 (lg:col-span-3): Target DX Station & Rig CAT Controller */}
+            <div className="lg:col-span-3 h-full min-h-[240px] lg:min-h-0 flex flex-col space-y-1.5 sm:space-y-2 overflow-y-auto">
+              {/* Target DX Station State */}
+              <div className="flex-1 min-h-[140px]">
+                <QsoController
                   qsoState={qsoState}
                   config={config}
                   currentBand={HAM_BANDS[currentBandIdx].name}
                   isTransmitting={isTransmitting}
-                  isTuning={isTuning}
                   onUpdateState={handleUpdateQsoState}
                   onUpdateConfig={handleUpdateConfig}
-                  onCallingCq={handleCallingCq}
-                  onToggleTx={handleToggleTx}
-                  onStartTx={handleStartTx}
-                  onStopTx={handleStopTx}
-                  onStartTune={handleStartTune}
-                  onStopTune={handleStopTune}
+                  fwdWatts={fwdWatts}
+                  swr={swr}
+                  isTuning={isTuning}
                 />
               </div>
 
-              {/* Window 3 (lg:col-span-3): Target DX Station & Rig CAT Controller */}
-              <div className="lg:col-span-3 h-full min-h-[240px] lg:min-h-0 flex flex-col space-y-1.5 sm:space-y-2 overflow-y-auto">
-                {/* Target DX Station State */}
-                <div className="flex-1 min-h-[140px]">
-                  <QsoController
-                    qsoState={qsoState}
-                    config={config}
-                    currentBand={HAM_BANDS[currentBandIdx].name}
-                    isTransmitting={isTransmitting}
-                    onUpdateState={handleUpdateQsoState}
-                    onUpdateConfig={handleUpdateConfig}
-                    fwdWatts={fwdWatts}
-                    swr={swr}
-                    isTuning={isTuning}
-                  />
-                </div>
-
-                {/* Rig VFO & CAT Status */}
-                <div className="h-40 sm:h-44 flex-shrink-0">
-                  <RigControlPanel
-                    currentBand={HAM_BANDS[currentBandIdx]}
-                    dialFreqHz={dialFreqHz}
-                    config={config}
-                    onBandChange={handleBandChange}
-                    onFreqChange={(hz) => {
-                      setDialFreqHz(hz);
-                      rigctl.setFreqHz(hz);
-                    }}
-                    isTransmitting={isTransmitting}
-                    isTuning={isTuning}
-                    onStartTune={handleStartTune}
-                    onStopTune={handleStopTune}
-                    onOpenBandManager={() => setIsBandManagerOpen(true)}
-                  />
-                </div>
+              {/* Rig VFO & CAT Status */}
+              <div className="h-40 sm:h-44 flex-shrink-0">
+                <RigControlPanel
+                  currentBand={HAM_BANDS[currentBandIdx]}
+                  dialFreqHz={dialFreqHz}
+                  config={config}
+                  onBandChange={handleBandChange}
+                  onFreqChange={(hz) => {
+                    setDialFreqHz(hz);
+                    rigctl.setFreqHz(hz);
+                  }}
+                  isTransmitting={isTransmitting}
+                  isTuning={isTuning}
+                  onStartTune={handleStartTune}
+                  onStopTune={handleStopTune}
+                  onOpenBandManager={() => setIsBandManagerOpen(true)}
+                />
               </div>
             </div>
           </div>
-        )}
-
-        {/* Python 3.10+ Source Package View */}
-        {activeView === 'PYTHON_SOURCE' && (
-          <div className="h-full">
-            <PythonSourceViewer />
-          </div>
-        )}
+        </div>
       </main>
 
       {/* Modals */}
@@ -556,6 +541,7 @@ export default function App() {
         onClose={() => setIsSettingsOpen(false)}
         config={config}
         onSaveConfig={handleSaveStationConfig}
+        onExecuteDecodeNow={executeDecodeCycle}
         onOpenWizard={() => {
           setIsSettingsOpen(false);
           setIsWizardOpen(true);

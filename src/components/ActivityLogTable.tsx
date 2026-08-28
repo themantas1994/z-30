@@ -2,7 +2,7 @@
  * Band Activity & Multi-Signal LDPC/SIC Decoded Messages Table
  */
 
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { DecodedSignal } from '../types/z30';
 import { Radio, Sparkles, Filter, Search, Trash2, ArrowUpRight, ShieldCheck, Zap } from 'lucide-react';
 
@@ -25,6 +25,15 @@ export const ActivityLogTable: React.FC<ActivityLogTableProps> = ({
 }) => {
   const [internalFilterType, setInternalFilterType] = useState<'ALL' | 'CQ' | 'MYCALL' | 'SIC'>('ALL');
   const [searchQuery, setSearchQuery] = useState<string>('');
+  const [currentTimeMs, setCurrentTimeMs] = useState<number>(Date.now());
+
+  // 1-second clock tick to auto-age out decoded signals after 60 seconds
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setCurrentTimeMs(Date.now());
+    }, 1000);
+    return () => clearInterval(timer);
+  }, []);
 
   const filterType = controlledFilterType !== undefined ? controlledFilterType : internalFilterType;
 
@@ -37,7 +46,14 @@ export const ActivityLogTable: React.FC<ActivityLogTableProps> = ({
 
   const filteredDecodes = useMemo(() => {
     const upperMyCall = myCall.toUpperCase().trim();
+    const cutoff = currentTimeMs - 60000; // 60 seconds maximum age
+
     return decodes.filter((item) => {
+      // 60-second age out filter
+      if (item.receivedAtMs && item.receivedAtMs < cutoff) {
+        return false;
+      }
+
       // Tab filter
       if (filterType === 'CQ' && !item.isCq) return false;
       if (filterType === 'MYCALL') {
@@ -61,7 +77,7 @@ export const ActivityLogTable: React.FC<ActivityLogTableProps> = ({
       }
       return true;
     });
-  }, [decodes, filterType, searchQuery, myCall]);
+  }, [decodes, filterType, searchQuery, myCall, currentTimeMs]);
 
   const getSnrBadge = (snr: number) => {
     if (snr >= -10) return 'bg-[#00FF41]/15 text-[#00FF41] border-[#00FF41]/40';

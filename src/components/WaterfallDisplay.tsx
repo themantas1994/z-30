@@ -56,7 +56,7 @@ interface WaterfallDisplayProps {
 }
 
 export type FreqRangePreset =
-  | 'STD_200_3000'
+  | 'STD_0_3000'
   | 'NARROW_500_2000'
   | 'DIGI_800_1800'
   | 'WIDE_100_3500'
@@ -218,8 +218,8 @@ export const WaterfallDisplay: React.FC<WaterfallDisplayProps> = ({
   const [waterfallHeightPreset, setWaterfallHeightPreset] = useState<'compact' | 'normal' | 'tall'>('normal');
 
   // Frequency Range Bounds State
-  const [freqRangePreset, setFreqRangePreset] = useState<FreqRangePreset>('STD_200_3000');
-  const [customMinFreq, setCustomMinFreq] = useState<number>(200);
+  const [freqRangePreset, setFreqRangePreset] = useState<FreqRangePreset>('STD_0_3000');
+  const [customMinFreq, setCustomMinFreq] = useState<number>(0);
   const [customMaxFreq, setCustomMaxFreq] = useState<number>(3000);
 
   const fullMinFreq = customMinFreq;
@@ -228,10 +228,10 @@ export const WaterfallDisplay: React.FC<WaterfallDisplayProps> = ({
 
   // Zoom & Pan State
   const [zoom, setZoom] = useState<number>(1); // 1x, 2x, 4x, 8x
-  const [centerFreqHz, setCenterFreqHz] = useState<number>(1600); // Dynamic midpoint
+  const [centerFreqHz, setCenterFreqHz] = useState<number>(1500); // Dynamic midpoint
   const [isDraggingPan, setIsDraggingPan] = useState<boolean>(false);
   const [dragStartX, setDragStartX] = useState<number>(0);
-  const [dragStartCenterFreq, setDragStartCenterFreq] = useState<number>(1600);
+  const [dragStartCenterFreq, setDragStartCenterFreq] = useState<number>(1500);
 
   // Interactive Cursor Inspection & Double-Click Toast
   const [cursorFreq, setCursorFreq] = useState<number | null>(null);
@@ -241,10 +241,10 @@ export const WaterfallDisplay: React.FC<WaterfallDisplayProps> = ({
 
   const handleSetFreqPreset = (preset: FreqRangePreset) => {
     setFreqRangePreset(preset);
-    if (preset === 'STD_200_3000') {
-      setCustomMinFreq(200);
+    if (preset === 'STD_0_3000') {
+      setCustomMinFreq(0);
       setCustomMaxFreq(3000);
-      setCenterFreqHz(1600);
+      setCenterFreqHz(1500);
     } else if (preset === 'NARROW_500_2000') {
       setCustomMinFreq(500);
       setCustomMaxFreq(2000);
@@ -426,25 +426,22 @@ export const WaterfallDisplay: React.FC<WaterfallDisplayProps> = ({
 
           // Transmitting 16-MFSK Tone Window or Tuning Carrier Marker
           if (isTransmitting) {
-            const txDist = freqAtX - txFreqHz;
-            if (txDist >= -2 && txDist <= Z30_SPECS.TOTAL_BANDWIDTH_HZ + 2) {
-              magnitude = Math.max(magnitude, 0.72 * signalBoost);
+            const activeToneFreq = audioEngine.getActiveTxToneFreqHz();
+            if (activeToneFreq !== null) {
+              const toneDist = Math.abs(freqAtX - activeToneFreq);
+              if (toneDist <= 2.0) {
+                magnitude = Math.max(magnitude, 0.95 * signalBoost);
+              }
+            } else {
+              const txDist = freqAtX - txFreqHz;
+              if (txDist >= 0 && txDist <= Z30_SPECS.TOTAL_BANDWIDTH_HZ) {
+                magnitude = Math.max(magnitude, 0.75 * signalBoost);
+              }
             }
           } else if (isTuning) {
             const txDist = Math.abs(freqAtX - txFreqHz);
-            if (txDist <= 4.0) {
-              magnitude = Math.max(magnitude, 0.85 * signalBoost);
-            }
-          }
-
-          // Active signal tones trace enhancement for decoded signals in current cycle
-          if (decodes && decodes.length > 0) {
-            for (const sig of decodes) {
-              const sigDist = freqAtX - sig.freq;
-              if (sigDist >= 0 && sigDist <= Z30_SPECS.TOTAL_BANDWIDTH_HZ) {
-                const snrNormalized = Math.max(0.12, Math.min(1.0, (sig.snr + 30) / 45));
-                magnitude = Math.max(magnitude, snrNormalized * 0.5 * signalBoost);
-              }
+            if (txDist <= 2.5) {
+              magnitude = Math.max(magnitude, 0.95 * signalBoost);
             }
           }
 
@@ -483,20 +480,14 @@ export const WaterfallDisplay: React.FC<WaterfallDisplayProps> = ({
           const bin = Math.floor((f / nyquist) * binCount);
           let val = (fftData[bin] || 0) / 255.0;
 
-          // Also inject peak for decoded carriers
-          if (decodes && decodes.length > 0) {
-            for (const sig of decodes) {
-              if (Math.abs(f - (sig.freq + 25)) <= 30) {
-                const snrNormalized = Math.max(0.1, (sig.snr + 30) / 45);
-                val = Math.max(val, 0.35 + snrNormalized * 0.45);
-              }
+          if (isTransmitting) {
+            const activeTone = audioEngine.getActiveTxToneFreqHz();
+            const targetCenter = activeTone !== null ? activeTone : (txFreqHz + 25);
+            if (Math.abs(f - targetCenter) <= 4.0 && f >= txFreqHz && f <= txFreqHz + Z30_SPECS.TOTAL_BANDWIDTH_HZ) {
+              val = Math.max(val, 0.95);
             }
-          }
-
-          if (isTransmitting && Math.abs(f - (txFreqHz + 25)) <= 30) {
-            val = Math.max(val, 0.85);
-          } else if (isTuning && Math.abs(f - txFreqHz) <= 8) {
-            val = Math.max(val, 0.9);
+          } else if (isTuning && Math.abs(f - txFreqHz) <= 3.0) {
+            val = Math.max(val, 0.95);
           }
 
           const y = height * 0.32 - val * height * 0.28;
@@ -544,42 +535,31 @@ export const WaterfallDisplay: React.FC<WaterfallDisplayProps> = ({
         ctx.stroke();
       }
 
-      // 5. Active Signal Tracking Indicators & Decoded Station Badges
+      // 5. Active Signal Decoded Station Badges (disappear after 60 seconds; no vertical green bars across waterfall)
       if (showTrackingOverlays && decodes.length > 0) {
-        const pulse = (Math.sin(Date.now() / 250) + 1) / 2; // 0.0 to 1.0 blinking pulse
+        const nowMs = Date.now();
+        const validDecodes = decodes.filter(sig => !sig.receivedAtMs || (nowMs - sig.receivedAtMs < 60000));
 
-        decodes.slice(0, 10).forEach((sig) => {
+        validDecodes.slice(0, 10).forEach((sig) => {
           if (sig.freq >= minVisibleFreq - 50 && sig.freq <= maxVisibleFreq + 50) {
             const sigX = freqToCanvasX(sig.freq, width);
             const sigW = Math.max(12, (Z30_SPECS.TOTAL_BANDWIDTH_HZ / visibleSpan) * width);
-
-            // Highlight box
             const isHovered = hoveredSignal?.id === sig.id;
             const sicColor =
               sig.sicPass === 1 ? '#00FF41' : sig.sicPass === 2 ? '#38BDF8' : '#C084FC';
 
-            ctx.fillStyle = isHovered
-              ? 'rgba(0, 255, 65, 0.25)'
-              : `rgba(${
-                  sig.sicPass === 1 ? '0, 255, 65' : sig.sicPass === 2 ? '56, 189, 248' : '192, 132, 252'
-                }, ${0.1 + pulse * 0.1})`;
-            ctx.fillRect(sigX, 0, sigW, height);
-
-            ctx.strokeStyle = sicColor;
-            ctx.lineWidth = isHovered ? 2.5 : 1.5;
-            ctx.strokeRect(sigX, 0, sigW, height);
-
-            // Signal Badge at bottom
-            const badgeW = Math.max(65, sigW + 10);
+            // Discrete Station Badge at bottom bar ONLY (height 16px)
+            const badgeW = Math.max(55, sigW + 8);
             ctx.fillStyle = '#050505';
-            ctx.fillRect(Math.max(2, sigX - 4), height - 22, badgeW, 18);
-            ctx.strokeStyle = sicColor;
-            ctx.strokeRect(Math.max(2, sigX - 4), height - 22, badgeW, 18);
+            ctx.fillRect(Math.max(2, sigX - 4), height - 20, badgeW, 16);
+            ctx.strokeStyle = isHovered ? '#FFFFFF' : sicColor;
+            ctx.lineWidth = isHovered ? 1.5 : 1.0;
+            ctx.strokeRect(Math.max(2, sigX - 4), height - 20, badgeW, 16);
 
             ctx.fillStyle = sicColor;
             ctx.font = 'bold 9px "Fira Code", monospace';
-            const label = sig.callFrom ? `${sig.callFrom}` : `SIC P${sig.sicPass}`;
-            ctx.fillText(label, Math.max(4, sigX), height - 9);
+            const label = sig.callFrom ? `${sig.callFrom}` : `P${sig.sicPass}`;
+            ctx.fillText(label, Math.max(4, sigX), height - 8);
           }
         });
       }
@@ -858,7 +838,7 @@ export const WaterfallDisplay: React.FC<WaterfallDisplayProps> = ({
               className="bg-[#1A1A1A] text-cyan-400 border border-[#333] px-2 py-0.5 text-xs font-bold focus:outline-none focus:border-cyan-400"
               title="Set Waterfall Audio Frequency Passband Range"
             >
-              <option value="STD_200_3000">200 - 3000 Hz (Std)</option>
+              <option value="STD_0_3000">0 - 3000 Hz (Std)</option>
               <option value="NARROW_500_2000">500 - 2000 Hz (Narrow)</option>
               <option value="DIGI_800_1800">800 - 1800 Hz (Digi)</option>
               <option value="WIDE_100_3500">100 - 3500 Hz (Wide)</option>
@@ -1003,211 +983,222 @@ export const WaterfallDisplay: React.FC<WaterfallDisplayProps> = ({
         </div>
       </div>
 
-      {/* Dynamic Frequency Ruler */}
-      <div className="relative h-6 bg-[#050505] border-b border-[#333] select-none text-[10px] text-[#888] flex items-center overflow-hidden">
-        {Array.from({ length: 16 }, (_, i) => {
-          const step = zoom >= 4 ? 25 : zoom >= 2 ? 50 : visibleSpan > 2000 ? 200 : 100;
-          const start = Math.ceil(minVisibleFreq / step) * step;
-          const f = start + i * step;
-          if (f > maxVisibleFreq) return null;
-          const leftPct = ((f - minVisibleFreq) / visibleSpan) * 100;
-          return (
-            <div
-              key={f}
-              className="absolute -translate-x-1/2 flex flex-col items-center pointer-events-none"
-              style={{ left: `${leftPct}%` }}
-            >
-              <span className="text-[#D4D4D4] font-semibold">{f}</span>
-              <div className="w-[1px] h-1.5 bg-[#444] mt-0.5" />
-            </div>
-          );
-        })}
-      </div>
-
-      {/* Main Canvas Area + Vertical Power Slider */}
+      {/* Main Section: Waterfall Window (Ruler + Canvas) on Left, Power Sliders on Right */}
       <div className="flex w-full bg-[#050505] border-b border-[#333]">
-        {/* Waterfall Canvas */}
-        <div
-          ref={containerRef}
-          className={`relative flex-1 ${
-            waterfallHeightPreset === 'compact'
-              ? 'h-32'
-              : waterfallHeightPreset === 'tall'
-              ? 'h-60'
-              : 'h-40 sm:h-44 md:h-48'
-          } bg-[#050505] overflow-hidden cursor-crosshair`}
-        >
-          <canvas
-            id="z30-waterfall-canvas"
-            ref={canvasRef}
-            onClick={handleCanvasClick}
-            onDoubleClick={handleCanvasDoubleClick}
-            onMouseMove={handleMouseMove}
-            onMouseDown={handleMouseDown}
-            onMouseUp={handleMouseUp}
-            onMouseLeave={handleMouseLeave}
-            onWheel={handleWheel}
-            className="w-full h-full block"
-          />
+        {/* Left Column: Frequency Ruler + Waterfall Canvas (ends before sliders on the right) */}
+        <div className="flex-1 min-w-0 flex flex-col border-r border-[#2E2E2E]">
+          {/* Dynamic Frequency Ruler - Exactly matches Waterfall Canvas width */}
+          <div className="relative h-6 bg-[#050505] border-b border-[#333] select-none text-[10px] text-[#888] flex items-center overflow-hidden w-full">
+            {Array.from({ length: 16 }, (_, i) => {
+              const step = zoom >= 4 ? 25 : zoom >= 2 ? 50 : visibleSpan > 2000 ? 200 : 100;
+              const start = Math.ceil(minVisibleFreq / step) * step;
+              const f = start + i * step;
+              if (f > maxVisibleFreq) return null;
+              const leftPct = ((f - minVisibleFreq) / visibleSpan) * 100;
+              return (
+                <div
+                  key={f}
+                  className="absolute -translate-x-1/2 flex flex-col items-center pointer-events-none"
+                  style={{ left: `${leftPct}%` }}
+                >
+                  <span className="text-[#D4D4D4] font-semibold">{f}</span>
+                  <div className="w-[1px] h-1.5 bg-[#444] mt-0.5" />
+                </div>
+              );
+            })}
+          </div>
 
-          {/* Double-Click Armed TX Notification Toast */}
-          {armedToastMessage && (
-            <div className="absolute top-3 left-1/2 -translate-x-1/2 bg-yellow-500 text-black font-bold px-3 py-1 text-xs border border-yellow-300 shadow-[0_0_15px_rgba(234,179,8,0.7)] flex items-center space-x-2 z-20 animate-in zoom-in-95 duration-150">
-              <Zap className="w-3.5 h-3.5 fill-current animate-pulse" />
-              <span>{armedToastMessage}</span>
-            </div>
-          )}
+          {/* Waterfall Canvas */}
+          <div
+            ref={containerRef}
+            className={`relative w-full ${
+              waterfallHeightPreset === 'compact'
+                ? 'h-28'
+                : waterfallHeightPreset === 'tall'
+                ? 'h-52'
+                : 'h-36 sm:h-40'
+            } bg-[#050505] overflow-hidden cursor-crosshair`}
+          >
+            <canvas
+              id="z30-waterfall-canvas"
+              ref={canvasRef}
+              onClick={handleCanvasClick}
+              onDoubleClick={handleCanvasDoubleClick}
+              onMouseMove={handleMouseMove}
+              onMouseDown={handleMouseDown}
+              onMouseUp={handleMouseUp}
+              onMouseLeave={handleMouseLeave}
+              onWheel={handleWheel}
+              className="w-full h-full block"
+            />
 
-          {/* Hovered Signal Inspection Popover */}
-          {hoveredSignal && (
-            <div className="absolute top-2 left-2 bg-[#0F0F0F]/95 border border-[#00FF41] p-2 text-xs shadow-xl pointer-events-none space-y-0.5 z-10">
-              <div className="flex items-center space-x-1.5 text-[#00FF41] font-bold">
-                <Radio className="w-3 h-3" />
-                <span>
-                  {hoveredSignal.callFrom || 'DX CARRIER'} @ {hoveredSignal.freq} Hz
-                </span>
+            {/* Double-Click Armed TX Notification Toast */}
+            {armedToastMessage && (
+              <div className="absolute top-3 left-1/2 -translate-x-1/2 bg-yellow-500 text-black font-bold px-3 py-1 text-xs border border-yellow-300 shadow-[0_0_15px_rgba(234,179,8,0.7)] flex items-center space-x-2 z-20 animate-in zoom-in-95 duration-150">
+                <Zap className="w-3.5 h-3.5 fill-current animate-pulse" />
+                <span>{armedToastMessage}</span>
               </div>
-              <div className="text-[11px] text-[#D4D4D4]">
-                Payload: <span className="text-cyan-400 font-bold">{hoveredSignal.message}</span>
-              </div>
-              <div className="text-[10px] text-[#888] flex space-x-2">
-                <span>
-                  SNR: <strong className="text-[#00FF41]">{hoveredSignal.snr} dB</strong>
-                </span>
-                <span>
-                  DT: <strong className="text-yellow-400">{hoveredSignal.dt.toFixed(2)}s</strong>
-                </span>
-                <span>
-                  SIC: <strong className="text-purple-400">Pass {hoveredSignal.sicPass}</strong>
-                </span>
-              </div>
-              <div className="text-[9px] text-yellow-400 font-bold pt-0.5">
-                Double-click to arm TX for next cycle!
-              </div>
-            </div>
-          )}
-
-          {/* Quick Instructions & Zoom Hint Banner */}
-          <div className="absolute bottom-1 right-2 bg-[#050505]/90 border border-[#333] px-2 py-0.5 text-[10px] text-[#888] pointer-events-none flex items-center space-x-2 z-10">
-            <span>
-              Double-Click: <strong className="text-yellow-400">Arm TX Next Cycle</strong>
-            </span>
-            <span>•</span>
-            <span>
-              Click: <strong className="text-[#00FF41]">Set RX</strong>
-            </span>
-            <span>•</span>
-            <span>
-              Shift+Click: <strong className="text-red-400">Set TX</strong>
-            </span>
-            <span>•</span>
-            <span>
-              Wheel: <strong className="text-cyan-400">Zoom ({zoom}x)</strong>
-            </span>
-            {zoom > 1 && (
-              <>
-                <span>•</span>
-                <span className="text-yellow-400">Drag to Pan</span>
-              </>
             )}
+
+            {/* Hovered Signal Inspection Popover */}
+            {hoveredSignal && (
+              <div className="absolute top-2 left-2 bg-[#0F0F0F]/95 border border-[#00FF41] p-2 text-xs shadow-xl pointer-events-none space-y-0.5 z-10">
+                <div className="flex items-center space-x-1.5 text-[#00FF41] font-bold">
+                  <Radio className="w-3 h-3" />
+                  <span>
+                    {hoveredSignal.callFrom || 'DX CARRIER'} @ {hoveredSignal.freq} Hz
+                  </span>
+                </div>
+                <div className="text-[11px] text-[#D4D4D4]">
+                  Payload: <span className="text-cyan-400 font-bold">{hoveredSignal.message}</span>
+                </div>
+                <div className="text-[10px] text-[#888] flex space-x-2">
+                  <span>
+                    SNR: <strong className="text-[#00FF41]">{hoveredSignal.snr} dB</strong>
+                  </span>
+                  <span>
+                    DT: <strong className="text-yellow-400">{hoveredSignal.dt.toFixed(2)}s</strong>
+                  </span>
+                  <span>
+                    SIC: <strong className="text-purple-400">Pass {hoveredSignal.sicPass}</strong>
+                  </span>
+                </div>
+                <div className="text-[9px] text-yellow-400 font-bold pt-0.5">
+                  Double-click to arm TX for next cycle!
+                </div>
+              </div>
+            )}
+
+            {/* Quick Instructions & Zoom Hint Banner */}
+            <div className="absolute bottom-1 right-2 bg-[#050505]/90 border border-[#333] px-2 py-0.5 text-[10px] text-[#888] pointer-events-none flex items-center space-x-2 z-10">
+              <span>
+                Double-Click: <strong className="text-yellow-400">Arm TX Next Cycle</strong>
+              </span>
+              <span>•</span>
+              <span>
+                Click: <strong className="text-[#00FF41]">Set RX</strong>
+              </span>
+              <span>•</span>
+              <span>
+                Shift+Click: <strong className="text-red-400">Set TX</strong>
+              </span>
+              <span>•</span>
+              <span>
+                Wheel: <strong className="text-cyan-400">Zoom ({zoom}x)</strong>
+              </span>
+              {zoom > 1 && (
+                <>
+                  <span>•</span>
+                  <span className="text-yellow-400">Drag to Pan</span>
+                </>
+              )}
+            </div>
           </div>
         </div>
 
         {/* Dual Vertical Audio / Power Slider Column (RX Volume & TX ALC) */}
         <div
-          className="w-32 sm:w-40 bg-[#0A0A0A] border-l border-[#2E2E2E] flex items-stretch divide-x divide-[#222] select-none font-mono flex-shrink-0"
+          className="w-32 sm:w-40 bg-[#0A0A0A] flex flex-col select-none font-mono flex-shrink-0"
           id="power-slider-panel"
         >
-          {/* Slider 1: RX VOL / POWER */}
-          <div className="flex-1 flex flex-col items-center justify-between p-1.5 min-w-0">
-            {/* Label & Value in dB */}
-            <div className="text-center w-full">
-              <div className="text-[8px] sm:text-[9px] font-bold tracking-wider text-[#888] uppercase truncate">
-                RX VOL
-              </div>
-              <div className="text-[11px] sm:text-xs font-bold text-[#00FF41] drop-shadow-[0_0_6px_rgba(0,255,65,0.5)]">
-                {powerDb >= 0 ? '+' : ''}
-                {powerDb.toFixed(1)} <span className="text-[8px] text-[#888]">dB</span>
-              </div>
-            </div>
-
-            {/* Vertical Slider Control */}
-            <div className="relative flex-1 flex items-center justify-center my-0.5 w-full min-h-[85px]">
-              <div className="relative h-24 sm:h-28 w-7 flex items-center justify-center">
-                <input
-                  id="vertical-rx-power-slider"
-                  type="range"
-                  min="-40"
-                  max="0"
-                  step="0.5"
-                  value={powerDb}
-                  onChange={(e) => handlePowerChange(Number(e.target.value))}
-                  className="w-24 sm:w-28 h-1.5 bg-[#222] appearance-none cursor-pointer accent-[#00FF41] -rotate-90 origin-center focus:outline-none"
-                  title={`RX Audio Level: ${powerDb >= 0 ? '+' : ''}${powerDb.toFixed(1)} dB`}
-                />
-              </div>
-            </div>
-
-            {/* Level Bar & Quick Scale */}
-            <div className="w-full flex flex-col items-center space-y-0.5">
-              <div className="w-full h-1 bg-[#181818] border border-[#333] overflow-hidden">
-                <div
-                  className={`h-full transition-all ${
-                    powerDb > -6 ? 'bg-[#00FF41]' : powerDb > -18 ? 'bg-cyan-400' : 'bg-yellow-500'
-                  }`}
-                  style={{ width: `${Math.max(5, Math.min(100, ((powerDb + 40) / 40) * 100))}%` }}
-                />
-              </div>
-              <div className="flex justify-between w-full text-[7px] text-[#666] leading-none">
-                <span>-40</span>
-                <span>0dB</span>
-              </div>
-            </div>
+          {/* Header row to match the Frequency Ruler height (h-6) */}
+          <div className="h-6 bg-[#080808] border-b border-[#333] px-2 flex items-center justify-center text-[9px] font-bold tracking-wider text-[#777] uppercase">
+            LEVELS
           </div>
 
-          {/* Slider 2: TX AUDIO / ALC POWER */}
-          <div className="flex-1 flex flex-col items-center justify-between p-1.5 min-w-0 bg-[#0D0D0D]">
-            {/* Label & Value in dB */}
-            <div className="text-center w-full">
-              <div className="text-[8px] sm:text-[9px] font-bold tracking-wider text-red-400 uppercase truncate">
-                TX ALC
+          {/* Sliders Area */}
+          <div className="flex-1 flex items-stretch divide-x divide-[#222]">
+            {/* Slider 1: RX VOL / POWER */}
+            <div className="flex-1 flex flex-col items-center justify-between p-1.5 min-w-0">
+              {/* Label & Value in dB */}
+              <div className="text-center w-full">
+                <div className="text-[8px] sm:text-[9px] font-bold tracking-wider text-[#888] uppercase truncate">
+                  RX VOL
+                </div>
+                <div className="text-[11px] sm:text-xs font-bold text-[#00FF41] drop-shadow-[0_0_6px_rgba(0,255,65,0.5)]">
+                  {powerDb >= 0 ? '+' : ''}
+                  {powerDb.toFixed(1)} <span className="text-[8px] text-[#888]">dB</span>
+                </div>
               </div>
-              <div className="text-[11px] sm:text-xs font-bold text-red-400 drop-shadow-[0_0_6px_rgba(239,68,68,0.5)]">
-                {txPowerDb >= 0 ? '+' : ''}
-                {txPowerDb.toFixed(1)} <span className="text-[8px] text-[#888]">dB</span>
+
+              {/* Vertical Slider Control */}
+              <div className="relative flex-1 flex items-center justify-center my-0.5 w-full min-h-[70px]">
+                <div className="relative h-20 sm:h-24 w-7 flex items-center justify-center">
+                  <input
+                    id="vertical-rx-power-slider"
+                    type="range"
+                    min="-40"
+                    max="0"
+                    step="0.5"
+                    value={powerDb}
+                    onChange={(e) => handlePowerChange(Number(e.target.value))}
+                    className="w-20 sm:w-24 h-1.5 bg-[#222] appearance-none cursor-pointer accent-[#00FF41] -rotate-90 origin-center focus:outline-none"
+                    title={`RX Audio Level: ${powerDb >= 0 ? '+' : ''}${powerDb.toFixed(1)} dB`}
+                  />
+                </div>
+              </div>
+
+              {/* Level Bar & Quick Scale */}
+              <div className="w-full flex flex-col items-center space-y-0.5">
+                <div className="w-full h-1 bg-[#181818] border border-[#333] overflow-hidden">
+                  <div
+                    className={`h-full transition-all ${
+                      powerDb > -6 ? 'bg-[#00FF41]' : powerDb > -18 ? 'bg-cyan-400' : 'bg-yellow-500'
+                    }`}
+                    style={{ width: `${Math.max(5, Math.min(100, ((powerDb + 40) / 40) * 100))}%` }}
+                  />
+                </div>
+                <div className="flex justify-between w-full text-[7px] text-[#666] leading-none">
+                  <span>-40</span>
+                  <span>0dB</span>
+                </div>
               </div>
             </div>
 
-            {/* Vertical Slider Control */}
-            <div className="relative flex-1 flex items-center justify-center my-0.5 w-full min-h-[85px]">
-              <div className="relative h-24 sm:h-28 w-7 flex items-center justify-center">
-                <input
-                  id="vertical-tx-alc-slider"
-                  type="range"
-                  min="-30"
-                  max="0"
-                  step="0.5"
-                  value={txPowerDb}
-                  onChange={(e) => handleTxPowerChange(Number(e.target.value))}
-                  className="w-24 sm:w-28 h-1.5 bg-[#222] appearance-none cursor-pointer accent-red-500 -rotate-90 origin-center focus:outline-none"
-                  title={`TX Audio / ALC Level: ${txPowerDb >= 0 ? '+' : ''}${txPowerDb.toFixed(1)} dB (adjust to set radio ALC meter)`}
-                />
+            {/* Slider 2: TX AUDIO / ALC POWER */}
+            <div className="flex-1 flex flex-col items-center justify-between p-1.5 min-w-0 bg-[#0D0D0D]">
+              {/* Label & Value in dB */}
+              <div className="text-center w-full">
+                <div className="text-[8px] sm:text-[9px] font-bold tracking-wider text-red-400 uppercase truncate">
+                  TX ALC
+                </div>
+                <div className="text-[11px] sm:text-xs font-bold text-red-400 drop-shadow-[0_0_6px_rgba(239,68,68,0.5)]">
+                  {txPowerDb >= 0 ? '+' : ''}
+                  {txPowerDb.toFixed(1)} <span className="text-[8px] text-[#888]">dB</span>
+                </div>
               </div>
-            </div>
 
-            {/* Level Bar & Quick Scale */}
-            <div className="w-full flex flex-col items-center space-y-0.5">
-              <div className="w-full h-1 bg-[#181818] border border-[#333] overflow-hidden">
-                <div
-                  className={`h-full transition-all ${
-                    txPowerDb > -6 ? 'bg-red-500' : txPowerDb > -15 ? 'bg-yellow-400' : 'bg-cyan-400'
-                  }`}
-                  style={{ width: `${Math.max(5, Math.min(100, ((txPowerDb + 30) / 30) * 100))}%` }}
-                />
+              {/* Vertical Slider Control */}
+              <div className="relative flex-1 flex items-center justify-center my-0.5 w-full min-h-[70px]">
+                <div className="relative h-20 sm:h-24 w-7 flex items-center justify-center">
+                  <input
+                    id="vertical-tx-alc-slider"
+                    type="range"
+                    min="-30"
+                    max="0"
+                    step="0.5"
+                    value={txPowerDb}
+                    onChange={(e) => handleTxPowerChange(Number(e.target.value))}
+                    className="w-20 sm:w-24 h-1.5 bg-[#222] appearance-none cursor-pointer accent-red-500 -rotate-90 origin-center focus:outline-none"
+                    title={`TX Audio / ALC Level: ${txPowerDb >= 0 ? '+' : ''}${txPowerDb.toFixed(1)} dB (adjust to set radio ALC meter)`}
+                  />
+                </div>
               </div>
-              <div className="flex justify-between w-full text-[7px] text-[#666] leading-none">
-                <span>-30</span>
-                <span>0dB</span>
+
+              {/* Level Bar & Quick Scale */}
+              <div className="w-full flex flex-col items-center space-y-0.5">
+                <div className="w-full h-1 bg-[#181818] border border-[#333] overflow-hidden">
+                  <div
+                    className={`h-full transition-all ${
+                      txPowerDb > -6 ? 'bg-red-500' : txPowerDb > -15 ? 'bg-yellow-400' : 'bg-cyan-400'
+                    }`}
+                    style={{ width: `${Math.max(5, Math.min(100, ((txPowerDb + 30) / 30) * 100))}%` }}
+                  />
+                </div>
+                <div className="flex justify-between w-full text-[7px] text-[#666] leading-none">
+                  <span>-30</span>
+                  <span>0dB</span>
+                </div>
               </div>
             </div>
           </div>

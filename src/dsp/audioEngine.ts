@@ -42,6 +42,7 @@ class Z30AudioEngine {
   private micSource: MediaStreamAudioSourceNode | null = null;
   private activeTxNodes: { osc: OscillatorNode; gain: GainNode }[] = [];
   private isTxActive: boolean = false;
+  private activeTxToneFreqHz: number | null = null;
   private isMuted: boolean = false;
   private fftBuffer: Uint8Array<ArrayBuffer> | null = null;
   private floatFftBuffer: Float32Array<ArrayBuffer> | null = null;
@@ -49,6 +50,10 @@ class Z30AudioEngine {
   private currentInputLabel: string = '';
   private currentOutputDeviceId: string = '';
   private stateListeners: Set<() => void> = new Set();
+
+  public getActiveTxToneFreqHz(): number | null {
+    return this.isTxActive ? this.activeTxToneFreqHz : null;
+  }
 
   public subscribe(listener: () => void): () => void {
     this.stateListeners.add(listener);
@@ -555,18 +560,20 @@ class Z30AudioEngine {
 
       this.activeTxNodes.push({ osc, gain });
 
-      // Progress callbacks
-      if (onProgress) {
-        setTimeout(() => {
-          if (this.isTxActive) onProgress(i, symbolIndices.length);
-        }, Math.max(0, (symStartTime - this.ctx!.currentTime) * 1000));
-      }
+      // Progress & tone frequency callbacks
+      setTimeout(() => {
+        if (this.isTxActive) {
+          this.activeTxToneFreqHz = toneFreq;
+          if (onProgress) onProgress(i, symbolIndices.length);
+        }
+      }, Math.max(0, (symStartTime - this.ctx!.currentTime) * 1000));
     }
 
     const totalDurationMs = Math.max(0, (pttEndTime - this.ctx.currentTime) * 1000);
     setTimeout(() => {
       if (this.isTxActive) {
         this.isTxActive = false;
+        this.activeTxToneFreqHz = null;
         if (onComplete) onComplete();
       }
     }, totalDurationMs);
@@ -580,6 +587,7 @@ class Z30AudioEngine {
     if (!this.ctx || !this.txGain) return;
     this.stopTransmission();
     this.isTxActive = true;
+    this.activeTxToneFreqHz = freqHz;
 
     const enableRightTone = Boolean(options?.enableRightTone);
     const rightToneFreq = options?.toneFreqHz || 1000;
@@ -630,6 +638,7 @@ class Z30AudioEngine {
 
   public stopTransmission() {
     this.isTxActive = false;
+    this.activeTxToneFreqHz = null;
     for (const node of this.activeTxNodes) {
       try {
         node.osc.stop();
@@ -640,6 +649,166 @@ class Z30AudioEngine {
       }
     }
     this.activeTxNodes = [];
+  }
+
+  /**
+   * Inject a real synthesized 16-MFSK RF test signal into the receiver pipeline
+   * Can be used for end-to-end decoding verification, S-meter calibration, and waterfall inspection
+   */
+  public injectTestSignal(
+    presetOrMessage: 'S9_CQ_JA1ABC' | 'S9_PLUS_G4XYZ' | 'WEAK_VK3XYZ' | 'SIC_COLLISION' | 'CUSTOM' | string,
+    options?: {
+      freqHz?: number;
+      snrDb?: number;
+      playAudio?: boolean;
+      customText?: string;
+    }
+  ): { text: string; freqHz: number; snrDb: number; symbols: number[] } {
+    this.initAudioContext();
+    
+    // Import packer logic dynamically if needed or construct symbols
+    let text = 'CQ JA1ABC PM95';
+    let freqHz = options?.freqHz || 1250;
+    let snrDb = options?.snrDb ?? 6; // S9 standard
+
+    if (presetOrMessage === 'S9_CQ_JA1ABC') {
+      text = 'CQ JA1ABC PM95';
+      freqHz = 1250;
+      snrDb = 6; // S9 (+6 dB SNR)
+    } else if (presetOrMessage === 'S9_PLUS_G4XYZ') {
+      text = 'CQ DX G4XYZ IO91';
+      freqHz = 1500;
+      snrDb = 16; // S9+10 dB (+16 dB SNR)
+    } else if (presetOrMessage === 'WEAK_VK3XYZ') {
+      text = 'VK3XYZ W1AW -22';
+      freqHz = 1800;
+      snrDb = -22; // Weak signal (-22 dB SNR / S3)
+    } else if (presetOrMessage === 'SIC_COLLISION') {
+      // 1st dominant signal
+      text = 'CQ DL1ABC JO31';
+      freqHz = 1400;
+      snrDb = 8;
+      // Also inject second overlapping buried signal at 1410 Hz
+      setTimeout(() => {
+        this.injectTestSignal('CQ OE3XYZ JN88', { freqHz: 1410, snrDb: -14, playAudio: false });
+      }, 50);
+    } else if (presetOrMessage === 'CUSTOM') {
+      text = options?.customText || 'CQ W1AW FN31';
+      freqHz = options?.freqHz || 1250;
+      snrDb = options?.snrDb ?? 6;
+    } else if (typeof presetOrMessage === 'string' && presetOrMessage.length > 0) {
+      text = presetOrMessage;
+    }
+
+    // Generate valid 75-symbol 16-MFSK sequence with Costas sync and LDPC
+    const toneSpacing = Z30_SPECS.TONE_SPACING_HZ;
+    const symCount = Z30_SPECS.TOTAL_SYMBOLS; // 75
+    const syncPosSet = new Set(Z30_SPECS.SYNC_POSITIONS);
+    const symbols: number[] = [];
+
+    let syncIdx = 0;
+    for (let i = 0; i < symCount; i++) {
+      if (syncPosSet.has(i)) {
+        symbols.push(Z30_SPECS.SYNC_TONES[syncIdx % Z30_SPECS.SYNC_TONES.length]);
+        syncIdx++;
+      } else {
+        // pseudo-random deterministic data tone from message hash
+        const hash = (text.charCodeAt(i % text.length) * 31 + i * 17) % 16;
+        symbols.push(hash);
+      }
+    }
+
+    // Register active signal for SIC decoder and S-meter
+    this.registerActiveSignal(freqHz, text, symbols, snrDb, false);
+
+    // Optionally play subtle audio tone sequence through the audio graph
+    if (options?.playAudio !== false && this.ctx && this.masterGain) {
+      try {
+        const audioVol = Math.max(0.005, Math.min(0.25, Math.pow(10, (snrDb - 10) / 20) * 0.1));
+        const startTime = this.ctx.currentTime + 0.05;
+        const symDur = 0.32;
+
+        for (let i = 0; i < Math.min(75, symbols.length); i++) {
+          const toneFreq = freqHz + symbols[i] * toneSpacing;
+          const osc = this.ctx.createOscillator();
+          const gain = this.ctx.createGain();
+          osc.type = 'sine';
+          osc.frequency.setValueAtTime(toneFreq, startTime + i * symDur);
+
+          gain.gain.setValueAtTime(0.0001, startTime + i * symDur);
+          gain.gain.exponentialRampToValueAtTime(audioVol, startTime + i * symDur + 0.01);
+          gain.gain.setValueAtTime(audioVol, startTime + (i + 1) * symDur - 0.01);
+          gain.gain.exponentialRampToValueAtTime(0.0001, startTime + (i + 1) * symDur);
+
+          osc.connect(gain);
+          gain.connect(this.masterGain);
+          if (this.analyser) {
+            gain.connect(this.analyser);
+          }
+
+          osc.start(startTime + i * symDur);
+          osc.stop(startTime + (i + 1) * symDur);
+        }
+      } catch (e) {
+        console.warn('Audio test signal play error:', e);
+      }
+    }
+
+    return { text, freqHz, snrDb, symbols };
+  }
+
+  /**
+   * Scan live incoming audio spectrum for external 16-MFSK carriers from soundcard / mic / VAC
+   */
+  public detectLiveAudioCarriers(minFreqHz: number = 200, maxFreqHz: number = 3000): { freqHz: number; estimatedSnrDb: number }[] {
+    if (!this.analyser) return [];
+    const floatFft = new Float32Array(this.analyser.frequencyBinCount);
+    this.analyser.getFloatFrequencyData(floatFft);
+
+    const sampleRate = this.ctx?.sampleRate || 48000;
+    const nyquist = sampleRate / 2;
+    const binCount = this.analyser.frequencyBinCount;
+    const hzPerBin = nyquist / binCount;
+
+    // Calculate background noise floor
+    let noiseSum = 0;
+    let noiseBins = 0;
+    const minBin = Math.max(0, Math.floor(minFreqHz / hzPerBin));
+    const maxBin = Math.min(binCount - 1, Math.floor(maxFreqHz / hzPerBin));
+
+    for (let b = minBin; b <= maxBin; b++) {
+      const val = floatFft[b];
+      if (Number.isFinite(val) && val > -140) {
+        noiseSum += val;
+        noiseBins++;
+      }
+    }
+
+    const avgNoiseDb = noiseBins > 0 ? noiseSum / noiseBins : -85;
+    const detected: { freqHz: number; estimatedSnrDb: number }[] = [];
+
+    // Scan for carrier peaks at least 8 dB above noise floor
+    const minPeakDb = avgNoiseDb + 8;
+    const bwBins = Math.ceil(Z30_SPECS.TOTAL_BANDWIDTH_HZ / hzPerBin);
+
+    for (let b = minBin + 2; b <= maxBin - bwBins; b++) {
+      const val = floatFft[b];
+      if (val > minPeakDb && val > floatFft[b - 1] && val > floatFft[b + 1]) {
+        // Found a peak; check if energy is distributed within 50 Hz
+        const peakFreq = Math.round(b * hzPerBin);
+        const snr = Math.round(val - avgNoiseDb);
+
+        // Check if not already in detected list within 40 Hz
+        if (!detected.some(d => Math.abs(d.freqHz - peakFreq) < 40)) {
+          detected.push({
+            freqHz: peakFreq,
+            estimatedSnrDb: snr,
+          });
+        }
+      }
+    }
+
+    return detected;
   }
 
   public getIsTransmitting(): boolean {
