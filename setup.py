@@ -26,6 +26,10 @@ setup(
     author_email='paulomantas2009@gmail.com',
     url='https://github.com/themantas1994/z-30',
     packages=find_packages(),
+    package_data={
+        'z30_dsp': ['web_dist/**/*', 'web_dist/*'],
+    },
+    include_package_data=True,
     py_modules=['config_wizard', 'rf_time_sync', 'band_manager'],
     install_requires=install_requires,
     python_requires='>=3.9',
@@ -33,6 +37,8 @@ setup(
         'console_scripts': [
             'z30=z30_dsp.main:main',
             'z30-transceiver=z30_dsp.main:main',
+            'z30-web=z30_dsp.web_server:main',
+            'z30-gui=z30_dsp.gui_tkinter:main',
             'z30-wizard=config_wizard:main',
             'z30-sync=rf_time_sync:main',
             'z30-bands=band_manager:main',

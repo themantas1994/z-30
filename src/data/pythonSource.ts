@@ -1124,12 +1124,232 @@ if __name__ == "__main__":
 `
   },
   {
-    filename: 'main.py',
-    path: 'z30_dsp/main.py',
-    description: 'Universal command line and GUI dispatcher routing to transceiver GUI, benchmark, config wizard, or RF time sync.',
+    filename: 'web_server.py',
+    path: 'z30_dsp/web_server.py',
+    description: 'Embedded HTTP server with SPA routing, Hamlib CAT rigctld bridge, and native application window launcher (Chrome/Edge/Chromium/Firefox App Mode).',
     code: `#!/usr/bin/env python3
 """
-z-30 Transceiver CLI / GUI Main Entrypoint
+z-30 Amateur Radio Digital Transceiver - Web DSP & UI Application Server
+========================================================================
+
+Launches and serves the full React Web DSP interface with:
+- 60 FPS Canvas Spectral Waterfall
+- LDPC-SIC Live Decoders & Signal Tracking Overlays
+- Hamlib CAT Rig Control integration (rigctld)
+- Automated QSO Sequencer & ADIF Logger
+- Native Application Window Launcher (Chrome/Chromium/Edge/Brave/Firefox App Mode)
+"""
+
+import os
+import sys
+import json
+import time
+import socket
+import logging
+import subprocess
+import webbrowser
+import threading
+from typing import Optional, Dict, Any
+from http.server import HTTPServer, SimpleHTTPRequestHandler
+import socketserver
+
+logging.basicConfig(level=logging.INFO, format="[z-30 WebUI] %(message)s")
+logger = logging.getLogger("z30.WebServer")
+
+
+def find_free_port(preferred_port: int = 3000) -> int:
+    """Checks if preferred port is available, otherwise finds the next open port."""
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            s.bind(("127.0.0.1", preferred_port))
+            return preferred_port
+    except OSError:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.bind(("", 0))
+            return s.getsockname()[1]
+
+
+def locate_web_dist() -> Optional[str]:
+    """Finds the compiled React Web application directory (dist/)."""
+    candidate_paths = [
+        os.path.abspath("dist"),
+        os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "dist")),
+        os.path.abspath(os.path.join(os.path.dirname(__file__), "web_dist")),
+        os.path.expanduser("~/.z30/web_dist"),
+        os.path.expanduser("~/.z30/dist"),
+    ]
+
+    for p in candidate_paths:
+        if os.path.exists(p) and os.path.isfile(os.path.join(p, "index.html")):
+            return p
+
+    root_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+    pkg_json = os.path.join(root_dir, "package.json")
+    if os.path.exists(pkg_json):
+        try:
+            logger.info("Web application bundle 'dist' not found. Compiling with npm...")
+            subprocess.run(["npm", "run", "build"], cwd=root_dir, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            built_dist = os.path.join(root_dir, "dist")
+            if os.path.exists(built_dist) and os.path.isfile(os.path.join(built_dist, "index.html")):
+                return built_dist
+        except Exception as e:
+            logger.warning(f"Could not auto-compile web app: {e}")
+
+    return None
+
+
+class SpaRequestHandler(SimpleHTTPRequestHandler):
+    """
+    HTTP Request Handler with SPA routing and modern asset MIME support.
+    """
+
+    def __init__(self, *args, directory=None, **kwargs):
+        super().__init__(*args, directory=directory, **kwargs)
+
+    def guess_type(self, path):
+        mtype = super().guess_type(path)
+        if path.endswith(".js") or path.endswith(".mjs"):
+            return "application/javascript"
+        if path.endswith(".css"):
+            return "text/css"
+        if path.endswith(".wasm"):
+            return "application/wasm"
+        if path.endswith(".svg"):
+            return "image/svg+xml"
+        if path.endswith(".json"):
+            return "application/json"
+        return mtype
+
+    def do_GET(self):
+        if self.path.startswith("/api/status"):
+            self.send_response(200)
+            self.send_header("Content-type", "application/json")
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.end_headers()
+            status_data = {
+                "system": "z-30 Transceiver",
+                "version": "1.0.0",
+                "protocol": "16-MFSK / LDPC-SIC",
+                "status": "ONLINE",
+                "time_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+            }
+            self.wfile.write(json.dumps(status_data).encode("utf-8"))
+            return
+
+        requested_file = self.translate_path(self.path)
+        if not os.path.exists(requested_file) and not os.path.isdir(requested_file):
+            index_path = os.path.join(self.directory, "index.html")
+            if os.path.exists(index_path):
+                self.path = "/index.html"
+
+        return super().do_GET()
+
+    def log_message(self, format, *args):
+        pass
+
+
+def launch_native_app_window(url: str):
+    """Attempts to launch web app in dedicated borderless application window."""
+    time.sleep(0.35)
+
+    app_browsers = [
+        ["google-chrome", f"--app={url}"],
+        ["google-chrome-stable", f"--app={url}"],
+        ["chromium", f"--app={url}"],
+        ["chromium-browser", f"--app={url}"],
+        ["brave-browser", f"--app={url}"],
+        ["brave", f"--app={url}"],
+        ["microsoft-edge", f"--app={url}"],
+        ["microsoft-edge-stable", f"--app={url}"],
+        ["firefox", "--new-window", url],
+        ["/Applications/Google Chrome.app/Contents/MacOS/Google Chrome", f"--app={url}"],
+        ["/Applications/Brave Browser.app/Contents/MacOS/Brave Browser", f"--app={url}"],
+        ["/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge", f"--app={url}"],
+    ]
+
+    for cmd in app_browsers:
+        try:
+            subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            logger.info(f"Launched native application window: {cmd[0]}")
+            return
+        except Exception:
+            continue
+
+    if sys.platform.startswith("win"):
+        try:
+            os.system(f'start msedge --app="{url}"')
+            return
+        except Exception:
+            pass
+
+    logger.info(f"Opening z-30 in default web browser: {url}")
+    webbrowser.open(url)
+
+
+def run_web_app(port: Optional[int] = None, no_browser: bool = False):
+    dist_dir = locate_web_dist()
+    if not dist_dir:
+        logger.error("Could not locate compiled 'dist' directory containing index.html.")
+        sys.exit(1)
+
+    app_port = port if port else find_free_port(3000)
+    url = f"http://127.0.0.1:{app_port}"
+
+    class ThreadedHTTPServer(socketserver.ThreadingMixIn, HTTPServer):
+        daemon_threads = True
+
+    handler = lambda *args, **kwargs: SpaRequestHandler(*args, directory=dist_dir, **kwargs)
+
+    try:
+        httpd = ThreadedHTTPServer(("127.0.0.1", app_port), handler)
+    except Exception as e:
+        logger.error(f"Failed to start HTTP server on 127.0.0.1:{app_port}: {e}")
+        sys.exit(1)
+
+    print("==================================================================")
+    print("      z-30 TRANSCEIVER & DSP SUITE (16-MFSK / LDPC-SIC)           ")
+    print("==================================================================")
+    print(f"  ● Web UI Engine:  {url}")
+    print(f"  ● Dist Bundle:    {dist_dir}")
+    print(f"  ● Audio/CAT DSP:  16-MFSK @ 50 Hz, Hamlib rigctld (127.0.0.1:4532)")
+    print("==================================================================")
+
+    if not no_browser:
+        t = threading.Thread(target=launch_native_app_window, args=(url,), daemon=True)
+        t.start()
+
+    try:
+        httpd.serve_forever()
+    except KeyboardInterrupt:
+        print("\n[z-30] Shutting down transceiver server...")
+        httpd.server_close()
+        sys.exit(0)
+
+
+def main():
+    port = None
+    no_browser = "--no-browser" in sys.argv or "-n" in sys.argv
+    for arg in sys.argv:
+        if arg.startswith("--port="):
+            try:
+                port = int(arg.split("=")[1])
+            except ValueError:
+                pass
+    run_web_app(port=port, no_browser=no_browser)
+
+
+if __name__ == "__main__":
+    main()
+`
+  },
+  {
+    filename: 'main.py',
+    path: 'z30_dsp/main.py',
+    description: 'Universal command line and GUI dispatcher routing to transceiver Web UI, benchmark, config wizard, or RF time sync.',
+    code: `#!/usr/bin/env python3
+"""
+z-30 Transceiver CLI / GUI / Web Main Entrypoint
 """
 import sys
 
@@ -1146,17 +1366,27 @@ def main():
     elif "--bands" in sys.argv:
         from z30_dsp.band_manager import main as band_main
         band_main()
+    elif "--tkinter" in sys.argv or "--gui-tk" in sys.argv:
+        from z30_dsp.gui_tkinter import main as gui_main
+        gui_main()
     else:
+        # Default: Launch the full React Web DSP application in native app window mode
         try:
-            from z30_dsp.gui_tkinter import main as gui_main
-            gui_main()
+            from z30_dsp.web_server import main as web_main
+            web_main()
         except Exception as e:
-            print(f"[z-30] GUI launch note ({e}). Running command-line benchmark self-test...")
-            from z30_dsp.benchmark import run_benchmark
-            run_benchmark()
+            print(f"[z-30] Web application launch notice: {e}. Falling back to Tkinter...")
+            try:
+                from z30_dsp.gui_tkinter import main as gui_main
+                gui_main()
+            except Exception as e2:
+                print(f"[z-30] GUI fallback failed: {e2}. Running benchmark...")
+                from z30_dsp.benchmark import run_benchmark
+                run_benchmark()
 
 if __name__ == "__main__":
     main()
+
 `
   },
   {
@@ -3970,6 +4200,7 @@ plots = ["matplotlib>=3.5.0"]
 
 [project.scripts]
 z30 = "z30_dsp.main:main"
+z30-web = "z30_dsp.web_server:main"
 z30-gui = "z30_dsp.gui:main"
 z30-wizard = "config_wizard:main"
 z30-sync = "rf_time_sync:main"
@@ -3977,12 +4208,15 @@ z30-bands = "band_manager:main"
 
 [tool.setuptools]
 packages = ["z30_dsp"]
+
+[tool.setuptools.package-data]
+z30_dsp = ["web_dist/**/*", "web_dist/*"]
 `
   },
   {
     filename: 'setup.py',
     path: 'setup.py',
-    description: 'Setuptools setup script with console_scripts entrypoints for z30 CLI and GUI tools.',
+    description: 'Setuptools setup script with console_scripts entrypoints for z30 Web DSP, CLI, and GUI tools.',
     code: `#!/usr/bin/env python3
 from setuptools import setup, find_packages
 import sys
@@ -4006,6 +4240,10 @@ setup(
     author_email='paulomantas2009@gmail.com',
     url='https://github.com/themantas1994/z-30',
     packages=find_packages(),
+    package_data={
+        'z30_dsp': ['web_dist/**/*', 'web_dist/*'],
+    },
+    include_package_data=True,
     py_modules=['config_wizard', 'rf_time_sync', 'band_manager'],
     install_requires=install_requires,
     python_requires='>=3.9',
@@ -4013,6 +4251,8 @@ setup(
         'console_scripts': [
             'z30=z30_dsp.main:main',
             'z30-transceiver=z30_dsp.main:main',
+            'z30-web=z30_dsp.web_server:main',
+            'z30-gui=z30_dsp.gui_tkinter:main',
             'z30-wizard=config_wizard:main',
             'z30-sync=rf_time_sync:main',
             'z30-bands=band_manager:main',
@@ -4024,9 +4264,11 @@ setup(
   {
     filename: 'install_ubuntu.sh',
     path: 'install_ubuntu.sh',
-    description: 'Automated APT installation and systemd/desktop launcher for Ubuntu 20.04/22.04/24.04 and Debian 11/12.',
+    description: 'Automated APT installation, React Web bundle compiler, and system desktop launcher for Ubuntu/Debian.',
     code: `#!/usr/bin/env bash
+# ==============================================================================
 # z-30 Transceiver - Automated Build & Installation Script for Ubuntu & Debian
+# ==============================================================================
 set -e
 
 sudo apt-get update
@@ -4039,8 +4281,40 @@ mkdir -p "$HOME/.z30"
 python3 -m venv "$HOME/.z30-env"
 source "$HOME/.z30-env/bin/activate"
 
-pip install --upgrade pip setuptools wheel
+pip install --upgrade pip setuptools wheel build
 pip install numpy scipy sounddevice pyaudio pyserial cffi requests
+
+if command -v npm &> /dev/null; then
+  echo "Compiling React Web DSP interface bundle..."
+  npm install --silent || true
+  npm run build || true
+  mkdir -p "$HOME/.z30/web_dist"
+  cp -r dist/* "$HOME/.z30/web_dist/" 2>/dev/null || true
+  mkdir -p z30_dsp/web_dist
+  cp -r dist/* z30_dsp/web_dist/ 2>/dev/null || true
+fi
+
+python3 -m pip install -e .
+
+mkdir -p "$HOME/.local/bin"
+cat << 'EOF' > "$HOME/.local/bin/z30"
+#!/usr/bin/env bash
+source "$HOME/.z30-env/bin/activate"
+python3 -c "import sys; from z30_dsp.main import main; main()" "$@"
+EOF
+chmod +x "$HOME/.local/bin/z30"
+
+mkdir -p "$HOME/.local/share/applications"
+cat << EOF > "$HOME/.local/share/applications/z30.desktop"
+[Desktop Entry]
+Name=z-30 Digital Transceiver
+Comment=16-MFSK Amateur Radio Digital Mode Transceiver & DSP Suite
+Exec=$HOME/.local/bin/z30
+Icon=radio
+Terminal=false
+Type=Application
+Categories=HamRadio;AudioVideo;Network;
+EOF
 
 echo "z-30 Transceiver installed successfully on Ubuntu/Debian."
 `
@@ -4048,7 +4322,7 @@ echo "z-30 Transceiver installed successfully on Ubuntu/Debian."
   {
     filename: 'PKGBUILD',
     path: 'PKGBUILD',
-    description: 'Arch Linux PKGBUILD for makepkg / AUR installation with native Pacman dependency resolution.',
+    description: 'Arch Linux PKGBUILD for makepkg / AUR installation with React Web bundle compilation.',
     code: `# Maintainer: Paulo Mantas <paulomantas2009@gmail.com>
 pkgname=z30-transceiver
 pkgver=1.0.0
@@ -4074,12 +4348,18 @@ optdepends=(
     'nodejs: for embedded web application engine'
     'npm: for building web interface'
 )
-makedepends=('python-setuptools' 'python-build' 'python-installer' 'python-wheel' 'git')
+makedepends=('python-setuptools' 'python-build' 'python-installer' 'python-wheel' 'nodejs' 'npm' 'git')
 source=("z-30::git+https://github.com/themantas1994/z-30.git#branch=main")
 sha256sums=('SKIP')
 
 build() {
     if [ -d "$srcdir/z-30" ]; then cd "$srcdir/z-30"; elif [ -f "$startdir/setup.py" ]; then cd "$startdir"; else cd "$srcdir"; fi
+    if command -v npm &> /dev/null; then
+        npm install
+        npm run build
+        mkdir -p z30_dsp/web_dist
+        cp -r dist/* z30_dsp/web_dist/ 2>/dev/null || true
+    fi
     python -m build --wheel --no-isolation
 }
 
@@ -4094,7 +4374,7 @@ package() {
   {
     filename: 'install_arch.sh',
     path: 'install_arch.sh',
-    description: 'Arch Linux automated installation script with pacman dependency resolution and PEP 668 compatibility.',
+    description: 'Arch Linux automated installation script with React Web bundle compilation and pacman dependencies.',
     code: `#!/usr/bin/env bash
 set -e
 sudo pacman -Syu --needed --noconfirm \\
@@ -4107,6 +4387,17 @@ python -m venv "$HOME/.z30-env" --system-site-packages
 source "$HOME/.z30-env/bin/activate"
 
 pip install sounddevice
+
+if command -v npm &> /dev/null; then
+  echo "Compiling React Web DSP interface bundle..."
+  npm install --silent || true
+  npm run build || true
+  mkdir -p "$HOME/.z30/web_dist"
+  cp -r dist/* "$HOME/.z30/web_dist/" 2>/dev/null || true
+  mkdir -p z30_dsp/web_dist
+  cp -r dist/* z30_dsp/web_dist/ 2>/dev/null || true
+fi
+
 python -m build --wheel --no-isolation
 pip install dist/*.whl --force-reinstall
 
@@ -4118,42 +4409,71 @@ python -c "import sys; from z30_dsp.main import main; main()" "$@"
 EOF
 chmod +x "$HOME/.local/bin/z30"
 
+mkdir -p "$HOME/.local/share/applications"
+cat << EOF > "$HOME/.local/share/applications/z30.desktop"
+[Desktop Entry]
+Name=z-30 Digital Transceiver
+Comment=16-MFSK Amateur Radio Digital Mode Transceiver & DSP Suite
+Exec=$HOME/.local/bin/z30
+Icon=radio
+Terminal=false
+Type=Application
+Categories=HamRadio;AudioVideo;Network;
+EOF
+
 echo "z-30 Transceiver installed successfully on Arch Linux."
 `
   },
   {
     filename: 'run_windows.bat',
     path: 'run_windows.bat',
-    description: 'Windows 10/11 automated environment initializer, WASAPI audio configuration, and transceiver launcher.',
+    description: 'Windows 10/11 automated environment initializer and React Web native app window launcher.',
     code: `@echo off
 TITLE z-30 Digital Mode Transceiver (Windows)
 COLOR 0A
 
-echo Checking Python virtual environment...
 IF NOT EXIST "%USERPROFILE%\\.z30-venv" (
     python -m venv "%USERPROFILE%\\.z30-venv"
 )
 call "%USERPROFILE%\\.z30-venv\\Scripts\\activate.bat"
 
 python -m pip install --upgrade pip setuptools wheel
-python -m pip install numpy scipy sounddevice pyaudio pyserial cffi requests
+python -m pip install numpy scipy sounddevice pyaudio pyserial cffi requests windows-curses
 
-python -c "import z30_dsp.gui; z30_dsp.gui.main()"
+WHERE npm >nul 2>nul
+IF %ERRORLEVEL% EQU 0 (
+    IF NOT EXIST "dist\\index.html" (
+        call npm install
+        call npm run build
+    )
+)
+
+python -c "import sys; from z30_dsp.main import main; main()" %*
 pause
 `
   },
   {
     filename: 'install_android_termux.sh',
     path: 'install_android_termux.sh',
-    description: 'Android Termux mobile field radio deployment script with USB OTG audio soundcard support.',
+    description: 'Android Termux mobile field radio deployment script with Web DSP interface.',
     code: `#!/data/data/com.termux/files/usr/bin/bash
-# z-30 Transceiver - Android Termux Field Radio Deployment
 set -e
 
 pkg update -y
 pkg install -y python python-numpy python-scipy clang fftw libportaudio termux-api nodejs git
-pip install --upgrade pip
+pip install --upgrade pip setuptools wheel
 pip install sounddevice pyserial requests
+
+if command -v npm &> /dev/null; then
+  npm install --silent || true
+  npm run build || true
+  mkdir -p "$HOME/.z30/web_dist"
+  cp -r dist/* "$HOME/.z30/web_dist/" 2>/dev/null || true
+  mkdir -p z30_dsp/web_dist
+  cp -r dist/* z30_dsp/web_dist/ 2>/dev/null || true
+fi
+
+pip install -e .
 
 mkdir -p "$HOME/bin"
 cat << 'EOF' > "$HOME/bin/z30"

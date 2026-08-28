@@ -23,7 +23,7 @@ optdepends=(
     'nodejs: for embedded web application engine'
     'npm: for building web interface'
 )
-makedepends=('python-setuptools' 'python-build' 'python-installer' 'python-wheel' 'git')
+makedepends=('python-setuptools' 'python-build' 'python-installer' 'python-wheel' 'nodejs' 'npm' 'git')
 source=("z-30::git+https://github.com/themantas1994/z-30.git#branch=main")
 sha256sums=('SKIP')
 
@@ -35,6 +35,14 @@ build() {
     else
         cd "$srcdir"
     fi
+
+    if command -v npm &> /dev/null; then
+        npm install
+        npm run build
+        mkdir -p z30_dsp/web_dist
+        cp -r dist/* z30_dsp/web_dist/ 2>/dev/null || true
+    fi
+
     python -m build --wheel --no-isolation
 }
 

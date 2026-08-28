@@ -30,6 +30,7 @@ plots = ["matplotlib>=3.5.0"]
 
 [project.scripts]
 z30 = "z30_dsp.main:main"
+z30-web = "z30_dsp.web_server:main"
 z30-gui = "z30_dsp.gui:main"
 z30-wizard = "config_wizard:main"
 z30-sync = "rf_time_sync:main"
@@ -37,3 +38,7 @@ z30-bands = "band_manager:main"
 
 [tool.setuptools]
 packages = ["z30_dsp"]
+
+[tool.setuptools.package-data]
+z30_dsp = ["web_dist/**/*", "web_dist/*"]
+

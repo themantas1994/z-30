@@ -51,15 +51,19 @@ source "$HOME/.z30-env/bin/activate"
 # Install sounddevice inside the venv (uses pacman-provided portaudio & cffi)
 pip install --upgrade sounddevice
 
-# Build and install z-30 package
-python -m build --wheel --no-isolation
-pip install dist/*.whl --force-reinstall
-
 if command -v npm &> /dev/null; then
-  echo -e "${YELLOW}[3/4] Compiling web DSP interface bundle...${NC}"
+  echo -e "${YELLOW}[3/4] Compiling React Web DSP interface bundle...${NC}"
   npm install --silent || true
   npm run build || true
+  mkdir -p "$HOME/.z30/web_dist"
+  cp -r dist/* "$HOME/.z30/web_dist/" 2>/dev/null || true
+  mkdir -p z30_dsp/web_dist
+  cp -r dist/* z30_dsp/web_dist/ 2>/dev/null || true
 fi
+
+# Build and install z-30 package (including web bundle)
+python -m build --wheel --no-isolation
+pip install dist/*.whl --force-reinstall
 
 echo -e "${YELLOW}[4/4] Registering binary launcher and desktop menu entry...${NC}"
 mkdir -p "$HOME/.local/bin"
