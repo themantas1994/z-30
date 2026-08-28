@@ -30,9 +30,11 @@ sudo pacman -Syu --needed --noconfirm \
     git \
     base-devel
 
-echo -e "${YELLOW}[2/4] Building Python package wheel...${NC}"
+echo -e "${YELLOW}[2/4] Building and installing Python package...${NC}"
 python -m pip install --upgrade build wheel --break-system-packages
 python -m pip install sounddevice numpy scipy pyserial --break-system-packages
+# ---> NEW: Actually install the z-30 application package into Python <---
+python -m pip install . --break-system-packages
 
 if command -v npm &> /dev/null; then
   echo -e "${YELLOW}[3/4] Compiling web DSP interface...${NC}"
