@@ -12,6 +12,7 @@ The project provides both a high-performance **interactive Web/PWA GUI** (featur
 
 ---
 <img width="1912" height="921" alt="image" src="https://github.com/user-attachments/assets/b1ff29c3-f6f4-478f-95ac-5f8d1572edc8" />
+[![ko-fi](https://ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/W8U525XLRQ)
 
 ## Table of Contents
 
@@ -543,6 +544,7 @@ z30 --tkinter
 ```
 
 ---
+[![ko-fi](https://ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/W8U525XLRQ)
 
 ## Contributing & License
 
