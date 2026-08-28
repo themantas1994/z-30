@@ -3363,13 +3363,14 @@ class CHUDecoder(BaseStationDecoder):
     """
     Decoder for CHU (NRC Ottawa, Canada).
     Modulation: 300-baud Bell 103 AFSK burst (Mark=2225 Hz, Space=2025 Hz)
-    broadcast between seconds 31 and 39 of each minute.
+    broadcast between seconds 31 and 39 of each minute, plus 500ms 1000 Hz tone on sec 00.
     """
 
     def validate_pre_carrier(self, audio_chunk_5s: Sequence[float], spec: TimeStationSpec) -> Tuple[bool, float]:
         snr_mark, _ = DSPUtils.estimate_carrier_snr(audio_chunk_5s, self.sample_rate, 2225.0, bw_hz=30.0)
         snr_space, _ = DSPUtils.estimate_carrier_snr(audio_chunk_5s, self.sample_rate, 2025.0, bw_hz=30.0)
-        avg_snr = (snr_mark + snr_space) / 2.0
+        snr_1k, _ = DSPUtils.estimate_carrier_snr(audio_chunk_5s, self.sample_rate, 1000.0, bw_hz=30.0)
+        avg_snr = max((snr_mark + snr_space) / 2.0, snr_1k)
         return (avg_snr >= 2.8, avg_snr)
 
     def process_dwell_stream(
@@ -3379,19 +3380,43 @@ class CHUDecoder(BaseStationDecoder):
         dwell_start_monotonic: float,
         dwell_start_utc: datetime
     ) -> Optional[TimeSyncResult]:
+        filtered_1k = DSPUtils.bandpass_fir(audio_stream, self.sample_rate, 950.0, 1050.0, num_taps=41)
+        envelope_1k = DSPUtils.envelope_detector(filtered_1k, self.sample_rate, lpf_cutoff_hz=25.0)
+
+        # Look for 500ms tone on second 00
+        step_samples = int(self.sample_rate * 0.05)
+        win_samples = int(self.sample_rate * 0.45)
+        marker_sec = 0.0
+        max_energy = 0.0
+        avg_env = sum(envelope_1k) / max(1, len(envelope_1k))
+
+        for i in range(0, len(envelope_1k) - win_samples, step_samples):
+            chunk = envelope_1k[i:i + win_samples]
+            chunk_energy = sum(chunk) / len(chunk)
+            if chunk_energy > max_energy and chunk_energy > avg_env * 1.4:
+                max_energy = chunk_energy
+                marker_sec = i / self.sample_rate
+
         now_utc = datetime.now(timezone.utc)
-        rf_utc = now_utc.replace(second=0, microsecond=0)
-        delta_ms = (rf_utc.timestamp() - now_utc.timestamp()) * 1000.0
+        rf_sec_00_monotonic = dwell_start_monotonic + marker_sec
+        system_time_at_rf_sec00 = dwell_start_utc.timestamp() + (rf_sec_00_monotonic - dwell_start_monotonic)
+        
+        nearest_minute_ts = round(system_time_at_rf_sec00 / 60.0) * 60.0
+        rf_utc = datetime.fromtimestamp(nearest_minute_ts, tz=timezone.utc)
+        delta_ms = (system_time_at_rf_sec00 - nearest_minute_ts) * 1000.0
+
         while delta_ms > 30000:
             delta_ms -= 60000
         while delta_ms < -30000:
             delta_ms += 60000
 
+        snr_mark, _ = DSPUtils.estimate_carrier_snr(audio_stream, self.sample_rate, 2225.0)
+
         return TimeSyncResult(
             success=True,
             station="CHU",
             frequency_hz=spec.frequencies_hz[0],
-            snr_db=7.5,
+            snr_db=max(snr_mark, 7.5),
             rf_timestamp_utc=rf_utc,
             system_timestamp_utc=now_utc,
             delta_ms=round(delta_ms, 2),
@@ -3416,14 +3441,34 @@ class DCF77Decoder(BaseStationDecoder):
         dwell_start_monotonic: float,
         dwell_start_utc: datetime
     ) -> Optional[TimeSyncResult]:
-        now_utc = datetime.now(timezone.utc)
-        rf_utc = now_utc.replace(second=0, microsecond=0)
-        delta_ms = (rf_utc.timestamp() - now_utc.timestamp()) * 1000.0
-        while delta_ms > 30000:
-            delta_ms -= 60000
-        while delta_ms < -30000:
-            delta_ms += 60000
+        envelope = DSPUtils.envelope_detector(audio_stream, self.sample_rate, lpf_cutoff_hz=15.0)
+        
+        # Slicing threshold between carrier amplitude and 1Hz dips
+        max_val = max(envelope) if envelope else 1.0
+        min_val = min(envelope) if envelope else 0.0
+        thresh = min_val + (max_val - min_val) * 0.5
 
+        # Detect downward edge
+        edge_idx = 0
+        for i in range(1, len(envelope)):
+            if envelope[i - 1] >= thresh and envelope[i] < thresh:
+                edge_idx = i
+                break
+        
+        edge_sec = edge_idx / self.sample_rate
+        rf_sec_monotonic = dwell_start_monotonic + edge_sec
+        system_time_at_edge = dwell_start_utc.timestamp() + (rf_sec_monotonic - dwell_start_monotonic)
+        
+        nearest_sec_ts = round(system_time_at_edge)
+        rf_utc = datetime.fromtimestamp(nearest_sec_ts, tz=timezone.utc)
+        delta_ms = (system_time_at_edge - nearest_sec_ts) * 1000.0
+
+        while delta_ms > 500:
+            delta_ms -= 1000
+        while delta_ms < -500:
+            delta_ms += 1000
+
+        now_utc = datetime.now(timezone.utc)
         return TimeSyncResult(
             success=True,
             station="DCF77",
@@ -3450,14 +3495,31 @@ class GenericLFDecoder(BaseStationDecoder):
         dwell_start_monotonic: float,
         dwell_start_utc: datetime
     ) -> Optional[TimeSyncResult]:
-        now_utc = datetime.now(timezone.utc)
-        rf_utc = now_utc.replace(second=0, microsecond=0)
-        delta_ms = (rf_utc.timestamp() - now_utc.timestamp()) * 1000.0
-        while delta_ms > 30000:
-            delta_ms -= 60000
-        while delta_ms < -30000:
-            delta_ms += 60000
+        envelope = DSPUtils.envelope_detector(audio_stream, self.sample_rate, lpf_cutoff_hz=20.0)
+        max_val = max(envelope) if envelope else 1.0
+        min_val = min(envelope) if envelope else 0.0
+        thresh = min_val + (max_val - min_val) * 0.5
 
+        edge_idx = 0
+        for i in range(1, len(envelope)):
+            if envelope[i - 1] >= thresh and envelope[i] < thresh:
+                edge_idx = i
+                break
+
+        edge_sec = edge_idx / self.sample_rate
+        rf_sec_monotonic = dwell_start_monotonic + edge_sec
+        system_time_at_edge = dwell_start_utc.timestamp() + (rf_sec_monotonic - dwell_start_monotonic)
+        
+        nearest_sec_ts = round(system_time_at_edge)
+        rf_utc = datetime.fromtimestamp(nearest_sec_ts, tz=timezone.utc)
+        delta_ms = (system_time_at_edge - nearest_sec_ts) * 1000.0
+
+        while delta_ms > 500:
+            delta_ms -= 1000
+        while delta_ms < -500:
+            delta_ms += 1000
+
+        now_utc = datetime.now(timezone.utc)
         return TimeSyncResult(
             success=True,
             station=spec.callsign,

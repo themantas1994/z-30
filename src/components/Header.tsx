@@ -6,7 +6,8 @@ import React, { useEffect, useState } from 'react';
 import { StationConfig, TxSlot } from '../types/z30';
 import { Z30_SPECS, evaluateSlotTiming } from '../dsp/z30Constants';
 import { audioEngine } from '../dsp/audioEngine';
-import { Radio, Mic, MicOff, Volume2, VolumeX, BookOpen, Code2, Settings, HelpCircle, Sparkles, Activity, Play, Cpu, Square, Zap, Clock, Wand2, Maximize2, Minimize2 } from 'lucide-react';
+import { formatUtcTime, formatTimeInTimezone } from '../dsp/timeUtils';
+import { Radio, Mic, MicOff, Volume2, VolumeX, BookOpen, Code2, Settings, HelpCircle, Sparkles, Activity, Play, Cpu, Square, Zap, Clock, Wand2, Maximize2, Minimize2, Globe } from 'lucide-react';
 
 interface HeaderProps {
   config: StationConfig;
@@ -56,6 +57,7 @@ export const Header: React.FC<HeaderProps> = ({
   cycleProgressSec,
 }) => {
   const [utcTimeStr, setUtcTimeStr] = useState<string>('00:00:00');
+  const [localTimeInfo, setLocalTimeInfo] = useState<{ timeStr: string; tzAbbr: string; offsetStr: string } | null>(null);
   const [isMuted, setIsMuted] = useState<boolean>(() => audioEngine.getIsMuted());
   const [micEnabled, setMicEnabled] = useState<boolean>(() => audioEngine.getIsMicrophoneActive());
   const [isFullscreen, setIsFullscreen] = useState<boolean>(false);
@@ -111,12 +113,25 @@ export const Header: React.FC<HeaderProps> = ({
   useEffect(() => {
     const updateTime = () => {
       const now = new Date(Date.now() + (timeOffsetMs || 0));
-      setUtcTimeStr(now.toTimeString().substring(0, 8));
+      // True UTC Time
+      setUtcTimeStr(formatUtcTime(now));
+
+      // Local Station Timezone if configured
+      if (config.timezone && config.timezone !== 'UTC') {
+        const info = formatTimeInTimezone(now, config.timezone);
+        setLocalTimeInfo({
+          timeStr: info.timeStr,
+          tzAbbr: info.tzAbbr,
+          offsetStr: info.offsetStr,
+        });
+      } else {
+        setLocalTimeInfo(null);
+      }
     };
     updateTime();
     const interval = setInterval(updateTime, 200);
     return () => clearInterval(interval);
-  }, [timeOffsetMs]);
+  }, [timeOffsetMs, config.timezone]);
 
   const handleToggleMute = () => {
     const nextMute = !isMuted;
@@ -188,11 +203,23 @@ export const Header: React.FC<HeaderProps> = ({
 
         {/* Center: Live UTC Clock & Synchronous Cycle Readout */}
         <div className="flex items-center space-x-2 bg-[#050505] px-2.5 py-1 border border-[#333] text-xs">
-          {/* UTC Clock */}
-          <div className="flex items-center space-x-1.5">
+          {/* UTC Clock (Radio Protocol Standard) */}
+          <div className="flex items-center space-x-1.5" title="Universal Coordinated Time (UTC) - 30-second digital mode synchronization reference">
             <span className="text-[#666] text-[10px]">UTC:</span>
             <span className="font-bold text-[#00FF41] tracking-wider text-sm">{utcTimeStr}</span>
           </div>
+
+          {/* Optional Operator Local Timezone Readout */}
+          {localTimeInfo && (
+            <div
+              className="flex items-center space-x-1 px-1.5 py-0.5 bg-[#141414] border border-[#333] text-[10px] text-zinc-300 hidden md:flex"
+              title={`Operator Local Time: ${localTimeInfo.timeStr} (${localTimeInfo.tzAbbr} / ${localTimeInfo.offsetStr}) - Protocol slots synchronize strictly to UTC`}
+            >
+              <Globe className="w-2.5 h-2.5 text-zinc-400 mr-0.5" />
+              <span className="text-zinc-400 font-mono">{localTimeInfo.tzAbbr}:</span>
+              <span className="font-mono text-zinc-200 font-bold">{localTimeInfo.timeStr}</span>
+            </div>
+          )}
 
           {/* Time Sync Button */}
           {onOpenTimeSync && (

@@ -120,14 +120,13 @@ export default function App() {
     }
   };
 
-  // Perform a full 30s SIC Decode Cycle on real received audio / transmissions
+  // Perform a full 30s SIC Decode Cycle on real received audio (self-decoding inhibited)
   const executeDecodeCycle = useCallback(() => {
-    const activeMsg = qsoEngine.getCurrentTxMessage(config);
     const result = sicDecoderEngine.runSicDecodeCycle(
       dialFreqHz,
       config.myCall,
       config.myGrid,
-      isTransmitting ? activeMsg : undefined,
+      isTransmitting,
       qsoState.txFreqHz
     );
 
@@ -167,12 +166,20 @@ export default function App() {
     const packed = packZ30Message(txText);
 
     setIsTransmitting(true);
-    rigctl.setPtt(true);
+    rigctl.setPtt(true, config.pttMethod, config.pttPolarity, {
+      pttPort: config.pttPort,
+      pttToneFreqHz: config.pttToneFreqHz,
+      cm108GpioPin: config.cm108GpioPin,
+      rpiGpioPin: config.rpiGpioPin,
+      tciHost: config.tciHost,
+      tciPort: config.tciPort,
+      winkeyerPort: config.winkeyerPort,
+    });
     setFwdWatts(config.txPowerWatts);
     setSwr(1.18);
 
-    // Register active signal into real audio frame history
-    audioEngine.registerActiveSignal(currentState.txFreqHz, txText, packed.symbols, 6);
+    // Register active signal into local audio frame history with isLocalTx = true (for waterfall display only, not for decoder)
+    audioEngine.registerActiveSignal(currentState.txFreqHz, txText, packed.symbols, 6, true);
 
     audioEngine.play16MfskSequence(
       currentState.txFreqHz,
@@ -180,9 +187,15 @@ export default function App() {
       undefined,
       () => {
         setIsTransmitting(false);
-        rigctl.setPtt(false);
+        rigctl.setPtt(false, config.pttMethod, config.pttPolarity);
         setFwdWatts(0);
         setSwr(1.0);
+      },
+      {
+        enableRightTone: config.pttMethod === 'AUDIO_TONE_RIGHT',
+        toneFreqHz: config.pttToneFreqHz || 1000,
+        leadInMs: config.pttLeadInMs || 20,
+        hangTimeMs: config.pttHangTimeMs || 30,
       }
     );
   }, [config, isTransmitting, isTuning]);
@@ -266,7 +279,7 @@ export default function App() {
     }
     setIsTransmitting(false);
     setIsTuning(false);
-    rigctl.setPtt(false);
+    rigctl.setPtt(false, config.pttMethod, config.pttPolarity);
     setFwdWatts(0);
     setSwr(1.0);
     qsoEngine.setTxEnabled(false);
@@ -291,10 +304,21 @@ export default function App() {
       setIsTransmitting(false);
     }
     setIsTuning(true);
-    rigctl.setPtt(true);
+    rigctl.setPtt(true, config.pttMethod, config.pttPolarity, {
+      pttPort: config.pttPort,
+      pttToneFreqHz: config.pttToneFreqHz,
+      cm108GpioPin: config.cm108GpioPin,
+      rpiGpioPin: config.rpiGpioPin,
+      tciHost: config.tciHost,
+      tciPort: config.tciPort,
+      winkeyerPort: config.winkeyerPort,
+    });
     setFwdWatts(config.txPowerWatts);
     setSwr(1.15);
-    audioEngine.startTuneTone(qsoState.txFreqHz);
+    audioEngine.startTuneTone(qsoState.txFreqHz, {
+      enableRightTone: config.pttMethod === 'AUDIO_TONE_RIGHT',
+      toneFreqHz: config.pttToneFreqHz || 1000,
+    });
 
     if (tuneTimeoutRef.current) clearTimeout(tuneTimeoutRef.current);
     tuneTimeoutRef.current = window.setTimeout(() => {
@@ -308,7 +332,7 @@ export default function App() {
       tuneTimeoutRef.current = null;
     }
     setIsTuning(false);
-    rigctl.setPtt(false);
+    rigctl.setPtt(false, config.pttMethod, config.pttPolarity);
     setFwdWatts(0);
     setSwr(1.0);
     audioEngine.stopTransmission();

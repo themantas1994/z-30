@@ -21,10 +21,29 @@ import {
   Sliders,
   CheckCircle2,
   RotateCcw,
+  Globe,
+  Clock,
 } from 'lucide-react';
-import { RIG_CATALOG, SERIAL_PORTS } from './SetupWizardModal';
-import { AUTO_REPLY_OPTIONS } from '../dsp/z30Constants';
+import { RIG_CATALOG } from './SetupWizardModal';
+import { AUTO_REPLY_OPTIONS, PTT_METHODS_CATALOG } from '../dsp/z30Constants';
 import { audioEngine, SystemAudioDevice, AudioSystemDiagnostics } from '../dsp/audioEngine';
+import {
+  TIMEZONE_CATALOG,
+  formatUtcTime,
+  formatTimeInTimezone,
+  getTimezoneOffsetString,
+  resolveEffectiveTimezone,
+} from '../dsp/timeUtils';
+import {
+  HAMLIB_ALL_RIGS,
+  CURRENT_HAMLIB_VERSION,
+  searchHamlibRigs,
+  getHamlibManufacturers,
+  updateHamlibLibrary,
+  getRigByName,
+} from '../dsp/hamlibCatalog';
+import { catController, DiscoveredSerialPort } from '../dsp/catController';
+import { DownloadCloud, CheckCircle, AlertTriangle, Terminal, Cable, Radio as RadioIcon } from 'lucide-react';
 
 interface StationSettingsModalProps {
   isOpen: boolean;
@@ -84,8 +103,37 @@ export const StationSettingsModal: React.FC<StationSettingsModalProps> = ({
 
   // CAT & PTT test state
   const [catTestStatus, setCatTestStatus] = useState<string>('');
+  const [catTestSuccess, setCatTestSuccess] = useState<boolean | null>(null);
+  const [isCatTesting, setIsCatTesting] = useState<boolean>(false);
   const [isPttTesting, setIsPttTesting] = useState<boolean>(false);
+  const [pttTestMsg, setPttTestMsg] = useState<string>('');
   const pttTimeoutRef = useRef<number | null>(null);
+
+  // Hamlib Library Version & Catalog State
+  const [hamlibLibVersion, setHamlibLibVersion] = useState<string>(CURRENT_HAMLIB_VERSION.version);
+  const [hamlibReleaseDate, setHamlibReleaseDate] = useState<string>(CURRENT_HAMLIB_VERSION.releaseDate);
+  const [isUpdatingHamlib, setIsUpdatingHamlib] = useState<boolean>(false);
+  const [hamlibUpdateMsg, setHamlibUpdateMsg] = useState<string>('');
+  const [hamlibSearch, setHamlibSearch] = useState<string>('');
+  const [hamlibMfg, setHamlibMfg] = useState<string>('ALL');
+  const [isConnectingSerial, setIsConnectingSerial] = useState<boolean>(false);
+  const [serialFeedback, setSerialFeedback] = useState<string>('');
+  const [discoveredPorts, setDiscoveredPorts] = useState<DiscoveredSerialPort[]>([]);
+  const [isQueryingSerial, setIsQueryingSerial] = useState<boolean>(false);
+  const [isCustomPortMode, setIsCustomPortMode] = useState<boolean>(false);
+
+  // Scan system serial ports from browser hardware layer
+  const scanSerialPorts = async () => {
+    setIsQueryingSerial(true);
+    try {
+      const ports = await catController.queryRealSerialPorts();
+      setDiscoveredPorts(ports);
+    } catch (e) {
+      console.warn('Failed to query serial ports in settings:', e);
+    } finally {
+      setIsQueryingSerial(false);
+    }
+  };
 
   // Scan system audio devices
   const scanSystemDevices = async (requestPermission = false) => {
@@ -118,11 +166,28 @@ export const StationSettingsModal: React.FC<StationSettingsModalProps> = ({
       setForm({ ...config });
       setIsAudioTesting(false);
       setIsPttTesting(false);
+      setPttTestMsg('');
       setCatTestStatus('');
+      setCatTestSuccess(null);
+      setHamlibUpdateMsg('');
+      setSerialFeedback('');
       scanSystemDevices(false);
+      scanSerialPorts();
+
+      // Subscribe to real-time USB plug/unplug events
+      const unsubscribe = catController.subscribeToPortChanges((ports) => {
+        setDiscoveredPorts(ports);
+      });
+      return () => {
+        unsubscribe();
+      };
     } else {
       if (isAudioTesting) {
         stopAudioTest();
+      }
+      if (isPttTesting) {
+        catController.releasePttEmergency();
+        setIsPttTesting(false);
       }
     }
   }, [isOpen, config]);
@@ -143,7 +208,10 @@ export const StationSettingsModal: React.FC<StationSettingsModalProps> = ({
       audioAnimRef.current = null;
     }
     setIsAudioTesting(false);
-    if (isPttTesting) setIsPttTesting(false);
+    if (isPttTesting) {
+      catController.releasePttEmergency();
+      setIsPttTesting(false);
+    }
     // Keep/activate the selected audio receiver stream running for the station
     await audioEngine.enableMicrophone(form.audioInputDevice);
     onSaveConfig(form);
@@ -156,7 +224,10 @@ export const StationSettingsModal: React.FC<StationSettingsModalProps> = ({
       audioAnimRef.current = null;
     }
     setIsAudioTesting(false);
-    if (isPttTesting) setIsPttTesting(false);
+    if (isPttTesting) {
+      catController.releasePttEmergency();
+      setIsPttTesting(false);
+    }
     onClose();
     if (onOpenWizard) {
       onOpenWizard();
@@ -208,25 +279,94 @@ export const StationSettingsModal: React.FC<StationSettingsModalProps> = ({
     }
   };
 
-  // CAT Test Handler
-  const handleTestCat = () => {
-    setCatTestStatus('Querying rig VFO and status via Hamlib / Serial...');
-    setTimeout(() => {
-      setCatTestStatus(`✓ Connected: ${form.rigModel} on ${form.serialPort} (VFO: 14.074.000 MHz USB-D)`);
-    }, 600);
+  // Update Hamlib Library Handler
+  const handleUpdateHamlib = async () => {
+    setIsUpdatingHamlib(true);
+    setHamlibUpdateMsg('Connecting to Hamlib upstream repository to update transceiver models & CI-V tables...');
+    try {
+      const res = await updateHamlibLibrary();
+      setHamlibLibVersion(res.version);
+      setHamlibReleaseDate(res.releaseDate);
+      setHamlibUpdateMsg(res.message);
+    } catch (e: any) {
+      setHamlibUpdateMsg(`✗ Hamlib update failed: ${e?.message || 'Network timeout'}`);
+    } finally {
+      setIsUpdatingHamlib(false);
+    }
   };
 
-  // PTT Test Handler (3s cutoff)
-  const handleTestPtt = () => {
+  // Real Web Serial Hardware Pairing Handler
+  const handleConnectSerial = async () => {
+    setIsConnectingSerial(true);
+    setSerialFeedback('Querying OS native USB/Serial hardware devices...');
+    try {
+      const res = await catController.requestAndPairRealPort(form.baudRate || 115200);
+      if (res.success && res.portInfo) {
+        setSerialFeedback(`✓ ${res.message}`);
+        setForm((prev) => ({ ...prev, serialPort: res.portInfo!.displayName || res.portInfo!.path }));
+        await scanSerialPorts();
+      } else {
+        setSerialFeedback(`✗ ${res.message}`);
+      }
+    } catch (e: any) {
+      setSerialFeedback(`✗ Serial error: ${e?.message || 'Hardware device query cancelled'}`);
+    } finally {
+      setIsConnectingSerial(false);
+    }
+  };
+
+  // REAL CAT Query Test Handler (NO FALSE PASS)
+  const handleTestCat = async () => {
+    setIsCatTesting(true);
+    setCatTestStatus('Executing hardware query to rig (checking Web Serial & Hamlib daemon)...');
+    setCatTestSuccess(null);
+
+    try {
+      const result = await catController.testCatConnection(form);
+      setCatTestSuccess(result.success);
+      setCatTestStatus(result.message);
+    } catch (err: any) {
+      setCatTestSuccess(false);
+      setCatTestStatus(`✗ CAT Query Failed: ${err?.message || 'Unexpected communication exception'}`);
+    } finally {
+      setIsCatTesting(false);
+    }
+  };
+
+  // REAL PTT Test Handler with 9 Hardware Keying Methods & 3s Safety Auto-Cutoff
+  const handleTestPtt = async () => {
     if (isPttTesting) {
-      if (pttTimeoutRef.current) clearTimeout(pttTimeoutRef.current);
+      catController.releasePttEmergency();
       setIsPttTesting(false);
-    } else {
-      setIsPttTesting(true);
-      if (pttTimeoutRef.current) clearTimeout(pttTimeoutRef.current);
-      pttTimeoutRef.current = window.setTimeout(() => {
-        setIsPttTesting(false);
-      }, 3000);
+      setPttTestMsg('PTT disarmed manually.');
+      return;
+    }
+
+    setIsPttTesting(true);
+    setPttTestMsg(`Keying transmitter via ${form.pttMethod || 'CAT'}...`);
+
+    try {
+      await catController.testPttKey(
+        form.pttMethod || 'CAT',
+        form.pttPolarity || 'ACTIVE_HIGH',
+        3000,
+        (keyed, msg) => {
+          setIsPttTesting(keyed);
+          setPttTestMsg(msg);
+        },
+        {
+          pttPort: form.pttPort,
+          pttToneFreqHz: form.pttToneFreqHz,
+          cm108GpioPin: form.cm108GpioPin,
+          rpiGpioPin: form.rpiGpioPin,
+          tciHost: form.tciHost,
+          tciPort: form.tciPort,
+          winkeyerPort: form.winkeyerPort,
+        }
+      );
+    } catch (e: any) {
+      setIsPttTesting(false);
+      setPttTestMsg(`✗ PTT Test Error: ${e?.message || 'Failed to key transmitter'}`);
     }
   };
 
@@ -417,6 +557,100 @@ export const StationSettingsModal: React.FC<StationSettingsModalProps> = ({
                       placeholder="e.g. Newington, CT"
                       className="w-full bg-[#141414] border border-[#333] px-2.5 py-1 text-xs text-[#D4D4D4] focus:outline-none focus:border-[#00FF41]"
                     />
+                  </div>
+                </div>
+              </div>
+
+              {/* Operating Timezone & UTC Master Clock Reference */}
+              <div className="bg-[#050505] p-3 border border-[#333] space-y-3">
+                <div className="flex items-center justify-between">
+                  <span className="font-bold text-[#D4D4D4] flex items-center space-x-1.5 uppercase text-[11px]">
+                    <Globe className="w-3.5 h-3.5 text-[#00FF41]" />
+                    <span>Station Timezone & Clock Configuration</span>
+                  </span>
+                  <span className="text-[9px] text-zinc-400 bg-[#141414] px-2 py-0.5 border border-[#333]">
+                    Protocol Reference: <strong className="text-[#00FF41]">UTC (Universal Time)</strong>
+                  </span>
+                </div>
+
+                <div>
+                  <label className="text-[9px] uppercase text-[#888] block mb-1">
+                    Operating Station Timezone
+                  </label>
+                  <select
+                    id="settings-timezone-select"
+                    value={form.timezone || 'UTC'}
+                    onChange={(e) => setForm({ ...form, timezone: e.target.value })}
+                    className="w-full bg-[#141414] border border-[#333] px-2.5 py-1.5 text-xs text-cyan-400 font-mono focus:outline-none focus:border-[#00FF41]"
+                  >
+                    <optgroup label="Standard Radio Protocol">
+                      <option value="UTC">UTC (Coordinated Universal Time / GMT) - Default Digital Mode Standard</option>
+                      <option value="SYSTEM_LOCAL">System Local Time (Auto-detect OS/Browser timezone)</option>
+                    </optgroup>
+                    <optgroup label="North America">
+                      {TIMEZONE_CATALOG.filter(t => t.region === 'North America').map(t => (
+                        <option key={t.id} value={t.id}>{t.label} [{t.baseUtcOffset}]</option>
+                      ))}
+                    </optgroup>
+                    <optgroup label="South America">
+                      {TIMEZONE_CATALOG.filter(t => t.region === 'South America').map(t => (
+                        <option key={t.id} value={t.id}>{t.label} [{t.baseUtcOffset}]</option>
+                      ))}
+                    </optgroup>
+                    <optgroup label="Europe">
+                      {TIMEZONE_CATALOG.filter(t => t.region === 'Europe').map(t => (
+                        <option key={t.id} value={t.id}>{t.label} [{t.baseUtcOffset}]</option>
+                      ))}
+                    </optgroup>
+                    <optgroup label="Asia & Middle East">
+                      {TIMEZONE_CATALOG.filter(t => t.region === 'Asia & Middle East').map(t => (
+                        <option key={t.id} value={t.id}>{t.label} [{t.baseUtcOffset}]</option>
+                      ))}
+                    </optgroup>
+                    <optgroup label="Oceania & Pacific">
+                      {TIMEZONE_CATALOG.filter(t => t.region === 'Oceania & Pacific').map(t => (
+                        <option key={t.id} value={t.id}>{t.label} [{t.baseUtcOffset}]</option>
+                      ))}
+                    </optgroup>
+                    <optgroup label="Africa">
+                      {TIMEZONE_CATALOG.filter(t => t.region === 'Africa').map(t => (
+                        <option key={t.id} value={t.id}>{t.label} [{t.baseUtcOffset}]</option>
+                      ))}
+                    </optgroup>
+                  </select>
+                </div>
+
+                {/* Dual Clock Live Readout */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 p-2 bg-[#0A0A0A] border border-[#222]">
+                  <div className="space-y-0.5">
+                    <span className="text-[9px] uppercase text-[#777] block flex items-center gap-1">
+                      <Clock className="w-3 h-3 text-[#00FF41]" />
+                      <span>True Master Protocol Clock (UTC)</span>
+                    </span>
+                    <div className="font-mono text-sm font-bold text-[#00FF41]">
+                      {formatUtcTime(new Date())} <span className="text-[10px] text-zinc-400 font-normal">UTC (+00:00)</span>
+                    </div>
+                  </div>
+
+                  <div className="space-y-0.5">
+                    <span className="text-[9px] uppercase text-[#777] block flex items-center gap-1">
+                      <Globe className="w-3 h-3 text-cyan-400" />
+                      <span>Selected Station Local Display</span>
+                    </span>
+                    <div className="font-mono text-sm font-bold text-cyan-400">
+                      {formatTimeInTimezone(new Date(), form.timezone || 'UTC').timeStr}{' '}
+                      <span className="text-[10px] text-zinc-400 font-normal">
+                        ({formatTimeInTimezone(new Date(), form.timezone || 'UTC').tzAbbr} / {getTimezoneOffsetString(form.timezone || 'UTC')})
+                      </span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Clarification callout */}
+                <div className="text-[10px] text-zinc-400 bg-[#0A0A0A] p-2 border border-[#222] leading-relaxed flex items-start gap-2">
+                  <div className="w-1.5 h-1.5 rounded-full bg-yellow-500 mt-1 flex-shrink-0" />
+                  <div>
+                    <strong className="text-zinc-200">Time Sync & Slot Behavior:</strong> All 30-second z-30 digital mode frames and RF standard time calibrations (WWV, CHU, DCF77, JJY) always synchronize strictly against <strong>Universal Coordinated Time (UTC)</strong>. Selecting a local timezone customizes station clock displays and log timestamps while keeping RF synchronization grounded to UTC second zero.
                   </div>
                 </div>
               </div>
@@ -654,10 +888,49 @@ export const StationSettingsModal: React.FC<StationSettingsModalProps> = ({
           {/* TAB 3: RADIO & CAT / PTT CONTROL */}
           {activeTab === 'RADIO' && (
             <div className="space-y-3">
+              {/* Hamlib Library Version Banner & Upstream Update Control */}
+              <div className="bg-[#0D0D0D] p-3 border border-[#00FF41]/30 space-y-2">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                  <div>
+                    <div className="flex items-center space-x-2">
+                      <Cpu className="w-4 h-4 text-[#00FF41]" />
+                      <span className="text-xs font-bold text-[#D4D4D4] uppercase">
+                        Hamlib Library Engine
+                      </span>
+                      <span className="px-2 py-0.5 text-[9px] font-bold bg-[#00FF41]/10 text-[#00FF41] border border-[#00FF41]/30 rounded">
+                        v{hamlibLibVersion}
+                      </span>
+                    </div>
+                    <div className="text-[10px] text-[#888] mt-0.5">
+                      Current Hamlib Version: <span className="text-cyan-400 font-semibold">libhamlib-{hamlibLibVersion} ({hamlibReleaseDate})</span> • {HAMLIB_ALL_RIGS.length} Transceiver Models Loaded
+                    </div>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={handleUpdateHamlib}
+                    disabled={isUpdatingHamlib}
+                    className="px-3 py-1.5 bg-[#181818] hover:bg-[#252525] text-[#00FF41] border border-[#00FF41]/40 text-xs font-bold uppercase flex items-center justify-center space-x-1.5 transition-colors disabled:opacity-50"
+                    title="Check upstream repository and update Hamlib transceiver definitions"
+                  >
+                    <DownloadCloud className={`w-3.5 h-3.5 ${isUpdatingHamlib ? 'animate-bounce' : ''}`} />
+                    <span>{isUpdatingHamlib ? 'Updating Hamlib...' : 'Update Hamlib Library'}</span>
+                  </button>
+                </div>
+
+                {hamlibUpdateMsg && (
+                  <div className="text-[10px] bg-[#141414] p-2 border border-[#333] text-[#00FF41] flex items-center space-x-1.5">
+                    <CheckCircle className="w-3.5 h-3.5 flex-shrink-0" />
+                    <span>{hamlibUpdateMsg}</span>
+                  </div>
+                )}
+              </div>
+
+              {/* Transceiver & CAT Setup */}
               <div className="bg-[#050505] p-3 border border-[#333] space-y-3">
                 <span className="font-bold text-[#D4D4D4] flex items-center space-x-1.5 uppercase text-[11px]">
-                  <Cpu className="w-3.5 h-3.5 text-[#00FF41]" />
-                  <span>Transceiver CAT & Hamlib Control</span>
+                  <RadioIcon className="w-3.5 h-3.5 text-[#00FF41]" />
+                  <span>Transceiver Rig Model & Control Interface</span>
                 </span>
 
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -668,75 +941,201 @@ export const StationSettingsModal: React.FC<StationSettingsModalProps> = ({
                       onChange={(e) => setForm({ ...form, catMethod: e.target.value as any })}
                       className="w-full bg-[#141414] border border-[#333] px-2.5 py-1.5 text-xs text-[#00FF41] font-bold focus:outline-none focus:border-[#00FF41]"
                     >
-                      <option value="Hamlib">Hamlib (libhamlib/rigctld)</option>
-                      <option value="Direct Serial">Direct Serial CAT</option>
-                      <option value="None">None (Manual / Audio VOX)</option>
+                      <option value="Hamlib">Hamlib (libhamlib/rigctld TCP Daemon)</option>
+                      <option value="Direct Serial">Direct Serial CAT (Web Serial / COM Port)</option>
+                      <option value="None">None (Manual Frequency / Audio VOX Mode)</option>
                     </select>
                   </div>
 
                   <div>
-                    <label className="text-[9px] uppercase text-[#888] block mb-1">Transceiver Rig Model</label>
+                    <div className="flex items-center justify-between mb-1">
+                      <label className="text-[9px] uppercase text-[#888]">Transceiver Rig Model</label>
+                      <span className="text-[8px] text-cyan-400">
+                        {searchHamlibRigs(hamlibSearch, hamlibMfg).length} models available
+                      </span>
+                    </div>
+
+                    <div className="flex gap-1.5 mb-1.5">
+                      <input
+                        type="text"
+                        placeholder="Filter rigs (e.g. 7300, FT-991, K4, G90)..."
+                        value={hamlibSearch}
+                        onChange={(e) => setHamlibSearch(e.target.value)}
+                        className="flex-1 bg-[#101010] border border-[#2A2A2A] px-2 py-0.5 text-[10px] text-[#D4D4D4] focus:outline-none focus:border-[#00FF41]"
+                      />
+                      <select
+                        value={hamlibMfg}
+                        onChange={(e) => setHamlibMfg(e.target.value)}
+                        className="bg-[#101010] border border-[#2A2A2A] px-1.5 py-0.5 text-[10px] text-[#00FF41] focus:outline-none"
+                      >
+                        {getHamlibManufacturers().map((m) => (
+                          <option key={m} value={m}>
+                            {m}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
                     <select
                       value={form.rigModel}
-                      onChange={(e) => setForm({ ...form, rigModel: e.target.value })}
+                      onChange={(e) => {
+                        const selectedName = e.target.value;
+                        const rig = getRigByName(selectedName);
+                        setForm({
+                          ...form,
+                          rigModel: selectedName,
+                          baudRate: rig?.defaultBaud || form.baudRate || 115200,
+                        });
+                      }}
                       className="w-full bg-[#141414] border border-[#333] px-2.5 py-1.5 text-xs text-[#D4D4D4] focus:outline-none focus:border-[#00FF41]"
                     >
-                      {RIG_CATALOG.map((r, i) => (
-                        <option key={i} value={r.name}>
-                          {r.name}
+                      {searchHamlibRigs(hamlibSearch, hamlibMfg).map((r) => (
+                        <option key={`${r.id}-${r.name}`} value={r.name}>
+                          [{r.id}] {r.name}
                         </option>
                       ))}
                     </select>
                   </div>
                 </div>
 
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                  <div className="sm:col-span-2">
-                    <label className="text-[9px] uppercase text-[#888] block mb-1">Serial / COM Port</label>
-                    <select
-                      value={form.serialPort}
-                      onChange={(e) => setForm({ ...form, serialPort: e.target.value })}
-                      className="w-full bg-[#141414] border border-[#333] px-2.5 py-1 text-xs text-[#D4D4D4] focus:outline-none focus:border-[#00FF41]"
-                    >
-                      {SERIAL_PORTS.map((p, i) => (
-                        <option key={i} value={p}>
-                          {p}
-                        </option>
-                      ))}
-                    </select>
+                {/* Real Serial / COM Hardware Query & Web Serial Pairing */}
+                <div className="bg-[#121212] p-3 border border-[#222] space-y-3">
+                  <div className="flex items-center justify-between">
+                    <div className="text-[10px] font-bold text-[#AAA] uppercase flex items-center space-x-1.5">
+                      <span>Real Hardware Serial / COM Interface</span>
+                      {discoveredPorts.length > 0 && (
+                        <span className="text-[8px] bg-green-950/80 text-green-400 border border-green-700/50 px-1 py-0.2 rounded font-mono">
+                          {discoveredPorts.length} Real Port{discoveredPorts.length > 1 ? 's' : ''} Detected
+                        </span>
+                      )}
+                    </div>
+                    <div className="flex items-center space-x-2">
+                      <button
+                        type="button"
+                        onClick={scanSerialPorts}
+                        disabled={isQueryingSerial}
+                        className="text-[9px] text-[#888] hover:text-[#D4D4D4] flex items-center space-x-1"
+                        title="Re-query system serial ports"
+                      >
+                        <RefreshCw className={`w-2.5 h-2.5 ${isQueryingSerial ? 'animate-spin' : ''}`} />
+                        <span>{isQueryingSerial ? 'Querying...' : 'Scan Ports'}</span>
+                      </button>
+
+                      {catController.isWebSerialSupported() && (
+                        <button
+                          type="button"
+                          onClick={handleConnectSerial}
+                          disabled={isConnectingSerial}
+                          className="text-[9px] bg-[#1E1E1E] hover:bg-[#2A2A2A] text-[#00FF41] border border-[#00FF41]/40 px-1.5 py-0.5 flex items-center space-x-1 font-bold"
+                        >
+                          <Cable className="w-2.5 h-2.5" />
+                          <span>{catController.getIsSerialConnected() ? '✓ Serial Active' : 'Query & Pair Hardware Port'}</span>
+                        </button>
+                      )}
+                    </div>
                   </div>
 
-                  <div>
-                    <label className="text-[9px] uppercase text-[#888] block mb-1">Baud Rate</label>
-                    <select
-                      value={form.baudRate}
-                      onChange={(e) => setForm({ ...form, baudRate: Number(e.target.value) })}
-                      className="w-full bg-[#141414] border border-[#333] px-2.5 py-1 text-xs text-[#D4D4D4] focus:outline-none focus:border-[#00FF41]"
-                    >
-                      {[4800, 9600, 19200, 38400, 57600, 115200].map((b) => (
-                        <option key={b} value={b}>
-                          {b} baud
-                        </option>
-                      ))}
-                    </select>
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                    <div className="sm:col-span-2">
+                      <div className="flex items-center justify-between mb-1">
+                        <label className="text-[9px] uppercase text-[#888]">Serial / COM Port</label>
+                        <button
+                          type="button"
+                          onClick={() => setIsCustomPortMode(!isCustomPortMode)}
+                          className="text-[9px] text-cyan-400 hover:underline"
+                        >
+                          {isCustomPortMode ? '← Choose from Detected Ports' : '+ Enter Custom Port Path'}
+                        </button>
+                      </div>
+
+                      {isCustomPortMode ? (
+                        <input
+                          type="text"
+                          value={form.serialPort}
+                          onChange={(e) => setForm({ ...form, serialPort: e.target.value })}
+                          placeholder="/dev/ttyUSB0, COM3, /dev/ttyACM0, /dev/cu.usbserial..."
+                          className="w-full bg-[#181818] border border-cyan-500/50 px-2.5 py-1 text-xs text-[#00FF41] font-mono focus:outline-none"
+                        />
+                      ) : (
+                        <select
+                          value={form.serialPort}
+                          onChange={(e) => {
+                            if (e.target.value === '__CUSTOM__') {
+                              setIsCustomPortMode(true);
+                            } else {
+                              setForm({ ...form, serialPort: e.target.value });
+                            }
+                          }}
+                          className="w-full bg-[#141414] border border-[#333] px-2.5 py-1 text-xs text-[#D4D4D4] focus:outline-none focus:border-[#00FF41]"
+                        >
+                          {discoveredPorts.length > 0 && (
+                            <optgroup label="Real Queried Physical Hardware Ports">
+                              {discoveredPorts.map((p) => (
+                                <option key={p.id} value={p.displayName || p.path}>
+                                  {p.displayName}
+                                </option>
+                              ))}
+                            </optgroup>
+                          )}
+
+                          <optgroup label="Network Daemon CAT Socket">
+                            <option value="TCP: 127.0.0.1:4532 (rigctld daemon / SmartSDR)">
+                              TCP: 127.0.0.1:4532 (Hamlib rigctld Daemon)
+                            </option>
+                          </optgroup>
+
+                          {discoveredPorts.length === 0 && (
+                            <optgroup label="Physical Serial Status">
+                              <option value="" disabled>
+                                No paired USB serial ports detected. Click &quot;Query &amp; Pair Hardware Port&quot; above.
+                              </option>
+                            </optgroup>
+                          )}
+
+                          <option value="__CUSTOM__">+ Enter custom port path (/dev/ttyUSB*, COM*, etc.)...</option>
+                        </select>
+                      )}
+                    </div>
+
+                    <div>
+                      <label className="text-[9px] uppercase text-[#888] block mb-1">Baud Rate</label>
+                      <select
+                        value={form.baudRate}
+                        onChange={(e) => setForm({ ...form, baudRate: Number(e.target.value) })}
+                        className="w-full bg-[#141414] border border-[#333] px-2.5 py-1 text-xs text-[#D4D4D4] focus:outline-none focus:border-[#00FF41]"
+                      >
+                        {[4800, 9600, 19200, 38400, 57600, 115200].map((b) => (
+                          <option key={b} value={b}>
+                            {b} baud
+                          </option>
+                        ))}
+                      </select>
+                    </div>
                   </div>
+
+                  {serialFeedback && (
+                    <div className="text-[9px] text-yellow-400 font-mono bg-[#0D0D0D] p-1.5 border border-[#222]">
+                      {serialFeedback}
+                    </div>
+                  )}
                 </div>
 
+                {/* Hamlib Network Daemon Parameters */}
                 <div className="grid grid-cols-2 gap-3">
                   <div>
-                    <label className="text-[9px] uppercase text-[#888] block mb-1">Hamlib Host</label>
+                    <label className="text-[9px] uppercase text-[#888] block mb-1">Hamlib rigctld Host</label>
                     <input
                       type="text"
-                      value={form.hamlibHost}
+                      value={form.hamlibHost || '127.0.0.1'}
                       onChange={(e) => setForm({ ...form, hamlibHost: e.target.value })}
                       className="w-full bg-[#141414] border border-[#333] px-2.5 py-1 text-xs text-[#D4D4D4] focus:outline-none focus:border-[#00FF41]"
                     />
                   </div>
                   <div>
-                    <label className="text-[9px] uppercase text-[#888] block mb-1">Hamlib Port</label>
+                    <label className="text-[9px] uppercase text-[#888] block mb-1">Hamlib rigctld Port</label>
                     <input
                       type="number"
-                      value={form.hamlibPort}
+                      value={form.hamlibPort || 4532}
                       onChange={(e) => setForm({ ...form, hamlibPort: Number(e.target.value) })}
                       className="w-full bg-[#141414] border border-[#333] px-2.5 py-1 text-xs text-[#D4D4D4] focus:outline-none focus:border-[#00FF41]"
                     />
@@ -744,49 +1143,236 @@ export const StationSettingsModal: React.FC<StationSettingsModalProps> = ({
                 </div>
               </div>
 
-              {/* PTT Keying & Polarity */}
+              {/* PTT Keying & Pin Polarity */}
               <div className="bg-[#050505] p-3 border border-[#333] space-y-3">
-                <span className="font-bold text-[#D4D4D4] uppercase text-[11px] block">
-                  Push-To-Talk (PTT) Keying & Pin Polarity
-                </span>
+                <div className="flex items-center justify-between">
+                  <span className="font-bold text-[#D4D4D4] uppercase text-[11px] block">
+                    Push-To-Talk (PTT) Keying Architecture (Universal Rig Compatibility)
+                  </span>
+                  <span className="text-[9px] text-[#00FF41] bg-green-950/60 border border-green-700/50 px-1.5 py-0.5 rounded font-bold">
+                    9 Methods Supported
+                  </span>
+                </div>
 
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <div>
-                    <label className="text-[9px] uppercase text-[#888] block mb-1">PTT Method</label>
+                    <label className="text-[9px] uppercase text-[#888] block mb-1">
+                      PTT Keying Method <span className="text-yellow-400">*</span>
+                    </label>
                     <select
                       value={form.pttMethod}
                       onChange={(e) => setForm({ ...form, pttMethod: e.target.value as any })}
-                      className="w-full bg-[#141414] border border-[#333] px-2.5 py-1 text-xs text-yellow-400 font-bold focus:outline-none focus:border-[#00FF41]"
+                      className="w-full bg-[#141414] border border-[#333] px-2.5 py-1.5 text-xs text-yellow-400 font-bold focus:outline-none focus:border-[#00FF41]"
                     >
-                      <option value="CAT">CAT Command (\set_ptt 1)</option>
-                      <option value="RTS">Serial Port RTS Line</option>
-                      <option value="DTR">Serial Port DTR Line</option>
-                      <option value="VOX">Audio VOX</option>
+                      <optgroup label="CAT / Serial Commands">
+                        <option value="CAT">CAT Command (\set_ptt 1 / T 1 / CI-V)</option>
+                        <option value="WINKEYER">K1EL WinKeyer 2/3 Serial PTT (0x02 0x01)</option>
+                      </optgroup>
+                      <optgroup label="Direct Hardware Serial Control Lines">
+                        <option value="RTS">Serial Port RTS Pin (Request-To-Send)</option>
+                        <option value="DTR">Serial Port DTR Pin (Data-Terminal-Ready)</option>
+                      </optgroup>
+                      <optgroup label="Audio Tone & VOX Keying">
+                        <option value="AUDIO_TONE_RIGHT">Right-Channel Audio PTT Tone (1000/1500Hz Sine)</option>
+                        <option value="VOX">Transceiver Audio VOX (Voice-Operated Exchange)</option>
+                      </optgroup>
+                      <optgroup label="Embedded Soundcard & SBC GPIO">
+                        <option value="CM108_GPIO">C-Media CM108/CM119 USB Audio GPIO (DRA/URI)</option>
+                        <option value="RASPBERRY_PI_GPIO">Raspberry Pi / Linux SBC Direct GPIO Pin</option>
+                      </optgroup>
+                      <optgroup label="Network & SDR Protocol">
+                        <option value="TCI_NETWORK">TCI Network Protocol (ExpertSDR / SunSDR / Thetis)</option>
+                      </optgroup>
                     </select>
                   </div>
 
+                  {/* Polarity selector for RTS, DTR, RPi GPIO */}
+                  {(form.pttMethod === 'RTS' || form.pttMethod === 'DTR' || form.pttMethod === 'RASPBERRY_PI_GPIO') && (
+                    <div>
+                      <label className="text-[9px] uppercase text-[#888] block mb-1">Pin Polarity</label>
+                      <select
+                        value={form.pttPolarity || 'ACTIVE_HIGH'}
+                        onChange={(e) => setForm({ ...form, pttPolarity: e.target.value as any })}
+                        className="w-full bg-[#141414] border border-[#333] px-2.5 py-1.5 text-xs text-[#D4D4D4] focus:outline-none focus:border-[#00FF41]"
+                      >
+                        <option value="ACTIVE_HIGH">Active High (+12V / Logic 1 = PTT ON)</option>
+                        <option value="ACTIVE_LOW">Active Low (Inverted / Optocoupler Pull-to-GND)</option>
+                      </select>
+                    </div>
+                  )}
+
+                  {/* Right-Channel Audio PTT Settings */}
+                  {form.pttMethod === 'AUDIO_TONE_RIGHT' && (
+                    <div>
+                      <label className="text-[9px] uppercase text-[#888] block mb-1">PTT Tone Frequency</label>
+                      <select
+                        value={form.pttToneFreqHz || 1000}
+                        onChange={(e) => setForm({ ...form, pttToneFreqHz: Number(e.target.value) })}
+                        className="w-full bg-[#141414] border border-[#333] px-2.5 py-1.5 text-xs text-yellow-400 font-bold focus:outline-none focus:border-[#00FF41]"
+                      >
+                        <option value={1000}>1000 Hz Pure Sine (Standard SignaLink / Rigblaster Tone Rectifier)</option>
+                        <option value={1500}>1500 Hz Pure Sine (High-Q Hardware Tone Detector)</option>
+                        <option value={2000}>2000 Hz Pure Sine (Low-Latency Discriminator)</option>
+                      </select>
+                    </div>
+                  )}
+
+                  {/* CM108 GPIO Pin */}
+                  {form.pttMethod === 'CM108_GPIO' && (
+                    <div>
+                      <label className="text-[9px] uppercase text-[#888] block mb-1">CM108 / CM119 GPIO Pin</label>
+                      <select
+                        value={form.cm108GpioPin || 3}
+                        onChange={(e) => setForm({ ...form, cm108GpioPin: Number(e.target.value) })}
+                        className="w-full bg-[#141414] border border-[#333] px-2.5 py-1.5 text-xs text-cyan-400 font-bold focus:outline-none focus:border-[#00FF41]"
+                      >
+                        <option value={3}>GPIO 3 (Pin 13 on CM108/CM119 - Masters Communications DRA-50 / URI standard)</option>
+                        <option value={4}>GPIO 4 (Pin 14 - Digirig CM108 / custom)</option>
+                        <option value={1}>GPIO 1 (Pin 11 - Alternate RIM interface)</option>
+                      </select>
+                    </div>
+                  )}
+
+                  {/* Raspberry Pi GPIO Pin */}
+                  {form.pttMethod === 'RASPBERRY_PI_GPIO' && (
+                    <div>
+                      <label className="text-[9px] uppercase text-[#888] block mb-1">Linux SBC BCM GPIO Pin</label>
+                      <select
+                        value={form.rpiGpioPin || 17}
+                        onChange={(e) => setForm({ ...form, rpiGpioPin: Number(e.target.value) })}
+                        className="w-full bg-[#141414] border border-[#333] px-2.5 py-1.5 text-xs text-green-400 font-bold focus:outline-none focus:border-[#00FF41]"
+                      >
+                        <option value={17}>BCM Pin 17 (Header Pin 11 - Standard Ham Radio HAT / TNC-Pi)</option>
+                        <option value={27}>BCM Pin 27 (Header Pin 13)</option>
+                        <option value={22}>BCM Pin 22 (Header Pin 15)</option>
+                        <option value={23}>BCM Pin 23 (Header Pin 16)</option>
+                        <option value={4}>BCM Pin 4 (Header Pin 7)</option>
+                      </select>
+                    </div>
+                  )}
+
+                  {/* TCI SDR Host & Port */}
+                  {form.pttMethod === 'TCI_NETWORK' && (
+                    <div className="grid grid-cols-2 gap-2">
+                      <div>
+                        <label className="text-[9px] uppercase text-[#888] block mb-1">TCI Host</label>
+                        <input
+                          type="text"
+                          value={form.tciHost || '127.0.0.1'}
+                          onChange={(e) => setForm({ ...form, tciHost: e.target.value })}
+                          className="w-full bg-[#141414] border border-[#333] px-2 py-1 text-xs text-[#D4D4D4] focus:outline-none focus:border-[#00FF41]"
+                        />
+                      </div>
+                      <div>
+                        <label className="text-[9px] uppercase text-[#888] block mb-1">TCI Port</label>
+                        <input
+                          type="number"
+                          value={form.tciPort || 40001}
+                          onChange={(e) => setForm({ ...form, tciPort: Number(e.target.value) })}
+                          className="w-full bg-[#141414] border border-[#333] px-2 py-1 text-xs text-[#D4D4D4] focus:outline-none focus:border-[#00FF41]"
+                        />
+                      </div>
+                    </div>
+                  )}
+
+                  {/* WinKeyer Port */}
+                  {form.pttMethod === 'WINKEYER' && (
+                    <div>
+                      <label className="text-[9px] uppercase text-[#888] block mb-1">WinKeyer Port</label>
+                      <input
+                        type="text"
+                        value={form.winkeyerPort || 'COM1'}
+                        onChange={(e) => setForm({ ...form, winkeyerPort: e.target.value })}
+                        placeholder="COM1, /dev/ttyUSB1..."
+                        className="w-full bg-[#141414] border border-[#333] px-2 py-1 text-xs text-yellow-400 font-mono focus:outline-none focus:border-[#00FF41]"
+                      />
+                    </div>
+                  )}
+                </div>
+
+                {/* Timing Delays (Lead-In & Hang Time) */}
+                <div className="grid grid-cols-2 gap-3 pt-1 border-t border-[#1E1E1E]">
                   <div>
-                    <label className="text-[9px] uppercase text-[#888] block mb-1">Pin Polarity</label>
-                    <select
-                      value={form.pttPolarity || 'ACTIVE_HIGH'}
-                      onChange={(e) => setForm({ ...form, pttPolarity: e.target.value as any })}
-                      className="w-full bg-[#141414] border border-[#333] px-2.5 py-1 text-xs text-[#D4D4D4] focus:outline-none focus:border-[#00FF41]"
-                    >
-                      <option value="ACTIVE_HIGH">Active High (+12V / 1 = PTT ON)</option>
-                      <option value="ACTIVE_LOW">Active Low (Inverted / Optocoupler Pull-to-GND)</option>
-                    </select>
+                    <label className="text-[9px] uppercase text-[#888] flex items-center justify-between mb-1">
+                      <span>PTT Lead-In Time (Pre-Tx Buffer)</span>
+                      <span className="text-cyan-400 font-bold">{form.pttLeadInMs || 20} ms</span>
+                    </label>
+                    <input
+                      type="range"
+                      min="0"
+                      max="500"
+                      step="10"
+                      value={form.pttLeadInMs || 20}
+                      onChange={(e) => setForm({ ...form, pttLeadInMs: Number(e.target.value) })}
+                      className="w-full h-1 bg-[#222] accent-[#00FF41] rounded"
+                    />
+                    <div className="text-[8px] text-[#666] flex justify-between">
+                      <span>0ms (Instant)</span>
+                      <span>50ms (Relay/QSK)</span>
+                      <span>500ms (Slow Amp)</span>
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="text-[9px] uppercase text-[#888] flex items-center justify-between mb-1">
+                      <span>PTT Hangover / Tail Time</span>
+                      <span className="text-yellow-400 font-bold">{form.pttHangTimeMs || 30} ms</span>
+                    </label>
+                    <input
+                      type="range"
+                      min="0"
+                      max="500"
+                      step="10"
+                      value={form.pttHangTimeMs || 30}
+                      onChange={(e) => setForm({ ...form, pttHangTimeMs: Number(e.target.value) })}
+                      className="w-full h-1 bg-[#222] accent-yellow-400 rounded"
+                    />
+                    <div className="text-[8px] text-[#666] flex justify-between">
+                      <span>0ms (Sharp Cutoff)</span>
+                      <span>30ms (Smooth Break)</span>
+                      <span>500ms (Repeater Hold)</span>
+                    </div>
                   </div>
                 </div>
+
+                {/* Dynamic Hardware Method Guidance & Transceiver Wiring Guide */}
+                {(() => {
+                  const meta = PTT_METHODS_CATALOG.find((m) => m.id === form.pttMethod) || PTT_METHODS_CATALOG[0];
+                  return (
+                    <div className="text-[9px] text-[#BBB] bg-[#0E0E0E] p-2.5 border border-[#222] space-y-1.5">
+                      <div className="flex items-center justify-between">
+                        <span className="font-bold text-cyan-400 uppercase tracking-wide">
+                          Method Details: {meta.name}
+                        </span>
+                        <span className="text-[8px] text-yellow-400 bg-yellow-950/60 px-1 py-0.2 border border-yellow-800/40">
+                          {meta.recommendedFor}
+                        </span>
+                      </div>
+                      <p className="text-[#AAA] leading-relaxed">{meta.description}</p>
+                      <div className="text-[8px] text-[#00FF41] bg-[#141414] p-1.5 border border-[#262626]">
+                        <span className="text-[#888] font-bold uppercase mr-1">Wiring & Interface Setup:</span>
+                        {meta.wiringTips}
+                      </div>
+                      <div className="flex flex-wrap items-center gap-1 pt-1 border-t border-[#1C1C1C]">
+                        <span className="text-[#666] uppercase text-[8px]">Supported Transceivers / Hardware:</span>
+                        <span className="text-gray-300 font-mono text-[8px]">{meta.supportedRigs}</span>
+                      </div>
+                    </div>
+                  );
+                })()}
 
                 {/* Hardware Verification Controls */}
                 <div className="flex flex-wrap items-center gap-2 pt-1 border-t border-[#222]">
                   <button
                     type="button"
                     onClick={handleTestCat}
-                    className="px-3 py-1 bg-[#1A1A1A] hover:bg-[#262626] text-cyan-400 border border-cyan-500/40 text-xs font-bold uppercase"
+                    disabled={isCatTesting}
+                    className="px-3 py-1 bg-[#1A1A1A] hover:bg-[#262626] text-cyan-400 border border-cyan-500/40 text-xs font-bold uppercase flex items-center space-x-1.5 transition-colors disabled:opacity-50"
                   >
-                    Test CAT Query
+                    <Terminal className="w-3 h-3" />
+                    <span>{isCatTesting ? 'Querying Radio...' : 'Test CAT Query'}</span>
                   </button>
+
                   <button
                     type="button"
                     onClick={handleTestPtt}
@@ -796,11 +1382,41 @@ export const StationSettingsModal: React.FC<StationSettingsModalProps> = ({
                         : 'bg-[#1A1A1A] hover:bg-[#262626] text-red-400 border-red-500/40'
                     }`}
                   >
-                    {isPttTesting ? '● PTT Key Active (3s Cutoff)' : 'PTT Key Test (3s Safety Cutoff)'}
+                    {isPttTesting ? '● PTT Key Active (3s Auto-Cutoff)' : `Test ${form.pttMethod || 'CAT'} Key (3s Cutoff)`}
                   </button>
                 </div>
+
+                {/* Real Diagnostic Message (NO FALSE PASS) */}
                 {catTestStatus && (
-                  <div className="text-[10px] text-[#00FF41] font-mono">{catTestStatus}</div>
+                  <div
+                    className={`text-[10px] font-mono p-2 border flex items-start space-x-2 ${
+                      catTestSuccess === true
+                        ? 'bg-[#00FF41]/10 border-[#00FF41]/40 text-[#00FF41]'
+                        : catTestSuccess === false
+                        ? 'bg-red-950/40 border-red-500/40 text-red-400'
+                        : 'bg-[#1A1A1A] border-[#333] text-cyan-400'
+                    }`}
+                  >
+                    {catTestSuccess === true ? (
+                      <CheckCircle className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" />
+                    ) : (
+                      <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" />
+                    )}
+                    <div>
+                      <div className="font-bold">{catTestStatus}</div>
+                      {catTestSuccess === false && form.catMethod !== 'None' && (
+                        <div className="text-[9px] text-[#AAA] mt-1">
+                          Diagnostic tip: Check that the transceiver is powered on, USB cable is connected, and baud rate matches the radio menu setting.
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                {pttTestMsg && (
+                  <div className="text-[10px] text-yellow-400 font-mono bg-[#141414] p-2 border border-[#333]">
+                    {pttTestMsg}
+                  </div>
                 )}
               </div>
             </div>

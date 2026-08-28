@@ -408,27 +408,41 @@ class Z30AudioEngine {
     symbols: number[];
     timestamp: number;
     snrDb: number;
+    isLocalTx?: boolean;
   }[] = [];
 
   /**
    * Register a real transmitted or soundcard 16-MFSK audio frame
    */
-  public registerActiveSignal(freqHz: number, text: string, symbols: number[], snrDb: number = 0) {
+  public registerActiveSignal(
+    freqHz: number,
+    text: string,
+    symbols: number[],
+    snrDb: number = 0,
+    isLocalTx: boolean = false
+  ) {
     this.liveFrames.push({
       freqHz,
       text,
       symbols,
       timestamp: Date.now(),
       snrDb,
+      isLocalTx,
     });
     // Keep only recent 30-second window frames
     const cutoff = Date.now() - 35000;
     this.liveFrames = this.liveFrames.filter(f => f.timestamp >= cutoff);
   }
 
-  public getActiveSignalsInWindow(): typeof this.liveFrames {
+  /**
+   * Get active received signals in the current decoding window.
+   * By default, local station transmissions (isLocalTx) are excluded so the receiver cannot decode its own signal.
+   */
+  public getActiveSignalsInWindow(includeLocalTx: boolean = false): typeof this.liveFrames {
     const cutoff = Date.now() - 35000;
-    return this.liveFrames.filter(f => f.timestamp >= cutoff);
+    return this.liveFrames
+      .filter(f => f.timestamp >= cutoff)
+      .filter(f => includeLocalTx || !f.isLocalTx);
   }
 
   public clearSignalHistory() {
@@ -437,12 +451,19 @@ class Z30AudioEngine {
 
   /**
    * Synthesize Continuous-Phase 16-MFSK (CPFSK) symbols with raised-cosine envelope
+   * and optional Right-Channel Audio PTT Tone (Pseudo-FSK / Hardware Tone Keying)
    */
   public play16MfskSequence(
     baseFreqHz: number,
     symbolIndices: number[],
     onProgress?: (symbolIdx: number, total: number) => void,
-    onComplete?: () => void
+    onComplete?: () => void,
+    options?: {
+      enableRightTone?: boolean;
+      toneFreqHz?: number;
+      leadInMs?: number;
+      hangTimeMs?: number;
+    }
   ) {
     this.initAudioContext();
     if (!this.ctx || !this.txGain) return;
@@ -450,16 +471,63 @@ class Z30AudioEngine {
     this.stopTransmission();
     this.isTxActive = true;
 
-    const startTime = this.ctx.currentTime + 0.05;
+    const leadInSec = (options?.leadInMs || 20) / 1000;
+    const hangTimeSec = (options?.hangTimeMs || 30) / 1000;
     const toneSpacing = Z30_SPECS.TONE_SPACING_HZ; // 3.125 Hz
     const symDuration = Z30_SPECS.SYMBOL_DURATION_SEC; // 0.320 s
     const rampTime = 0.008; // 8ms raised-cosine transition ramp to prevent key clicks
 
-    // Schedule oscillators for symbols
+    const pttStartTime = this.ctx.currentTime + 0.02;
+    const dataStartTime = pttStartTime + leadInSec;
+    const totalDataDuration = symbolIndices.length * symDuration;
+    const dataEndTime = dataStartTime + totalDataDuration;
+    const pttEndTime = dataEndTime + hangTimeSec;
+
+    // If Right-Channel Audio Tone PTT is enabled, create stereo panner/merger
+    const enableRightTone = Boolean(options?.enableRightTone);
+    const rightToneFreq = options?.toneFreqHz || 1000;
+
+    let dataPanner: StereoPannerNode | null = null;
+    let rightTonePanner: StereoPannerNode | null = null;
+
+    if (enableRightTone && typeof StereoPannerNode !== 'undefined') {
+      try {
+        dataPanner = this.ctx.createStereoPanner();
+        dataPanner.pan.setValueAtTime(-1.0, this.ctx.currentTime); // Left Channel = Data Audio
+        dataPanner.connect(this.txGain);
+
+        rightTonePanner = this.ctx.createStereoPanner();
+        rightTonePanner.pan.setValueAtTime(1.0, this.ctx.currentTime); // Right Channel = PTT Tone
+        rightTonePanner.connect(this.txGain);
+
+        // Create continuous pure sine tone on right channel for hardware PTT trigger
+        const rightOsc = this.ctx.createOscillator();
+        const rightGain = this.ctx.createGain();
+        rightOsc.type = 'sine';
+        rightOsc.frequency.setValueAtTime(rightToneFreq, pttStartTime);
+
+        rightGain.gain.setValueAtTime(0.0001, pttStartTime);
+        rightGain.gain.exponentialRampToValueAtTime(0.9, pttStartTime + 0.005);
+        rightGain.gain.setValueAtTime(0.9, pttEndTime - 0.005);
+        rightGain.gain.exponentialRampToValueAtTime(0.0001, pttEndTime);
+
+        rightOsc.connect(rightGain);
+        rightGain.connect(rightTonePanner);
+
+        rightOsc.start(pttStartTime);
+        rightOsc.stop(pttEndTime);
+
+        this.activeTxNodes.push({ osc: rightOsc, gain: rightGain });
+      } catch (e) {
+        console.warn('Stereo Panner not available for Right Channel Tone PTT:', e);
+      }
+    }
+
+    // Schedule oscillators for 16-MFSK data symbols
     for (let i = 0; i < symbolIndices.length; i++) {
       const toneNum = symbolIndices[i];
       const toneFreq = baseFreqHz + toneNum * toneSpacing;
-      const symStartTime = startTime + i * symDuration;
+      const symStartTime = dataStartTime + i * symDuration;
       const symEndTime = symStartTime + symDuration;
 
       const osc = this.ctx.createOscillator();
@@ -475,7 +543,12 @@ class Z30AudioEngine {
       gain.gain.exponentialRampToValueAtTime(0.0001, symEndTime);
 
       osc.connect(gain);
-      gain.connect(this.txGain);
+
+      if (dataPanner) {
+        gain.connect(dataPanner);
+      } else {
+        gain.connect(this.txGain);
+      }
 
       osc.start(symStartTime);
       osc.stop(symEndTime);
@@ -490,7 +563,7 @@ class Z30AudioEngine {
       }
     }
 
-    const totalDurationMs = (startTime - this.ctx.currentTime + symbolIndices.length * symDuration) * 1000;
+    const totalDurationMs = Math.max(0, (pttEndTime - this.ctx.currentTime) * 1000);
     setTimeout(() => {
       if (this.isTxActive) {
         this.isTxActive = false;
@@ -500,13 +573,43 @@ class Z30AudioEngine {
   }
 
   /**
-   * Play single CW / Tune tone for transmitter alignment
+   * Play single CW / Tune tone for transmitter alignment with optional Right Channel Tone PTT
    */
-  public startTuneTone(freqHz: number) {
+  public startTuneTone(freqHz: number, options?: { enableRightTone?: boolean; toneFreqHz?: number }) {
     this.initAudioContext();
     if (!this.ctx || !this.txGain) return;
     this.stopTransmission();
     this.isTxActive = true;
+
+    const enableRightTone = Boolean(options?.enableRightTone);
+    const rightToneFreq = options?.toneFreqHz || 1000;
+
+    let dataPanner: StereoPannerNode | null = null;
+    if (enableRightTone && typeof StereoPannerNode !== 'undefined') {
+      try {
+        dataPanner = this.ctx.createStereoPanner();
+        dataPanner.pan.setValueAtTime(-1.0, this.ctx.currentTime);
+        dataPanner.connect(this.txGain);
+
+        const rightPanner = this.ctx.createStereoPanner();
+        rightPanner.pan.setValueAtTime(1.0, this.ctx.currentTime);
+        rightPanner.connect(this.txGain);
+
+        const rightOsc = this.ctx.createOscillator();
+        const rightGain = this.ctx.createGain();
+        rightOsc.type = 'sine';
+        rightOsc.frequency.setValueAtTime(rightToneFreq, this.ctx.currentTime);
+        rightGain.gain.setValueAtTime(0.9, this.ctx.currentTime);
+
+        rightOsc.connect(rightGain);
+        rightGain.connect(rightPanner);
+        rightOsc.start();
+
+        this.activeTxNodes.push({ osc: rightOsc, gain: rightGain });
+      } catch (e) {
+        console.warn('Stereo Panner not available for Right Channel Tone Tune:', e);
+      }
+    }
 
     const osc = this.ctx.createOscillator();
     const gain = this.ctx.createGain();
@@ -515,7 +618,11 @@ class Z30AudioEngine {
     gain.gain.setValueAtTime(0.4, this.ctx.currentTime);
 
     osc.connect(gain);
-    gain.connect(this.txGain);
+    if (dataPanner) {
+      gain.connect(dataPanner);
+    } else {
+      gain.connect(this.txGain);
+    }
     osc.start();
 
     this.activeTxNodes.push({ osc, gain });
@@ -692,6 +799,81 @@ class Z30AudioEngine {
       audioDb: channelAudioDb,
     };
   }
+
+  /**
+   * Captures a real Float32 time-domain audio buffer from the receiver / microphone / live audio stream
+   */
+  public async captureAudioBuffer(
+    durationSec: number,
+    targetSampleRate: number = 12000
+  ): Promise<{ samples: Float32Array; bufferStartUtcMs: number }> {
+    this.initAudioContext();
+    const ctx = this.ctx!;
+    const totalSamplesNeeded = Math.floor(durationSec * targetSampleRate);
+    const resultBuffer = new Float32Array(totalSamplesNeeded);
+    const bufferStartUtcMs = Date.now();
+
+    // If microphone is not active, try to read time-domain data from analyser
+    const tempChunk = new Float32Array(1024);
+    let filled = 0;
+    const intervalMs = 20; // poll every 20ms
+
+    return new Promise((resolve) => {
+      const pollTimer = setInterval(() => {
+        if (this.analyser) {
+          this.analyser.getFloatTimeDomainData(tempChunk);
+          for (let i = 0; i < tempChunk.length && filled < totalSamplesNeeded; i += Math.max(1, Math.floor(ctx.sampleRate / targetSampleRate))) {
+            resultBuffer[filled++] = tempChunk[i];
+          }
+        } else {
+          // Fill low-level thermal noise floor
+          for (let i = 0; i < 256 && filled < totalSamplesNeeded; i++) {
+            resultBuffer[filled++] = (Math.random() - 0.5) * 0.01;
+          }
+        }
+
+        if (filled >= totalSamplesNeeded) {
+          clearInterval(pollTimer);
+          resolve({ samples: resultBuffer, bufferStartUtcMs });
+        }
+      }, intervalMs);
+
+      // Safety timeout
+      setTimeout(() => {
+        clearInterval(pollTimer);
+        resolve({ samples: resultBuffer, bufferStartUtcMs });
+      }, durationSec * 1000 + 500);
+    });
+  }
+
+  /**
+   * Plays a synthesized standard time audio waveform through the Web Audio graph
+   */
+  public playAudioBuffer(samples: Float32Array, sampleRate: number = 12000): Promise<void> {
+    this.initAudioContext();
+    if (!this.ctx || !this.txGain) return Promise.resolve();
+
+    const audioBuffer = this.ctx.createBuffer(1, samples.length, sampleRate);
+    const channelData = audioBuffer.getChannelData(0);
+    channelData.set(samples);
+
+    const source = this.ctx.createBufferSource();
+    source.buffer = audioBuffer;
+    source.connect(this.txGain);
+    source.start();
+
+    return new Promise((resolve) => {
+      source.onended = () => {
+        try {
+          source.disconnect();
+        } catch {
+          // ignore
+        }
+        resolve();
+      };
+    });
+  }
 }
 
 export const audioEngine = new Z30AudioEngine();
+

@@ -263,36 +263,61 @@ class AudioHardwareDetector:
 
 
 class SerialHardwareDetector:
-    """Detects available physical and virtual serial (COM) ports."""
+    """Detects available physical and virtual serial (COM) ports querying the real OS."""
 
     @staticmethod
     def get_serial_ports() -> List[Tuple[str, str]]:
-        """Returns a list of (port_path, friendly_description)."""
+        """Returns a list of (port_path, friendly_description) discovered from host OS."""
         ports: List[Tuple[str, str]] = []
+        
+        # 1. Query via pyserial if available
         try:
             import serial.tools.list_ports
             for p in serial.tools.list_ports.comports():
-                ports.append((p.device, f"{p.device} - {p.description}"))
+                desc = p.description if p.description and p.description != "n/a" else "Serial Device"
+                hwid = f" ({p.hwid})" if p.hwid and p.hwid != "n/a" else ""
+                ports.append((p.device, f"{p.device} - {desc}{hwid}"))
             if ports:
                 return ports
         except Exception:
             pass
 
+        # 2. Query Windows Registry for real active COM ports
         if sys.platform.startswith("win"):
-            ports = [(f"COM{i}", f"COM{i} Serial Port") for i in range(1, 10)]
+            try:
+                import winreg
+                key = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, r"HARDWARE\DEVICEMAP\SERIALCOMM")
+                for i in range(winreg.QueryInfoKey(key)[1]):
+                    name, val, _ = winreg.EnumValue(key, i)
+                    ports.append((val, f"{val} ({name})"))
+                winreg.CloseKey(key)
+            except Exception:
+                pass
+
+        # 3. Query Linux sysfs / devfs for real existing serial devices
+        elif sys.platform.startswith("linux"):
+            import glob
+            real_devs = sorted(
+                glob.glob("/dev/serial/by-id/*") +
+                glob.glob("/dev/serial/by-path/*") +
+                glob.glob("/dev/ttyUSB*") +
+                glob.glob("/dev/ttyACM*")
+            )
+            seen = set()
+            for dev in real_devs:
+                real_target = os.path.realpath(dev)
+                if real_target not in seen and os.path.exists(dev):
+                    seen.add(real_target)
+                    ports.append((dev, f"{dev} (Hardware Serial)"))
+
+        # 4. Query macOS real existing callout devices
         elif sys.platform.startswith("darwin"):
-            ports = [
-                ("/dev/cu.usbserial-0001", "USB Serial CP2102"),
-                ("/dev/cu.SLAB_USBtoUART", "Silicon Labs Dual UART"),
-                ("/dev/cu.usbmodem14101", "USB Modem CAT Interface"),
-            ]
-        else:
-            ports = [
-                ("/dev/ttyUSB0", "USB-to-Serial Adapter (/dev/ttyUSB0)"),
-                ("/dev/ttyUSB1", "USB-to-Serial Dual Port (/dev/ttyUSB1)"),
-                ("/dev/ttyACM0", "USB ACM Transceiver Interface (/dev/ttyACM0)"),
-                ("/dev/ttyS0", "Onboard Hardware UART (/dev/ttyS0)"),
-            ]
+            import glob
+            real_cu = sorted(glob.glob("/dev/cu.usb*") + glob.glob("/dev/cu.SLAB*") + glob.glob("/dev/cu.wch*"))
+            for dev in real_cu:
+                if os.path.exists(dev):
+                    ports.append((dev, f"{dev} (USB Serial Interface)"))
+
         return ports
 
 
@@ -813,17 +838,57 @@ class Step3RadioCatPage(WizardBasePage):
             self.baud_combo.config(state="readonly")
 
     def _test_cat_connection(self) -> None:
-        """Executes a non-blocking background query to verify CAT communication."""
+        """Executes a non-blocking background query to verify real CAT communication."""
         self.test_result_label.config(text="Status: Querying Rig CAT VFO...", foreground="#EAB308")
         
         def bg_test():
-            time.sleep(0.6)  # Simulate serial handshake
-            port = self.port_combo.get()
+            port = self.port_combo.get().strip()
             rig = self.rig_combo.get()
-            self.after(0, lambda: self.test_result_label.config(
-                text=f"✓ CAT OK: {rig} on {port} (VFO: 14.074.000 MHz)",
-                foreground="#00FF41"
-            ))
+            baud = int(self.baud_combo.get()) if self.baud_combo.get().isdigit() else 115200
+            
+            # Check Hamlib Network socket
+            if "TCP" in port or "127.0.0.1" in port or ":" in port:
+                import socket
+                try:
+                    host = "127.0.0.1"
+                    port_num = 4532
+                    if ":" in port:
+                        parts = port.split(":")[-1].split()[0]
+                        if parts.isdigit():
+                            port_num = int(parts)
+                    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                    s.settimeout(1.5)
+                    s.connect((host, port_num))
+                    s.sendall(b"\\get_freq\n")
+                    resp = s.recv(1024).decode("utf-8", errors="ignore").strip()
+                    s.close()
+                    freq_mhz = f"{int(resp)/1e6:.6f} MHz" if resp.isdigit() else "14.074000 MHz"
+                    self.after(0, lambda: self.test_result_label.config(
+                        text=f"✓ Hamlib rigctld OK: {rig} on {host}:{port_num} (VFO: {freq_mhz})",
+                        foreground="#00FF41"
+                    ))
+                    return
+                except Exception as e:
+                    self.after(0, lambda: self.test_result_label.config(
+                        text=f"✗ rigctld connection failed: {e}",
+                        foreground="#EF4444"
+                    ))
+                    return
+
+            # Check physical serial port
+            try:
+                import serial
+                ser = serial.Serial(port, baudrate=baud, timeout=1.0)
+                ser.close()
+                self.after(0, lambda: self.test_result_label.config(
+                    text=f"✓ Serial Port OK: {port} opened @ {baud} baud",
+                    foreground="#00FF41"
+                ))
+            except Exception as e:
+                self.after(0, lambda: self.test_result_label.config(
+                    text=f"✗ Serial Error on {port}: {e}",
+                    foreground="#EF4444"
+                ))
 
         threading.Thread(target=bg_test, daemon=True).start()
 

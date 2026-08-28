@@ -7,6 +7,7 @@ import { DecodedSignal } from '../types/z30';
 import { Z30_SPECS } from './z30Constants';
 import { packZ30Message } from './z30Codec';
 import { audioEngine } from './audioEngine';
+import { formatUtcTime } from './timeUtils';
 
 export interface SicIterationStep {
   passNumber: 1 | 2 | 3;
@@ -22,28 +23,43 @@ export class Z30SicDecoderEngine {
   private currentCycleDecodes: DecodedSignal[] = [];
 
   /**
-   * Run full multi-signal SIC decoding cycle across the audio bandwidth
+   * Run full multi-signal SIC decoding cycle across the audio bandwidth.
+   * Prevents self-decoding of local transmissions.
    */
   public runSicDecodeCycle(
     dialFreqHz: number,
     myCall: string,
     _myGrid: string,
-    activeTxMessage?: string,
-    activeTxFreq?: number
+    isStationTransmitting: boolean = false,
+    _txFreqHz?: number
   ): { decodes: DecodedSignal[]; steps: SicIterationStep[] } {
     const now = new Date();
-    const timeStr = now.toTimeString().substring(0, 8);
+    const timeStr = formatUtcTime(now);
     const utcSec = now.getUTCSeconds();
     const steps: SicIterationStep[] = [];
     const cycleDecodes: DecodedSignal[] = [];
 
     // Base RF center dial in MHz
     const dialMhz = dialFreqHz / 1e6;
+    const cleanMyCall = (myCall || '').trim().toUpperCase();
 
-    // Collect actual signals registered in the audio window
-    const recordedSignals = audioEngine.getActiveSignalsInWindow();
+    // If station is actively transmitting, transceiver receiver is muted/blanked (simplex operation)
+    if (isStationTransmitting) {
+      steps.push({
+        passNumber: 1,
+        description: 'Pass 1 (Direct LDPC): Station actively transmitting on RF. Receiver front-end muted / self-decode inhibited.',
+        residualPowerDb: -40.0,
+        signalsFound: [],
+      });
+      this.lastIterationSteps = steps;
+      this.currentCycleDecodes = [];
+      return { decodes: [], steps };
+    }
 
-    // Candidates array populated ONLY from real signals
+    // Collect actual received signals registered in the audio window (excluding local TX frames)
+    const recordedSignals = audioEngine.getActiveSignalsInWindow(false);
+
+    // Candidates array populated ONLY from received RF signals
     const rawCandidates: {
       call: string;
       grid: string;
@@ -55,11 +71,18 @@ export class Z30SicDecoderEngine {
       packed: ReturnType<typeof packZ30Message>;
     }[] = [];
 
-    // 1. Process any active signals heard in the audio window
+    // 1. Process active incoming signals heard in the audio window
     for (const sig of recordedSignals) {
       const packed = packZ30Message(sig.text);
+      const callFrom = (packed.callFrom || 'STATION').toUpperCase();
+
+      // Guard: strictly ignore any self-transmitted signals or signals originating from our own callsign
+      if (cleanMyCall && (callFrom === cleanMyCall || sig.text.toUpperCase().startsWith(`${cleanMyCall} `))) {
+        continue;
+      }
+
       rawCandidates.push({
-        call: packed.callFrom || 'STATION',
+        call: callFrom,
         grid: packed.grid || 'FN31',
         freq: sig.freqHz,
         snr: sig.snrDb || -12,
@@ -70,29 +93,11 @@ export class Z30SicDecoderEngine {
       });
     }
 
-    // 2. If user transmitted in this cycle, include the self-monitored TX decode
-    if (activeTxMessage && activeTxFreq) {
-      const alreadyPresent = rawCandidates.some(c => Math.abs(c.freq - activeTxFreq) < 5);
-      if (!alreadyPresent) {
-        const packed = packZ30Message(activeTxMessage);
-        rawCandidates.push({
-          call: packed.callFrom || myCall,
-          grid: packed.grid || 'FN31',
-          freq: activeTxFreq,
-          snr: 6,
-          dt: 0.0,
-          message: activeTxMessage,
-          isCq: packed.type === 'CQ',
-          packed,
-        });
-      }
-    }
-
-    // If no real signals were received or transmitted, report an empty clean band
+    // If no real signals were received, report an empty clean band
     if (rawCandidates.length === 0) {
       steps.push({
         passNumber: 1,
-        description: 'Pass 1 (Direct LDPC): Passband scanned (200 - 3000 Hz). No carrier peaks detected above noise floor.',
+        description: 'Pass 1 (Direct LDPC): Passband scanned (200 - 3000 Hz). No external carrier peaks detected above noise floor.',
         residualPowerDb: -35.0,
         signalsFound: [],
       });

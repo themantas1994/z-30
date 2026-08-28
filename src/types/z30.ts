@@ -43,6 +43,17 @@ export interface DecodedSignal {
   ldpcIterations?: number;
 }
 
+export type PttMethodType =
+  | 'CAT'
+  | 'RTS'
+  | 'DTR'
+  | 'VOX'
+  | 'AUDIO_TONE_RIGHT'
+  | 'CM108_GPIO'
+  | 'RASPBERRY_PI_GPIO'
+  | 'TCI_NETWORK'
+  | 'WINKEYER';
+
 export interface StationConfig {
   myCall: string;
   myGrid: string;
@@ -63,8 +74,19 @@ export interface StationConfig {
   dataBits?: number;
   stopBits?: number;
   handshake?: string;
-  pttMethod: 'CAT' | 'RTS' | 'DTR' | 'VOX';
+  // PTT Keying Hardware Configuration (All Transceiver Types)
+  pttMethod: PttMethodType;
+  pttPort?: string; // Optional separate dedicated PTT COM/serial port
   pttPolarity?: 'ACTIVE_HIGH' | 'ACTIVE_LOW';
+  pttToneFreqHz?: number; // Frequency for Right-Channel PTT Tone (default 1000 Hz)
+  pttToneChannel?: 'RIGHT' | 'LEFT' | 'BOTH';
+  cm108GpioPin?: number; // C-Media CM108/CM119 GPIO pin (e.g. 3 or 4)
+  rpiGpioPin?: number; // Raspberry Pi / Linux SBC BCM GPIO pin (e.g. 17 or 27)
+  tciHost?: string; // TCI Network Host (e.g. 127.0.0.1)
+  tciPort?: number; // TCI Network Port (e.g. 40001)
+  winkeyerPort?: string; // WinKeyer COM port if using external keyer
+  pttLeadInMs?: number; // Lead-in PTT pre-key delay in ms (e.g. 20ms)
+  pttHangTimeMs?: number; // Tail hangover release delay in ms (e.g. 30ms)
   autoSeq: boolean;
   call1st: boolean;
   autoReplyPriority?: AutoReplyPriority;
@@ -74,6 +96,7 @@ export interface StationConfig {
   defaultTxSlot?: TxSlot;
   customBands?: Record<string, number>;
   appTimeOffsetMs?: number;
+  timezone?: string; // Timezone identifier (e.g. 'UTC', 'SYSTEM_LOCAL', 'America/New_York')
 }
 
 export interface BandDef {
