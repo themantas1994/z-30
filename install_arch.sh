@@ -21,7 +21,6 @@ sudo pacman -Syu --needed --noconfirm \
     python-numpy \
     python-scipy \
     python-pyserial \
-    python-sounddevice \
     python-cffi \
     portaudio \
     hamlib \
@@ -32,8 +31,8 @@ sudo pacman -Syu --needed --noconfirm \
     base-devel
 
 echo -e "${YELLOW}[2/4] Building Python package wheel...${NC}"
-python -m pip install --upgrade build wheel
-python -m pip install sounddevice numpy scipy pyserial
+python -m pip install --upgrade build wheel --break-system-packages
+python -m pip install sounddevice numpy scipy pyserial --break-system-packages
 
 if command -v npm &> /dev/null; then
   echo -e "${YELLOW}[3/4] Compiling web DSP interface...${NC}"
