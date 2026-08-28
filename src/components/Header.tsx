@@ -21,6 +21,7 @@ interface HeaderProps {
   onOpenSettings: () => void;
   onOpenWizard?: () => void;
   onOpenSpecs: () => void;
+  onOpenWiki?: (slug?: string) => void;
   onOpenTimeSync?: () => void;
   timeOffsetMs?: number;
   onTriggerDecode: () => void;
@@ -43,6 +44,7 @@ export const Header: React.FC<HeaderProps> = ({
   onOpenSettings,
   onOpenWizard,
   onOpenSpecs,
+  onOpenWiki,
   onOpenTimeSync,
   timeOffsetMs = 0,
   onTriggerDecode,
@@ -364,6 +366,19 @@ export const Header: React.FC<HeaderProps> = ({
             >
               <Wand2 className="w-3.5 h-3.5" />
               <span className="hidden lg:inline text-[11px] font-bold">Wizard</span>
+            </button>
+          )}
+
+          {/* GitHub Wiki & Documentation */}
+          {onOpenWiki && (
+            <button
+              id="open-wiki-btn"
+              onClick={() => onOpenWiki('Home')}
+              title="Open GitHub Wiki & Documentation Browser"
+              className="p-1.5 bg-[#141414] hover:bg-[#1A1A1A] text-yellow-400 hover:text-yellow-300 border border-yellow-500/40 text-xs flex items-center space-x-1 shadow-[0_0_8px_rgba(234,179,8,0.1)]"
+            >
+              <BookOpen className="w-3.5 h-3.5 text-yellow-400" />
+              <span className="hidden md:inline text-[11px] font-bold text-yellow-400">Wiki</span>
             </button>
           )}
 

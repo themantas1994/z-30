@@ -25,6 +25,7 @@ import { SetupWizardModal } from './components/SetupWizardModal';
 import { SpecsModal } from './components/SpecsModal';
 import { BandManagerModal } from './components/BandManagerModal';
 import { RfTimeSyncModal } from './components/RfTimeSyncModal';
+import { WikiModal } from './components/WikiModal';
 
 export default function App() {
   // Station & Hardware Config (Initialized from LocalStorage if available)
@@ -60,6 +61,8 @@ export default function App() {
     }
   });
   const [isSpecsOpen, setIsSpecsOpen] = useState<boolean>(false);
+  const [isWikiOpen, setIsWikiOpen] = useState<boolean>(false);
+  const [wikiSlug, setWikiSlug] = useState<string>('Home');
   const [isBandManagerOpen, setIsBandManagerOpen] = useState<boolean>(false);
   const [isTimeSyncOpen, setIsTimeSyncOpen] = useState<boolean>(false);
 
@@ -401,6 +404,10 @@ export default function App() {
         onOpenSettings={() => setIsSettingsOpen(true)}
         onOpenWizard={() => setIsWizardOpen(true)}
         onOpenSpecs={() => setIsSpecsOpen(true)}
+        onOpenWiki={(slug) => {
+          if (slug) setWikiSlug(slug);
+          setIsWikiOpen(true);
+        }}
         onOpenTimeSync={() => setIsTimeSyncOpen(true)}
         timeOffsetMs={timeOffsetMs}
         onTriggerDecode={executeDecodeCycle}
@@ -558,6 +565,12 @@ export default function App() {
       <SpecsModal
         isOpen={isSpecsOpen}
         onClose={() => setIsSpecsOpen(false)}
+      />
+
+      <WikiModal
+        isOpen={isWikiOpen}
+        onClose={() => setIsWikiOpen(false)}
+        initialArticleSlug={wikiSlug}
       />
 
       <RfTimeSyncModal
