@@ -50,6 +50,20 @@ class Z30AudioEngine {
   private currentInputLabel: string = '';
   private currentOutputDeviceId: string = '';
   private stateListeners: Set<() => void> = new Set();
+  private isExperimentalModeAllowed: boolean = false;
+
+  public isExperimentalModeEnabled(): boolean {
+    return this.isExperimentalModeAllowed;
+  }
+
+  public setExperimentalModeEnabled(enabled: boolean) {
+    this.isExperimentalModeAllowed = enabled;
+    if (!enabled) {
+      // Clear non-local injected test frames when experimental mode is disabled
+      this.clearSignalHistory();
+    }
+    this.notifyListeners();
+  }
 
   public getActiveTxToneFreqHz(): number | null {
     return this.isTxActive ? this.activeTxToneFreqHz : null;
@@ -664,6 +678,10 @@ class Z30AudioEngine {
       customText?: string;
     }
   ): { text: string; freqHz: number; snrDb: number; symbols: number[] } {
+    if (!this.isExperimentalModeAllowed) {
+      console.warn('[AudioEngine] Experimental synthetic signal injection is locked and disabled in production mode. Unlock in Station Settings -> Experimental Testing to authorize.');
+      return { text: '', freqHz: 0, snrDb: 0, symbols: [] };
+    }
     this.initAudioContext();
     
     // Import packer logic dynamically if needed or construct symbols

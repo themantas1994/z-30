@@ -35,6 +35,7 @@ import {
   Volume2,
   Globe,
   SlidersHorizontal,
+  Lock,
 } from 'lucide-react';
 import { audioEngine } from '../dsp/audioEngine';
 import { rigctl } from '../dsp/catController';
@@ -581,15 +582,31 @@ export const RfTimeSyncModal: React.FC<RfTimeSyncModalProps> = ({
                 </button>
 
                 <button
-                  onClick={() => setAudioSource('RF_TEST_BEACON')}
+                  onClick={() => {
+                    if (!audioEngine.isExperimentalModeEnabled()) {
+                      addLog(
+                        'RF Calibration Test Beacon is LOCKED. To enable synthetic test signals, open Station Settings -> Experimental Testing, accept the risk agreement, and unlock the testing harness.',
+                        'WARN'
+                      );
+                      return;
+                    }
+                    setAudioSource('RF_TEST_BEACON');
+                  }}
                   className={`px-2.5 py-1 text-[11px] font-bold uppercase transition-all flex items-center space-x-1.5 ${
                     audioSource === 'RF_TEST_BEACON'
                       ? 'bg-cyan-500 text-black shadow-[0_0_8px_rgba(6,182,212,0.4)]'
                       : 'bg-[#080808] text-[#888] border border-[#333] hover:text-[#CCC]'
                   }`}
                 >
-                  <Sparkles className="w-3.5 h-3.5" />
+                  {audioEngine.isExperimentalModeEnabled() ? (
+                    <Sparkles className="w-3.5 h-3.5" />
+                  ) : (
+                    <Lock className="w-3.5 h-3.5 text-zinc-500" />
+                  )}
                   <span>RF Calibration Test Beacon</span>
+                  {!audioEngine.isExperimentalModeEnabled() && (
+                    <span className="text-[9px] bg-zinc-800 text-zinc-400 px-1 py-0.2 ml-1">LOCKED</span>
+                  )}
                 </button>
               </div>
             </div>
