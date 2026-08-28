@@ -179,9 +179,13 @@ export class Z30QsoEngine {
       this.state.currentTxMacro = 'tx2';
     }
 
-    if (this.state.txEnabled && config.autoSeq) {
-      // User has armed TX - retain enabled state
-    }
+    // Arm TX to transmit in the next synchronous cycle
+    this.state.txEnabled = true;
+
+    // Set TX slot to alternate with the received cycle
+    const nowUtcSec = new Date().getUTCSeconds();
+    const currentIsEven = Math.floor(nowUtcSec / 30) % 2 === 0;
+    this.state.txSlot = currentIsEven ? 'ODD' : 'EVEN';
   }
 
   /**

@@ -23,6 +23,8 @@ interface HeaderProps {
   onOpenSettings: () => void;
   onOpenWizard?: () => void;
   onOpenSpecs: () => void;
+  onOpenTimeSync?: () => void;
+  timeOffsetMs?: number;
   onTriggerDecode: () => void;
   onStartTx?: () => void;
   onStopTx?: () => void;
@@ -46,6 +48,8 @@ export const Header: React.FC<HeaderProps> = ({
   onOpenSettings,
   onOpenWizard,
   onOpenSpecs,
+  onOpenTimeSync,
+  timeOffsetMs = 0,
   onTriggerDecode,
   onStartTx,
   onStopTx,
@@ -61,13 +65,13 @@ export const Header: React.FC<HeaderProps> = ({
 
   useEffect(() => {
     const updateTime = () => {
-      const now = new Date();
+      const now = new Date(Date.now() + (timeOffsetMs || 0));
       setUtcTimeStr(now.toTimeString().substring(0, 8));
     };
     updateTime();
     const interval = setInterval(updateTime, 200);
     return () => clearInterval(interval);
-  }, []);
+  }, [timeOffsetMs]);
 
   const handleToggleMute = () => {
     const nextMute = !isMuted;
@@ -140,12 +144,31 @@ export const Header: React.FC<HeaderProps> = ({
         </div>
 
         {/* Center: Live UTC Clock & Synchronous Cycle Readout */}
-        <div className="flex items-center space-x-3 bg-[#050505] px-3 py-1 border border-[#333] text-xs">
+        <div className="flex items-center space-x-2 bg-[#050505] px-2.5 py-1 border border-[#333] text-xs">
           {/* UTC Clock */}
           <div className="flex items-center space-x-1.5">
             <span className="text-[#666] text-[10px]">UTC:</span>
             <span className="font-bold text-[#00FF41] tracking-wider text-sm">{utcTimeStr}</span>
           </div>
+
+          {/* Time Sync Button */}
+          {onOpenTimeSync && (
+            <button
+              id="header-time-sync-btn"
+              type="button"
+              onClick={onOpenTimeSync}
+              title="Activate Automatic RF Time Synchronization Engine (WWV, CHU, DCF77, MSF, WWVB, JJY)"
+              className="px-2 py-0.5 bg-yellow-500/15 hover:bg-yellow-500 text-yellow-400 hover:text-black border border-yellow-500/40 text-[10px] font-bold uppercase tracking-wider flex items-center space-x-1 transition-all shadow-[0_0_8px_rgba(234,179,8,0.15)] group"
+            >
+              <Clock className="w-3 h-3 text-yellow-400 group-hover:text-black animate-pulse" />
+              <span>SYNC TIME</span>
+              {timeOffsetMs !== undefined && timeOffsetMs !== 0 && (
+                <span className="text-[9px] bg-[#141414] group-hover:bg-black group-hover:text-yellow-400 px-1 py-0.2 border border-yellow-700/60 text-yellow-300 font-mono">
+                  {timeOffsetMs >= 0 ? '+' : ''}{timeOffsetMs.toFixed(1)}ms
+                </span>
+              )}
+            </button>
+          )}
 
           <span className="text-[#444]">|</span>
 

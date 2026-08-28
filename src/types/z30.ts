@@ -73,6 +73,7 @@ export interface StationConfig {
   splitTx: boolean;
   defaultTxSlot?: TxSlot;
   customBands?: Record<string, number>;
+  appTimeOffsetMs?: number;
 }
 
 export interface RfChannelParams {

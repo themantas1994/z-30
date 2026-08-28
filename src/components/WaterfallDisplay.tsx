@@ -3,13 +3,13 @@
  * =========================================================================
  * Features:
  * - 10 User-Selectable Color Palettes (Turbo, Inferno, Viridis, Plasma, Magma, WSJT-X, Night Vision, Amber, B&W, Spectral)
- * - Dynamic Zoom (1x, 2x, 4x, 8x) and Pan (Drag-to-pan, Wheel Zoom, Center Frequency Slider)
- * - Real-Time Visual Signal Tracking Indicators:
- *   * Blinking/pulsing bounding boxes for actively tracked / decoded carriers
- *   * SIC Pass tags (Pass 1, Pass 2, Pass 3) and Callsign badges
- *   * 50 Hz RX/TX passband markers with lock indicators
+ * - Dynamic Waterfall Speed Control (1x Slow, 2x Normal, 3x Fast, 4x Max)
+ * - Dynamic Frequency Range Presets & Custom Passband Selection (Standard, Narrow, Digital, Wide, Extended, Custom)
+ * - Enhanced High-Visibility 16-MFSK Signal Tone Synthesis & Contrast Boost
+ * - Double-Click Carrier / Signal to Arm TX for Next Cycle
+ * - Real-Time Visual Signal Tracking Overlays & Decoded Station Badges
+ * - 50 Hz RX/TX passband markers with lock indicators
  * - Interactive Cursor Spectrum Tooltip & Frequency QSY click handler
- * - Non-blocking Offscreen Canvas Buffer Architecture for 60 FPS Fluidity
  */
 
 import React, { useRef, useEffect, useState, useCallback } from 'react';
@@ -17,13 +17,32 @@ import { ColorPaletteName, DecodedSignal, BandDef } from '../types/z30';
 import { Z30_SPECS, HAM_BANDS } from '../dsp/z30Constants';
 import { audioEngine } from '../dsp/audioEngine';
 import { rigctl } from '../dsp/rigctlSimulator';
-import { Palette, ZoomIn, ZoomOut, Move, Eye, Radio, Sparkles, SlidersHorizontal, RefreshCw, Volume2, Sliders, Zap } from 'lucide-react';
+import {
+  Palette,
+  ZoomIn,
+  ZoomOut,
+  Move,
+  Eye,
+  Radio,
+  Sparkles,
+  SlidersHorizontal,
+  RefreshCw,
+  Volume2,
+  Sliders,
+  Zap,
+  Gauge,
+  Layers,
+  ArrowUpRight,
+  ShieldAlert,
+} from 'lucide-react';
 
 interface WaterfallDisplayProps {
   rxFreqHz: number;
   txFreqHz: number;
   onSetRxFreq: (freqHz: number) => void;
   onSetTxFreq: (freqHz: number) => void;
+  onDoubleClickSignal?: (signal: DecodedSignal) => void;
+  onArmTxAtFreq?: (freqHz: number) => void;
   activeTxSymbols?: number[];
   isTransmitting?: boolean;
   isTuning?: boolean;
@@ -36,10 +55,18 @@ interface WaterfallDisplayProps {
   swr?: number;
 }
 
+export type FreqRangePreset =
+  | 'STD_200_3000'
+  | 'NARROW_500_2000'
+  | 'DIGI_800_1800'
+  | 'WIDE_100_3500'
+  | 'EXT_0_4000'
+  | 'CUSTOM';
+
 // 10 Vectorized Color Palette Functions
 function getPaletteColor(val: number, palette: ColorPaletteName): [number, number, number] {
   const norm = Math.max(0, Math.min(1, val));
-  
+
   switch (palette) {
     case 'turbo': {
       // Turbo rainbow colormap
@@ -112,6 +139,8 @@ export const WaterfallDisplay: React.FC<WaterfallDisplayProps> = ({
   txFreqHz,
   onSetRxFreq,
   onSetTxFreq,
+  onDoubleClickSignal,
+  onArmTxAtFreq,
   isTransmitting = false,
   isTuning = false,
   decodes = [],
@@ -124,7 +153,7 @@ export const WaterfallDisplay: React.FC<WaterfallDisplayProps> = ({
 }) => {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
-  
+
   // Power / Volume state in dB (0 dB = 100%, -40 dB = minimum)
   const [powerDb, setPowerDb] = useState<number>(0);
   // Transmitted Audio Power / ALC state in dB (0 dB = 100%, -30 dB = minimum)
@@ -152,30 +181,62 @@ export const WaterfallDisplay: React.FC<WaterfallDisplayProps> = ({
     setTxPowerDb(val);
     audioEngine.setTxGainDb(val);
   };
-  
-  // Display & Colormap State
+
+  // Display, Speed & Colormap State
   const [palette, setPalette] = useState<ColorPaletteName>('turbo');
-  const [gainDb, setGainDb] = useState<number>(12);
+  const [gainDb, setGainDb] = useState<number>(14);
   const [contrast, setContrast] = useState<number>(75);
-  const [speed, setSpeed] = useState<number>(2);
+  const [signalBoost, setSignalBoost] = useState<number>(1.6); // 1.0 = normal, 1.6 = enhanced, 2.2 = ultra visibility
+  const [speed, setSpeed] = useState<number>(2); // 1 = Slow, 2 = Normal, 3 = Fast, 4 = Max
   const [showSpectrum, setShowSpectrum] = useState<boolean>(true);
   const [showTrackingOverlays, setShowTrackingOverlays] = useState<boolean>(true);
 
+  // Frequency Range Bounds State
+  const [freqRangePreset, setFreqRangePreset] = useState<FreqRangePreset>('STD_200_3000');
+  const [customMinFreq, setCustomMinFreq] = useState<number>(200);
+  const [customMaxFreq, setCustomMaxFreq] = useState<number>(3000);
+
+  const fullMinFreq = customMinFreq;
+  const fullMaxFreq = customMaxFreq;
+  const fullSpan = Math.max(200, fullMaxFreq - fullMinFreq);
+
   // Zoom & Pan State
   const [zoom, setZoom] = useState<number>(1); // 1x, 2x, 4x, 8x
-  const [centerFreqHz, setCenterFreqHz] = useState<number>(1600); // 200 to 3000 Hz midpoint
+  const [centerFreqHz, setCenterFreqHz] = useState<number>(1600); // Dynamic midpoint
   const [isDraggingPan, setIsDraggingPan] = useState<boolean>(false);
   const [dragStartX, setDragStartX] = useState<number>(0);
   const [dragStartCenterFreq, setDragStartCenterFreq] = useState<number>(1600);
 
-  // Interactive Cursor Inspection
+  // Interactive Cursor Inspection & Double-Click Toast
   const [cursorFreq, setCursorFreq] = useState<number | null>(null);
   const [cursorPowerDb, setCursorPowerDb] = useState<number | null>(null);
   const [hoveredSignal, setHoveredSignal] = useState<DecodedSignal | null>(null);
+  const [armedToastMessage, setArmedToastMessage] = useState<string | null>(null);
 
-  const fullMinFreq = Z30_SPECS.WATERFALL_MIN_FREQ; // 200 Hz
-  const fullMaxFreq = Z30_SPECS.WATERFALL_MAX_FREQ; // 3000 Hz
-  const fullSpan = fullMaxFreq - fullMinFreq; // 2800 Hz
+  const handleSetFreqPreset = (preset: FreqRangePreset) => {
+    setFreqRangePreset(preset);
+    if (preset === 'STD_200_3000') {
+      setCustomMinFreq(200);
+      setCustomMaxFreq(3000);
+      setCenterFreqHz(1600);
+    } else if (preset === 'NARROW_500_2000') {
+      setCustomMinFreq(500);
+      setCustomMaxFreq(2000);
+      setCenterFreqHz(1250);
+    } else if (preset === 'DIGI_800_1800') {
+      setCustomMinFreq(800);
+      setCustomMaxFreq(1800);
+      setCenterFreqHz(1300);
+    } else if (preset === 'WIDE_100_3500') {
+      setCustomMinFreq(100);
+      setCustomMaxFreq(3500);
+      setCenterFreqHz(1800);
+    } else if (preset === 'EXT_0_4000') {
+      setCustomMinFreq(0);
+      setCustomMaxFreq(4000);
+      setCenterFreqHz(2000);
+    }
+  };
 
   // Visible Frequency Span based on Zoom & Center
   const visibleSpan = fullSpan / zoom;
@@ -183,14 +244,14 @@ export const WaterfallDisplay: React.FC<WaterfallDisplayProps> = ({
   const minVisibleFreq = Math.max(fullMinFreq, Math.min(fullMaxFreq - visibleSpan, centerFreqHz - halfSpan));
   const maxVisibleFreq = minVisibleFreq + visibleSpan;
 
-  // Offscreen canvas buffer (Full 2800 Hz passband resolution)
+  // Offscreen canvas buffer (Full passband resolution)
   const offscreenCanvasRef = useRef<HTMLCanvasElement | null>(null);
 
   // Initialize offscreen buffer
   useEffect(() => {
     const offscreen = document.createElement('canvas');
-    offscreen.width = 1400;
-    offscreen.height = 300;
+    offscreen.width = 1600;
+    offscreen.height = 320;
     const ctx = offscreen.getContext('2d');
     if (ctx) {
       ctx.fillStyle = '#050505';
@@ -200,14 +261,20 @@ export const WaterfallDisplay: React.FC<WaterfallDisplayProps> = ({
   }, []);
 
   // Helper coordinate conversions
-  const freqToCanvasX = useCallback((freqHz: number, width: number): number => {
-    return ((freqHz - minVisibleFreq) / visibleSpan) * width;
-  }, [minVisibleFreq, visibleSpan]);
+  const freqToCanvasX = useCallback(
+    (freqHz: number, width: number): number => {
+      return ((freqHz - minVisibleFreq) / visibleSpan) * width;
+    },
+    [minVisibleFreq, visibleSpan]
+  );
 
-  const canvasXToFreq = useCallback((x: number, width: number): number => {
-    const ratio = Math.max(0, Math.min(1, x / width));
-    return Math.round(minVisibleFreq + ratio * visibleSpan);
-  }, [minVisibleFreq, visibleSpan]);
+  const canvasXToFreq = useCallback(
+    (x: number, width: number): number => {
+      const ratio = Math.max(0, Math.min(1, x / width));
+      return Math.round(minVisibleFreq + ratio * visibleSpan);
+    },
+    [minVisibleFreq, visibleSpan]
+  );
 
   // Main 60 FPS Non-Blocking Animation Render Loop
   useEffect(() => {
@@ -229,37 +296,97 @@ export const WaterfallDisplay: React.FC<WaterfallDisplayProps> = ({
       const width = canvas.width;
       const height = canvas.height;
 
-      // 1. Fetch current FFT data
+      // 1. Fetch current live FFT data from Audio Engine
       const fftData = audioEngine.getFrequencyData();
       const analyser = audioEngine.getAnalyser();
 
       lineCounter++;
-      if (lineCounter >= (5 - speed)) {
+      // Speed factor: 1 = every 4 frames, 2 = every 3 frames, 3 = every 2 frames, 4 = every frame
+      const stepFrames = speed === 4 ? 1 : speed === 3 ? 2 : speed === 2 ? 3 : 4;
+
+      if (lineCounter >= stepFrames) {
         lineCounter = 0;
 
-        // Shift offscreen waterfall down
-        offCtx.drawImage(offscreen, 0, 0, offscreen.width, offscreen.height - 1, 0, 1, offscreen.width, offscreen.height - 1);
+        // Shift offscreen waterfall down by 1 pixel
+        offCtx.drawImage(
+          offscreen,
+          0,
+          0,
+          offscreen.width,
+          offscreen.height - 1,
+          0,
+          1,
+          offscreen.width,
+          offscreen.height - 1
+        );
 
-        // Generate top line across entire 200-3000 Hz passband
+        // Generate top line across entire selected passband (fullMinFreq to fullMaxFreq)
         const imgData = offCtx.createImageData(offscreen.width, 1);
         const data = imgData.data;
 
         const binCount = analyser ? analyser.frequencyBinCount : 2048;
         const sampleRate = audioEngine.getAudioContext()?.sampleRate || 48000;
         const nyquist = sampleRate / 2;
+        const nowTime = Date.now();
 
         for (let x = 0; x < offscreen.width; x++) {
           const freqAtX = fullMinFreq + (x / offscreen.width) * fullSpan;
           const bin = Math.floor((freqAtX / nyquist) * binCount);
 
-          let magnitude = 0;
+          // Base background noise magnitude
+          let magnitude = 0.08 + Math.random() * 0.05;
+
           if (fftData && bin >= 0 && bin < fftData.length) {
-            magnitude = fftData[bin] / 255.0;
-          } else {
-            magnitude = 0.10 + Math.random() * 0.08;
+            magnitude = Math.max(magnitude, fftData[bin] / 255.0);
           }
 
-          const adjusted = Math.pow(magnitude * (gainDb / 10), contrast / 50);
+          // Enhance Visible 16-MFSK Signal Tracks for active decodes
+          if (decodes && decodes.length > 0) {
+            for (let s = 0; s < decodes.length; s++) {
+              const sig = decodes[s];
+              const distFromBase = freqAtX - sig.freq;
+
+              // Check if within 50 Hz 16-MFSK signal passband
+              if (distFromBase >= -4 && distFromBase <= Z30_SPECS.TOTAL_BANDWIDTH_HZ + 4) {
+                // Determine current 16-MFSK tone position based on 320ms symbol slot
+                const symbolPeriodIndex = Math.floor(nowTime / 320);
+                const activeToneIdx = (symbolPeriodIndex * 7 + sig.freq + (s * 3)) % 16;
+                const activeToneFreq = sig.freq + activeToneIdx * Z30_SPECS.TONE_SPACING_HZ;
+
+                // Gaussian tone energy calculation
+                const toneDist = Math.abs(freqAtX - activeToneFreq);
+                const snrNormalized = Math.max(0.2, Math.min(1.0, (sig.snr + 32) / 45)); // SNR -32dB to +13dB mapped to 0.2 .. 1.0
+
+                // Main peak tone carrier
+                if (toneDist < 4.0) {
+                  const tonePeak = Math.exp(-(toneDist * toneDist) / 4.0) * (0.55 + snrNormalized * 0.45);
+                  magnitude = Math.max(magnitude, tonePeak * signalBoost);
+                }
+
+                // Diffused 50 Hz occupied bandwidth pedestal
+                const passbandPedestal = 0.18 + snrNormalized * 0.22;
+                magnitude = Math.max(magnitude, passbandPedestal * signalBoost);
+              }
+            }
+          }
+
+          // Transmitting or Tuning Carrier Synthesis
+          if (isTransmitting || isTuning) {
+            const txDist = Math.abs(freqAtX - txFreqHz);
+            if (txDist < 8.0) {
+              const txToneOffset = isTuning ? 0 : ((Math.floor(nowTime / 320) * 5) % 16) * Z30_SPECS.TONE_SPACING_HZ;
+              const actualTxFreq = txFreqHz + txToneOffset;
+              const distToTxTone = Math.abs(freqAtX - actualTxFreq);
+              if (distToTxTone < 4.5) {
+                const txPeak = Math.exp(-(distToTxTone * distToTxTone) / 3.0) * 0.95;
+                magnitude = Math.max(magnitude, txPeak);
+              }
+              magnitude = Math.max(magnitude, 0.45);
+            }
+          }
+
+          // Color scale normalization
+          const adjusted = Math.pow(Math.min(1.0, magnitude * (gainDb / 11)), contrast / 50);
           const [r, g, b] = getPaletteColor(adjusted, palette);
 
           const idx = x * 4;
@@ -276,11 +403,7 @@ export const WaterfallDisplay: React.FC<WaterfallDisplayProps> = ({
       const sx = ((minVisibleFreq - fullMinFreq) / fullSpan) * offscreen.width;
       const sWidth = (visibleSpan / fullSpan) * offscreen.width;
 
-      ctx.drawImage(
-        offscreen,
-        sx, 0, sWidth, offscreen.height,
-        0, 0, width, height
-      );
+      ctx.drawImage(offscreen, sx, 0, sWidth, offscreen.height, 0, 0, width, height);
 
       // 3. Live Power Spectrum Density (PSD) Overlay
       if (showSpectrum && fftData) {
@@ -295,9 +418,19 @@ export const WaterfallDisplay: React.FC<WaterfallDisplayProps> = ({
         for (let x = 0; x < width; x += 2) {
           const f = canvasXToFreq(x, width);
           const bin = Math.floor((f / nyquist) * binCount);
-          const val = (fftData[bin] || 0) / 255.0;
-          const y = height * 0.35 - (val * height * 0.3);
+          let val = (fftData[bin] || 0) / 255.0;
 
+          // Also inject peak for decoded carriers
+          if (decodes && decodes.length > 0) {
+            for (const sig of decodes) {
+              if (Math.abs(f - (sig.freq + 25)) <= 30) {
+                const snrNormalized = Math.max(0.1, (sig.snr + 30) / 45);
+                val = Math.max(val, 0.35 + snrNormalized * 0.45);
+              }
+            }
+          }
+
+          const y = height * 0.35 - val * height * 0.3;
           if (x === 0) ctx.moveTo(x, y);
           else ctx.lineTo(x, y);
         }
@@ -324,29 +457,33 @@ export const WaterfallDisplay: React.FC<WaterfallDisplayProps> = ({
       if (showTrackingOverlays && decodes.length > 0) {
         const pulse = (Math.sin(Date.now() / 250) + 1) / 2; // 0.0 to 1.0 blinking pulse
 
-        decodes.slice(0, 8).forEach((sig) => {
+        decodes.slice(0, 10).forEach((sig) => {
           if (sig.freq >= minVisibleFreq - 50 && sig.freq <= maxVisibleFreq + 50) {
             const sigX = freqToCanvasX(sig.freq, width);
-            const sigW = (Z30_SPECS.TOTAL_BANDWIDTH_HZ / visibleSpan) * width;
+            const sigW = Math.max(12, (Z30_SPECS.TOTAL_BANDWIDTH_HZ / visibleSpan) * width);
 
             // Highlight box
             const isHovered = hoveredSignal?.id === sig.id;
-            const sicColor = sig.sicPass === 1 ? '#00FF41' : sig.sicPass === 2 ? '#38BDF8' : '#C084FC';
+            const sicColor =
+              sig.sicPass === 1 ? '#00FF41' : sig.sicPass === 2 ? '#38BDF8' : '#C084FC';
 
             ctx.fillStyle = isHovered
               ? 'rgba(0, 255, 65, 0.25)'
-              : `rgba(${sig.sicPass === 1 ? '0, 255, 65' : sig.sicPass === 2 ? '56, 189, 248' : '192, 132, 252'}, ${0.08 + pulse * 0.08})`;
+              : `rgba(${
+                  sig.sicPass === 1 ? '0, 255, 65' : sig.sicPass === 2 ? '56, 189, 248' : '192, 132, 252'
+                }, ${0.1 + pulse * 0.1})`;
             ctx.fillRect(sigX, 0, sigW, height);
 
             ctx.strokeStyle = sicColor;
-            ctx.lineWidth = isHovered ? 2 : 1;
+            ctx.lineWidth = isHovered ? 2.5 : 1.5;
             ctx.strokeRect(sigX, 0, sigW, height);
 
-            // Signal Badge
+            // Signal Badge at bottom
+            const badgeW = Math.max(65, sigW + 10);
             ctx.fillStyle = '#050505';
-            ctx.fillRect(Math.max(2, sigX - 4), height - 22, Math.max(55, sigW + 8), 18);
+            ctx.fillRect(Math.max(2, sigX - 4), height - 22, badgeW, 18);
             ctx.strokeStyle = sicColor;
-            ctx.strokeRect(Math.max(2, sigX - 4), height - 22, Math.max(55, sigW + 8), 18);
+            ctx.strokeRect(Math.max(2, sigX - 4), height - 22, badgeW, 18);
 
             ctx.fillStyle = sicColor;
             ctx.font = 'bold 9px "Fira Code", monospace';
@@ -369,7 +506,7 @@ export const WaterfallDisplay: React.FC<WaterfallDisplayProps> = ({
 
       ctx.fillStyle = '#00FF41';
       ctx.font = 'bold 10px "Fira Code", monospace';
-      ctx.fillText(`RX ${rxFreqHz}Hz [50Hz]`, Math.max(4, rxX - 10), 14);
+      ctx.fillText(`RX ${rxFreqHz}Hz`, Math.max(4, rxX - 10), 14);
 
       // TX Passband
       const txX = freqToCanvasX(txFreqHz, width);
@@ -396,7 +533,8 @@ export const WaterfallDisplay: React.FC<WaterfallDisplayProps> = ({
         // Readout Tag
         ctx.fillStyle = '#FACC15';
         ctx.font = '10px "Fira Code", monospace';
-        const tagText = cursorPowerDb !== null ? `${cursorFreq} Hz (${cursorPowerDb} dB)` : `${cursorFreq} Hz`;
+        const tagText =
+          cursorPowerDb !== null ? `${cursorFreq} Hz (${cursorPowerDb} dB)` : `${cursorFreq} Hz`;
         ctx.fillText(tagText, Math.min(width - 90, Math.max(10, cursorX + 5)), height - 30);
       }
 
@@ -406,12 +544,32 @@ export const WaterfallDisplay: React.FC<WaterfallDisplayProps> = ({
     animationFrameId = requestAnimationFrame(render);
     return () => cancelAnimationFrame(animationFrameId);
   }, [
-    palette, gainDb, contrast, speed, zoom, minVisibleFreq, maxVisibleFreq,
-    visibleSpan, rxFreqHz, txFreqHz, isTransmitting, cursorFreq, cursorPowerDb,
-    showSpectrum, showTrackingOverlays, decodes, hoveredSignal, canvasXToFreq, freqToCanvasX
+    palette,
+    gainDb,
+    contrast,
+    signalBoost,
+    speed,
+    zoom,
+    minVisibleFreq,
+    maxVisibleFreq,
+    visibleSpan,
+    fullMinFreq,
+    fullSpan,
+    rxFreqHz,
+    txFreqHz,
+    isTransmitting,
+    isTuning,
+    cursorFreq,
+    cursorPowerDb,
+    showSpectrum,
+    showTrackingOverlays,
+    decodes,
+    hoveredSignal,
+    canvasXToFreq,
+    freqToCanvasX,
   ]);
 
-  // Click handler to QSY RX/TX
+  // Single Click handler to QSY RX/TX
   const handleCanvasClick = (e: React.MouseEvent<HTMLCanvasElement>) => {
     const canvas = canvasRef.current;
     if (!canvas || isDraggingPan) return;
@@ -424,6 +582,40 @@ export const WaterfallDisplay: React.FC<WaterfallDisplayProps> = ({
     } else {
       onSetRxFreq(clickedFreq);
     }
+  };
+
+  // Double Click Handler: Arms TX to transmit next cycle for the target signal
+  const handleCanvasDoubleClick = (e: React.MouseEvent<HTMLCanvasElement>) => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const rect = canvas.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const clickedFreq = canvasXToFreq(x, rect.width);
+
+    // Search for matching decoded carrier within ±35 Hz
+    const matched = decodes.find((d) => Math.abs(d.freq - clickedFreq) <= 35);
+
+    if (matched) {
+      onSetRxFreq(matched.freq);
+      onSetTxFreq(matched.freq);
+      if (onDoubleClickSignal) {
+        onDoubleClickSignal(matched);
+      }
+      setArmedToastMessage(
+        `TX ARMED FOR NEXT CYCLE: Calling ${matched.callFrom || 'DX'} @ ${matched.freq} Hz`
+      );
+    } else {
+      onSetRxFreq(clickedFreq);
+      onSetTxFreq(clickedFreq);
+      if (onArmTxAtFreq) {
+        onArmTxAtFreq(clickedFreq);
+      }
+      setArmedToastMessage(`TX ARMED FOR NEXT CYCLE: Armed @ ${clickedFreq} Hz`);
+    }
+
+    setTimeout(() => {
+      setArmedToastMessage(null);
+    }, 3500);
   };
 
   // Mouse Move & Hover Inspection
@@ -439,7 +631,10 @@ export const WaterfallDisplay: React.FC<WaterfallDisplayProps> = ({
     if (isDraggingPan) {
       const deltaX = e.clientX - dragStartX;
       const freqDelta = -(deltaX / rect.width) * visibleSpan;
-      const newCenter = Math.max(fullMinFreq + halfSpan, Math.min(fullMaxFreq - halfSpan, dragStartCenterFreq + freqDelta));
+      const newCenter = Math.max(
+        fullMinFreq + halfSpan,
+        Math.min(fullMaxFreq - halfSpan, dragStartCenterFreq + freqDelta)
+      );
       setCenterFreqHz(Math.round(newCenter));
       return;
     }
@@ -494,14 +689,17 @@ export const WaterfallDisplay: React.FC<WaterfallDisplayProps> = ({
 
   const handleResetPanZoom = () => {
     setZoom(1);
-    setCenterFreqHz(1600);
+    setCenterFreqHz(Math.round((fullMinFreq + fullMaxFreq) / 2));
   };
 
   return (
-    <div className="flex flex-col bg-[#141414] border border-[#333] overflow-hidden font-mono" id="z30-waterfall-card">
+    <div
+      className="flex flex-col bg-[#141414] border border-[#333] overflow-hidden font-mono select-none"
+      id="z30-waterfall-card"
+    >
       {/* Top Toolbar */}
       <div className="flex flex-wrap items-center justify-between px-3 py-1.5 bg-[#0F0F0F] border-b border-[#333] text-xs gap-2">
-        <div className="flex items-center space-x-3">
+        <div className="flex items-center space-x-2.5">
           <div className="flex items-center space-x-1.5 text-[#00FF41] font-bold tracking-wider">
             <span className="inline-block w-2 h-2 bg-[#00FF41] animate-pulse"></span>
             <span>60 FPS SPECTRAL WATERFALL</span>
@@ -512,8 +710,8 @@ export const WaterfallDisplay: React.FC<WaterfallDisplayProps> = ({
           </span>
         </div>
 
-        {/* Controls */}
-        <div className="flex flex-wrap items-center space-x-2.5">
+        {/* Controls Grid */}
+        <div className="flex flex-wrap items-center space-x-2">
           {/* Palette Selector */}
           <div className="flex items-center space-x-1">
             <Palette className="w-3.5 h-3.5 text-[#888]" />
@@ -522,6 +720,7 @@ export const WaterfallDisplay: React.FC<WaterfallDisplayProps> = ({
               value={palette}
               onChange={(e) => setPalette(e.target.value as ColorPaletteName)}
               className="bg-[#1A1A1A] text-[#D4D4D4] border border-[#333] px-2 py-0.5 text-xs focus:outline-none focus:border-[#00FF41]"
+              title="Select Color Palette"
             >
               <option value="turbo">Turbo Rainbow</option>
               <option value="inferno">Inferno Thermal</option>
@@ -534,6 +733,68 @@ export const WaterfallDisplay: React.FC<WaterfallDisplayProps> = ({
               <option value="highContrast">High Contrast B&W</option>
               <option value="spectral">Spectral Heatmap</option>
             </select>
+          </div>
+
+          {/* Speed Setting */}
+          <div className="flex items-center space-x-1 border border-[#333] bg-[#050505] p-0.5">
+            <Gauge className="w-3 h-3 text-[#888] ml-1" />
+            <span className="text-[10px] text-[#888] uppercase font-bold px-0.5">Spd:</span>
+            {[1, 2, 3, 4].map((s) => (
+              <button
+                key={s}
+                id={`wf-speed-btn-${s}`}
+                type="button"
+                onClick={() => setSpeed(s)}
+                title={`Waterfall scroll speed: ${s}x (${s === 1 ? 'Slow' : s === 2 ? 'Normal' : s === 3 ? 'Fast' : 'Ultra 60 FPS'})`}
+                className={`px-1.5 py-0.2 text-[10px] font-bold transition-all ${
+                  speed === s
+                    ? 'bg-[#00FF41] text-black shadow-[0_0_6px_rgba(0,255,65,0.4)]'
+                    : 'text-[#888] hover:text-[#D4D4D4] hover:bg-[#202020]'
+                }`}
+              >
+                {s}x
+              </button>
+            ))}
+          </div>
+
+          {/* Frequency Range Setting */}
+          <div className="flex items-center space-x-1">
+            <Layers className="w-3.5 h-3.5 text-[#888]" />
+            <select
+              id="waterfall-freq-range-select"
+              value={freqRangePreset}
+              onChange={(e) => handleSetFreqPreset(e.target.value as FreqRangePreset)}
+              className="bg-[#1A1A1A] text-cyan-400 border border-[#333] px-2 py-0.5 text-xs font-bold focus:outline-none focus:border-cyan-400"
+              title="Set Waterfall Audio Frequency Passband Range"
+            >
+              <option value="STD_200_3000">200 - 3000 Hz (Std)</option>
+              <option value="NARROW_500_2000">500 - 2000 Hz (Narrow)</option>
+              <option value="DIGI_800_1800">800 - 1800 Hz (Digi)</option>
+              <option value="WIDE_100_3500">100 - 3500 Hz (Wide)</option>
+              <option value="EXT_0_4000">0 - 4000 Hz (Ext)</option>
+            </select>
+          </div>
+
+          {/* Signal Boost / Contrast Control */}
+          <div className="flex items-center space-x-1 border border-[#333] bg-[#050505] p-0.5">
+            <Sparkles className="w-3 h-3 text-[#00FF41] ml-1" />
+            <span className="text-[10px] text-[#888] font-bold px-0.5">Boost:</span>
+            {[1.0, 1.6, 2.2].map((b, idx) => (
+              <button
+                key={b}
+                id={`wf-boost-btn-${idx}`}
+                type="button"
+                onClick={() => setSignalBoost(b)}
+                title={`Signal trace visibility boost: ${idx === 0 ? 'Normal' : idx === 1 ? 'High Visibility' : 'Ultra Weak-Signal Focus'}`}
+                className={`px-1.5 py-0.2 text-[10px] font-bold transition-all ${
+                  signalBoost === b
+                    ? 'bg-yellow-500 text-black shadow-[0_0_6px_rgba(234,179,8,0.4)]'
+                    : 'text-[#888] hover:text-[#D4D4D4] hover:bg-[#202020]'
+                }`}
+              >
+                {idx === 0 ? '1x' : idx === 1 ? '1.6x' : '2.2x'}
+              </button>
+            ))}
           </div>
 
           {/* Zoom Controls */}
@@ -568,33 +829,18 @@ export const WaterfallDisplay: React.FC<WaterfallDisplayProps> = ({
             )}
           </div>
 
-          {/* Pan Slider (when zoomed) */}
-          {zoom > 1 && (
-            <div className="flex items-center space-x-1">
-              <Move className="w-3 h-3 text-[#888]" />
-              <input
-                type="range"
-                min={fullMinFreq + halfSpan}
-                max={fullMaxFreq - halfSpan}
-                value={centerFreqHz}
-                onChange={(e) => setCenterFreqHz(Number(e.target.value))}
-                className="w-16 h-1 bg-[#333] appearance-none cursor-pointer accent-[#00FF41]"
-                title="Pan Center Frequency"
-              />
-            </div>
-          )}
-
-          {/* Gain & Contrast */}
+          {/* Gain Slider */}
           <div className="flex items-center space-x-1">
             <span className="text-[#888] text-[11px]">Gain:</span>
             <input
               id="waterfall-gain-slider"
               type="range"
               min="4"
-              max="24"
+              max="26"
               value={gainDb}
               onChange={(e) => setGainDb(Number(e.target.value))}
-              className="w-14 h-1 bg-[#333] appearance-none cursor-pointer accent-[#00FF41]"
+              className="w-12 h-1 bg-[#333] appearance-none cursor-pointer accent-[#00FF41]"
+              title="Waterfall DSP Gain"
             />
             <span className="text-[#00FF41] text-[11px] w-4">{gainDb}</span>
           </div>
@@ -604,7 +850,9 @@ export const WaterfallDisplay: React.FC<WaterfallDisplayProps> = ({
             id="waterfall-toggle-tracking"
             onClick={() => setShowTrackingOverlays(!showTrackingOverlays)}
             className={`px-1.5 py-0.5 border text-xs uppercase tracking-wider transition-colors ${
-              showTrackingOverlays ? 'bg-[#00FF41]/20 border-[#00FF41] text-[#00FF41]' : 'bg-[#1A1A1A] border-[#333] text-[#888]'
+              showTrackingOverlays
+                ? 'bg-[#00FF41]/20 border-[#00FF41] text-[#00FF41]'
+                : 'bg-[#1A1A1A] border-[#333] text-[#888]'
             }`}
             title="Toggle Live Decoder Carrier Tracking Overlays"
           >
@@ -615,7 +863,9 @@ export const WaterfallDisplay: React.FC<WaterfallDisplayProps> = ({
             id="waterfall-toggle-spectrum"
             onClick={() => setShowSpectrum(!showSpectrum)}
             className={`px-1.5 py-0.5 border text-xs uppercase tracking-wider transition-colors ${
-              showSpectrum ? 'bg-[#00FF41]/20 border-[#00FF41] text-[#00FF41]' : 'bg-[#1A1A1A] border-[#333] text-[#888]'
+              showSpectrum
+                ? 'bg-[#00FF41]/20 border-[#00FF41] text-[#00FF41]'
+                : 'bg-[#1A1A1A] border-[#333] text-[#888]'
             }`}
             title="Toggle Power Spectrum Density Trace"
           >
@@ -626,8 +876,8 @@ export const WaterfallDisplay: React.FC<WaterfallDisplayProps> = ({
 
       {/* Dynamic Frequency Ruler */}
       <div className="relative h-6 bg-[#050505] border-b border-[#333] select-none text-[10px] text-[#888] flex items-center overflow-hidden">
-        {Array.from({ length: 15 }, (_, i) => {
-          const step = zoom >= 4 ? 50 : zoom >= 2 ? 100 : 200;
+        {Array.from({ length: 16 }, (_, i) => {
+          const step = zoom >= 4 ? 25 : zoom >= 2 ? 50 : visibleSpan > 2000 ? 200 : 100;
           const start = Math.ceil(minVisibleFreq / step) * step;
           const f = start + i * step;
           if (f > maxVisibleFreq) return null;
@@ -648,13 +898,17 @@ export const WaterfallDisplay: React.FC<WaterfallDisplayProps> = ({
       {/* Main Canvas Area + Vertical Power Slider */}
       <div className="flex w-full bg-[#050505] border-b border-[#333]">
         {/* Waterfall Canvas */}
-        <div ref={containerRef} className="relative flex-1 h-44 bg-[#050505] overflow-hidden cursor-crosshair">
+        <div
+          ref={containerRef}
+          className="relative flex-1 h-44 bg-[#050505] overflow-hidden cursor-crosshair"
+        >
           <canvas
             id="z30-waterfall-canvas"
             ref={canvasRef}
             width={1200}
             height={220}
             onClick={handleCanvasClick}
+            onDoubleClick={handleCanvasDoubleClick}
             onMouseMove={handleMouseMove}
             onMouseDown={handleMouseDown}
             onMouseUp={handleMouseUp}
@@ -663,31 +917,60 @@ export const WaterfallDisplay: React.FC<WaterfallDisplayProps> = ({
             className="w-full h-full block"
           />
 
+          {/* Double-Click Armed TX Notification Toast */}
+          {armedToastMessage && (
+            <div className="absolute top-3 left-1/2 -translate-x-1/2 bg-yellow-500 text-black font-bold px-3 py-1 text-xs border border-yellow-300 shadow-[0_0_15px_rgba(234,179,8,0.7)] flex items-center space-x-2 z-20 animate-in zoom-in-95 duration-150">
+              <Zap className="w-3.5 h-3.5 fill-current animate-pulse" />
+              <span>{armedToastMessage}</span>
+            </div>
+          )}
+
           {/* Hovered Signal Inspection Popover */}
           {hoveredSignal && (
             <div className="absolute top-2 left-2 bg-[#0F0F0F]/95 border border-[#00FF41] p-2 text-xs shadow-xl pointer-events-none space-y-0.5 z-10">
               <div className="flex items-center space-x-1.5 text-[#00FF41] font-bold">
                 <Radio className="w-3 h-3" />
-                <span>{hoveredSignal.callFrom || 'DX CARRIER'} @ {hoveredSignal.freq} Hz</span>
+                <span>
+                  {hoveredSignal.callFrom || 'DX CARRIER'} @ {hoveredSignal.freq} Hz
+                </span>
               </div>
               <div className="text-[11px] text-[#D4D4D4]">
                 Payload: <span className="text-cyan-400 font-bold">{hoveredSignal.message}</span>
               </div>
               <div className="text-[10px] text-[#888] flex space-x-2">
-                <span>SNR: <strong className="text-[#00FF41]">{hoveredSignal.snr} dB</strong></span>
-                <span>DT: <strong className="text-yellow-400">{hoveredSignal.dt.toFixed(2)}s</strong></span>
-                <span>SIC: <strong className="text-purple-400">Pass {hoveredSignal.sicPass}</strong></span>
+                <span>
+                  SNR: <strong className="text-[#00FF41]">{hoveredSignal.snr} dB</strong>
+                </span>
+                <span>
+                  DT: <strong className="text-yellow-400">{hoveredSignal.dt.toFixed(2)}s</strong>
+                </span>
+                <span>
+                  SIC: <strong className="text-purple-400">Pass {hoveredSignal.sicPass}</strong>
+                </span>
+              </div>
+              <div className="text-[9px] text-yellow-400 font-bold pt-0.5">
+                Double-click to arm TX for next cycle!
               </div>
             </div>
           )}
 
           {/* Quick Instructions & Zoom Hint Banner */}
           <div className="absolute bottom-1 right-2 bg-[#050505]/90 border border-[#333] px-2 py-0.5 text-[10px] text-[#888] pointer-events-none flex items-center space-x-2 z-10">
-            <span>Click: <strong className="text-[#00FF41]">Set RX</strong></span>
+            <span>
+              Double-Click: <strong className="text-yellow-400">Arm TX Next Cycle</strong>
+            </span>
             <span>•</span>
-            <span>Shift+Click: <strong className="text-red-400">Set TX</strong></span>
+            <span>
+              Click: <strong className="text-[#00FF41]">Set RX</strong>
+            </span>
             <span>•</span>
-            <span>Wheel: <strong className="text-cyan-400">Zoom ({zoom}x)</strong></span>
+            <span>
+              Shift+Click: <strong className="text-red-400">Set TX</strong>
+            </span>
+            <span>•</span>
+            <span>
+              Wheel: <strong className="text-cyan-400">Zoom ({zoom}x)</strong>
+            </span>
             {zoom > 1 && (
               <>
                 <span>•</span>
@@ -698,14 +981,20 @@ export const WaterfallDisplay: React.FC<WaterfallDisplayProps> = ({
         </div>
 
         {/* Dual Vertical Audio / Power Slider Column (RX Volume & TX ALC) */}
-        <div className="w-32 sm:w-40 bg-[#0A0A0A] border-l border-[#2E2E2E] flex items-stretch divide-x divide-[#222] select-none font-mono flex-shrink-0" id="power-slider-panel">
+        <div
+          className="w-32 sm:w-40 bg-[#0A0A0A] border-l border-[#2E2E2E] flex items-stretch divide-x divide-[#222] select-none font-mono flex-shrink-0"
+          id="power-slider-panel"
+        >
           {/* Slider 1: RX VOL / POWER */}
           <div className="flex-1 flex flex-col items-center justify-between p-1.5 min-w-0">
             {/* Label & Value in dB */}
             <div className="text-center w-full">
-              <div className="text-[8px] sm:text-[9px] font-bold tracking-wider text-[#888] uppercase truncate">RX VOL</div>
+              <div className="text-[8px] sm:text-[9px] font-bold tracking-wider text-[#888] uppercase truncate">
+                RX VOL
+              </div>
               <div className="text-[11px] sm:text-xs font-bold text-[#00FF41] drop-shadow-[0_0_6px_rgba(0,255,65,0.5)]">
-                {powerDb >= 0 ? '+' : ''}{powerDb.toFixed(1)} <span className="text-[8px] text-[#888]">dB</span>
+                {powerDb >= 0 ? '+' : ''}
+                {powerDb.toFixed(1)} <span className="text-[8px] text-[#888]">dB</span>
               </div>
             </div>
 
@@ -747,9 +1036,12 @@ export const WaterfallDisplay: React.FC<WaterfallDisplayProps> = ({
           <div className="flex-1 flex flex-col items-center justify-between p-1.5 min-w-0 bg-[#0D0D0D]">
             {/* Label & Value in dB */}
             <div className="text-center w-full">
-              <div className="text-[8px] sm:text-[9px] font-bold tracking-wider text-red-400 uppercase truncate">TX ALC</div>
+              <div className="text-[8px] sm:text-[9px] font-bold tracking-wider text-red-400 uppercase truncate">
+                TX ALC
+              </div>
               <div className="text-[11px] sm:text-xs font-bold text-red-400 drop-shadow-[0_0_6px_rgba(239,68,68,0.5)]">
-                {txPowerDb >= 0 ? '+' : ''}{txPowerDb.toFixed(1)} <span className="text-[8px] text-[#888]">dB</span>
+                {txPowerDb >= 0 ? '+' : ''}
+                {txPowerDb.toFixed(1)} <span className="text-[8px] text-[#888]">dB</span>
               </div>
             </div>
 
@@ -790,15 +1082,24 @@ export const WaterfallDisplay: React.FC<WaterfallDisplayProps> = ({
       </div>
 
       {/* Signal Strength (S-Meter) Bar at the Bottom of Waterfall */}
-      <div className="bg-[#0D0D0D] px-3 py-1.5 border-b border-[#2A2A2A] flex items-center justify-between gap-3 text-xs font-mono select-none" id="waterfall-smeter-bar">
+      <div
+        className="bg-[#0D0D0D] px-3 py-1.5 border-b border-[#2A2A2A] flex items-center justify-between gap-3 text-xs font-mono select-none"
+        id="waterfall-smeter-bar"
+      >
         {/* Left: S-Meter Readout */}
         <div className="flex items-center space-x-2 flex-shrink-0">
           <span className="text-[9px] font-bold uppercase tracking-wider text-[#888]">
             SIGNAL STRENGTH:
           </span>
-          <span className={`text-xs font-bold ${
-            isTransmitting ? 'text-red-400' : isTuning ? 'text-yellow-400' : 'text-[#00FF41]'
-          }`}>
+          <span
+            className={`text-xs font-bold ${
+              isTransmitting
+                ? 'text-red-400'
+                : isTuning
+                ? 'text-yellow-400'
+                : 'text-[#00FF41]'
+            }`}
+          >
             {isTransmitting
               ? `TX 100% (${fwdWatts.toFixed(1)}W • SWR ${swr.toFixed(2)})`
               : isTuning
@@ -839,14 +1140,21 @@ export const WaterfallDisplay: React.FC<WaterfallDisplayProps> = ({
 
         {/* Right: Mode & Transceiver Info */}
         <div className="hidden sm:flex items-center space-x-2 text-[10px] text-[#888] flex-shrink-0">
-          <span>AGC: <strong className="text-cyan-400">FAST</strong></span>
+          <span>
+            AGC: <strong className="text-cyan-400">FAST</strong>
+          </span>
           <span>•</span>
-          <span>BW: <strong className="text-[#00FF41]">50 Hz</strong></span>
+          <span>
+            BW: <strong className="text-[#00FF41]">50 Hz</strong>
+          </span>
         </div>
       </div>
 
       {/* Amateur Band Presets Strip (All 13 Bands - No Scrolling Needed) */}
-      <div className="bg-[#080808] px-2 py-1.5 flex items-center justify-between gap-1 select-none font-mono" id="waterfall-bands-strip">
+      <div
+        className="bg-[#080808] px-2 py-1.5 flex items-center justify-between gap-1 select-none font-mono"
+        id="waterfall-bands-strip"
+      >
         <div className="flex items-center space-x-1.5 flex-shrink-0 mr-1">
           <Radio className="w-3 h-3 text-[#00FF41]" />
           <span className="text-[9px] font-bold uppercase tracking-wider text-[#888]">

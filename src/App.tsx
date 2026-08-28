@@ -27,12 +27,14 @@ import { StationSettingsModal } from './components/StationSettingsModal';
 import { SetupWizardModal } from './components/SetupWizardModal';
 import { SpecsModal } from './components/SpecsModal';
 import { BandManagerModal } from './components/BandManagerModal';
+import { RfTimeSyncModal } from './components/RfTimeSyncModal';
 
 export default function App() {
   // Station & Hardware Config
   const [config, setConfig] = useState<StationConfig>(DEFAULT_STATION_CONFIG);
   const [currentBandIdx, setCurrentBandIdx] = useState<number>(5); // 20m default (14.076 MHz)
   const [dialFreqHz, setDialFreqHz] = useState<number>(HAM_BANDS[5].dialFreqHz);
+  const [timeOffsetMs, setTimeOffsetMs] = useState<number>(0);
 
   // QSO State Machine
   const [qsoState, setQsoState] = useState<QsoState>(qsoEngine.getState());
@@ -47,6 +49,7 @@ export default function App() {
   const [isWizardOpen, setIsWizardOpen] = useState<boolean>(false);
   const [isSpecsOpen, setIsSpecsOpen] = useState<boolean>(false);
   const [isBandManagerOpen, setIsBandManagerOpen] = useState<boolean>(false);
+  const [isTimeSyncOpen, setIsTimeSyncOpen] = useState<boolean>(false);
 
   // QSOs, Logs & Band Activity Filter
   const [activityFilter, setActivityFilter] = useState<'ALL' | 'CQ' | 'MYCALL' | 'SIC'>('ALL');
@@ -183,7 +186,7 @@ export default function App() {
   // Main Synchronous 30-Second Cycle Clock Engine
   useEffect(() => {
     const timer = setInterval(() => {
-      const now = new Date();
+      const now = new Date(Date.now() + (timeOffsetMs || 0));
       const seconds = now.getUTCSeconds() + now.getUTCMilliseconds() / 1000.0;
       const cycleSec = seconds % Z30_SPECS.CYCLE_DURATION_SEC; // 0.0 to 30.0
       const cycleNumber = Math.floor(now.getTime() / 30000);
@@ -210,11 +213,19 @@ export default function App() {
     }, 100);
 
     return () => clearInterval(timer);
-  }, [config, isTransmitting, isTuning, executeDecodeCycle, startActiveTransmission]);
+  }, [config, timeOffsetMs, isTransmitting, isTuning, executeDecodeCycle, startActiveTransmission]);
 
-  // Handle Double-Clicking a Decoded Signal
+  // Handle Double-Clicking a Decoded Signal: Arms TX for next cycle
   const handleSelectSignal = (signal: DecodedSignal) => {
     qsoEngine.selectSignalToCall(signal, config);
+    setQsoState(qsoEngine.getState());
+  };
+
+  // Handle Arming TX at a specific frequency (e.g. from waterfall double-click)
+  const handleArmTxAtFreq = (freqHz: number) => {
+    qsoEngine.setRxFreq(freqHz, false);
+    qsoEngine.setTxFreq(freqHz);
+    qsoEngine.setTxEnabled(true);
     setQsoState(qsoEngine.getState());
   };
 
@@ -362,6 +373,8 @@ export default function App() {
         onOpenSettings={() => setIsSettingsOpen(true)}
         onOpenWizard={() => setIsWizardOpen(true)}
         onOpenSpecs={() => setIsSpecsOpen(true)}
+        onOpenTimeSync={() => setIsTimeSyncOpen(true)}
+        timeOffsetMs={timeOffsetMs}
         onTriggerDecode={executeDecodeCycle}
         onStartTx={handleStartTx}
         onStopTx={handleStopTx}
@@ -381,6 +394,8 @@ export default function App() {
                 txFreqHz={qsoState.txFreqHz}
                 onSetRxFreq={handleSetRxFreq}
                 onSetTxFreq={handleSetTxFreq}
+                onDoubleClickSignal={handleSelectSignal}
+                onArmTxAtFreq={handleArmTxAtFreq}
                 isTransmitting={isTransmitting}
                 isTuning={isTuning}
                 decodes={decodes}
@@ -540,6 +555,17 @@ export default function App() {
       <SpecsModal
         isOpen={isSpecsOpen}
         onClose={() => setIsSpecsOpen(false)}
+      />
+
+      <RfTimeSyncModal
+        isOpen={isTimeSyncOpen}
+        onClose={() => setIsTimeSyncOpen(false)}
+        config={config}
+        currentOffsetMs={timeOffsetMs}
+        onApplyOffset={(offsetMs) => {
+          setTimeOffsetMs(offsetMs);
+          handleUpdateConfig({ appTimeOffsetMs: offsetMs });
+        }}
       />
     </div>
   );
