@@ -21,6 +21,7 @@ sudo pacman -Syu --needed --noconfirm \
     python-numpy \
     python-scipy \
     python-pyserial \
+    python-sounddevice \
     python-cffi \
     portaudio \
     hamlib \
