@@ -11,6 +11,7 @@
 The project provides both a high-performance **interactive Web/PWA GUI** (featuring a 60 FPS HTML5 spectral waterfall, Web Audio 12/48 kHz DSP pipeline, live S-meter, and ADIF logbook) and a **native Python 3 DSP package (`z30_dsp`)** with Hamlib CAT transceiver control (`rigctld`), 9 PTT keying methods, 6 auto-reply sequencing algorithms, and automated RF time calibration against international time standards (**WWV, CHU, DCF77, MSF, WWVB, JJY**).
 
 ---
+<img width="1912" height="921" alt="image" src="https://github.com/user-attachments/assets/b1ff29c3-f6f4-478f-95ac-5f8d1572edc8" />
 
 ## Table of Contents
 
