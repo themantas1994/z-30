@@ -387,9 +387,9 @@ export default function App() {
       />
 
       {/* Main Workspace */}
-      <main className="flex-1 overflow-hidden p-2 max-w-7xl w-full mx-auto">
+      <main className="flex-1 overflow-hidden p-1.5 sm:p-2 w-full flex flex-col min-h-0">
         {activeView === 'TRANSCEIVER' && (
-          <div className="flex flex-col h-full space-y-2">
+          <div className="flex flex-col h-full space-y-1.5 sm:space-y-2 min-h-0 flex-1 overflow-hidden">
             {/* Top: 60 FPS Spectral Waterfall & Spectrogram */}
             <div className="flex-shrink-0">
               <WaterfallDisplay
@@ -412,9 +412,9 @@ export default function App() {
             </div>
 
             {/* Bottom Grid: 3 Dedicated Windows (Activity Decodes, QSO Macros/PTT Sequencer, DX Target & CAT Rig) */}
-            <div className="grid grid-cols-1 lg:grid-cols-12 gap-2 flex-1 min-h-0">
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-1.5 sm:gap-2 flex-1 min-h-0 overflow-hidden">
               {/* Window 1 (lg:col-span-5): Band Activity & Multi-Pass SIC Decodes (Scrollable) */}
-              <div className="lg:col-span-5 h-full min-h-[320px] flex flex-col">
+              <div className="lg:col-span-5 h-full min-h-[220px] lg:min-h-0 flex flex-col overflow-hidden">
                 <ActivityLogTable
                   decodes={decodes}
                   myCall={config.myCall}
@@ -428,8 +428,8 @@ export default function App() {
                 />
               </div>
 
-              {/* Window 2 (lg:col-span-4): Standard QSO Macros, Auto-Reply Rule & PTT Action Sequencer (No Scrolling) */}
-              <div className="lg:col-span-4 h-full min-h-[320px] flex flex-col">
+              {/* Window 2 (lg:col-span-4): Standard QSO Macros, Auto-Reply Rule & PTT Action Sequencer */}
+              <div className="lg:col-span-4 h-full min-h-[240px] lg:min-h-0 flex flex-col overflow-y-auto">
                 <QsoMacrosTransmitPanel
                   qsoState={qsoState}
                   config={config}
@@ -447,10 +447,10 @@ export default function App() {
                 />
               </div>
 
-              {/* Window 3 (lg:col-span-3): Target DX Station & Rig CAT Controller (No Scrolling) */}
-              <div className="lg:col-span-3 h-full flex flex-col space-y-2 min-h-[320px]">
+              {/* Window 3 (lg:col-span-3): Target DX Station & Rig CAT Controller */}
+              <div className="lg:col-span-3 h-full min-h-[240px] lg:min-h-0 flex flex-col space-y-1.5 sm:space-y-2 overflow-y-auto">
                 {/* Target DX Station State */}
-                <div className="flex-1 min-h-[160px]">
+                <div className="flex-1 min-h-[140px]">
                   <QsoController
                     qsoState={qsoState}
                     config={config}
@@ -465,7 +465,7 @@ export default function App() {
                 </div>
 
                 {/* Rig VFO & CAT Status */}
-                <div className="h-44 flex-shrink-0">
+                <div className="h-40 sm:h-44 flex-shrink-0">
                   <RigControlPanel
                     currentBand={HAM_BANDS[currentBandIdx]}
                     dialFreqHz={dialFreqHz}

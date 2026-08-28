@@ -190,6 +190,7 @@ export const WaterfallDisplay: React.FC<WaterfallDisplayProps> = ({
   const [speed, setSpeed] = useState<number>(2); // 1 = Slow, 2 = Normal, 3 = Fast, 4 = Max
   const [showSpectrum, setShowSpectrum] = useState<boolean>(true);
   const [showTrackingOverlays, setShowTrackingOverlays] = useState<boolean>(true);
+  const [waterfallHeightPreset, setWaterfallHeightPreset] = useState<'compact' | 'normal' | 'tall'>('normal');
 
   // Frequency Range Bounds State
   const [freqRangePreset, setFreqRangePreset] = useState<FreqRangePreset>('STD_200_3000');
@@ -250,8 +251,8 @@ export const WaterfallDisplay: React.FC<WaterfallDisplayProps> = ({
   // Initialize offscreen buffer
   useEffect(() => {
     const offscreen = document.createElement('canvas');
-    offscreen.width = 1600;
-    offscreen.height = 320;
+    offscreen.width = 1920;
+    offscreen.height = 360;
     const ctx = offscreen.getContext('2d');
     if (ctx) {
       ctx.fillStyle = '#050505';
@@ -259,6 +260,64 @@ export const WaterfallDisplay: React.FC<WaterfallDisplayProps> = ({
     }
     offscreenCanvasRef.current = offscreen;
   }, []);
+
+  // ResizeObserver for perfect 1:1 crisp pixel scaling to any window dimensions
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+
+    const handleResize = () => {
+      const rect = container.getBoundingClientRect();
+      const w = Math.max(300, Math.floor(rect.width));
+      const h = Math.max(100, Math.floor(rect.height));
+
+      const canvas = canvasRef.current;
+      if (canvas) {
+        if (canvas.width !== w || canvas.height !== h) {
+          canvas.width = w;
+          canvas.height = h;
+        }
+      }
+
+      const offscreen = offscreenCanvasRef.current;
+      if (offscreen) {
+        const targetOffscreenW = Math.max(1920, w);
+        const targetOffscreenH = Math.max(360, h);
+        if (offscreen.width < targetOffscreenW || offscreen.height < targetOffscreenH) {
+          const oldW = offscreen.width;
+          const oldH = offscreen.height;
+          const temp = document.createElement('canvas');
+          temp.width = oldW;
+          temp.height = oldH;
+          const tempCtx = temp.getContext('2d');
+          if (tempCtx) tempCtx.drawImage(offscreen, 0, 0);
+
+          offscreen.width = targetOffscreenW;
+          offscreen.height = targetOffscreenH;
+          const offCtx = offscreen.getContext('2d');
+          if (offCtx) {
+            offCtx.fillStyle = '#050505';
+            offCtx.fillRect(0, 0, targetOffscreenW, targetOffscreenH);
+            offCtx.drawImage(temp, 0, 0);
+          }
+        }
+      }
+    };
+
+    handleResize();
+
+    const resizeObserver = new ResizeObserver(() => {
+      handleResize();
+    });
+
+    resizeObserver.observe(container);
+    window.addEventListener('resize', handleResize);
+
+    return () => {
+      resizeObserver.disconnect();
+      window.removeEventListener('resize', handleResize);
+    };
+  }, [waterfallHeightPreset]);
 
   // Helper coordinate conversions
   const freqToCanvasX = useCallback(
@@ -829,6 +888,44 @@ export const WaterfallDisplay: React.FC<WaterfallDisplayProps> = ({
             )}
           </div>
 
+          {/* Height Preset Selector */}
+          <div className="flex items-center space-x-0.5 border border-[#333] bg-[#050505] p-0.5">
+            <span className="text-[10px] text-[#888] font-bold px-1 uppercase">H:</span>
+            <button
+              id="wf-height-compact-btn"
+              type="button"
+              onClick={() => setWaterfallHeightPreset('compact')}
+              className={`px-1.5 py-0.2 text-[10px] font-bold ${
+                waterfallHeightPreset === 'compact' ? 'bg-[#00FF41] text-black' : 'text-[#888] hover:text-[#D4D4D4]'
+              }`}
+              title="Compact Waterfall Height (32 / 128px)"
+            >
+              S
+            </button>
+            <button
+              id="wf-height-normal-btn"
+              type="button"
+              onClick={() => setWaterfallHeightPreset('normal')}
+              className={`px-1.5 py-0.2 text-[10px] font-bold ${
+                waterfallHeightPreset === 'normal' ? 'bg-[#00FF41] text-black' : 'text-[#888] hover:text-[#D4D4D4]'
+              }`}
+              title="Standard Waterfall Height (44 / 176px)"
+            >
+              M
+            </button>
+            <button
+              id="wf-height-tall-btn"
+              type="button"
+              onClick={() => setWaterfallHeightPreset('tall')}
+              className={`px-1.5 py-0.2 text-[10px] font-bold ${
+                waterfallHeightPreset === 'tall' ? 'bg-[#00FF41] text-black' : 'text-[#888] hover:text-[#D4D4D4]'
+              }`}
+              title="Expanded Waterfall Height (60 / 240px)"
+            >
+              L
+            </button>
+          </div>
+
           {/* Gain Slider */}
           <div className="flex items-center space-x-1">
             <span className="text-[#888] text-[11px]">Gain:</span>
@@ -900,13 +997,17 @@ export const WaterfallDisplay: React.FC<WaterfallDisplayProps> = ({
         {/* Waterfall Canvas */}
         <div
           ref={containerRef}
-          className="relative flex-1 h-44 bg-[#050505] overflow-hidden cursor-crosshair"
+          className={`relative flex-1 ${
+            waterfallHeightPreset === 'compact'
+              ? 'h-32'
+              : waterfallHeightPreset === 'tall'
+              ? 'h-60'
+              : 'h-40 sm:h-44 md:h-48'
+          } bg-[#050505] overflow-hidden cursor-crosshair`}
         >
           <canvas
             id="z30-waterfall-canvas"
             ref={canvasRef}
-            width={1200}
-            height={220}
             onClick={handleCanvasClick}
             onDoubleClick={handleCanvasDoubleClick}
             onMouseMove={handleMouseMove}

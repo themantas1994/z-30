@@ -6,7 +6,7 @@ import React, { useEffect, useState } from 'react';
 import { StationConfig, TxSlot } from '../types/z30';
 import { Z30_SPECS, evaluateSlotTiming } from '../dsp/z30Constants';
 import { audioEngine } from '../dsp/audioEngine';
-import { Radio, Mic, MicOff, Volume2, VolumeX, BookOpen, Code2, Settings, HelpCircle, Sparkles, Activity, Play, Cpu, Square, Zap, Clock, Wand2, Package } from 'lucide-react';
+import { Radio, Mic, MicOff, Volume2, VolumeX, BookOpen, Code2, Settings, HelpCircle, Sparkles, Activity, Play, Cpu, Square, Zap, Clock, Wand2, Package, Maximize2, Minimize2 } from 'lucide-react';
 
 interface HeaderProps {
   config: StationConfig;
@@ -62,8 +62,43 @@ export const Header: React.FC<HeaderProps> = ({
   const [utcTimeStr, setUtcTimeStr] = useState<string>('00:00:00');
   const [isMuted, setIsMuted] = useState<boolean>(false);
   const [micEnabled, setMicEnabled] = useState<boolean>(false);
+  const [isFullscreen, setIsFullscreen] = useState<boolean>(false);
 
   const slotInfo = evaluateSlotTiming((txSlot || 'EVEN') as TxSlot);
+
+  useEffect(() => {
+    const handleFullscreenChange = () => {
+      setIsFullscreen(Boolean(document.fullscreenElement || (document as any).webkitFullscreenElement));
+    };
+
+    document.addEventListener('fullscreenchange', handleFullscreenChange);
+    document.addEventListener('webkitfullscreenchange', handleFullscreenChange);
+    return () => {
+      document.removeEventListener('fullscreenchange', handleFullscreenChange);
+      document.removeEventListener('webkitfullscreenchange', handleFullscreenChange);
+    };
+  }, []);
+
+  const handleToggleFullscreen = async () => {
+    try {
+      if (!document.fullscreenElement && !(document as any).webkitFullscreenElement) {
+        const root = document.documentElement;
+        if (root.requestFullscreen) {
+          await root.requestFullscreen();
+        } else if ((root as any).webkitRequestFullscreen) {
+          await (root as any).webkitRequestFullscreen();
+        }
+      } else {
+        if (document.exitFullscreen) {
+          await document.exitFullscreen();
+        } else if ((document as any).webkitExitFullscreen) {
+          await (document as any).webkitExitFullscreen();
+        }
+      }
+    } catch (err) {
+      console.warn('Fullscreen toggle failed:', err);
+    }
+  };
 
   useEffect(() => {
     const updateTime = () => {
@@ -119,7 +154,7 @@ export const Header: React.FC<HeaderProps> = ({
         />
       </div>
 
-      <div className="max-w-7xl mx-auto px-3 py-2 flex flex-wrap items-center justify-between gap-2">
+      <div className="w-full px-2 sm:px-3 py-1.5 flex flex-wrap items-center justify-between gap-2">
         {/* Left: App Logo & Mode Identity */}
         <div className="flex items-center space-x-4">
           <div className="flex items-center space-x-2">
@@ -387,6 +422,23 @@ export const Header: React.FC<HeaderProps> = ({
             className="p-1.5 bg-[#141414] hover:bg-[#1A1A1A] text-[#888] hover:text-[#D4D4D4] border border-[#333] text-xs"
           >
             <HelpCircle className="w-3.5 h-3.5 text-purple-400" />
+          </button>
+
+          {/* Fullscreen Mode Toggle */}
+          <button
+            id="toggle-fullscreen-btn"
+            onClick={handleToggleFullscreen}
+            title={isFullscreen ? 'Exit Fullscreen (F11 / Esc)' : 'Enter Fullscreen Window (F11)'}
+            className={`p-1.5 border text-xs transition-colors flex items-center space-x-1 ${
+              isFullscreen
+                ? 'bg-[#00FF41]/20 border-[#00FF41] text-[#00FF41] shadow-[0_0_8px_rgba(0,255,65,0.4)]'
+                : 'bg-[#141414] hover:bg-[#1A1A1A] text-[#888] hover:text-[#00FF41] border-[#333]'
+            }`}
+          >
+            {isFullscreen ? <Minimize2 className="w-3.5 h-3.5" /> : <Maximize2 className="w-3.5 h-3.5" />}
+            <span className="hidden 2xl:inline text-[11px] font-bold">
+              {isFullscreen ? 'Exit Full' : 'Fullscreen'}
+            </span>
           </button>
         </div>
       </div>
