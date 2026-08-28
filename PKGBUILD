@@ -10,7 +10,6 @@ depends=(
     'python>=3.9'
     'python-numpy'
     'python-scipy'
-    'python-sounddevice'
     'python-pyserial'
     'python-cffi'
     'python-requests'
@@ -19,9 +18,10 @@ depends=(
     'tk'
 )
 optdepends=(
+    'python-sounddevice: hardware audio capture & playback (available in AUR or via pip)'
+    'python-pyaudio: alternative audio backend'
     'nodejs: for embedded web application engine'
     'npm: for building web interface'
-    'python-pyaudio: alternative audio backend'
 )
 makedepends=('python-setuptools' 'python-build' 'python-installer' 'python-wheel' 'git')
 source=("z-30::git+https://github.com/themantas1994/z-30.git#branch=main")

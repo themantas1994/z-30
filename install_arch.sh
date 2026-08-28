@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # ==============================================================================
 # z-30 Transceiver - Automated Installation Script for Arch Linux & Manjaro
-# Compatible with Arch Linux, Manjaro, EndeavourOS, and Garuda Linux
+# Compatible with Arch Linux, Manjaro, EndeavourOS, Garuda Linux, and CachyOS
 # ==============================================================================
 
 set -e
@@ -22,7 +22,7 @@ if ! command -v pacman &> /dev/null; then
     exit 1
 fi
 
-echo -e "${YELLOW}[1/4] Installing dependencies via pacman...${NC}"
+echo -e "${YELLOW}[1/4] Installing official dependencies via pacman...${NC}"
 sudo pacman -Syu --needed --noconfirm \
     python \
     python-pip \
@@ -32,7 +32,6 @@ sudo pacman -Syu --needed --noconfirm \
     python-wheel \
     python-numpy \
     python-scipy \
-    python-sounddevice \
     python-pyserial \
     python-cffi \
     python-requests \
@@ -49,9 +48,12 @@ mkdir -p "$HOME/.z30"
 python -m venv "$HOME/.z30-env" --system-site-packages
 source "$HOME/.z30-env/bin/activate"
 
-# Build and install wheel cleanly
+# Install sounddevice inside the venv (uses pacman-provided portaudio & cffi)
+pip install --upgrade sounddevice
+
+# Build and install z-30 package
 python -m build --wheel --no-isolation
-pip install --no-deps dist/*.whl --force-reinstall
+pip install dist/*.whl --force-reinstall
 
 if command -v npm &> /dev/null; then
   echo -e "${YELLOW}[3/4] Compiling web DSP interface bundle...${NC}"

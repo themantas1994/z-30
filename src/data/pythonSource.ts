@@ -3922,13 +3922,18 @@ depends=(
     'python>=3.9'
     'python-numpy'
     'python-scipy'
-    'python-sounddevice'
     'python-pyserial'
     'python-cffi'
     'python-requests'
     'portaudio'
     'hamlib'
     'tk'
+)
+optdepends=(
+    'python-sounddevice: hardware audio capture & playback (available in AUR or via pip)'
+    'python-pyaudio: alternative audio backend'
+    'nodejs: for embedded web application engine'
+    'npm: for building web interface'
 )
 makedepends=('python-setuptools' 'python-build' 'python-installer' 'python-wheel' 'git')
 source=("z-30::git+https://github.com/themantas1994/z-30.git#branch=main")
@@ -3955,15 +3960,16 @@ package() {
 set -e
 sudo pacman -Syu --needed --noconfirm \\
     python python-pip python-setuptools python-build python-installer python-wheel \\
-    python-numpy python-scipy python-sounddevice python-pyserial python-cffi python-requests \\
+    python-numpy python-scipy python-pyserial python-cffi python-requests \\
     portaudio hamlib tk nodejs npm git base-devel
 
 mkdir -p "$HOME/.z30"
 python -m venv "$HOME/.z30-env" --system-site-packages
 source "$HOME/.z30-env/bin/activate"
 
+pip install sounddevice
 python -m build --wheel --no-isolation
-pip install --no-deps dist/*.whl --force-reinstall
+pip install dist/*.whl --force-reinstall
 
 mkdir -p "$HOME/.local/bin"
 cat << 'EOF' > "$HOME/.local/bin/z30"

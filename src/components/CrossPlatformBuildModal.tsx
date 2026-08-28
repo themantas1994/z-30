@@ -258,7 +258,7 @@ export const CrossPlatformBuildModal: React.FC<CrossPlatformBuildModalProps> = (
                   </span>
                   <button
                     onClick={() => copyToClipboard(
-                      'sudo pacman -Syu --needed python python-pip python-setuptools python-build python-installer python-wheel python-numpy python-scipy python-sounddevice python-pyserial python-cffi portaudio hamlib tk git base-devel && bash install_arch.sh',
+                      'sudo pacman -Syu --needed python python-pip python-setuptools python-build python-installer python-wheel python-numpy python-scipy python-pyserial python-cffi python-requests portaudio hamlib tk git base-devel && bash install_arch.sh',
                       'arch_pacman'
                     )}
                     className="flex items-center gap-1 text-[11px] bg-[#222] hover:bg-[#333] text-[#1793D1] px-2.5 py-1 rounded transition-colors"
@@ -273,7 +273,7 @@ export const CrossPlatformBuildModal: React.FC<CrossPlatformBuildModalProps> = (
                 <div className="bg-[#0A0A0A] p-3 rounded border border-[#222222] font-mono text-[11px] text-[#D4D4D4] space-y-2">
                   <div className="text-[#888]"># 1. Native Pacman Dependencies & Build Tools:</div>
                   <div className="text-[#00FF41]">
-                    sudo pacman -Syu --needed python python-setuptools python-build python-installer python-wheel python-numpy python-scipy python-sounddevice python-pyserial python-cffi portaudio hamlib tk git base-devel
+                    sudo pacman -Syu --needed python python-pip python-setuptools python-build python-installer python-wheel python-numpy python-scipy python-pyserial python-cffi python-requests portaudio hamlib tk git base-devel
                   </div>
                   <div className="text-[#888]"># 2. Run Automated Arch Installer (or makepkg -si):</div>
                   <div className="text-[#00FF41]">
@@ -287,13 +287,13 @@ export const CrossPlatformBuildModal: React.FC<CrossPlatformBuildModalProps> = (
 
                 <div className="mt-4 flex gap-3">
                   <button
-                    onClick={() => downloadFile('PKGBUILD', `# Maintainer: Paulo Mantas <paulomantas2009@gmail.com>\npkgname=z30-transceiver\npkgver=1.0.0\npkgrel=1\npkgdesc="16-MFSK Weak-Signal Digital Mode Transceiver, LDPC-SIC Decoder, CAT Controller, and DSP Suite"\narch=('x86_64' 'aarch64')\nurl="https://github.com/themantas1994/z-30"\nlicense=('MIT')\ndepends=('python>=3.9' 'python-numpy' 'python-scipy' 'python-sounddevice' 'python-pyserial' 'python-cffi' 'portaudio' 'hamlib' 'tk')\nmakedepends=('python-setuptools' 'python-build' 'python-installer' 'python-wheel' 'git')\nsource=("z-30::git+https://github.com/themantas1994/z-30.git#branch=main")\nsha256sums=('SKIP')\n\nbuild() {\n    if [ -d "$srcdir/z-30" ]; then cd "$srcdir/z-30"; else cd "$startdir"; fi\n    python -m build --wheel --no-isolation\n}\n\npackage() {\n    if [ -d "$srcdir/z-30" ]; then cd "$srcdir/z-30"; else cd "$startdir"; fi\n    python -m installer --destdir="$pkgdir" dist/*.whl\n    if [ -f z30.desktop ]; then install -Dm644 z30.desktop "$pkgdir/usr/share/applications/z30.desktop"; fi\n}\n`)}
+                    onClick={() => downloadFile('PKGBUILD', `# Maintainer: Paulo Mantas <paulomantas2009@gmail.com>\npkgname=z30-transceiver\npkgver=1.0.0\npkgrel=1\npkgdesc="16-MFSK Weak-Signal Digital Mode Transceiver, LDPC-SIC Decoder, CAT Controller, and DSP Suite"\narch=('x86_64' 'aarch64')\nurl="https://github.com/themantas1994/z-30"\nlicense=('MIT')\ndepends=('python>=3.9' 'python-numpy' 'python-scipy' 'python-pyserial' 'python-cffi' 'python-requests' 'portaudio' 'hamlib' 'tk')\nmakedepends=('python-setuptools' 'python-build' 'python-installer' 'python-wheel' 'git')\nsource=("z-30::git+https://github.com/themantas1994/z-30.git#branch=main")\nsha256sums=('SKIP')\n\nbuild() {\n    if [ -d "$srcdir/z-30" ]; then cd "$srcdir/z-30"; else cd "$startdir"; fi\n    python -m build --wheel --no-isolation\n}\n\npackage() {\n    if [ -d "$srcdir/z-30" ]; then cd "$srcdir/z-30"; else cd "$startdir"; fi\n    python -m installer --destdir="$pkgdir" dist/*.whl\n    if [ -f z30.desktop ]; then install -Dm644 z30.desktop "$pkgdir/usr/share/applications/z30.desktop"; fi\n}\n`)}
                     className="flex items-center gap-2 px-3 py-1.5 bg-[#1793D1]/20 hover:bg-[#1793D1]/30 text-[#1793D1] border border-[#1793D1]/40 rounded text-xs transition-colors"
                   >
                     <Download className="w-3.5 h-3.5" /> Download PKGBUILD
                   </button>
                   <button
-                    onClick={() => downloadFile('install_arch.sh', `#!/usr/bin/env bash\nset -e\nsudo pacman -Syu --needed --noconfirm python python-pip python-setuptools python-build python-installer python-wheel python-numpy python-scipy python-sounddevice python-pyserial python-cffi portaudio hamlib tk git base-devel\npython -m venv "$HOME/.z30-env" --system-site-packages\nsource "$HOME/.z30-env/bin/activate"\npython -m build --wheel --no-isolation\npip install --no-deps dist/*.whl --force-reinstall\necho "z-30 installed successfully on Arch Linux."\n`)}
+                    onClick={() => downloadFile('install_arch.sh', `#!/usr/bin/env bash\nset -e\nsudo pacman -Syu --needed --noconfirm python python-pip python-setuptools python-build python-installer python-wheel python-numpy python-scipy python-pyserial python-cffi python-requests portaudio hamlib tk git base-devel\npython -m venv "$HOME/.z30-env" --system-site-packages\nsource "$HOME/.z30-env/bin/activate"\npip install sounddevice\npython -m build --wheel --no-isolation\npip install dist/*.whl --force-reinstall\necho "z-30 installed successfully on Arch Linux."\n`)}
                     className="flex items-center gap-2 px-3 py-1.5 bg-[#1793D1]/20 hover:bg-[#1793D1]/30 text-[#1793D1] border border-[#1793D1]/40 rounded text-xs transition-colors"
                   >
                     <Download className="w-3.5 h-3.5" /> Download install_arch.sh
