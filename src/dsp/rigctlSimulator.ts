@@ -14,18 +14,19 @@ export interface RigctlLogItem {
 }
 
 export class RigctlSimulator {
-  private currentFreqHz: number = 14074000; // 20m default
+  private currentFreqHz: number = 14076000; // 20m z-30 default
   private currentMode: string = 'PKTUSB';
   private currentPassbandHz: number = 3000;
   private pttState: boolean = false;
   private splitState: boolean = false;
-  private txFreqHz: number = 14074000;
+  private txFreqHz: number = 14076000;
   private isConnected: boolean = true;
   private commandHistory: RigctlLogItem[] = [];
   private currentBandIdx: number = 5; // 20m
 
   constructor() {
     this.currentFreqHz = HAM_BANDS[5].dialFreqHz;
+    this.txFreqHz = HAM_BANDS[5].dialFreqHz;
   }
 
   public getFreqHz(): number {

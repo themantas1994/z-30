@@ -51,20 +51,36 @@ export const Z30_SPECS = {
   DEFAULT_AUDIO_FREQ: 1250, // Hz default center frequency
 };
 
+export const DEFAULT_BANDS: Record<string, number> = {
+  '160m': 1842000,
+  '80m':  3576000,
+  '60m':  5359000,
+  '40m':  7076000,
+  '30m':  10139000,
+  '20m':  14076000,
+  '17m':  18102000,
+  '15m':  21076000,
+  '12m':  24917000,
+  '10m':  28076000,
+  '6m':   50316000,
+  '2m':   144176000,
+  '70cm': 432176000,
+};
+
 export const HAM_BANDS: BandDef[] = [
-  { name: '160m', dialFreqHz: 1840000, bandMeters: '160m' },
-  { name: '80m',  dialFreqHz: 3573000, bandMeters: '80m' },
-  { name: '60m',  dialFreqHz: 5357000, bandMeters: '60m' },
-  { name: '40m',  dialFreqHz: 7074000, bandMeters: '40m' },
-  { name: '30m',  dialFreqHz: 10136000, bandMeters: '30m' },
-  { name: '20m',  dialFreqHz: 14074000, bandMeters: '20m' },
-  { name: '17m',  dialFreqHz: 18100000, bandMeters: '17m' },
-  { name: '15m',  dialFreqHz: 21074000, bandMeters: '15m' },
-  { name: '12m',  dialFreqHz: 24915000, bandMeters: '12m' },
-  { name: '10m',  dialFreqHz: 28074000, bandMeters: '10m' },
-  { name: '6m',   dialFreqHz: 50313000, bandMeters: '6m' },
-  { name: '2m',   dialFreqHz: 144174000, bandMeters: '2m' },
-  { name: '70cm', dialFreqHz: 432174000, bandMeters: '70cm' },
+  { name: '160m', dialFreqHz: 1842000, bandMeters: '160m' },
+  { name: '80m',  dialFreqHz: 3576000, bandMeters: '80m' },
+  { name: '60m',  dialFreqHz: 5359000, bandMeters: '60m' },
+  { name: '40m',  dialFreqHz: 7076000, bandMeters: '40m' },
+  { name: '30m',  dialFreqHz: 10139000, bandMeters: '30m' },
+  { name: '20m',  dialFreqHz: 14076000, bandMeters: '20m' },
+  { name: '17m',  dialFreqHz: 18102000, bandMeters: '17m' },
+  { name: '15m',  dialFreqHz: 21076000, bandMeters: '15m' },
+  { name: '12m',  dialFreqHz: 24917000, bandMeters: '12m' },
+  { name: '10m',  dialFreqHz: 28076000, bandMeters: '10m' },
+  { name: '6m',   dialFreqHz: 50316000, bandMeters: '6m' },
+  { name: '2m',   dialFreqHz: 144176000, bandMeters: '2m' },
+  { name: '70cm', dialFreqHz: 432176000, bandMeters: '70cm' },
 ];
 
 export const DEFAULT_STATION_CONFIG: import('../types/z30').StationConfig = {

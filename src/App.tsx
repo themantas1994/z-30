@@ -17,6 +17,7 @@ import { Header } from './components/Header';
 import { WaterfallDisplay } from './components/WaterfallDisplay';
 import { ActivityLogTable } from './components/ActivityLogTable';
 import { QsoController } from './components/QsoController';
+import { QsoMacrosTransmitPanel } from './components/QsoMacrosTransmitPanel';
 import { RigControlPanel } from './components/RigControlPanel';
 import { RfSimulatorPanel } from './components/RfSimulatorPanel';
 import { PythonSourceViewer } from './components/PythonSourceViewer';
@@ -25,11 +26,12 @@ import { LdpcLabModal } from './components/LdpcLabModal';
 import { StationSettingsModal } from './components/StationSettingsModal';
 import { SetupWizardModal } from './components/SetupWizardModal';
 import { SpecsModal } from './components/SpecsModal';
+import { BandManagerModal } from './components/BandManagerModal';
 
 export default function App() {
   // Station & Hardware Config
   const [config, setConfig] = useState<StationConfig>(DEFAULT_STATION_CONFIG);
-  const [currentBandIdx, setCurrentBandIdx] = useState<number>(5); // 20m default (14.074 MHz)
+  const [currentBandIdx, setCurrentBandIdx] = useState<number>(5); // 20m default (14.076 MHz)
   const [dialFreqHz, setDialFreqHz] = useState<number>(HAM_BANDS[5].dialFreqHz);
 
   // QSO State Machine
@@ -44,6 +46,7 @@ export default function App() {
   const [isSettingsOpen, setIsSettingsOpen] = useState<boolean>(false);
   const [isWizardOpen, setIsWizardOpen] = useState<boolean>(false);
   const [isSpecsOpen, setIsSpecsOpen] = useState<boolean>(false);
+  const [isBandManagerOpen, setIsBandManagerOpen] = useState<boolean>(false);
 
   // QSOs, Logs & Band Activity Filter
   const [activityFilter, setActivityFilter] = useState<'ALL' | 'CQ' | 'MYCALL' | 'SIC'>('ALL');
@@ -102,10 +105,13 @@ export default function App() {
 
   // Update Band selection
   const handleBandChange = (bandName: string) => {
-    const band = HAM_BANDS.find((b) => b.name === bandName);
-    if (band) {
-      setCurrentBandIdx(HAM_BANDS.indexOf(band));
-      setDialFreqHz(band.dialFreqHz);
+    const bandIdx = HAM_BANDS.findIndex((b) => b.name === bandName);
+    if (bandIdx !== -1) {
+      const band = HAM_BANDS[bandIdx];
+      const targetHz = config.customBands?.[bandName] || band.dialFreqHz;
+      setCurrentBandIdx(bandIdx);
+      setDialFreqHz(targetHz);
+      rigctl.setFreqHz(targetHz);
       rigctl.setBandByName(bandName);
     }
   };
@@ -376,14 +382,21 @@ export default function App() {
                 onSetRxFreq={handleSetRxFreq}
                 onSetTxFreq={handleSetTxFreq}
                 isTransmitting={isTransmitting}
+                isTuning={isTuning}
                 decodes={decodes}
+                currentBand={HAM_BANDS[currentBandIdx]}
+                dialFreqHz={dialFreqHz}
+                onBandChange={handleBandChange}
+                onOpenBandManager={() => setIsBandManagerOpen(true)}
+                fwdWatts={fwdWatts}
+                swr={swr}
               />
             </div>
 
-            {/* Bottom Grid: Activity Decodes (Left) + Rig & QSO Sequencer (Right) */}
+            {/* Bottom Grid: 3 Dedicated Windows (Activity Decodes, QSO Macros/PTT Sequencer, DX Target & CAT Rig) */}
             <div className="grid grid-cols-1 lg:grid-cols-12 gap-2 flex-1 min-h-0">
-              {/* Left 7 Columns: Band Activity & Multi-Pass SIC Decodes */}
-              <div className="lg:col-span-7 h-full min-h-[300px]">
+              {/* Window 1 (lg:col-span-5): Band Activity & Multi-Pass SIC Decodes (Scrollable) */}
+              <div className="lg:col-span-5 h-full min-h-[320px] flex flex-col">
                 <ActivityLogTable
                   decodes={decodes}
                   myCall={config.myCall}
@@ -397,10 +410,29 @@ export default function App() {
                 />
               </div>
 
-              {/* Right 5 Columns: Rig Control & QSO Automation */}
-              <div className="lg:col-span-5 h-full flex flex-col space-y-2 min-h-[300px]">
-                {/* QSO Sequencer */}
-                <div className="flex-1 min-h-[220px]">
+              {/* Window 2 (lg:col-span-4): Standard QSO Macros, Auto-Reply Rule & PTT Action Sequencer (No Scrolling) */}
+              <div className="lg:col-span-4 h-full min-h-[320px] flex flex-col">
+                <QsoMacrosTransmitPanel
+                  qsoState={qsoState}
+                  config={config}
+                  currentBand={HAM_BANDS[currentBandIdx].name}
+                  isTransmitting={isTransmitting}
+                  isTuning={isTuning}
+                  onUpdateState={handleUpdateQsoState}
+                  onUpdateConfig={handleUpdateConfig}
+                  onCallingCq={handleCallingCq}
+                  onToggleTx={handleToggleTx}
+                  onStartTx={handleStartTx}
+                  onStopTx={handleStopTx}
+                  onStartTune={handleStartTune}
+                  onStopTune={handleStopTune}
+                />
+              </div>
+
+              {/* Window 3 (lg:col-span-3): Target DX Station & Rig CAT Controller (No Scrolling) */}
+              <div className="lg:col-span-3 h-full flex flex-col space-y-2 min-h-[320px]">
+                {/* Target DX Station State */}
+                <div className="flex-1 min-h-[160px]">
                   <QsoController
                     qsoState={qsoState}
                     config={config}
@@ -408,20 +440,14 @@ export default function App() {
                     isTransmitting={isTransmitting}
                     onUpdateState={handleUpdateQsoState}
                     onUpdateConfig={handleUpdateConfig}
-                    onCallingCq={handleCallingCq}
-                    onToggleTx={handleToggleTx}
-                    onStartTx={handleStartTx}
-                    onStopTx={handleStopTx}
-                    onStartTune={handleStartTune}
-                    onStopTune={handleStopTune}
-                    isTuning={isTuning}
                     fwdWatts={fwdWatts}
                     swr={swr}
+                    isTuning={isTuning}
                   />
                 </div>
 
-                {/* Rig & S-Meter */}
-                <div className="h-48 flex-shrink-0">
+                {/* Rig VFO & CAT Status */}
+                <div className="h-44 flex-shrink-0">
                   <RigControlPanel
                     currentBand={HAM_BANDS[currentBandIdx]}
                     dialFreqHz={dialFreqHz}
@@ -435,6 +461,7 @@ export default function App() {
                     isTuning={isTuning}
                     onStartTune={handleStartTune}
                     onStopTune={handleStopTune}
+                    onOpenBandManager={() => setIsBandManagerOpen(true)}
                   />
                 </div>
               </div>
@@ -463,6 +490,22 @@ export default function App() {
       </main>
 
       {/* Modals */}
+      <BandManagerModal
+        isOpen={isBandManagerOpen}
+        onClose={() => setIsBandManagerOpen(false)}
+        config={config}
+        currentBandName={HAM_BANDS[currentBandIdx].name}
+        currentDialFreqHz={dialFreqHz}
+        onSelectBandAndFreq={(bandName, freqHz) => {
+          const idx = HAM_BANDS.findIndex((b) => b.name === bandName);
+          if (idx !== -1) {
+            setCurrentBandIdx(idx);
+            setDialFreqHz(freqHz);
+          }
+        }}
+        onSaveConfig={(updated) => handleUpdateConfig(updated)}
+      />
+
       <LogbookModal
         isOpen={isLogbookOpen}
         onClose={() => setIsLogbookOpen(false)}

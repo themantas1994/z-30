@@ -72,6 +72,7 @@ export interface StationConfig {
   holdTxFreq: boolean;
   splitTx: boolean;
   defaultTxSlot?: TxSlot;
+  customBands?: Record<string, number>;
 }
 
 export interface RfChannelParams {

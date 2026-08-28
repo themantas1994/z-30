@@ -85,6 +85,18 @@ class Z30AudioEngine {
     }
   }
 
+  public setTxVolume(vol: number) {
+    if (this.txGain && this.ctx) {
+      this.txGain.gain.setValueAtTime(Math.max(0, Math.min(1, vol)), this.ctx.currentTime);
+    }
+  }
+
+  public setTxGainDb(db: number) {
+    // 0 dB -> 1.0, -20 dB -> 0.1, -40 dB -> 0.01
+    const linear = Math.pow(10, db / 20);
+    this.setTxVolume(linear);
+  }
+
   /**
    * Start synthetic atmospheric RF background noise (AWGN)
    */

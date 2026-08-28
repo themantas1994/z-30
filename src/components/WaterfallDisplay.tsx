@@ -13,10 +13,11 @@
  */
 
 import React, { useRef, useEffect, useState, useCallback } from 'react';
-import { ColorPaletteName, DecodedSignal } from '../types/z30';
-import { Z30_SPECS } from '../dsp/z30Constants';
+import { ColorPaletteName, DecodedSignal, BandDef } from '../types/z30';
+import { Z30_SPECS, HAM_BANDS } from '../dsp/z30Constants';
 import { audioEngine } from '../dsp/audioEngine';
-import { Palette, ZoomIn, ZoomOut, Move, Eye, Radio, Sparkles, SlidersHorizontal, RefreshCw } from 'lucide-react';
+import { rigctl } from '../dsp/rigctlSimulator';
+import { Palette, ZoomIn, ZoomOut, Move, Eye, Radio, Sparkles, SlidersHorizontal, RefreshCw, Volume2, Sliders, Zap } from 'lucide-react';
 
 interface WaterfallDisplayProps {
   rxFreqHz: number;
@@ -25,7 +26,14 @@ interface WaterfallDisplayProps {
   onSetTxFreq: (freqHz: number) => void;
   activeTxSymbols?: number[];
   isTransmitting?: boolean;
+  isTuning?: boolean;
   decodes?: DecodedSignal[];
+  currentBand?: BandDef;
+  dialFreqHz?: number;
+  onBandChange?: (bandName: string) => void;
+  onOpenBandManager?: () => void;
+  fwdWatts?: number;
+  swr?: number;
 }
 
 // 10 Vectorized Color Palette Functions
@@ -105,10 +113,45 @@ export const WaterfallDisplay: React.FC<WaterfallDisplayProps> = ({
   onSetRxFreq,
   onSetTxFreq,
   isTransmitting = false,
+  isTuning = false,
   decodes = [],
+  currentBand,
+  dialFreqHz,
+  onBandChange,
+  onOpenBandManager,
+  fwdWatts = 50.0,
+  swr = 1.12,
 }) => {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
+  
+  // Power / Volume state in dB (0 dB = 100%, -40 dB = minimum)
+  const [powerDb, setPowerDb] = useState<number>(0);
+  // Transmitted Audio Power / ALC state in dB (0 dB = 100%, -30 dB = minimum)
+  const [txPowerDb, setTxPowerDb] = useState<number>(0);
+
+  // Live S-Meter state
+  const [sMeterDb, setSMeterDb] = useState<number>(-95);
+
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setSMeterDb(rigctl.getSmeterDb());
+    }, 120);
+    return () => clearInterval(timer);
+  }, []);
+
+  const sMeterPercent = Math.max(5, Math.min(100, ((sMeterDb + 130) / 100) * 100));
+
+  const handlePowerChange = (val: number) => {
+    setPowerDb(val);
+    const linearGain = Math.pow(10, val / 20);
+    audioEngine.setMasterVolume(linearGain);
+  };
+
+  const handleTxPowerChange = (val: number) => {
+    setTxPowerDb(val);
+    audioEngine.setTxGainDb(val);
+  };
   
   // Display & Colormap State
   const [palette, setPalette] = useState<ColorPaletteName>('turbo');
@@ -602,54 +645,252 @@ export const WaterfallDisplay: React.FC<WaterfallDisplayProps> = ({
         })}
       </div>
 
-      {/* Main Canvas Area */}
-      <div ref={containerRef} className="relative w-full h-44 bg-[#050505] overflow-hidden cursor-crosshair">
-        <canvas
-          id="z30-waterfall-canvas"
-          ref={canvasRef}
-          width={1200}
-          height={220}
-          onClick={handleCanvasClick}
-          onMouseMove={handleMouseMove}
-          onMouseDown={handleMouseDown}
-          onMouseUp={handleMouseUp}
-          onMouseLeave={handleMouseLeave}
-          onWheel={handleWheel}
-          className="w-full h-full block"
-        />
+      {/* Main Canvas Area + Vertical Power Slider */}
+      <div className="flex w-full bg-[#050505] border-b border-[#333]">
+        {/* Waterfall Canvas */}
+        <div ref={containerRef} className="relative flex-1 h-44 bg-[#050505] overflow-hidden cursor-crosshair">
+          <canvas
+            id="z30-waterfall-canvas"
+            ref={canvasRef}
+            width={1200}
+            height={220}
+            onClick={handleCanvasClick}
+            onMouseMove={handleMouseMove}
+            onMouseDown={handleMouseDown}
+            onMouseUp={handleMouseUp}
+            onMouseLeave={handleMouseLeave}
+            onWheel={handleWheel}
+            className="w-full h-full block"
+          />
 
-        {/* Hovered Signal Inspection Popover */}
-        {hoveredSignal && (
-          <div className="absolute top-2 left-2 bg-[#0F0F0F]/95 border border-[#00FF41] p-2 text-xs shadow-xl pointer-events-none space-y-0.5">
-            <div className="flex items-center space-x-1.5 text-[#00FF41] font-bold">
-              <Radio className="w-3 h-3" />
-              <span>{hoveredSignal.callFrom || 'DX CARRIER'} @ {hoveredSignal.freq} Hz</span>
+          {/* Hovered Signal Inspection Popover */}
+          {hoveredSignal && (
+            <div className="absolute top-2 left-2 bg-[#0F0F0F]/95 border border-[#00FF41] p-2 text-xs shadow-xl pointer-events-none space-y-0.5 z-10">
+              <div className="flex items-center space-x-1.5 text-[#00FF41] font-bold">
+                <Radio className="w-3 h-3" />
+                <span>{hoveredSignal.callFrom || 'DX CARRIER'} @ {hoveredSignal.freq} Hz</span>
+              </div>
+              <div className="text-[11px] text-[#D4D4D4]">
+                Payload: <span className="text-cyan-400 font-bold">{hoveredSignal.message}</span>
+              </div>
+              <div className="text-[10px] text-[#888] flex space-x-2">
+                <span>SNR: <strong className="text-[#00FF41]">{hoveredSignal.snr} dB</strong></span>
+                <span>DT: <strong className="text-yellow-400">{hoveredSignal.dt.toFixed(2)}s</strong></span>
+                <span>SIC: <strong className="text-purple-400">Pass {hoveredSignal.sicPass}</strong></span>
+              </div>
             </div>
-            <div className="text-[11px] text-[#D4D4D4]">
-              Payload: <span className="text-cyan-400 font-bold">{hoveredSignal.message}</span>
+          )}
+
+          {/* Quick Instructions & Zoom Hint Banner */}
+          <div className="absolute bottom-1 right-2 bg-[#050505]/90 border border-[#333] px-2 py-0.5 text-[10px] text-[#888] pointer-events-none flex items-center space-x-2 z-10">
+            <span>Click: <strong className="text-[#00FF41]">Set RX</strong></span>
+            <span>•</span>
+            <span>Shift+Click: <strong className="text-red-400">Set TX</strong></span>
+            <span>•</span>
+            <span>Wheel: <strong className="text-cyan-400">Zoom ({zoom}x)</strong></span>
+            {zoom > 1 && (
+              <>
+                <span>•</span>
+                <span className="text-yellow-400">Drag to Pan</span>
+              </>
+            )}
+          </div>
+        </div>
+
+        {/* Dual Vertical Audio / Power Slider Column (RX Volume & TX ALC) */}
+        <div className="w-32 sm:w-40 bg-[#0A0A0A] border-l border-[#2E2E2E] flex items-stretch divide-x divide-[#222] select-none font-mono flex-shrink-0" id="power-slider-panel">
+          {/* Slider 1: RX VOL / POWER */}
+          <div className="flex-1 flex flex-col items-center justify-between p-1.5 min-w-0">
+            {/* Label & Value in dB */}
+            <div className="text-center w-full">
+              <div className="text-[8px] sm:text-[9px] font-bold tracking-wider text-[#888] uppercase truncate">RX VOL</div>
+              <div className="text-[11px] sm:text-xs font-bold text-[#00FF41] drop-shadow-[0_0_6px_rgba(0,255,65,0.5)]">
+                {powerDb >= 0 ? '+' : ''}{powerDb.toFixed(1)} <span className="text-[8px] text-[#888]">dB</span>
+              </div>
             </div>
-            <div className="text-[10px] text-[#888] flex space-x-2">
-              <span>SNR: <strong className="text-[#00FF41]">{hoveredSignal.snr} dB</strong></span>
-              <span>DT: <strong className="text-yellow-400">{hoveredSignal.dt.toFixed(2)}s</strong></span>
-              <span>SIC: <strong className="text-purple-400">Pass {hoveredSignal.sicPass}</strong></span>
+
+            {/* Vertical Slider Control */}
+            <div className="relative flex-1 flex items-center justify-center my-0.5 w-full min-h-[85px]">
+              <div className="relative h-24 sm:h-28 w-7 flex items-center justify-center">
+                <input
+                  id="vertical-rx-power-slider"
+                  type="range"
+                  min="-40"
+                  max="0"
+                  step="0.5"
+                  value={powerDb}
+                  onChange={(e) => handlePowerChange(Number(e.target.value))}
+                  className="w-24 sm:w-28 h-1.5 bg-[#222] appearance-none cursor-pointer accent-[#00FF41] -rotate-90 origin-center focus:outline-none"
+                  title={`RX Audio Level: ${powerDb >= 0 ? '+' : ''}${powerDb.toFixed(1)} dB`}
+                />
+              </div>
+            </div>
+
+            {/* Level Bar & Quick Scale */}
+            <div className="w-full flex flex-col items-center space-y-0.5">
+              <div className="w-full h-1 bg-[#181818] border border-[#333] overflow-hidden">
+                <div
+                  className={`h-full transition-all ${
+                    powerDb > -6 ? 'bg-[#00FF41]' : powerDb > -18 ? 'bg-cyan-400' : 'bg-yellow-500'
+                  }`}
+                  style={{ width: `${Math.max(5, Math.min(100, ((powerDb + 40) / 40) * 100))}%` }}
+                />
+              </div>
+              <div className="flex justify-between w-full text-[7px] text-[#666] leading-none">
+                <span>-40</span>
+                <span>0dB</span>
+              </div>
             </div>
           </div>
-        )}
 
-        {/* Quick Instructions & Zoom Hint Banner */}
-        <div className="absolute bottom-1 right-2 bg-[#050505]/90 border border-[#333] px-2 py-0.5 text-[10px] text-[#888] pointer-events-none flex items-center space-x-2">
-          <span>Click: <strong className="text-[#00FF41]">Set RX</strong></span>
-          <span>•</span>
-          <span>Shift+Click: <strong className="text-red-400">Set TX</strong></span>
-          <span>•</span>
-          <span>Wheel: <strong className="text-cyan-400">Zoom ({zoom}x)</strong></span>
-          {zoom > 1 && (
-            <>
-              <span>•</span>
-              <span className="text-yellow-400">Drag to Pan</span>
-            </>
-          )}
+          {/* Slider 2: TX AUDIO / ALC POWER */}
+          <div className="flex-1 flex flex-col items-center justify-between p-1.5 min-w-0 bg-[#0D0D0D]">
+            {/* Label & Value in dB */}
+            <div className="text-center w-full">
+              <div className="text-[8px] sm:text-[9px] font-bold tracking-wider text-red-400 uppercase truncate">TX ALC</div>
+              <div className="text-[11px] sm:text-xs font-bold text-red-400 drop-shadow-[0_0_6px_rgba(239,68,68,0.5)]">
+                {txPowerDb >= 0 ? '+' : ''}{txPowerDb.toFixed(1)} <span className="text-[8px] text-[#888]">dB</span>
+              </div>
+            </div>
+
+            {/* Vertical Slider Control */}
+            <div className="relative flex-1 flex items-center justify-center my-0.5 w-full min-h-[85px]">
+              <div className="relative h-24 sm:h-28 w-7 flex items-center justify-center">
+                <input
+                  id="vertical-tx-alc-slider"
+                  type="range"
+                  min="-30"
+                  max="0"
+                  step="0.5"
+                  value={txPowerDb}
+                  onChange={(e) => handleTxPowerChange(Number(e.target.value))}
+                  className="w-24 sm:w-28 h-1.5 bg-[#222] appearance-none cursor-pointer accent-red-500 -rotate-90 origin-center focus:outline-none"
+                  title={`TX Audio / ALC Level: ${txPowerDb >= 0 ? '+' : ''}${txPowerDb.toFixed(1)} dB (adjust to set radio ALC meter)`}
+                />
+              </div>
+            </div>
+
+            {/* Level Bar & Quick Scale */}
+            <div className="w-full flex flex-col items-center space-y-0.5">
+              <div className="w-full h-1 bg-[#181818] border border-[#333] overflow-hidden">
+                <div
+                  className={`h-full transition-all ${
+                    txPowerDb > -6 ? 'bg-red-500' : txPowerDb > -15 ? 'bg-yellow-400' : 'bg-cyan-400'
+                  }`}
+                  style={{ width: `${Math.max(5, Math.min(100, ((txPowerDb + 30) / 30) * 100))}%` }}
+                />
+              </div>
+              <div className="flex justify-between w-full text-[7px] text-[#666] leading-none">
+                <span>-30</span>
+                <span>0dB</span>
+              </div>
+            </div>
+          </div>
         </div>
+      </div>
+
+      {/* Signal Strength (S-Meter) Bar at the Bottom of Waterfall */}
+      <div className="bg-[#0D0D0D] px-3 py-1.5 border-b border-[#2A2A2A] flex items-center justify-between gap-3 text-xs font-mono select-none" id="waterfall-smeter-bar">
+        {/* Left: S-Meter Readout */}
+        <div className="flex items-center space-x-2 flex-shrink-0">
+          <span className="text-[9px] font-bold uppercase tracking-wider text-[#888]">
+            SIGNAL STRENGTH:
+          </span>
+          <span className={`text-xs font-bold ${
+            isTransmitting ? 'text-red-400' : isTuning ? 'text-yellow-400' : 'text-[#00FF41]'
+          }`}>
+            {isTransmitting
+              ? `TX 100% (${fwdWatts.toFixed(1)}W • SWR ${swr.toFixed(2)})`
+              : isTuning
+              ? `TUNE CW (${fwdWatts.toFixed(1)}W)`
+              : `S${Math.min(9, Math.max(1, Math.round(sMeterPercent / 10)))} (${sMeterDb.toFixed(0)} dBm)`}
+          </span>
+        </div>
+
+        {/* Center: Graphical Multi-Segment S-Meter Scale */}
+        <div className="flex-1 max-w-xl flex flex-col space-y-0.5">
+          <div className="relative w-full h-2.5 bg-[#141414] border border-[#333] overflow-hidden">
+            <div
+              className={`h-full transition-all duration-100 ${
+                isTransmitting
+                  ? 'bg-red-500'
+                  : isTuning
+                  ? 'bg-yellow-500'
+                  : sMeterPercent > 60
+                  ? 'bg-gradient-to-r from-[#00FF41] via-yellow-400 to-red-500'
+                  : 'bg-[#00FF41]'
+              }`}
+              style={{ width: `${isTransmitting || isTuning ? 100 : sMeterPercent}%` }}
+            />
+          </div>
+          {/* S-Meter Graduations */}
+          <div className="flex justify-between text-[8px] text-[#666] font-mono px-0.5 leading-none">
+            <span>S1</span>
+            <span>S3</span>
+            <span>S5</span>
+            <span>S7</span>
+            <span className="text-[#00FF41] font-semibold">S9</span>
+            <span className="text-yellow-400">+10</span>
+            <span className="text-yellow-500">+20</span>
+            <span className="text-red-400">+30</span>
+            <span className="text-red-500 font-bold">+40</span>
+          </div>
+        </div>
+
+        {/* Right: Mode & Transceiver Info */}
+        <div className="hidden sm:flex items-center space-x-2 text-[10px] text-[#888] flex-shrink-0">
+          <span>AGC: <strong className="text-cyan-400">FAST</strong></span>
+          <span>•</span>
+          <span>BW: <strong className="text-[#00FF41]">50 Hz</strong></span>
+        </div>
+      </div>
+
+      {/* Amateur Band Presets Strip (All 13 Bands - No Scrolling Needed) */}
+      <div className="bg-[#080808] px-2 py-1.5 flex items-center justify-between gap-1 select-none font-mono" id="waterfall-bands-strip">
+        <div className="flex items-center space-x-1.5 flex-shrink-0 mr-1">
+          <Radio className="w-3 h-3 text-[#00FF41]" />
+          <span className="text-[9px] font-bold uppercase tracking-wider text-[#888]">
+            BANDS:
+          </span>
+        </div>
+
+        {/* 13 Band Buttons Strip */}
+        <div className="flex items-center gap-1 flex-1 overflow-x-auto no-scrollbar py-0.5">
+          {HAM_BANDS.map((b) => {
+            const isCurrent = currentBand && b.name === currentBand.name;
+            const currentFreq = dialFreqHz && isCurrent ? dialFreqHz : b.dialFreqHz;
+            return (
+              <button
+                key={b.name}
+                id={`wf-band-btn-${b.name}`}
+                type="button"
+                onClick={() => onBandChange && onBandChange(b.name)}
+                title={`${b.name} — Dial: ${(currentFreq / 1e6).toFixed(6)} MHz`}
+                className={`py-1 px-1.5 sm:px-2 text-center text-[11px] sm:text-xs font-bold transition-all border flex-1 min-w-[38px] ${
+                  isCurrent
+                    ? 'bg-[#00FF41] text-black border-[#00FF41] shadow-[0_0_8px_rgba(0,255,65,0.4)] scale-[1.02]'
+                    : 'bg-[#141414] hover:bg-[#202020] border-[#2A2A2A] text-[#AAA] hover:text-[#FFF]'
+                }`}
+              >
+                <div className="leading-tight">{b.name}</div>
+              </button>
+            );
+          })}
+        </div>
+
+        {/* Band Manager Settings Trigger */}
+        {onOpenBandManager && (
+          <button
+            type="button"
+            id="wf-open-band-manager-btn"
+            onClick={onOpenBandManager}
+            className="flex-shrink-0 px-2 py-1 bg-[#1A1A1A] hover:bg-[#262626] text-[#00FF41] border border-[#00FF41]/40 text-[10px] font-bold uppercase flex items-center space-x-1 transition-colors ml-1"
+            title="Open Band Manager (band_manager.py) to configure dial presets"
+          >
+            <Sliders className="w-3 h-3" />
+            <span className="hidden md:inline">Presets</span>
+          </button>
+        )}
       </div>
     </div>
   );
