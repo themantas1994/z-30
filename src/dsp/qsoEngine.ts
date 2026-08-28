@@ -196,8 +196,79 @@ export class Z30QsoEngine {
     const myCall = config.myCall.toUpperCase();
     let autoLogged: LogEntry | undefined;
 
-    // Check if any incoming message is addressed to us
-    const targetedMsg = decodes.find(d => d.callTo === myCall || d.message.startsWith(myCall));
+    // Check for all incoming messages addressed to our station
+    const candidateMsgs = decodes.filter((d) => {
+      if (d.callTo === myCall) return true;
+      if (d.message.startsWith(`${myCall} `) || d.message === myCall) return true;
+      if (d.message.includes(` ${myCall} `) || d.message.endsWith(` ${myCall}`)) return true;
+      return false;
+    });
+
+    let targetedMsg: DecodedSignal | undefined;
+
+    if (candidateMsgs.length > 0) {
+      if (candidateMsgs.length === 1) {
+        targetedMsg = candidateMsgs[0];
+      } else {
+        // Multi-caller pileup resolution based on Auto-Reply Priority Rule
+        const priority = config.autoReplyPriority || 'FIRST';
+
+        const scoredCandidates = candidateMsgs.map((c, originalIndex) => {
+          // Extract grid if present in decode or message
+          let grid = c.grid;
+          if (!grid) {
+            const parts = c.message.split(/\s+/);
+            for (const p of parts) {
+              if (/^[A-R]{2}[0-9]{2}([A-X]{2})?$/i.test(p) && p.toUpperCase() !== 'RR73') {
+                grid = p.toUpperCase();
+                break;
+              }
+            }
+          }
+
+          let distanceKm: number | null = null;
+          if (grid && config.myGrid) {
+            distanceKm = calculateMaidenheadDistanceAndAzimuth(config.myGrid, grid).distanceKm;
+          }
+
+          return {
+            decode: c,
+            index: originalIndex,
+            snr: c.snr,
+            distanceKm,
+            grid,
+          };
+        });
+
+        if (priority === 'FIRST') {
+          targetedMsg = scoredCandidates[0].decode;
+        } else if (priority === 'LAST') {
+          targetedMsg = scoredCandidates[scoredCandidates.length - 1].decode;
+        } else if (priority === 'STRONGEST') {
+          scoredCandidates.sort((a, b) => b.snr - a.snr);
+          targetedMsg = scoredCandidates[0].decode;
+        } else if (priority === 'WEAKEST') {
+          scoredCandidates.sort((a, b) => a.snr - b.snr);
+          targetedMsg = scoredCandidates[0].decode;
+        } else if (priority === 'NEAREST') {
+          scoredCandidates.sort((a, b) => {
+            const distA = a.distanceKm !== null ? a.distanceKm : 999999;
+            const distB = b.distanceKm !== null ? b.distanceKm : 999999;
+            return distA - distB;
+          });
+          targetedMsg = scoredCandidates[0].decode;
+        } else if (priority === 'FARTHEST') {
+          scoredCandidates.sort((a, b) => {
+            const distA = a.distanceKm !== null ? a.distanceKm : -1;
+            const distB = b.distanceKm !== null ? b.distanceKm : -1;
+            return distB - distA;
+          });
+          targetedMsg = scoredCandidates[0].decode;
+        } else {
+          targetedMsg = candidateMsgs[0];
+        }
+      }
+    }
 
     if (targetedMsg && config.autoSeq) {
       this.state.idleCyclesCount = 0;

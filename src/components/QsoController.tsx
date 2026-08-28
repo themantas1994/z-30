@@ -3,11 +3,11 @@
  */
 
 import React, { useState } from 'react';
-import { StationConfig, TxSlot } from '../types/z30';
+import { AutoReplyPriority, StationConfig, TxSlot } from '../types/z30';
 import { QsoState } from '../dsp/qsoEngine';
 import { buildQsoMacros } from '../dsp/z30Codec';
-import { evaluateSlotTiming } from '../dsp/z30Constants';
-import { Radio, Power, Flame, Zap, CheckCircle2, RotateCcw, Send, Settings2, Sliders, Square, Clock, AlertTriangle } from 'lucide-react';
+import { AUTO_REPLY_OPTIONS, evaluateSlotTiming } from '../dsp/z30Constants';
+import { Radio, Power, Flame, Zap, CheckCircle2, RotateCcw, Send, Settings2, Sliders, Square, Clock, AlertTriangle, Sparkles } from 'lucide-react';
 
 interface QsoControllerProps {
   qsoState: QsoState;
@@ -15,6 +15,8 @@ interface QsoControllerProps {
   currentBand: string;
   isTransmitting: boolean;
   onUpdateState: (partial: Partial<QsoState>) => void;
+  onUpdateConfig?: (partial: Partial<StationConfig>) => void;
+  onCallingCq?: () => void;
   onToggleTx: () => void;
   onStartTx?: () => void;
   onStopTx?: () => void;
@@ -31,6 +33,8 @@ export const QsoController: React.FC<QsoControllerProps> = ({
   currentBand,
   isTransmitting,
   onUpdateState,
+  onUpdateConfig,
+  onCallingCq,
   onToggleTx,
   onStartTx,
   onStopTx,
@@ -53,6 +57,9 @@ export const QsoController: React.FC<QsoControllerProps> = ({
 
   const handleMacroSelect = (macroKey: QsoState['currentTxMacro']) => {
     onUpdateState({ currentTxMacro: macroKey });
+    if (macroKey === 'tx1' || macroKey === 'tx6') {
+      onCallingCq?.();
+    }
   };
 
   const handleCustomMsgSubmit = (e: React.FormEvent) => {
@@ -231,6 +238,48 @@ export const QsoController: React.FC<QsoControllerProps> = ({
           <div className="flex items-center space-x-1.5">
             <span className="text-[#888]">AUDIO:</span>
             <span className="text-cyan-400 font-bold">{qsoState.txFreqHz} Hz</span>
+          </div>
+        </div>
+
+        {/* Auto-Reply Priority Rule Card */}
+        <div className="bg-[#050505] p-2 border border-[#333] space-y-1.5" id="auto-reply-priority-panel">
+          <div className="flex items-center justify-between">
+            <span className="text-[10px] font-bold uppercase text-[#888] flex items-center space-x-1.5">
+              <Sparkles className="w-3 h-3 text-[#00FF41]" />
+              <span>Auto-Reply Rule (CQ Pileup Filter)</span>
+            </span>
+            <span className="text-[9px] text-[#00FF41] font-mono font-bold bg-[#00FF41]/10 px-1.5 py-0.2 border border-[#00FF41]/30">
+              {AUTO_REPLY_OPTIONS.find(o => o.id === (config.autoReplyPriority || 'FIRST'))?.tag || 'First'}
+            </span>
+          </div>
+
+          <div className="grid grid-cols-3 gap-1">
+            {AUTO_REPLY_OPTIONS.map((opt) => {
+              const isSelected = (config.autoReplyPriority || 'FIRST') === opt.id;
+              return (
+                <button
+                  key={opt.id}
+                  type="button"
+                  id={`auto-reply-${opt.id.toLowerCase()}-btn`}
+                  onClick={() => onUpdateConfig?.({ autoReplyPriority: opt.id })}
+                  title={opt.description}
+                  className={`px-1 py-1 text-[10px] font-mono font-bold uppercase border transition-all text-center flex flex-col items-center justify-center ${
+                    isSelected
+                      ? 'bg-[#00FF41] text-black border-[#00FF41] shadow-[0_0_8px_rgba(0,255,65,0.4)]'
+                      : 'bg-[#141414] hover:bg-[#1C1C1C] text-[#888] hover:text-[#D4D4D4] border-[#2A2A2A]'
+                  }`}
+                >
+                  <span>{opt.shortLabel}</span>
+                  <span className={`text-[8px] opacity-80 ${isSelected ? 'text-black font-semibold' : 'text-[#666]'}`}>
+                    {opt.id === 'NEAREST' || opt.id === 'FARTHEST'
+                      ? 'Dist (km)'
+                      : opt.id === 'STRONGEST' || opt.id === 'WEAKEST'
+                      ? 'SNR (dB)'
+                      : 'Arrival'}
+                  </span>
+                </button>
+              );
+            })}
           </div>
         </div>
 

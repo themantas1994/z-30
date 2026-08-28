@@ -23,6 +23,7 @@ import {
   RotateCcw,
 } from 'lucide-react';
 import { RIG_CATALOG, AUDIO_INPUTS, AUDIO_OUTPUTS, SERIAL_PORTS } from './SetupWizardModal';
+import { AUTO_REPLY_OPTIONS } from '../dsp/z30Constants';
 
 interface StationSettingsModalProps {
   isOpen: boolean;
@@ -634,9 +635,48 @@ export const StationSettingsModal: React.FC<StationSettingsModalProps> = ({
                       className="w-4 h-4 bg-[#141414] border-[#333] text-[#00FF41] focus:ring-0 accent-[#00FF41]"
                     />
                     <span className="text-[#D4D4D4]">
-                      Call 1st (Automatically answer first decoded station answering your CQ call)
+                      Auto-Reply / Call 1st (Automatically answer decoded stations responding to your CQ call)
                     </span>
                   </label>
+
+                  {/* Auto-Reply Priority Rule Selection */}
+                  <div className="bg-[#0A0A0A] p-2.5 border border-[#262626] space-y-2 ml-6">
+                    <div className="flex items-center justify-between">
+                      <label className="text-[10px] uppercase font-bold text-[#00FF41] block">
+                        Auto-Reply Priority Rule (Pileup Resolution)
+                      </label>
+                      <span className="text-[9px] text-[#888]">
+                        Active: <span className="text-[#00FF41] font-bold">{form.autoReplyPriority || 'FIRST'}</span>
+                      </span>
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2">
+                      {AUTO_REPLY_OPTIONS.map((opt) => {
+                        const isSelected = (form.autoReplyPriority || 'FIRST') === opt.id;
+                        return (
+                          <div
+                            key={opt.id}
+                            onClick={() => setForm({ ...form, autoReplyPriority: opt.id })}
+                            className={`p-2 border cursor-pointer transition-all ${
+                              isSelected
+                                ? 'bg-[#00FF41]/10 border-[#00FF41] text-[#D4D4D4]'
+                                : 'bg-[#141414] border-[#2A2A2A] text-[#888] hover:bg-[#1A1A1A] hover:text-[#CCC]'
+                            }`}
+                          >
+                            <div className="flex items-center justify-between mb-1">
+                              <span className={`text-[11px] font-bold ${isSelected ? 'text-[#00FF41]' : 'text-[#CCC]'}`}>
+                                {opt.shortLabel}
+                              </span>
+                              <span className="text-[9px] px-1 py-0.2 bg-[#050505] border border-[#333] font-mono text-[#AAA]">
+                                {opt.tag}
+                              </span>
+                            </div>
+                            <p className="text-[10px] text-[#777] leading-tight">{opt.description}</p>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
 
                   <label className="flex items-center space-x-2 cursor-pointer">
                     <input

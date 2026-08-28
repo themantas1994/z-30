@@ -91,11 +91,63 @@ export const DEFAULT_STATION_CONFIG: import('../types/z30').StationConfig = {
   pttPolarity: 'ACTIVE_HIGH',
   autoSeq: true,
   call1st: true,
+  autoReplyPriority: 'FIRST',
   watchdogCycles: 4,
   holdTxFreq: true,
   splitTx: false,
   defaultTxSlot: 'EVEN',
 };
+
+export const AUTO_REPLY_OPTIONS: {
+  id: import('../types/z30').AutoReplyPriority;
+  label: string;
+  shortLabel: string;
+  description: string;
+  tag: string;
+}[] = [
+  {
+    id: 'FIRST',
+    label: 'First Decoded (Chrono)',
+    shortLabel: 'First',
+    description: 'Answers the first decoded caller in the current time slot (Standard WSJT-X Call 1st behavior).',
+    tag: 'Arrival Order',
+  },
+  {
+    id: 'LAST',
+    label: 'Last Decoded',
+    shortLabel: 'Last',
+    description: 'Answers the last decoded caller in the sequence.',
+    tag: 'Arrival Tail',
+  },
+  {
+    id: 'STRONGEST',
+    label: 'Strongest Signal (Max SNR)',
+    shortLabel: 'Strongest',
+    description: 'Answers the loudest calling station with the highest SNR (e.g. -4 dB before -24 dB).',
+    tag: 'Highest SNR',
+  },
+  {
+    id: 'WEAKEST',
+    label: 'Weakest Signal (Deep DX)',
+    shortLabel: 'Weakest',
+    description: 'Answers the weakest station near the LDPC noise threshold (e.g. -28 dB before -6 dB).',
+    tag: 'Lowest SNR',
+  },
+  {
+    id: 'NEAREST',
+    label: 'Nearest Station (Closest km)',
+    shortLabel: 'Nearest',
+    description: 'Answers the geographically closest station based on Maidenhead grid distance.',
+    tag: 'Min Distance',
+  },
+  {
+    id: 'FARTHEST',
+    label: 'Farthest DX (Max Distance)',
+    shortLabel: 'Farthest',
+    description: 'Answers the station with the greatest Maidenhead great-circle distance (furthest DX).',
+    tag: 'Max Distance',
+  },
+];
 
 export interface SlotTimingInfo {
   utcSeconds: number;

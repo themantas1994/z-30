@@ -93,12 +93,21 @@ export class Z30SicDecoderEngine {
       const dt = Number((Math.random() * 0.8 - 0.4).toFixed(2));
 
       // Decide message type
-      const isCq = Math.random() > 0.35;
+      const isCallingUs = (activeTxMessage?.startsWith('CQ') && idx < 3) || Math.random() > 0.6;
+      const isCq = !isCallingUs && Math.random() > 0.35;
       let msg = '';
       if (isCq) {
         msg = `CQ ${item.call} ${item.grid}`;
+      } else if (isCallingUs) {
+        // Calling our station with grid or report
+        if (Math.random() > 0.4) {
+          msg = `${myCall} ${item.call} ${item.grid}`;
+        } else {
+          const rpt = effectiveSnr >= 0 ? `+0${effectiveSnr}` : `${effectiveSnr}`;
+          msg = `${myCall} ${item.call} ${rpt}`;
+        }
       } else {
-        const targetCall = Math.random() > 0.5 ? myCall : 'K6AR';
+        const targetCall = 'K6AR';
         const rpt = effectiveSnr >= 0 ? `+0${effectiveSnr}` : `${effectiveSnr}`;
         msg = `${targetCall} ${item.call} ${rpt}`;
       }

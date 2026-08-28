@@ -9,6 +9,8 @@ import { Radio, Sparkles, Filter, Search, Trash2, ArrowUpRight, ShieldCheck, Zap
 interface ActivityLogTableProps {
   decodes: DecodedSignal[];
   myCall: string;
+  filterType?: 'ALL' | 'CQ' | 'MYCALL' | 'SIC';
+  onFilterChange?: (tab: 'ALL' | 'CQ' | 'MYCALL' | 'SIC') => void;
   onSelectSignal: (signal: DecodedSignal) => void;
   onClearHistory: () => void;
 }
@@ -16,17 +18,37 @@ interface ActivityLogTableProps {
 export const ActivityLogTable: React.FC<ActivityLogTableProps> = ({
   decodes,
   myCall,
+  filterType: controlledFilterType,
+  onFilterChange,
   onSelectSignal,
   onClearHistory,
 }) => {
-  const [filterType, setFilterType] = useState<'ALL' | 'CQ' | 'MYCALL' | 'SIC'>('ALL');
+  const [internalFilterType, setInternalFilterType] = useState<'ALL' | 'CQ' | 'MYCALL' | 'SIC'>('ALL');
   const [searchQuery, setSearchQuery] = useState<string>('');
 
+  const filterType = controlledFilterType !== undefined ? controlledFilterType : internalFilterType;
+
+  const handleSetFilter = (newFilter: 'ALL' | 'CQ' | 'MYCALL' | 'SIC') => {
+    if (onFilterChange) {
+      onFilterChange(newFilter);
+    }
+    setInternalFilterType(newFilter);
+  };
+
   const filteredDecodes = useMemo(() => {
+    const upperMyCall = myCall.toUpperCase().trim();
     return decodes.filter((item) => {
       // Tab filter
       if (filterType === 'CQ' && !item.isCq) return false;
-      if (filterType === 'MYCALL' && !item.isMyCall) return false;
+      if (filterType === 'MYCALL') {
+        const isAddressedToUs =
+          item.isMyCall ||
+          item.callTo === upperMyCall ||
+          item.message.startsWith(`${upperMyCall} `) ||
+          item.message.includes(` ${upperMyCall} `) ||
+          item.message.endsWith(` ${upperMyCall}`);
+        if (!isAddressedToUs) return false;
+      }
       if (filterType === 'SIC' && item.sicPass === 1) return false;
 
       // Text search
@@ -39,7 +61,7 @@ export const ActivityLogTable: React.FC<ActivityLogTableProps> = ({
       }
       return true;
     });
-  }, [decodes, filterType, searchQuery]);
+  }, [decodes, filterType, searchQuery, myCall]);
 
   const getSnrBadge = (snr: number) => {
     if (snr >= -10) return 'bg-[#00FF41]/15 text-[#00FF41] border-[#00FF41]/40';
@@ -87,7 +109,7 @@ export const ActivityLogTable: React.FC<ActivityLogTableProps> = ({
         <div className="flex items-center space-x-1">
           <button
             id="filter-all-btn"
-            onClick={() => setFilterType('ALL')}
+            onClick={() => handleSetFilter('ALL')}
             className={`px-2 py-0.5 text-[11px] font-bold uppercase transition-colors ${
               filterType === 'ALL' ? 'bg-[#00FF41] text-black' : 'bg-[#1A1A1A] text-[#888] hover:text-[#D4D4D4] border border-[#333]'
             }`}
@@ -96,7 +118,7 @@ export const ActivityLogTable: React.FC<ActivityLogTableProps> = ({
           </button>
           <button
             id="filter-cq-btn"
-            onClick={() => setFilterType('CQ')}
+            onClick={() => handleSetFilter('CQ')}
             className={`px-2 py-0.5 text-[11px] font-bold uppercase transition-colors ${
               filterType === 'CQ' ? 'bg-[#00FF41] text-black' : 'bg-[#1A1A1A] text-[#888] hover:text-[#D4D4D4] border border-[#333]'
             }`}
@@ -105,16 +127,16 @@ export const ActivityLogTable: React.FC<ActivityLogTableProps> = ({
           </button>
           <button
             id="filter-mycall-btn"
-            onClick={() => setFilterType('MYCALL')}
+            onClick={() => handleSetFilter('MYCALL')}
             className={`px-2 py-0.5 text-[11px] font-bold uppercase transition-colors ${
-              filterType === 'MYCALL' ? 'bg-yellow-500 text-black' : 'bg-[#1A1A1A] text-[#888] hover:text-[#D4D4D4] border border-[#333]'
+              filterType === 'MYCALL' ? 'bg-yellow-500 text-black shadow-[0_0_8px_rgba(234,179,8,0.4)]' : 'bg-[#1A1A1A] text-[#888] hover:text-[#D4D4D4] border border-[#333]'
             }`}
           >
             My Call ({myCall})
           </button>
           <button
             id="filter-sic-btn"
-            onClick={() => setFilterType('SIC')}
+            onClick={() => handleSetFilter('SIC')}
             className={`px-2 py-0.5 text-[11px] font-bold uppercase transition-colors ${
               filterType === 'SIC' ? 'bg-purple-600 text-white' : 'bg-[#1A1A1A] text-[#888] hover:text-[#D4D4D4] border border-[#333]'
             }`}

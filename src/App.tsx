@@ -45,7 +45,8 @@ export default function App() {
   const [isWizardOpen, setIsWizardOpen] = useState<boolean>(false);
   const [isSpecsOpen, setIsSpecsOpen] = useState<boolean>(false);
 
-  // Decodes & SIC State
+  // QSOs, Logs & Band Activity Filter
+  const [activityFilter, setActivityFilter] = useState<'ALL' | 'CQ' | 'MYCALL' | 'SIC'>('ALL');
   const [decodes, setDecodes] = useState<DecodedSignal[]>([]);
   const [sicSteps, setSicSteps] = useState<SicIterationStep[]>([]);
   const [logEntries, setLogEntries] = useState<LogEntry[]>(qsoLogger.getEntries());
@@ -221,6 +222,12 @@ export default function App() {
     const updatedState = qsoEngine.getState();
     setQsoState(updatedState);
 
+    // If starting a CQ transmission or in CALLING_CQ stage, auto-switch main decodes view to MY CALL
+    const txMsg = qsoEngine.getCurrentTxMessage(config);
+    if (txMsg.startsWith('CQ') || updatedState.stage === 'CALLING_CQ' || updatedState.currentTxMacro === 'tx1' || updatedState.currentTxMacro === 'tx6') {
+      setActivityFilter('MYCALL');
+    }
+
     // 2. Check if currently at beginning of selected slot (0.0 to 1.5s)
     const slotInfo = evaluateSlotTiming(updatedState.txSlot, new Date());
 
@@ -301,8 +308,33 @@ export default function App() {
     setQsoState(qsoEngine.getState());
   };
 
+  // Called whenever user initiates CQ or selects CQ macro
+  const handleCallingCq = useCallback(() => {
+    setActivityFilter('MYCALL');
+  }, []);
+
+  const handleUpdateConfig = useCallback((partial: Partial<StationConfig>) => {
+    setConfig((prev) => {
+      const next = { ...prev, ...partial };
+      try {
+        localStorage.setItem('z30_station_config', JSON.stringify(next));
+      } catch {
+        // ignore
+      }
+      return next;
+    });
+  }, []);
+
   const handleUpdateQsoState = (partial: Partial<QsoState>) => {
     Object.assign(qsoState, partial);
+    // If state machine switches to calling CQ, automatically switch activity filter to MY CALL
+    if (
+      partial.stage === 'CALLING_CQ' ||
+      partial.currentTxMacro === 'tx1' ||
+      partial.currentTxMacro === 'tx6'
+    ) {
+      setActivityFilter('MYCALL');
+    }
     setQsoState({ ...qsoState });
   };
 
@@ -355,6 +387,8 @@ export default function App() {
                 <ActivityLogTable
                   decodes={decodes}
                   myCall={config.myCall}
+                  filterType={activityFilter}
+                  onFilterChange={setActivityFilter}
                   onSelectSignal={handleSelectSignal}
                   onClearHistory={() => {
                     sicDecoderEngine.clearHistory();
@@ -373,6 +407,8 @@ export default function App() {
                     currentBand={HAM_BANDS[currentBandIdx].name}
                     isTransmitting={isTransmitting}
                     onUpdateState={handleUpdateQsoState}
+                    onUpdateConfig={handleUpdateConfig}
+                    onCallingCq={handleCallingCq}
                     onToggleTx={handleToggleTx}
                     onStartTx={handleStartTx}
                     onStopTx={handleStopTx}

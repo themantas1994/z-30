@@ -14,6 +14,14 @@ export type QsoStage =
 
 export type TxSlot = 'EVEN' | 'ODD' | 'MANUAL';
 
+export type AutoReplyPriority =
+  | 'FIRST'
+  | 'LAST'
+  | 'STRONGEST'
+  | 'WEAKEST'
+  | 'NEAREST'
+  | 'FARTHEST';
+
 export interface DecodedSignal {
   id: string;
   timestamp: string; // HH:MM:SS
@@ -59,6 +67,7 @@ export interface StationConfig {
   pttPolarity?: 'ACTIVE_HIGH' | 'ACTIVE_LOW';
   autoSeq: boolean;
   call1st: boolean;
+  autoReplyPriority?: AutoReplyPriority;
   watchdogCycles: number;
   holdTxFreq: boolean;
   splitTx: boolean;

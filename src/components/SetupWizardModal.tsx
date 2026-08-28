@@ -776,6 +776,12 @@ export const SetupWizardModal: React.FC<SetupWizardModalProps> = ({
                         </td>
                       </tr>
                       <tr>
+                        <td className="p-2 text-[#888]">Auto-Reply Priority Rule</td>
+                        <td className="p-2 text-[#00FF41] font-bold">
+                          {form.autoReplyPriority || 'FIRST'} (Nearest, Farthest, First, Last, Strongest, Weakest)
+                        </td>
+                      </tr>
+                      <tr>
                         <td className="p-2 text-[#888]">z-30 Protocol Standard</td>
                         <td className="p-2 text-[#38BDF8]">
                           16-MFSK / 50 Hz BW / 30s Slot / LDPC(216,77) + SIC
