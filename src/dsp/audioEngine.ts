@@ -9,7 +9,28 @@ import { Z30_SPECS } from './z30Constants';
 export interface AudioMeterData {
   peakDb: number;
   rmsDb: number;
+  linearLevel: number;
   isClipping: boolean;
+}
+
+export interface SystemAudioDevice {
+  deviceId: string;
+  label: string;
+  kind: 'audioinput' | 'audiooutput';
+  groupId: string;
+}
+
+export interface AudioSystemDiagnostics {
+  isSupported: boolean;
+  permissionState: 'prompt' | 'granted' | 'denied' | 'unknown';
+  contextState: AudioContextState | 'uninitialized';
+  sampleRate: number;
+  baseLatencyMs: number;
+  inputDeviceCount: number;
+  outputDeviceCount: number;
+  activeInputLabel: string;
+  isMicActive: boolean;
+  sinkIdSupported: boolean;
 }
 
 class Z30AudioEngine {
@@ -26,6 +47,9 @@ class Z30AudioEngine {
   private isMuted: boolean = false;
   private fftBuffer: Uint8Array<ArrayBuffer> | null = null;
   private floatFftBuffer: Float32Array<ArrayBuffer> | null = null;
+  private currentInputDeviceId: string = '';
+  private currentInputLabel: string = '';
+  private currentOutputDeviceId: string = '';
 
   public initAudioContext(): AudioContext {
     if (!this.ctx) {
@@ -60,6 +84,144 @@ class Z30AudioEngine {
     return this.ctx;
   }
 
+  /**
+   * Enumerate real operating system audio input and output devices
+   */
+  public async getSystemAudioDevices(): Promise<{
+    inputs: SystemAudioDevice[];
+    outputs: SystemAudioDevice[];
+    hasPermission: boolean;
+    error?: string;
+  }> {
+    if (typeof navigator === 'undefined' || !navigator.mediaDevices || !navigator.mediaDevices.enumerateDevices) {
+      return {
+        inputs: [],
+        outputs: [],
+        hasPermission: false,
+        error: 'Web MediaDevices API is not supported in this browser.',
+      };
+    }
+
+    try {
+      const devices = await navigator.mediaDevices.enumerateDevices();
+      const inputs: SystemAudioDevice[] = [];
+      const outputs: SystemAudioDevice[] = [];
+      let hasPermission = false;
+
+      let defaultInputCounter = 1;
+      let defaultOutputCounter = 1;
+
+      for (const dev of devices) {
+        if (dev.kind === 'audioinput') {
+          if (dev.label) hasPermission = true;
+          inputs.push({
+            deviceId: dev.deviceId,
+            label: dev.label || `Audio Input ${defaultInputCounter++} (${dev.deviceId ? dev.deviceId.substring(0, 8) + '...' : 'Default'})`,
+            kind: 'audioinput',
+            groupId: dev.groupId,
+          });
+        } else if (dev.kind === 'audiooutput') {
+          if (dev.label) hasPermission = true;
+          outputs.push({
+            deviceId: dev.deviceId,
+            label: dev.label || `Audio Output ${defaultOutputCounter++} (${dev.deviceId ? dev.deviceId.substring(0, 8) + '...' : 'Default'})`,
+            kind: 'audiooutput',
+            groupId: dev.groupId,
+          });
+        }
+      }
+
+      return { inputs, outputs, hasPermission };
+    } catch (err: any) {
+      return {
+        inputs: [],
+        outputs: [],
+        hasPermission: false,
+        error: err?.message || 'Failed to enumerate system audio devices.',
+      };
+    }
+  }
+
+  /**
+   * Request system audio permission and immediately return labeled devices
+   */
+  public async requestSystemAudioPermission(): Promise<{
+    success: boolean;
+    inputs: SystemAudioDevice[];
+    outputs: SystemAudioDevice[];
+    error?: string;
+  }> {
+    try {
+      this.initAudioContext();
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        return { success: false, inputs: [], outputs: [], error: 'MediaDevices getUserMedia not supported' };
+      }
+
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          echoCancellation: false,
+          noiseSuppression: false,
+          autoGainControl: false,
+        },
+      });
+
+      // Stop test stream tracks to release device unless microphone is intentionally active
+      if (!this.micStream) {
+        stream.getTracks().forEach(t => t.stop());
+      }
+
+      const refreshed = await this.getSystemAudioDevices();
+      return {
+        success: true,
+        inputs: refreshed.inputs,
+        outputs: refreshed.outputs,
+      };
+    } catch (err: any) {
+      return {
+        success: false,
+        inputs: [],
+        outputs: [],
+        error: err?.message || 'Permission denied by user or system.',
+      };
+    }
+  }
+
+  /**
+   * Query comprehensive system audio diagnostics
+   */
+  public async getDiagnostics(): Promise<AudioSystemDiagnostics> {
+    const isSupported = typeof window !== 'undefined' && ('AudioContext' in window || 'webkitAudioContext' in window);
+    let permissionState: 'prompt' | 'granted' | 'denied' | 'unknown' = 'unknown';
+
+    if (typeof navigator !== 'undefined' && navigator.permissions && navigator.permissions.query) {
+      try {
+        const status = await navigator.permissions.query({ name: 'microphone' as PermissionName });
+        permissionState = status.state as any;
+      } catch {
+        permissionState = 'unknown';
+      }
+    }
+
+    const devInfo = await this.getSystemAudioDevices();
+    const sinkIdSupported = Boolean(
+      (this.ctx && 'setSinkId' in this.ctx) ||
+      (typeof HTMLMediaElement !== 'undefined' && 'setSinkId' in HTMLMediaElement.prototype)
+    );
+
+    return {
+      isSupported,
+      permissionState,
+      contextState: this.ctx ? this.ctx.state : 'uninitialized',
+      sampleRate: this.ctx ? this.ctx.sampleRate : 48000,
+      baseLatencyMs: this.ctx && (this.ctx as any).baseLatency ? Math.round((this.ctx as any).baseLatency * 1000) : 10,
+      inputDeviceCount: devInfo.inputs.length,
+      outputDeviceCount: devInfo.outputs.length,
+      activeInputLabel: this.currentInputLabel || (this.micStream ? 'Active Audio Input' : 'None (Audio Receiver Idle)'),
+      isMicActive: Boolean(this.micStream && this.micStream.active),
+      sinkIdSupported,
+    };
+  }
+
   public getAudioContext(): AudioContext | null {
     return this.ctx;
   }
@@ -92,9 +254,89 @@ class Z30AudioEngine {
   }
 
   public setTxGainDb(db: number) {
-    // 0 dB -> 1.0, -20 dB -> 0.1, -40 dB -> 0.01
     const linear = Math.pow(10, db / 20);
     this.setTxVolume(linear);
+  }
+
+  /**
+   * Set output audio destination device sink ID if supported
+   */
+  public async setAudioOutputDevice(deviceId: string): Promise<boolean> {
+    this.currentOutputDeviceId = deviceId;
+    if (this.ctx && 'setSinkId' in (this.ctx as any)) {
+      try {
+        await (this.ctx as any).setSinkId(deviceId);
+        return true;
+      } catch (e) {
+        console.warn('AudioContext setSinkId failed:', e);
+      }
+    }
+    return false;
+  }
+
+  /**
+   * Enable real microphone / soundcard receiver stream with optional deviceId
+   */
+  public async enableMicrophone(deviceId?: string): Promise<boolean> {
+    try {
+      this.initAudioContext();
+      if (!this.ctx || !this.analyser) return false;
+
+      if (this.micStream) {
+        this.disableMicrophone();
+      }
+
+      const audioConstraints: MediaTrackConstraints = {
+        echoCancellation: false,
+        noiseSuppression: false,
+        autoGainControl: false,
+      };
+
+      if (deviceId && deviceId !== 'default' && deviceId !== '') {
+        audioConstraints.deviceId = { exact: deviceId };
+      }
+
+      this.micStream = await navigator.mediaDevices.getUserMedia({
+        audio: audioConstraints,
+      });
+
+      const audioTrack = this.micStream.getAudioTracks()[0];
+      if (audioTrack) {
+        this.currentInputLabel = audioTrack.label || 'Default Soundcard';
+        this.currentInputDeviceId = deviceId || '';
+      }
+
+      this.micSource = this.ctx.createMediaStreamSource(this.micStream);
+      this.micSource.connect(this.analyser);
+      return true;
+    } catch (e) {
+      console.warn('Audio input access not granted or unavailable:', e);
+      return false;
+    }
+  }
+
+  public disableMicrophone() {
+    if (this.micSource) {
+      try {
+        this.micSource.disconnect();
+      } catch {
+        // ignore
+      }
+      this.micSource = null;
+    }
+    if (this.micStream) {
+      this.micStream.getTracks().forEach((t) => t.stop());
+      this.micStream = null;
+    }
+    this.currentInputLabel = '';
+  }
+
+  public getIsMicrophoneActive(): boolean {
+    return Boolean(this.micStream && this.micStream.active);
+  }
+
+  public getCurrentInputLabel(): string {
+    return this.currentInputLabel;
   }
 
   private liveFrames: {
@@ -282,50 +524,6 @@ class Z30AudioEngine {
   }
 
   /**
-   * Enable real microphone input for receiver testing
-   */
-  public async enableMicrophone(): Promise<boolean> {
-    try {
-      this.initAudioContext();
-      if (!this.ctx || !this.analyser) return false;
-
-      if (this.micStream) {
-        this.disableMicrophone();
-      }
-
-      this.micStream = await navigator.mediaDevices.getUserMedia({
-        audio: {
-          echoCancellation: false,
-          noiseSuppression: false,
-          autoGainControl: false,
-        },
-      });
-
-      this.micSource = this.ctx.createMediaStreamSource(this.micStream);
-      this.micSource.connect(this.analyser);
-      return true;
-    } catch (e) {
-      console.warn('Microphone access not granted or unavailable:', e);
-      return false;
-    }
-  }
-
-  public disableMicrophone() {
-    if (this.micSource) {
-      try {
-        this.micSource.disconnect();
-      } catch {
-        // ignore
-      }
-      this.micSource = null;
-    }
-    if (this.micStream) {
-      this.micStream.getTracks().forEach((t) => t.stop());
-      this.micStream = null;
-    }
-  }
-
-  /**
    * Extract FFT Frequency domain data for waterfall & spectrum
    */
   public getFrequencyData(): Uint8Array<ArrayBuffer> | null {
@@ -345,7 +543,7 @@ class Z30AudioEngine {
    */
   public getAudioMeter(): AudioMeterData {
     if (!this.analyser) {
-      return { peakDb: -100, rmsDb: -100, isClipping: false };
+      return { peakDb: -100, rmsDb: -100, linearLevel: 0, isClipping: false };
     }
 
     const timeData = new Float32Array(512);
@@ -367,6 +565,7 @@ class Z30AudioEngine {
     return {
       peakDb: Math.max(-100, Math.min(0, peakDb)),
       rmsDb: Math.max(-100, Math.min(0, rmsDb)),
+      linearLevel: Math.min(1.0, peak),
       isClipping: peak >= 0.98,
     };
   }

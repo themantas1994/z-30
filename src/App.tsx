@@ -26,7 +26,6 @@ import { SetupWizardModal } from './components/SetupWizardModal';
 import { SpecsModal } from './components/SpecsModal';
 import { BandManagerModal } from './components/BandManagerModal';
 import { RfTimeSyncModal } from './components/RfTimeSyncModal';
-import { CrossPlatformBuildModal } from './components/CrossPlatformBuildModal';
 
 export default function App() {
   // Station & Hardware Config
@@ -48,7 +47,6 @@ export default function App() {
   const [isSpecsOpen, setIsSpecsOpen] = useState<boolean>(false);
   const [isBandManagerOpen, setIsBandManagerOpen] = useState<boolean>(false);
   const [isTimeSyncOpen, setIsTimeSyncOpen] = useState<boolean>(false);
-  const [isPlatformsOpen, setIsPlatformsOpen] = useState<boolean>(false);
 
   // QSOs, Logs & Band Activity Filter
   const [activityFilter, setActivityFilter] = useState<'ALL' | 'CQ' | 'MYCALL' | 'SIC'>('ALL');
@@ -338,7 +336,6 @@ export default function App() {
         onOpenSettings={() => setIsSettingsOpen(true)}
         onOpenWizard={() => setIsWizardOpen(true)}
         onOpenSpecs={() => setIsSpecsOpen(true)}
-        onOpenPlatforms={() => setIsPlatformsOpen(true)}
         onOpenTimeSync={() => setIsTimeSyncOpen(true)}
         timeOffsetMs={timeOffsetMs}
         onTriggerDecode={executeDecodeCycle}
@@ -515,11 +512,6 @@ export default function App() {
           setTimeOffsetMs(offsetMs);
           handleUpdateConfig({ appTimeOffsetMs: offsetMs });
         }}
-      />
-
-      <CrossPlatformBuildModal
-        isOpen={isPlatformsOpen}
-        onClose={() => setIsPlatformsOpen(false)}
       />
     </div>
   );

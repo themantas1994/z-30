@@ -22,7 +22,9 @@ import {
   MapPin,
   AlertCircle,
   FileCheck,
+  Sliders,
 } from 'lucide-react';
+import { audioEngine, SystemAudioDevice, AudioSystemDiagnostics } from '../dsp/audioEngine';
 
 interface SetupWizardModalProps {
   isOpen: boolean;
@@ -82,20 +84,6 @@ export const RIG_CATALOG = [
   { name: 'Dummy / Simulated Rig (Testing)', id: 1 },
 ];
 
-export const AUDIO_INPUTS = [
-  'Default Sound Card (USB Audio CODEC)',
-  'Microphone (Realtek High Definition Audio)',
-  'Line In (Virtual Audio Cable / VAC)',
-  'USB Audio CODEC (IC-7300 / FT-991A Direct)',
-];
-
-export const AUDIO_OUTPUTS = [
-  'Default Sound Card (USB Audio CODEC)',
-  'Speakers (Realtek High Definition Audio)',
-  'Line Out (Virtual Audio Cable / VAC)',
-  'USB Audio CODEC (Transmitter Audio In)',
-];
-
 export const SERIAL_PORTS = [
   '/dev/ttyUSB0 (COM3 - Silicon Labs CP210x)',
   '/dev/ttyUSB1 (COM4 - FTDI Dual UART)',
@@ -114,15 +102,51 @@ export const SetupWizardModal: React.FC<SetupWizardModalProps> = ({
   const [form, setForm] = useState<StationConfig>({ ...config });
   const [errorMsg, setErrorMsg] = useState<string>('');
 
+  // Real System Audio Devices & Diagnostics
+  const [systemInputs, setSystemInputs] = useState<SystemAudioDevice[]>([]);
+  const [systemOutputs, setSystemOutputs] = useState<SystemAudioDevice[]>([]);
+  const [isScanningDevices, setIsScanningDevices] = useState<boolean>(false);
+  const [audioPermissionGranted, setAudioPermissionGranted] = useState<boolean>(false);
+  const [diagnostics, setDiagnostics] = useState<AudioSystemDiagnostics | null>(null);
+
   // Audio meter test state
   const [isAudioTesting, setIsAudioTesting] = useState<boolean>(false);
   const [vuLevel, setVuLevel] = useState<number>(0);
-  const audioIntervalRef = useRef<number | null>(null);
+  const [peakDb, setPeakDb] = useState<number>(-100);
+  const [rmsDb, setRmsDb] = useState<number>(-100);
+  const [isClipping, setIsClipping] = useState<boolean>(false);
+  const audioAnimRef = useRef<number | null>(null);
 
   // CAT & PTT test state
   const [catTestStatus, setCatTestStatus] = useState<string>('');
   const [isPttTesting, setIsPttTesting] = useState<boolean>(false);
   const pttTimeoutRef = useRef<number | null>(null);
+
+  // Scan system audio devices
+  const scanSystemDevices = async (requestPermission = false) => {
+    setIsScanningDevices(true);
+    try {
+      if (requestPermission) {
+        const permRes = await audioEngine.requestSystemAudioPermission();
+        if (permRes.success) {
+          setSystemInputs(permRes.inputs);
+          setSystemOutputs(permRes.outputs);
+          setAudioPermissionGranted(true);
+        }
+      } else {
+        const res = await audioEngine.getSystemAudioDevices();
+        setSystemInputs(res.inputs);
+        setSystemOutputs(res.outputs);
+        setAudioPermissionGranted(res.hasPermission);
+      }
+      const diag = await audioEngine.getDiagnostics();
+      setDiagnostics(diag);
+    } catch (e) {
+      console.warn('Failed to query system audio devices in wizard:', e);
+    } finally {
+      setIsScanningDevices(false);
+    }
+  };
 
   useEffect(() => {
     if (isOpen) {
@@ -132,13 +156,18 @@ export const SetupWizardModal: React.FC<SetupWizardModalProps> = ({
       setCatTestStatus('');
       setIsPttTesting(false);
       setIsAudioTesting(false);
+      scanSystemDevices(false);
+    } else {
+      if (isAudioTesting) {
+        stopAudioTest();
+      }
     }
   }, [isOpen, config]);
 
   // Clean up timers on unmount or close
   useEffect(() => {
     return () => {
-      if (audioIntervalRef.current) clearInterval(audioIntervalRef.current);
+      if (audioAnimRef.current) cancelAnimationFrame(audioAnimRef.current);
       if (pttTimeoutRef.current) clearTimeout(pttTimeoutRef.current);
     };
   }, []);
@@ -166,20 +195,46 @@ export const SetupWizardModal: React.FC<SetupWizardModalProps> = ({
   const gridVal = validateGrid(form.myGrid);
   const latLon = maidenheadToLatLon(form.myGrid);
 
-  // VU Meter Toggle
+  // Live Real Audio VU Meter
+  const startAudioTest = async () => {
+    setIsAudioTesting(true);
+    const matchingInput = systemInputs.find(
+      (d) => d.label === form.audioInputDevice || d.deviceId === form.audioInputDevice
+    );
+    const success = await audioEngine.enableMicrophone(matchingInput?.deviceId);
+    if (!success) {
+      await scanSystemDevices(true);
+    }
+
+    const updateMeter = () => {
+      const meter = audioEngine.getAudioMeter();
+      setPeakDb(meter.peakDb);
+      setRmsDb(meter.rmsDb);
+      setVuLevel(meter.linearLevel);
+      setIsClipping(meter.isClipping);
+      audioAnimRef.current = requestAnimationFrame(updateMeter);
+    };
+    audioAnimRef.current = requestAnimationFrame(updateMeter);
+  };
+
+  const stopAudioTest = () => {
+    if (audioAnimRef.current) {
+      cancelAnimationFrame(audioAnimRef.current);
+      audioAnimRef.current = null;
+    }
+    audioEngine.disableMicrophone();
+    setIsAudioTesting(false);
+    setVuLevel(0);
+    setPeakDb(-100);
+    setRmsDb(-100);
+    setIsClipping(false);
+  };
+
   const toggleAudioTest = () => {
     if (isAudioTesting) {
-      if (audioIntervalRef.current) clearInterval(audioIntervalRef.current);
-      setIsAudioTesting(false);
-      setVuLevel(0);
+      stopAudioTest();
     } else {
-      setIsAudioTesting(true);
-      let phase = 0;
-      audioIntervalRef.current = window.setInterval(() => {
-        phase += 0.2;
-        const val = Math.sin(phase) * 0.35 + Math.cos(phase * 2.1) * 0.2 + 0.4;
-        setVuLevel(Math.max(0.05, Math.min(0.95, val)));
-      }, 60);
+      startAudioTest();
     }
   };
 
@@ -450,40 +505,134 @@ export const SetupWizardModal: React.FC<SetupWizardModalProps> = ({
                   </p>
                 </div>
 
+                {/* System Audio Hardware Scanner Bar */}
+                <div className="bg-[#0b0b0b] p-3 border border-[#262626] space-y-2">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div className="flex items-center space-x-2">
+                      <Volume2 className="w-3.5 h-3.5 text-[#00FF41]" />
+                      <span className="text-[10px] font-bold uppercase text-[#D4D4D4]">
+                        Operating System Audio Detection
+                      </span>
+                      <span
+                        className={`text-[8px] px-1.5 py-0.5 rounded font-bold uppercase ${
+                          audioPermissionGranted
+                            ? 'bg-[#00FF41]/20 text-[#00FF41] border border-[#00FF41]/40'
+                            : 'bg-yellow-500/20 text-yellow-400 border border-yellow-500/40'
+                        }`}
+                      >
+                        {audioPermissionGranted ? '✓ Authorized' : '⚠ Limited Labels'}
+                      </span>
+                    </div>
+
+                    <div className="flex items-center space-x-2">
+                      {!audioPermissionGranted && (
+                        <button
+                          type="button"
+                          onClick={() => scanSystemDevices(true)}
+                          disabled={isScanningDevices}
+                          className="px-2 py-1 bg-yellow-500/20 hover:bg-yellow-500/30 text-yellow-300 border border-yellow-500/50 text-[9px] font-bold uppercase flex items-center space-x-1"
+                        >
+                          <Shield className="w-2.5 h-2.5" />
+                          <span>Authorize Devices</span>
+                        </button>
+                      )}
+
+                      <button
+                        type="button"
+                        onClick={() => scanSystemDevices(false)}
+                        disabled={isScanningDevices}
+                        className="px-2 py-1 bg-[#1A1A1A] hover:bg-[#282828] text-[#00FF41] border border-[#333] text-[9px] font-bold uppercase flex items-center space-x-1"
+                      >
+                        <RefreshCw className={`w-2.5 h-2.5 ${isScanningDevices ? 'animate-spin' : ''}`} />
+                        <span>{isScanningDevices ? 'Scanning...' : 'Scan System Devices'}</span>
+                      </button>
+                    </div>
+                  </div>
+
+                  {diagnostics && (
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 pt-1 text-[8px]">
+                      <div className="bg-[#141414] p-1.5 border border-[#222]">
+                        <span className="text-[#666] block uppercase">Sample Rate</span>
+                        <span className="text-cyan-400 font-bold">{diagnostics.sampleRate} Hz</span>
+                      </div>
+                      <div className="bg-[#141414] p-1.5 border border-[#222]">
+                        <span className="text-[#666] block uppercase">OS Inputs</span>
+                        <span className="text-[#00FF41] font-bold">{systemInputs.length || 1} Detected</span>
+                      </div>
+                      <div className="bg-[#141414] p-1.5 border border-[#222]">
+                        <span className="text-[#666] block uppercase">OS Outputs</span>
+                        <span className="text-yellow-400 font-bold">{systemOutputs.length || 1} Detected</span>
+                      </div>
+                      <div className="bg-[#141414] p-1.5 border border-[#222]">
+                        <span className="text-[#666] block uppercase">Web Audio Subsystem</span>
+                        <span className="text-purple-400 font-bold">{diagnostics.contextState.toUpperCase()}</span>
+                      </div>
+                    </div>
+                  )}
+                </div>
+
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   {/* Input Soundcard */}
                   <div className="bg-[#121212] p-3 border border-[#222] space-y-1.5">
-                    <label className="text-[10px] uppercase font-bold text-[#D4D4D4] block">
-                      Input Device (Rx Receiver Audio)
-                    </label>
+                    <div className="flex items-center justify-between">
+                      <label className="text-[10px] uppercase font-bold text-[#D4D4D4]">
+                        Input Device (Rx Demodulator Audio)
+                      </label>
+                      <span className="text-[8px] text-cyan-400">
+                        {systemInputs.length > 0 ? `${systemInputs.length} detected` : 'Generic'}
+                      </span>
+                    </div>
                     <select
                       value={form.audioInputDevice}
                       onChange={(e) => setForm({ ...form, audioInputDevice: e.target.value })}
                       className="w-full bg-[#181818] border border-[#333] px-2.5 py-1.5 text-xs text-cyan-400 focus:outline-none focus:border-[#00FF41]"
                     >
-                      {AUDIO_INPUTS.map((dev, i) => (
-                        <option key={i} value={dev}>
-                          {dev}
-                        </option>
-                      ))}
+                      {systemInputs.length > 0 ? (
+                        systemInputs.map((dev, i) => (
+                          <option key={`sys-in-${i}`} value={dev.label || dev.deviceId}>
+                            {dev.label || `Audio Input ${i + 1} (${dev.deviceId.substring(0, 8)}...)`}
+                          </option>
+                        ))
+                      ) : (
+                        <option value="Default System Audio Device">Default System Audio Input</option>
+                      )}
+                      {form.audioInputDevice &&
+                        !systemInputs.some((d) => (d.label || d.deviceId) === form.audioInputDevice) &&
+                        form.audioInputDevice !== 'Default System Audio Device' && (
+                          <option value={form.audioInputDevice}>{form.audioInputDevice}</option>
+                        )}
                     </select>
                   </div>
 
                   {/* Output Soundcard */}
                   <div className="bg-[#121212] p-3 border border-[#222] space-y-1.5">
-                    <label className="text-[10px] uppercase font-bold text-[#D4D4D4] block">
-                      Output Device (Tx Transmit Audio)
-                    </label>
+                    <div className="flex items-center justify-between">
+                      <label className="text-[10px] uppercase font-bold text-[#D4D4D4]">
+                        Output Device (Tx Modulator Audio)
+                      </label>
+                      <span className="text-[8px] text-yellow-400">
+                        {systemOutputs.length > 0 ? `${systemOutputs.length} detected` : 'Generic'}
+                      </span>
+                    </div>
                     <select
                       value={form.audioOutputDevice}
                       onChange={(e) => setForm({ ...form, audioOutputDevice: e.target.value })}
                       className="w-full bg-[#181818] border border-[#333] px-2.5 py-1.5 text-xs text-yellow-400 focus:outline-none focus:border-[#00FF41]"
                     >
-                      {AUDIO_OUTPUTS.map((dev, i) => (
-                        <option key={i} value={dev}>
-                          {dev}
-                        </option>
-                      ))}
+                      {systemOutputs.length > 0 ? (
+                        systemOutputs.map((dev, i) => (
+                          <option key={`sys-out-${i}`} value={dev.label || dev.deviceId}>
+                            {dev.label || `Audio Output ${i + 1} (${dev.deviceId.substring(0, 8)}...)`}
+                          </option>
+                        ))
+                      ) : (
+                        <option value="Default System Audio Device">Default System Audio Output</option>
+                      )}
+                      {form.audioOutputDevice &&
+                        !systemOutputs.some((d) => (d.label || d.deviceId) === form.audioOutputDevice) &&
+                        form.audioOutputDevice !== 'Default System Audio Device' && (
+                          <option value={form.audioOutputDevice}>{form.audioOutputDevice}</option>
+                        )}
                     </select>
                   </div>
                 </div>
@@ -499,8 +648,9 @@ export const SetupWizardModal: React.FC<SetupWizardModalProps> = ({
                         onChange={(e) => setForm({ ...form, sampleRateHz: Number(e.target.value) })}
                         className="w-full bg-[#181818] border border-[#333] px-2 py-1 text-xs text-[#D4D4D4] focus:outline-none focus:border-[#00FF41]"
                       >
-                        <option value={12000}>12000 Hz (Native z-30 16-MFSK)</option>
-                        <option value={48000}>48000 Hz (HD Audio CODEC)</option>
+                        <option value={12000}>12000 Hz (Native z-30 16-MFSK Bandwidth)</option>
+                        <option value={48000}>48000 Hz (Standard 24-bit HD Audio CODEC)</option>
+                        <option value={44100}>44100 Hz (Legacy Soundcard Sample Rate)</option>
                       </select>
                     </div>
                     <div>
@@ -510,8 +660,8 @@ export const SetupWizardModal: React.FC<SetupWizardModalProps> = ({
                         onChange={(e) => setForm({ ...form, audioChannels: Number(e.target.value) as any })}
                         className="w-full bg-[#181818] border border-[#333] px-2 py-1 text-xs text-[#D4D4D4] focus:outline-none focus:border-[#00FF41]"
                       >
-                        <option value={1}>Mono (Channel 1 / Left)</option>
-                        <option value={2}>Stereo (2 Channels)</option>
+                        <option value={1}>Mono (Channel 1 / Left Rx Audio)</option>
+                        <option value={2}>Stereo (Dual Channel I/Q or Stereo)</option>
                       </select>
                     </div>
                   </div>
@@ -520,9 +670,16 @@ export const SetupWizardModal: React.FC<SetupWizardModalProps> = ({
                 {/* Real-Time Input Level VU Meter Test */}
                 <div className="bg-[#121212] p-3 border border-[#222] space-y-2">
                   <div className="flex items-center justify-between">
-                    <span className="text-[10px] font-bold text-[#D4D4D4] uppercase">
-                      Live Audio Input Level Verification
-                    </span>
+                    <div className="flex items-center space-x-2">
+                      <span className="text-[10px] font-bold text-[#D4D4D4] uppercase">
+                        Live Audio Input Level Verification (Hardware Test)
+                      </span>
+                      {isClipping && (
+                        <span className="px-1.5 py-0.2 text-[8px] bg-red-600 text-white font-bold animate-pulse">
+                          CLIPPING
+                        </span>
+                      )}
+                    </div>
                     <button
                       type="button"
                       onClick={toggleAudioTest}
@@ -533,7 +690,7 @@ export const SetupWizardModal: React.FC<SetupWizardModalProps> = ({
                       }`}
                     >
                       {isAudioTesting ? <Square className="w-3 h-3" /> : <Play className="w-3 h-3" />}
-                      <span>{isAudioTesting ? 'Stop Level Test' : 'Start Audio Input Test'}</span>
+                      <span>{isAudioTesting ? 'Stop Level Test' : 'Test Selected Input'}</span>
                     </button>
                   </div>
 
@@ -543,18 +700,26 @@ export const SetupWizardModal: React.FC<SetupWizardModalProps> = ({
                       <div
                         className="h-full transition-all duration-75"
                         style={{
-                          width: `${vuLevel * 100}%`,
+                          width: `${Math.min(100, Math.max(2, vuLevel * 100))}%`,
                           backgroundColor:
                             vuLevel > 0.85 ? '#EF4444' : vuLevel > 0.65 ? '#EAB308' : '#00FF41',
                         }}
                       />
                     </div>
-                    <span className="text-[10px] font-bold w-16 text-right text-cyan-400">
-                      {isAudioTesting ? `${dbVal} dB` : 'IDLE'}
-                    </span>
+                    <div className="flex items-center space-x-2 text-[10px] font-bold">
+                      <span className="text-cyan-400 w-16 text-right">
+                        {isAudioTesting ? (rmsDb > -99 ? `${rmsDb.toFixed(1)} dB` : '-inf dB') : '0.0 dB'}
+                      </span>
+                      <span className="text-[#666] text-[8px] hidden sm:inline">
+                        {isAudioTesting ? `(Peak: ${peakDb.toFixed(1)} dB)` : ''}
+                      </span>
+                    </div>
                   </div>
-                  <div className="text-[8px] text-[#666]">
-                    Ideal audio input level during reception should peak between -15 dB and -6 dB (Green/Yellow region).
+                  <div className="text-[8px] text-[#666] flex justify-between px-1">
+                    <span>-60 dB (Noise Floor)</span>
+                    <span>-30 dB (Weak Signal)</span>
+                    <span>-10 dB (Optimal Receiver Level)</span>
+                    <span className="text-red-400">0 dB (Clip)</span>
                   </div>
                 </div>
               </div>

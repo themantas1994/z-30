@@ -22,8 +22,9 @@ import {
   CheckCircle2,
   RotateCcw,
 } from 'lucide-react';
-import { RIG_CATALOG, AUDIO_INPUTS, AUDIO_OUTPUTS, SERIAL_PORTS } from './SetupWizardModal';
+import { RIG_CATALOG, SERIAL_PORTS } from './SetupWizardModal';
 import { AUTO_REPLY_OPTIONS } from '../dsp/z30Constants';
+import { audioEngine, SystemAudioDevice, AudioSystemDiagnostics } from '../dsp/audioEngine';
 
 interface StationSettingsModalProps {
   isOpen: boolean;
@@ -66,15 +67,51 @@ export const StationSettingsModal: React.FC<StationSettingsModalProps> = ({
   const [form, setForm] = useState<StationConfig>({ ...config });
   const [activeTab, setActiveTab] = useState<'STATION' | 'AUDIO' | 'RADIO' | 'AUTOMATION'>('STATION');
 
+  // Real System Audio Devices & Diagnostics
+  const [systemInputs, setSystemInputs] = useState<SystemAudioDevice[]>([]);
+  const [systemOutputs, setSystemOutputs] = useState<SystemAudioDevice[]>([]);
+  const [isScanningDevices, setIsScanningDevices] = useState<boolean>(false);
+  const [audioPermissionGranted, setAudioPermissionGranted] = useState<boolean>(false);
+  const [diagnostics, setDiagnostics] = useState<AudioSystemDiagnostics | null>(null);
+
   // Audio test meter state
   const [isAudioTesting, setIsAudioTesting] = useState<boolean>(false);
   const [vuLevel, setVuLevel] = useState<number>(0);
-  const audioIntervalRef = useRef<number | null>(null);
+  const [peakDb, setPeakDb] = useState<number>(-100);
+  const [rmsDb, setRmsDb] = useState<number>(-100);
+  const [isClipping, setIsClipping] = useState<boolean>(false);
+  const audioAnimRef = useRef<number | null>(null);
 
   // CAT & PTT test state
   const [catTestStatus, setCatTestStatus] = useState<string>('');
   const [isPttTesting, setIsPttTesting] = useState<boolean>(false);
   const pttTimeoutRef = useRef<number | null>(null);
+
+  // Scan system audio devices
+  const scanSystemDevices = async (requestPermission = false) => {
+    setIsScanningDevices(true);
+    try {
+      if (requestPermission) {
+        const permRes = await audioEngine.requestSystemAudioPermission();
+        if (permRes.success) {
+          setSystemInputs(permRes.inputs);
+          setSystemOutputs(permRes.outputs);
+          setAudioPermissionGranted(true);
+        }
+      } else {
+        const res = await audioEngine.getSystemAudioDevices();
+        setSystemInputs(res.inputs);
+        setSystemOutputs(res.outputs);
+        setAudioPermissionGranted(res.hasPermission);
+      }
+      const diag = await audioEngine.getDiagnostics();
+      setDiagnostics(diag);
+    } catch (e) {
+      console.warn('Failed to query system audio devices:', e);
+    } finally {
+      setIsScanningDevices(false);
+    }
+  };
 
   useEffect(() => {
     if (isOpen) {
@@ -82,12 +119,17 @@ export const StationSettingsModal: React.FC<StationSettingsModalProps> = ({
       setIsAudioTesting(false);
       setIsPttTesting(false);
       setCatTestStatus('');
+      scanSystemDevices(false);
+    } else {
+      if (isAudioTesting) {
+        stopAudioTest();
+      }
     }
   }, [isOpen, config]);
 
   useEffect(() => {
     return () => {
-      if (audioIntervalRef.current) clearInterval(audioIntervalRef.current);
+      if (audioAnimRef.current) cancelAnimationFrame(audioAnimRef.current);
       if (pttTimeoutRef.current) clearTimeout(pttTimeoutRef.current);
     };
   }, []);
@@ -96,14 +138,14 @@ export const StationSettingsModal: React.FC<StationSettingsModalProps> = ({
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (isAudioTesting) toggleAudioTest();
+    if (isAudioTesting) stopAudioTest();
     if (isPttTesting) setIsPttTesting(false);
     onSaveConfig(form);
     onClose();
   };
 
   const handleLaunchWizard = () => {
-    if (isAudioTesting) toggleAudioTest();
+    if (isAudioTesting) stopAudioTest();
     if (isPttTesting) setIsPttTesting(false);
     onClose();
     if (onOpenWizard) {
@@ -111,20 +153,48 @@ export const StationSettingsModal: React.FC<StationSettingsModalProps> = ({
     }
   };
 
-  // Live VU Meter Toggle
+  // Live Real Audio VU Meter
+  const startAudioTest = async () => {
+    setIsAudioTesting(true);
+    // Find device ID matching selected device string
+    const matchingInput = systemInputs.find(
+      (d) => d.label === form.audioInputDevice || d.deviceId === form.audioInputDevice
+    );
+    const success = await audioEngine.enableMicrophone(matchingInput?.deviceId);
+    if (!success) {
+      // Prompt permission if needed
+      await scanSystemDevices(true);
+    }
+
+    const updateMeter = () => {
+      const meter = audioEngine.getAudioMeter();
+      setPeakDb(meter.peakDb);
+      setRmsDb(meter.rmsDb);
+      setVuLevel(meter.linearLevel);
+      setIsClipping(meter.isClipping);
+      audioAnimRef.current = requestAnimationFrame(updateMeter);
+    };
+    audioAnimRef.current = requestAnimationFrame(updateMeter);
+  };
+
+  const stopAudioTest = () => {
+    if (audioAnimRef.current) {
+      cancelAnimationFrame(audioAnimRef.current);
+      audioAnimRef.current = null;
+    }
+    audioEngine.disableMicrophone();
+    setIsAudioTesting(false);
+    setVuLevel(0);
+    setPeakDb(-100);
+    setRmsDb(-100);
+    setIsClipping(false);
+  };
+
   const toggleAudioTest = () => {
     if (isAudioTesting) {
-      if (audioIntervalRef.current) clearInterval(audioIntervalRef.current);
-      setIsAudioTesting(false);
-      setVuLevel(0);
+      stopAudioTest();
     } else {
-      setIsAudioTesting(true);
-      let phase = 0;
-      audioIntervalRef.current = window.setInterval(() => {
-        phase += 0.2;
-        const val = Math.sin(phase) * 0.35 + Math.cos(phase * 2.1) * 0.2 + 0.4;
-        setVuLevel(Math.max(0.05, Math.min(0.95, val)));
-      }, 60);
+      startAudioTest();
     }
   };
 
@@ -153,7 +223,7 @@ export const StationSettingsModal: React.FC<StationSettingsModalProps> = ({
   const isCallValid = CALLSIGN_REGEX.test(form.myCall.trim());
   const isGridValid = GRID_REGEX.test(form.myGrid.trim()) && (form.myGrid.trim().length === 4 || form.myGrid.trim().length === 6);
   const latLon = maidenheadToLatLon(form.myGrid);
-  const dbVal = vuLevel > 0 ? (20 * Math.log10(vuLevel)).toFixed(1) : '-inf';
+  const dbVal = rmsDb > -99 ? `${rmsDb.toFixed(1)} dB` : '-inf dB';
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/85 p-4 font-mono select-none">
@@ -346,40 +416,142 @@ export const StationSettingsModal: React.FC<StationSettingsModalProps> = ({
           {/* TAB 2: AUDIO & DSP SOUND CARD */}
           {activeTab === 'AUDIO' && (
             <div className="space-y-3">
+              {/* System Sound Card Detection & Permission Bar */}
+              <div className="bg-[#080808] p-3 border border-[#2A2A2A] space-y-2">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="flex items-center space-x-2">
+                    <Volume2 className="w-4 h-4 text-[#00FF41]" />
+                    <span className="font-bold text-[#D4D4D4] uppercase text-[11px]">
+                      Operating System Audio Detection
+                    </span>
+                    <span
+                      className={`text-[9px] px-1.5 py-0.5 rounded font-bold uppercase ${
+                        audioPermissionGranted
+                          ? 'bg-[#00FF41]/20 text-[#00FF41] border border-[#00FF41]/40'
+                          : 'bg-yellow-500/20 text-yellow-400 border border-yellow-500/40'
+                      }`}
+                    >
+                      {audioPermissionGranted ? '✓ Devices Authorized' : '⚠ Limited Labels (Need Access)'}
+                    </span>
+                  </div>
+
+                  <div className="flex items-center space-x-2">
+                    {!audioPermissionGranted && (
+                      <button
+                        type="button"
+                        onClick={() => scanSystemDevices(true)}
+                        disabled={isScanningDevices}
+                        className="px-2.5 py-1 bg-yellow-500/20 hover:bg-yellow-500/30 text-yellow-300 border border-yellow-500/50 text-[10px] font-bold uppercase flex items-center space-x-1"
+                        title="Prompt browser to allow audio device access so real soundcard names are visible"
+                      >
+                        <Shield className="w-3 h-3" />
+                        <span>Authorize Sound Cards</span>
+                      </button>
+                    )}
+
+                    <button
+                      type="button"
+                      onClick={() => scanSystemDevices(false)}
+                      disabled={isScanningDevices}
+                      className="px-2.5 py-1 bg-[#1A1A1A] hover:bg-[#282828] text-[#00FF41] border border-[#333] text-[10px] font-bold uppercase flex items-center space-x-1"
+                      title="Re-query system for newly connected USB soundcards, VAC virtual cables, or transceivers"
+                    >
+                      <RefreshCw className={`w-3 h-3 ${isScanningDevices ? 'animate-spin' : ''}`} />
+                      <span>{isScanningDevices ? 'Scanning...' : 'Scan System Devices'}</span>
+                    </button>
+                  </div>
+                </div>
+
+                {/* Diagnostics Status Pills */}
+                {diagnostics && (
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 pt-1 text-[9px]">
+                    <div className="bg-[#121212] p-1.5 border border-[#222]">
+                      <span className="text-[#666] block uppercase">Context Rate</span>
+                      <span className="text-cyan-400 font-bold">{diagnostics.sampleRate} Hz</span>
+                    </div>
+                    <div className="bg-[#121212] p-1.5 border border-[#222]">
+                      <span className="text-[#666] block uppercase">Detected Inputs</span>
+                      <span className="text-[#00FF41] font-bold">{systemInputs.length || 1} Device(s)</span>
+                    </div>
+                    <div className="bg-[#121212] p-1.5 border border-[#222]">
+                      <span className="text-[#666] block uppercase">Detected Outputs</span>
+                      <span className="text-yellow-400 font-bold">{systemOutputs.length || 1} Device(s)</span>
+                    </div>
+                    <div className="bg-[#121212] p-1.5 border border-[#222]">
+                      <span className="text-[#666] block uppercase">Audio Subsystem</span>
+                      <span className="text-purple-400 font-bold">{diagnostics.contextState.toUpperCase()}</span>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* Sound Card Audio Interfaces */}
               <div className="bg-[#050505] p-3 border border-[#333] space-y-3">
                 <span className="font-bold text-[#D4D4D4] flex items-center space-x-1.5 uppercase text-[11px]">
-                  <Volume2 className="w-3.5 h-3.5 text-[#00FF41]" />
-                  <span>Sound Card Audio Interfaces (Rx Demod / Tx Mod)</span>
+                  <Sliders className="w-3.5 h-3.5 text-[#00FF41]" />
+                  <span>Configured Sound Card Interfaces (Rx Demod / Tx Mod)</span>
                 </span>
 
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <div>
-                    <label className="text-[9px] uppercase text-[#888] block mb-1">Input Device (Rx Audio)</label>
+                    <div className="flex items-center justify-between mb-1">
+                      <label className="text-[9px] uppercase text-[#888]">
+                        Input Device (Rx Demodulator) <span className="text-[#00FF41]">*</span>
+                      </label>
+                      <span className="text-[8px] text-cyan-400">
+                        {systemInputs.length > 0 ? `${systemInputs.length} detected` : 'Generic'}
+                      </span>
+                    </div>
                     <select
                       value={form.audioInputDevice}
                       onChange={(e) => setForm({ ...form, audioInputDevice: e.target.value })}
                       className="w-full bg-[#141414] border border-[#333] px-2.5 py-1.5 text-xs text-cyan-400 focus:outline-none focus:border-[#00FF41]"
                     >
-                      {AUDIO_INPUTS.map((dev, i) => (
-                        <option key={i} value={dev}>
-                          {dev}
-                        </option>
-                      ))}
+                      {systemInputs.length > 0 ? (
+                        systemInputs.map((dev, i) => (
+                          <option key={`sys-in-${i}`} value={dev.label || dev.deviceId}>
+                            {dev.label || `Audio Input ${i + 1} (${dev.deviceId.substring(0, 8)}...)`}
+                          </option>
+                        ))
+                      ) : (
+                        <option value="Default System Audio Device">Default System Audio Input</option>
+                      )}
+                      {form.audioInputDevice &&
+                        !systemInputs.some((d) => (d.label || d.deviceId) === form.audioInputDevice) &&
+                        form.audioInputDevice !== 'Default System Audio Device' && (
+                          <option value={form.audioInputDevice}>{form.audioInputDevice}</option>
+                        )}
                     </select>
                   </div>
 
                   <div>
-                    <label className="text-[9px] uppercase text-[#888] block mb-1">Output Device (Tx Audio)</label>
+                    <div className="flex items-center justify-between mb-1">
+                      <label className="text-[9px] uppercase text-[#888]">
+                        Output Device (Tx Modulator) <span className="text-yellow-400">*</span>
+                      </label>
+                      <span className="text-[8px] text-yellow-400">
+                        {systemOutputs.length > 0 ? `${systemOutputs.length} detected` : 'Generic'}
+                      </span>
+                    </div>
                     <select
                       value={form.audioOutputDevice}
                       onChange={(e) => setForm({ ...form, audioOutputDevice: e.target.value })}
                       className="w-full bg-[#141414] border border-[#333] px-2.5 py-1.5 text-xs text-yellow-400 focus:outline-none focus:border-[#00FF41]"
                     >
-                      {AUDIO_OUTPUTS.map((dev, i) => (
-                        <option key={i} value={dev}>
-                          {dev}
-                        </option>
-                      ))}
+                      {systemOutputs.length > 0 ? (
+                        systemOutputs.map((dev, i) => (
+                          <option key={`sys-out-${i}`} value={dev.label || dev.deviceId}>
+                            {dev.label || `Audio Output ${i + 1} (${dev.deviceId.substring(0, 8)}...)`}
+                          </option>
+                        ))
+                      ) : (
+                        <option value="Default System Audio Device">Default System Audio Output</option>
+                      )}
+                      {form.audioOutputDevice &&
+                        !systemOutputs.some((d) => (d.label || d.deviceId) === form.audioOutputDevice) &&
+                        form.audioOutputDevice !== 'Default System Audio Device' && (
+                          <option value={form.audioOutputDevice}>{form.audioOutputDevice}</option>
+                        )}
                     </select>
                   </div>
                 </div>
@@ -392,8 +564,9 @@ export const StationSettingsModal: React.FC<StationSettingsModalProps> = ({
                       onChange={(e) => setForm({ ...form, sampleRateHz: Number(e.target.value) })}
                       className="w-full bg-[#141414] border border-[#333] px-2.5 py-1 text-xs text-[#D4D4D4] focus:outline-none focus:border-[#00FF41]"
                     >
-                      <option value={12000}>12000 Hz (Native z-30 16-MFSK)</option>
-                      <option value={48000}>48000 Hz (HD Audio CODEC)</option>
+                      <option value={12000}>12000 Hz (Native z-30 16-MFSK Bandwidth)</option>
+                      <option value={48000}>48000 Hz (Standard 24-bit HD Audio CODEC)</option>
+                      <option value={44100}>44100 Hz (Legacy Soundcard Sample Rate)</option>
                     </select>
                   </div>
 
@@ -404,19 +577,27 @@ export const StationSettingsModal: React.FC<StationSettingsModalProps> = ({
                       onChange={(e) => setForm({ ...form, audioChannels: Number(e.target.value) as any })}
                       className="w-full bg-[#141414] border border-[#333] px-2.5 py-1 text-xs text-[#D4D4D4] focus:outline-none focus:border-[#00FF41]"
                     >
-                      <option value={1}>Mono (Channel 1 / Left)</option>
-                      <option value={2}>Stereo (2 Channels)</option>
+                      <option value={1}>Mono (Channel 1 / Left Rx Audio)</option>
+                      <option value={2}>Stereo (Dual Channel I/Q or Stereo)</option>
                     </select>
                   </div>
                 </div>
               </div>
 
-              {/* Live Audio Input Level Meter */}
+              {/* Live Real-Time Audio Input Level VU Meter */}
               <div className="bg-[#050505] p-3 border border-[#333] space-y-2">
                 <div className="flex items-center justify-between">
-                  <span className="font-bold text-[#D4D4D4] uppercase text-[11px]">
-                    Live Audio Input Level VU Meter Test
-                  </span>
+                  <div className="flex items-center space-x-2">
+                    <span className="font-bold text-[#D4D4D4] uppercase text-[11px]">
+                      Live Audio Input Level VU Meter (Hardware Test)
+                    </span>
+                    {isClipping && (
+                      <span className="px-1.5 py-0.2 text-[8px] bg-red-600 text-white font-bold animate-pulse">
+                        CLIPPING
+                      </span>
+                    )}
+                  </div>
+
                   <button
                     type="button"
                     onClick={toggleAudioTest}
@@ -427,7 +608,7 @@ export const StationSettingsModal: React.FC<StationSettingsModalProps> = ({
                     }`}
                   >
                     {isAudioTesting ? <Square className="w-3 h-3" /> : <Play className="w-3 h-3" />}
-                    <span>{isAudioTesting ? 'Stop Level Test' : 'Start Input Test'}</span>
+                    <span>{isAudioTesting ? 'Stop Level Test' : 'Test Selected Input'}</span>
                   </button>
                 </div>
 
@@ -436,15 +617,25 @@ export const StationSettingsModal: React.FC<StationSettingsModalProps> = ({
                     <div
                       className="h-full transition-all duration-75"
                       style={{
-                        width: `${vuLevel * 100}%`,
+                        width: `${Math.min(100, Math.max(2, vuLevel * 100))}%`,
                         backgroundColor:
                           vuLevel > 0.85 ? '#EF4444' : vuLevel > 0.65 ? '#EAB308' : '#00FF41',
                       }}
                     />
                   </div>
-                  <span className="text-[10px] font-bold w-16 text-right text-cyan-400">
-                    {isAudioTesting ? `${dbVal} dB` : '0.0 dB'}
-                  </span>
+                  <div className="flex items-center space-x-2 text-[10px] font-bold">
+                    <span className="text-cyan-400 w-16 text-right">{isAudioTesting ? dbVal : '0.0 dB'}</span>
+                    <span className="text-[#666] text-[8px] hidden sm:inline">
+                      {isAudioTesting ? `(Peak: ${peakDb.toFixed(1)} dB)` : ''}
+                    </span>
+                  </div>
+                </div>
+
+                <div className="text-[8px] text-[#666] flex justify-between px-1">
+                  <span>-60 dB (Noise Floor)</span>
+                  <span>-30 dB (Weak Signal)</span>
+                  <span>-10 dB (Optimal)</span>
+                  <span className="text-red-400">0 dB (Clip)</span>
                 </div>
               </div>
             </div>
