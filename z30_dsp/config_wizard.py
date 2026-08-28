@@ -1176,7 +1176,7 @@ def launch_config_wizard_if_needed(
     return None
 
 
-if __name__ == "__main__":
+def main():
     root = tk.Tk()
     root.withdraw()
 
@@ -1186,3 +1186,7 @@ if __name__ == "__main__":
     wiz = ConfigWizardDialog(parent=root, on_finish_callback=on_setup_finished)
     root.wait_window(wiz)
     root.destroy()
+
+if __name__ == "__main__":
+    main()
+

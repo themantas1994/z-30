@@ -1202,10 +1202,9 @@ def launch_config_wizard_if_needed(
     return None
 
 
-if __name__ == "__main__":
-    # Standalone execution demo
+def main():
     root = tk.Tk()
-    root.withdraw()  # Hide temporary root window during standalone wizard run
+    root.withdraw()
 
     def on_setup_finished(cfg: StationConfig):
         print(f"[z-30 Startup] Wizard finished! Callsign: {cfg.callsign}, Grid: {cfg.grid}, Rig: {cfg.rig_model_name}")
@@ -1213,3 +1212,7 @@ if __name__ == "__main__":
     wiz = ConfigWizardDialog(parent=root, on_finish_callback=on_setup_finished)
     root.wait_window(wiz)
     root.destroy()
+
+if __name__ == "__main__":
+    main()
+

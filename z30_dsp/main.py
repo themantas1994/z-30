@@ -6,8 +6,8 @@ import sys
 
 def main():
     if "--benchmark" in sys.argv or "-b" in sys.argv:
-        from z30_dsp.benchmark import run_self_test
-        run_self_test()
+        from z30_dsp.benchmark import run_benchmark
+        run_benchmark()
     elif "--wizard" in sys.argv or "-w" in sys.argv:
         from z30_dsp.config_wizard import main as wizard_main
         wizard_main()
@@ -23,8 +23,9 @@ def main():
             gui_main()
         except Exception as e:
             print(f"[z-30] GUI launch note ({e}). Running command-line benchmark self-test...")
-            from z30_dsp.benchmark import run_self_test
-            run_self_test()
+            from z30_dsp.benchmark import run_benchmark
+            run_benchmark()
 
 if __name__ == "__main__":
     main()
+

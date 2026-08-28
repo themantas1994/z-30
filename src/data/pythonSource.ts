@@ -287,8 +287,12 @@ import threading
 import time
 import numpy as np
 from typing import Dict, List, Tuple, Optional
-from z30_dsp.auto_logger import AsyncQsoLogger, QsoLogRecord
-from config_wizard import SettingsManager, StationConfig, launch_config_wizard_if_needed, ConfigWizardDialog
+try:
+    from z30_dsp.auto_logger import AsyncQsoLogger, QsoLogRecord
+    from z30_dsp.config_wizard import SettingsManager, StationConfig, launch_config_wizard_if_needed, ConfigWizardDialog
+except ImportError:
+    from auto_logger import AsyncQsoLogger, QsoLogRecord
+    from config_wizard import SettingsManager, StationConfig, launch_config_wizard_if_needed, ConfigWizardDialog
 
 # 10 Vectorized Color Lookups for Waterfall
 def build_colormap_lut(name: str) -> np.ndarray:
@@ -685,10 +689,13 @@ class Z30TkinterApp:
                 time.sleep(0.5)
         threading.Thread(target=update_clock, daemon=True).start()
 
-if __name__ == "__main__":
+def main():
     root = tk.Tk()
     app = Z30TkinterApp(root)
     root.mainloop()
+
+if __name__ == "__main__":
+    main()
 `
   },
   {
@@ -1109,8 +1116,47 @@ def run_benchmark():
     print("providing a +8.5 dB sensitivity advantage over standard FT8.")
     print("=============================================================")
 
+run_self_test = run_benchmark
+main = run_benchmark
+
 if __name__ == "__main__":
-    run_benchmark()
+    main()
+`
+  },
+  {
+    filename: 'main.py',
+    path: 'z30_dsp/main.py',
+    description: 'Universal command line and GUI dispatcher routing to transceiver GUI, benchmark, config wizard, or RF time sync.',
+    code: `#!/usr/bin/env python3
+"""
+z-30 Transceiver CLI / GUI Main Entrypoint
+"""
+import sys
+
+def main():
+    if "--benchmark" in sys.argv or "-b" in sys.argv:
+        from z30_dsp.benchmark import run_benchmark
+        run_benchmark()
+    elif "--wizard" in sys.argv or "-w" in sys.argv:
+        from z30_dsp.config_wizard import main as wizard_main
+        wizard_main()
+    elif "--sync" in sys.argv or "-s" in sys.argv:
+        from z30_dsp.rf_time_sync import main as sync_main
+        sync_main()
+    elif "--bands" in sys.argv:
+        from z30_dsp.band_manager import main as band_main
+        band_main()
+    else:
+        try:
+            from z30_dsp.gui_tkinter import main as gui_main
+            gui_main()
+        except Exception as e:
+            print(f"[z-30] GUI launch note ({e}). Running command-line benchmark self-test...")
+            from z30_dsp.benchmark import run_benchmark
+            run_benchmark()
+
+if __name__ == "__main__":
+    main()
 `
   },
   {
@@ -2295,7 +2341,7 @@ def launch_config_wizard_if_needed(
     return None
 
 
-if __name__ == "__main__":
+def main():
     root = tk.Tk()
     root.withdraw()
 
@@ -2305,6 +2351,9 @@ if __name__ == "__main__":
     wiz = ConfigWizardDialog(parent=root, on_finish_callback=on_setup_finished)
     root.wait_window(wiz)
     root.destroy()
+
+if __name__ == "__main__":
+    main()
 `
   },
   {
@@ -3867,7 +3916,7 @@ def run_self_test() -> bool:
     return True
 
 
-if __name__ == "__main__":
+def main():
     if "--test" in sys.argv or "-t" in sys.argv:
         success = run_self_test()
         sys.exit(0 if success else 1)
@@ -3880,6 +3929,9 @@ if __name__ == "__main__":
         print("  python rf_time_sync.py --gui     (Launch interactive Tkinter UI)")
         print("\nExecuting default self-test suite...")
         run_self_test()
+
+if __name__ == "__main__":
+    main()
 `
   },
   {

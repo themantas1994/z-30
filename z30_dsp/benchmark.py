@@ -34,5 +34,9 @@ def run_benchmark():
     print("providing a +8.5 dB sensitivity advantage over standard FT8.")
     print("=============================================================")
 
+run_self_test = run_benchmark
+main = run_benchmark
+
 if __name__ == "__main__":
-    run_benchmark()
+    main()
+

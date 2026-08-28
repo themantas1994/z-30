@@ -16,8 +16,13 @@ import threading
 import time
 import numpy as np
 from typing import Dict, List, Tuple, Optional
-from z30_dsp.auto_logger import AsyncQsoLogger, QsoLogRecord
-from config_wizard import SettingsManager, StationConfig, launch_config_wizard_if_needed, ConfigWizardDialog
+try:
+    from z30_dsp.auto_logger import AsyncQsoLogger, QsoLogRecord
+    from z30_dsp.config_wizard import SettingsManager, StationConfig, launch_config_wizard_if_needed, ConfigWizardDialog
+except ImportError:
+    from auto_logger import AsyncQsoLogger, QsoLogRecord
+    from config_wizard import SettingsManager, StationConfig, launch_config_wizard_if_needed, ConfigWizardDialog
+
 
 # 10 Vectorized Color Lookups for Waterfall
 def build_colormap_lut(name: str) -> np.ndarray:
@@ -414,7 +419,11 @@ class Z30TkinterApp:
                 time.sleep(0.5)
         threading.Thread(target=update_clock, daemon=True).start()
 
-if __name__ == "__main__":
+def main():
     root = tk.Tk()
     app = Z30TkinterApp(root)
     root.mainloop()
+
+if __name__ == "__main__":
+    main()
+

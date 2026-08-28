@@ -1238,7 +1238,7 @@ def run_self_test() -> bool:
     return True
 
 
-if __name__ == "__main__":
+def main():
     if "--test" in sys.argv or "-t" in sys.argv:
         success = run_self_test()
         sys.exit(0 if success else 1)
@@ -1251,3 +1251,7 @@ if __name__ == "__main__":
         print("  python rf_time_sync.py --gui     (Launch interactive Tkinter UI)")
         print("\nExecuting default self-test suite...")
         run_self_test()
+
+if __name__ == "__main__":
+    main()
+
