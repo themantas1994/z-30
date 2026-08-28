@@ -16,10 +16,9 @@ interface HeaderProps {
   isTuning?: boolean;
   txEnabled?: boolean;
   txSlot?: TxSlot;
-  activeView: 'TRANSCEIVER' | 'PYTHON_SOURCE' | 'RF_TESTBENCH';
-  setActiveView: (view: 'TRANSCEIVER' | 'PYTHON_SOURCE' | 'RF_TESTBENCH') => void;
+  activeView: 'TRANSCEIVER' | 'PYTHON_SOURCE';
+  setActiveView: (view: 'TRANSCEIVER' | 'PYTHON_SOURCE') => void;
   onOpenLogbook: () => void;
-  onOpenLdpcLab: () => void;
   onOpenSettings: () => void;
   onOpenWizard?: () => void;
   onOpenSpecs: () => void;
@@ -45,7 +44,6 @@ export const Header: React.FC<HeaderProps> = ({
   activeView,
   setActiveView,
   onOpenLogbook,
-  onOpenLdpcLab,
   onOpenSettings,
   onOpenWizard,
   onOpenSpecs,
@@ -306,18 +304,6 @@ export const Header: React.FC<HeaderProps> = ({
               Transceiver
             </button>
             <button
-              id="view-rf-testbench-tab"
-              onClick={() => setActiveView('RF_TESTBENCH')}
-              className={`px-2.5 py-1 transition-colors flex items-center space-x-1 uppercase text-[11px] font-bold ${
-                activeView === 'RF_TESTBENCH'
-                  ? 'bg-purple-600 text-white shadow-[0_0_10px_rgba(168,85,247,0.4)]'
-                  : 'text-[#888] hover:text-[#D4D4D4] hover:bg-[#1A1A1A]'
-              }`}
-            >
-              <Sparkles className="w-3 h-3" />
-              <span>RF/SIC Testbench</span>
-            </button>
-            <button
               id="view-python-source-tab"
               onClick={() => setActiveView('PYTHON_SOURCE')}
               className={`px-2.5 py-1 transition-colors flex items-center space-x-1 uppercase text-[11px] font-bold ${
@@ -353,17 +339,6 @@ export const Header: React.FC<HeaderProps> = ({
             }`}
           >
             {micEnabled ? <Mic className="w-3.5 h-3.5 text-[#00FF41]" /> : <MicOff className="w-3.5 h-3.5" />}
-          </button>
-
-          {/* LDPC Lab */}
-          <button
-            id="open-ldpc-lab-btn"
-            onClick={onOpenLdpcLab}
-            title="Open Interactive (216, 77) LDPC Codec Lab"
-            className="p-1.5 bg-[#141414] hover:bg-[#1A1A1A] text-[#888] hover:text-[#D4D4D4] border border-[#333] text-xs flex items-center space-x-1"
-          >
-            <Cpu className="w-3.5 h-3.5 text-[#00FF41]" />
-            <span className="hidden md:inline text-[11px]">LDPC Lab</span>
           </button>
 
           {/* Logbook */}

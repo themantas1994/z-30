@@ -97,8 +97,41 @@ class Z30AudioEngine {
     this.setTxVolume(linear);
   }
 
+  private liveFrames: {
+    freqHz: number;
+    text: string;
+    symbols: number[];
+    timestamp: number;
+    snrDb: number;
+  }[] = [];
+
   /**
-   * Start synthetic atmospheric RF background noise (AWGN)
+   * Register a real transmitted or soundcard 16-MFSK audio frame
+   */
+  public registerActiveSignal(freqHz: number, text: string, symbols: number[], snrDb: number = 0) {
+    this.liveFrames.push({
+      freqHz,
+      text,
+      symbols,
+      timestamp: Date.now(),
+      snrDb,
+    });
+    // Keep only recent 30-second window frames
+    const cutoff = Date.now() - 35000;
+    this.liveFrames = this.liveFrames.filter(f => f.timestamp >= cutoff);
+  }
+
+  public getActiveSignalsInWindow(): typeof this.liveFrames {
+    const cutoff = Date.now() - 35000;
+    return this.liveFrames.filter(f => f.timestamp >= cutoff);
+  }
+
+  public clearSignalHistory() {
+    this.liveFrames = [];
+  }
+
+  /**
+   * Start synthetic atmospheric RF background noise (AWGN) - Only if explicitly requested
    */
   public startBackgroundRfNoise(level: number = 0.05) {
     if (!this.ctx) this.initAudioContext();

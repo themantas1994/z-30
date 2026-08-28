@@ -392,55 +392,18 @@ export const WaterfallDisplay: React.FC<WaterfallDisplayProps> = ({
           const freqAtX = fullMinFreq + (x / offscreen.width) * fullSpan;
           const bin = Math.floor((freqAtX / nyquist) * binCount);
 
-          // Base background noise magnitude
-          let magnitude = 0.08 + Math.random() * 0.05;
+          // Real FFT audio spectrum value from audio engine (soundcard / mic / VAC / receiver)
+          let magnitude = 0.02;
 
           if (fftData && bin >= 0 && bin < fftData.length) {
             magnitude = Math.max(magnitude, fftData[bin] / 255.0);
           }
 
-          // Enhance Visible 16-MFSK Signal Tracks for active decodes
-          if (decodes && decodes.length > 0) {
-            for (let s = 0; s < decodes.length; s++) {
-              const sig = decodes[s];
-              const distFromBase = freqAtX - sig.freq;
-
-              // Check if within 50 Hz 16-MFSK signal passband
-              if (distFromBase >= -4 && distFromBase <= Z30_SPECS.TOTAL_BANDWIDTH_HZ + 4) {
-                // Determine current 16-MFSK tone position based on 320ms symbol slot
-                const symbolPeriodIndex = Math.floor(nowTime / 320);
-                const activeToneIdx = (symbolPeriodIndex * 7 + sig.freq + (s * 3)) % 16;
-                const activeToneFreq = sig.freq + activeToneIdx * Z30_SPECS.TONE_SPACING_HZ;
-
-                // Gaussian tone energy calculation
-                const toneDist = Math.abs(freqAtX - activeToneFreq);
-                const snrNormalized = Math.max(0.2, Math.min(1.0, (sig.snr + 32) / 45)); // SNR -32dB to +13dB mapped to 0.2 .. 1.0
-
-                // Main peak tone carrier
-                if (toneDist < 4.0) {
-                  const tonePeak = Math.exp(-(toneDist * toneDist) / 4.0) * (0.55 + snrNormalized * 0.45);
-                  magnitude = Math.max(magnitude, tonePeak * signalBoost);
-                }
-
-                // Diffused 50 Hz occupied bandwidth pedestal
-                const passbandPedestal = 0.18 + snrNormalized * 0.22;
-                magnitude = Math.max(magnitude, passbandPedestal * signalBoost);
-              }
-            }
-          }
-
-          // Transmitting or Tuning Carrier Synthesis
+          // Transmitting or Tuning Carrier Marker
           if (isTransmitting || isTuning) {
             const txDist = Math.abs(freqAtX - txFreqHz);
             if (txDist < 8.0) {
-              const txToneOffset = isTuning ? 0 : ((Math.floor(nowTime / 320) * 5) % 16) * Z30_SPECS.TONE_SPACING_HZ;
-              const actualTxFreq = txFreqHz + txToneOffset;
-              const distToTxTone = Math.abs(freqAtX - actualTxFreq);
-              if (distToTxTone < 4.5) {
-                const txPeak = Math.exp(-(distToTxTone * distToTxTone) / 3.0) * 0.95;
-                magnitude = Math.max(magnitude, txPeak);
-              }
-              magnitude = Math.max(magnitude, 0.45);
+              magnitude = Math.max(magnitude, 0.65);
             }
           }
 

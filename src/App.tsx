@@ -1,14 +1,14 @@
 /**
- * z-30 Digital Mode Transceiver Station & DSP Workbench Suite
+ * z-30 Digital Mode Transceiver Station & Production DSP Suite
  * 16-MFSK / 50 Hz Bandwidth / 30s Sync Cycle / LDPC + SIC
  */
 
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { DecodedSignal, LogEntry, RfChannelParams, StationConfig } from './types/z30';
+import { DecodedSignal, LogEntry, StationConfig } from './types/z30';
 import { DEFAULT_STATION_CONFIG, HAM_BANDS, Z30_SPECS, evaluateSlotTiming } from './dsp/z30Constants';
 import { audioEngine } from './dsp/audioEngine';
 import { packZ30Message } from './dsp/z30Codec';
-import { sicDecoderEngine, SicIterationStep } from './dsp/sicDecoder';
+import { sicDecoderEngine } from './dsp/sicDecoder';
 import { qsoEngine, QsoState } from './dsp/qsoEngine';
 import { qsoLogger } from './dsp/qsoLogger';
 import { rigctl } from './dsp/rigctlSimulator';
@@ -19,10 +19,8 @@ import { ActivityLogTable } from './components/ActivityLogTable';
 import { QsoController } from './components/QsoController';
 import { QsoMacrosTransmitPanel } from './components/QsoMacrosTransmitPanel';
 import { RigControlPanel } from './components/RigControlPanel';
-import { RfSimulatorPanel } from './components/RfSimulatorPanel';
 import { PythonSourceViewer } from './components/PythonSourceViewer';
 import { LogbookModal } from './components/LogbookModal';
-import { LdpcLabModal } from './components/LdpcLabModal';
 import { StationSettingsModal } from './components/StationSettingsModal';
 import { SetupWizardModal } from './components/SetupWizardModal';
 import { SpecsModal } from './components/SpecsModal';
@@ -40,12 +38,11 @@ export default function App() {
   // QSO State Machine
   const [qsoState, setQsoState] = useState<QsoState>(qsoEngine.getState());
 
-  // Active View Tab
-  const [activeView, setActiveView] = useState<'TRANSCEIVER' | 'PYTHON_SOURCE' | 'RF_TESTBENCH'>('TRANSCEIVER');
+  // Active View Tab (Production Transceiver & Python Source Code)
+  const [activeView, setActiveView] = useState<'TRANSCEIVER' | 'PYTHON_SOURCE'>('TRANSCEIVER');
 
   // Modals
   const [isLogbookOpen, setIsLogbookOpen] = useState<boolean>(false);
-  const [isLdpcLabOpen, setIsLdpcLabOpen] = useState<boolean>(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState<boolean>(false);
   const [isWizardOpen, setIsWizardOpen] = useState<boolean>(false);
   const [isSpecsOpen, setIsSpecsOpen] = useState<boolean>(false);
@@ -56,7 +53,6 @@ export default function App() {
   // QSOs, Logs & Band Activity Filter
   const [activityFilter, setActivityFilter] = useState<'ALL' | 'CQ' | 'MYCALL' | 'SIC'>('ALL');
   const [decodes, setDecodes] = useState<DecodedSignal[]>([]);
-  const [sicSteps, setSicSteps] = useState<SicIterationStep[]>([]);
   const [logEntries, setLogEntries] = useState<LogEntry[]>(qsoLogger.getEntries());
 
   // Subscribe to asynchronous QSO Logger events
@@ -68,17 +64,6 @@ export default function App() {
     return unsubscribe;
   }, []);
 
-  // RF Channel Simulator Params
-  const [channelParams, setChannelParams] = useState<RfChannelParams>({
-    snrDb: -22,
-    fadingModel: 'RAYLEIGH_MILD',
-    dopplerDriftHzPerSec: 0.2,
-    enableCoChannelInterference: false,
-    interfererSnrDb: 4,
-    interfererDeltaFreqHz: 6,
-    simulatedNoise: true,
-  });
-
   // Transmitter & Audio Real-Time State
   const [isTransmitting, setIsTransmitting] = useState<boolean>(false);
   const [isTuning, setIsTuning] = useState<boolean>(false);
@@ -88,25 +73,6 @@ export default function App() {
 
   // Track if decode was already run for the current 30s cycle
   const lastDecodedCycleRef = useRef<number>(-1);
-
-  // Initialize initial background RF noise & initial decode set
-  useEffect(() => {
-    audioEngine.startBackgroundRfNoise(0.04);
-
-    // Initial band activity seed
-    const initial = sicDecoderEngine.runSicDecodeCycle(
-      dialFreqHz,
-      config.myCall,
-      config.myGrid,
-      channelParams
-    );
-    setDecodes(initial.decodes);
-    setSicSteps(initial.steps);
-
-    return () => {
-      audioEngine.stopBackgroundRfNoise();
-    };
-  }, []);
 
   // Update Band selection
   const handleBandChange = (bandName: string) => {
@@ -121,35 +87,35 @@ export default function App() {
     }
   };
 
-  // Perform a full 30s SIC Decode Cycle
+  // Perform a full 30s SIC Decode Cycle on real received audio / transmissions
   const executeDecodeCycle = useCallback(() => {
     const activeMsg = qsoEngine.getCurrentTxMessage(config);
     const result = sicDecoderEngine.runSicDecodeCycle(
       dialFreqHz,
       config.myCall,
       config.myGrid,
-      channelParams,
       isTransmitting ? activeMsg : undefined,
       qsoState.txFreqHz
     );
 
     setDecodes(sicDecoderEngine.getHistory());
-    setSicSteps(result.steps);
 
-    // Process through QSO auto-sequencing state machine
-    const autoResult = qsoEngine.processDecodesForAutoSeq(
-      result.decodes,
-      config,
-      HAM_BANDS[currentBandIdx].name,
-      dialFreqHz
-    );
+    // Process through QSO auto-sequencing state machine if decodes arrived
+    if (result.decodes.length > 0) {
+      const autoResult = qsoEngine.processDecodesForAutoSeq(
+        result.decodes,
+        config,
+        HAM_BANDS[currentBandIdx].name,
+        dialFreqHz
+      );
 
-    setQsoState(qsoEngine.getState());
+      setQsoState(qsoEngine.getState());
 
-    if (autoResult.autoLogged) {
-      qsoLogger.logQsoAsync(autoResult.autoLogged);
+      if (autoResult.autoLogged) {
+        qsoLogger.logQsoAsync(autoResult.autoLogged);
+      }
     }
-  }, [dialFreqHz, config, channelParams, isTransmitting, qsoState.txFreqHz, currentBandIdx]);
+  }, [dialFreqHz, config, isTransmitting, qsoState.txFreqHz, currentBandIdx]);
 
   const tuneTimeoutRef = useRef<number | null>(null);
 
@@ -171,6 +137,9 @@ export default function App() {
     rigctl.setPtt(true);
     setFwdWatts(config.txPowerWatts);
     setSwr(1.18);
+
+    // Register active signal into real audio frame history
+    audioEngine.registerActiveSignal(currentState.txFreqHz, txText, packed.symbols, 6);
 
     audioEngine.play16MfskSequence(
       currentState.txFreqHz,
@@ -251,11 +220,7 @@ export default function App() {
     const slotInfo = evaluateSlotTiming(updatedState.txSlot, new Date());
 
     if (slotInfo.canTransmitImmediately) {
-      // Start 24-second 16-MFSK transmission immediately
       startActiveTransmission();
-    } else {
-      // Armed and synchronized! The 30s cycle clock will automatically trigger
-      // transmission as soon as the target slot arrives.
     }
   };
 
@@ -346,7 +311,6 @@ export default function App() {
 
   const handleUpdateQsoState = (partial: Partial<QsoState>) => {
     Object.assign(qsoState, partial);
-    // If state machine switches to calling CQ, automatically switch activity filter to MY CALL
     if (
       partial.stage === 'CALLING_CQ' ||
       partial.currentTxMacro === 'tx1' ||
@@ -371,7 +335,6 @@ export default function App() {
         activeView={activeView}
         setActiveView={setActiveView}
         onOpenLogbook={() => setIsLogbookOpen(true)}
-        onOpenLdpcLab={() => setIsLdpcLabOpen(true)}
         onOpenSettings={() => setIsSettingsOpen(true)}
         onOpenWizard={() => setIsWizardOpen(true)}
         onOpenSpecs={() => setIsSpecsOpen(true)}
@@ -487,18 +450,6 @@ export default function App() {
           </div>
         )}
 
-        {/* RF Channel & SIC Testbench View */}
-        {activeView === 'RF_TESTBENCH' && (
-          <div className="h-full">
-            <RfSimulatorPanel
-              channelParams={channelParams}
-              onUpdateParams={(p) => setChannelParams((prev) => ({ ...prev, ...p }))}
-              sicSteps={sicSteps}
-              onTriggerDecodeNow={executeDecodeCycle}
-            />
-          </div>
-        )}
-
         {/* Python 3.10+ Source Package View */}
         {activeView === 'PYTHON_SOURCE' && (
           <div className="h-full">
@@ -530,11 +481,6 @@ export default function App() {
         entries={logEntries}
         myCall={config.myCall}
         myGrid={config.myGrid}
-      />
-
-      <LdpcLabModal
-        isOpen={isLdpcLabOpen}
-        onClose={() => setIsLdpcLabOpen(false)}
       />
 
       <StationSettingsModal
