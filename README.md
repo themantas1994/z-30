@@ -1,4 +1,3 @@
-[![ko-fi](https://ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/W8U525XLRQ)
 # z-30: Experimental Amateur Radio 16-MFSK Weak-Signal Digital Transceiver & DSP Suite
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
