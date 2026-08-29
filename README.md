@@ -11,7 +11,6 @@
 The project provides both a high-performance **interactive Web/PWA GUI** (featuring a 60 FPS HTML5 spectral waterfall, Web Audio 12/48 kHz DSP pipeline, live S-meter, and ADIF logbook) and a **native Python 3 DSP package (`z30_dsp`)** with Hamlib CAT transceiver control (`rigctld`), 9 PTT keying methods, 6 auto-reply sequencing algorithms, and automated RF time calibration against international time standards (**WWV, CHU, DCF77, MSF, WWVB, JJY**).
 
 ---
-<img width="1912" height="921" alt="image" src="https://github.com/user-attachments/assets/b1ff29c3-f6f4-478f-95ac-5f8d1572edc8" />
 
 ## Table of Contents
 
@@ -461,6 +460,12 @@ z30 --bands
 # Launch native zero-dependency Tkinter desktop GUI
 z30 --tkinter
 # or: python3 -m z30_dsp.gui_tkinter
+
+# Check for updates and sync from GitHub (https://github.com/themantas1994/z-30)
+z30 --update
+# or: python3 -m z30_dsp.updater
+# Non-interactive auto-pull:
+z30 --update -y
 ```
 
 ---
@@ -543,7 +548,6 @@ z30 --tkinter
 ```
 
 ---
-[![ko-fi](https://ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/W8U525XLRQ)
 
 ## Contributing & License
 
