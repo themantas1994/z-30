@@ -35,9 +35,9 @@ def find_free_port(preferred_port: int = 3000) -> int:
             s.bind(("127.0.0.1", preferred_port))
             return preferred_port
     except OSError:
-        # Preferred port busy, allocate ephemeral port
+        # Preferred port busy, allocate ephemeral port on loopback only
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-            s.bind(("", 0))
+            s.bind(("127.0.0.1", 0))
             return s.getsockname()[1]
 
 
