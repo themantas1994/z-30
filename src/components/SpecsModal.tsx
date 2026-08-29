@@ -9,9 +9,10 @@ import { HelpCircle, X, ShieldCheck, Zap, Radio, Layers, Activity } from 'lucide
 interface SpecsModalProps {
   isOpen: boolean;
   onClose: () => void;
+  onOpenBenchmark?: () => void;
 }
 
-export const SpecsModal: React.FC<SpecsModalProps> = ({ isOpen, onClose }) => {
+export const SpecsModal: React.FC<SpecsModalProps> = ({ isOpen, onClose, onOpenBenchmark }) => {
   if (!isOpen) return null;
 
   return (
@@ -50,8 +51,8 @@ export const SpecsModal: React.FC<SpecsModalProps> = ({ isOpen, onClose }) => {
               <span className="font-bold text-yellow-400 text-xs">30.0 Seconds</span>
             </div>
             <div className="bg-[#050505] p-2.5 border border-[#333]">
-              <span className="text-[9px] text-[#888] block uppercase">AWGN THRESHOLD</span>
-              <span className="font-bold text-purple-400 text-xs">-29.5 dB SNR</span>
+              <span className="text-[9px] text-[#888] block uppercase">AWGN 50% THRESHOLD</span>
+              <span className="font-bold text-purple-400 text-xs">-25.0 dB SNR</span>
             </div>
           </div>
 
@@ -68,6 +69,7 @@ export const SpecsModal: React.FC<SpecsModalProps> = ({ isOpen, onClose }) => {
               <li><strong>Active Transmission:</strong> 75 symbols * 0.320s = 24.0 seconds.</li>
               <li><strong>Guard & Decode Window:</strong> 6.0 seconds for FFT framing, multi-stage SIC, and LDPC decoding.</li>
               <li><strong>Synchronization:</strong> 21 Costas array sync symbols interleaved throughout the frame for sub-Hz frequency tracking and symbol time offset (DT) estimation.</li>
+              <li><strong>Empirical Sensitivity (Monte Carlo):</strong> 50% decode at -25.0 dB SNR; 90% decode at -24.0 dB SNR (+4.0 dB link margin gain over FT8).</li>
             </ul>
           </div>
 
@@ -121,7 +123,7 @@ export const SpecsModal: React.FC<SpecsModalProps> = ({ isOpen, onClose }) => {
                   <td className="p-1.5">16-MFSK</td>
                   <td className="p-1.5">50 Hz</td>
                   <td className="p-1.5">30 sec</td>
-                  <td className="p-1.5 text-purple-300">-29.5 dB</td>
+                  <td className="p-1.5 text-purple-300">-25.0 dB (50%) / -24.0 dB (90%)</td>
                   <td className="p-1.5 text-[#00FF41]">Yes (3-Pass SIC)</td>
                 </tr>
                 <tr className="text-[#888]">
@@ -151,6 +153,21 @@ export const SpecsModal: React.FC<SpecsModalProps> = ({ isOpen, onClose }) => {
               </tbody>
             </table>
           </div>
+
+          {onOpenBenchmark && (
+            <div className="pt-2 flex justify-end">
+              <button
+                onClick={() => {
+                  onClose();
+                  onOpenBenchmark();
+                }}
+                className="px-3 py-1.5 bg-[#00FF41]/10 hover:bg-[#00FF41]/20 text-[#00FF41] border border-[#00FF41]/50 text-xs font-bold uppercase tracking-wider flex items-center space-x-1.5 transition-colors"
+              >
+                <Activity className="w-3.5 h-3.5" />
+                <span>Launch Monte Carlo Waveform & SNR Decoder Benchmark</span>
+              </button>
+            </div>
+          )}
         </div>
       </div>
     </div>

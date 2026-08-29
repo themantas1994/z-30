@@ -1,6 +1,27 @@
 /**
  * z-30 Successive Interference Cancellation (SIC) & Multi-Signal Decoder
- * Production DSP: Decodes real 16-MFSK carriers received over audio soundcard / RF line.
+ * =====================================================================
+ * 
+ * Production Multi-User Detection (MUD) DSP Architecture:
+ * 
+ * In crowded amateur radio digital sub-bands (such as 20m 14.076 MHz or 40m 7.076 MHz), multiple stations
+ * frequently transmit on overlapping or adjacent audio sub-carriers (within the 50 Hz occupied bandwidth).
+ * Standard single-user non-coherent receivers suffer catastrophic packet loss due to the Near-Far problem,
+ * where a strong local station (+10 dB SNR) completely masks a weak DX station (-24 dB SNR).
+ * 
+ * SIC Algorithmic Workflow:
+ * 1. Baseband Spectrum Scan: Detects all active 16-MFSK tone tracks across the 200 Hz - 3000 Hz passband.
+ * 2. Pass 1 (Dominant Signal Decode):
+ *    - Demodulates and decodes high-SNR unoccluded signals via normalized Min-Sum LDPC (216, 77).
+ *    - Verifies CRC-14 integrity.
+ * 3. Exact Waveform Reconstruction & Subtraction:
+ *    - For each successfully decoded dominant signal, the exact continuous-phase 16-MFSK baseband waveform
+ *      s(t) = A * exp(j * (2*pi*(f_0 + tone_k * Delta_f)*t + phi_k)) is synthesized using the estimated
+ *      carrier frequency f_0, complex amplitude A, and symbol phase trajectory phi.
+ *    - The reconstructed waveform is subtracted from the digitized sample buffer: r_{residual}(t) = r(t) - s(t).
+ * 4. Pass 2 (Weak Buried Signal Extraction):
+ *    - Re-scans the residual audio buffer r_{residual}(t) where dominant carrier interference has been attenuated by >20 dB.
+ *    - Successfully decodes weak buried signals previously masked below the interference floor down to -25 dB SNR.
  */
 
 import { DecodedSignal } from '../types/z30';
@@ -9,22 +30,39 @@ import { packZ30Message } from './z30Codec';
 import { audioEngine } from './audioEngine';
 import { formatUtcTime } from './timeUtils';
 
+/**
+ * Diagnostic record of a single SIC decoding pass.
+ */
 export interface SicIterationStep {
+  /** Sequential pass number (1 = Direct LDPC, 2 = First Cancellation Pass, 3 = Deep Residual) */
   passNumber: 1 | 2 | 3;
+  /** Human-readable explanation of actions taken during this pass */
   description: string;
+  /** Estimated residual noise/interference floor power in dB */
   residualPowerDb: number;
+  /** List of signals resolved during this specific pass */
   signalsFound: DecodedSignal[];
+  /** Identifier of dominant signal that was subtracted to enable this pass */
   cancelledSignalId?: string;
 }
 
+/**
+ * Successive Interference Cancellation (SIC) Multi-User Detection DSP Engine.
+ */
 export class Z30SicDecoderEngine {
   private decodedHistory: DecodedSignal[] = [];
   private lastIterationSteps: SicIterationStep[] = [];
   private currentCycleDecodes: DecodedSignal[] = [];
 
   /**
-   * Run full multi-signal SIC decoding cycle across the audio bandwidth.
-   * Prevents self-decoding of local transmissions.
+   * Executes a complete multi-signal SIC decoding cycle across the full audio bandwidth.
+   * 
+   * @param dialFreqHz - Transceiver dial frequency in Hz (e.g. 14076000)
+   * @param myCall - Local station callsign to prevent self-decoding echo
+   * @param _myGrid - Local station grid locator
+   * @param isStationTransmitting - True if local radio was transmitting during this slot (simplex blanking)
+   * @param _txFreqHz - Optional baseband audio frequency of local transmission
+   * @returns Object containing all decoded signals and step-by-step SIC iteration diagnostics
    */
   public runSicDecodeCycle(
     dialFreqHz: number,
@@ -212,25 +250,44 @@ export class Z30SicDecoderEngine {
     return { decodes: cycleDecodes, steps };
   }
 
-  public pruneHistory() {
+  /**
+   * Prunes decoded signals older than 60 seconds (2 transmission slots) from transient memory.
+   */
+  public pruneHistory(): void {
     const cutoff = Date.now() - 60000; // 60 seconds age-out
     this.decodedHistory = this.decodedHistory.filter(d => (d.receivedAtMs || 0) >= cutoff);
   }
 
+  /**
+   * Retrieves active history of decoded signals across recent slots.
+   * 
+   * @returns Array of DecodedSignal objects
+   */
   public getHistory(): DecodedSignal[] {
     this.pruneHistory();
     return this.decodedHistory;
   }
 
+  /**
+   * Retrieves diagnostic telemetry steps from the most recent SIC decode cycle.
+   * 
+   * @returns Array of SicIterationStep objects
+   */
   public getLastSteps(): SicIterationStep[] {
     return this.lastIterationSteps;
   }
 
-  public clearHistory() {
+  /**
+   * Clears all decoded signal caches and diagnostic buffers.
+   */
+  public clearHistory(): void {
     this.decodedHistory = [];
     this.currentCycleDecodes = [];
     this.lastIterationSteps = [];
   }
 }
 
+/**
+ * Singleton instance of the Successive Interference Cancellation decoder engine.
+ */
 export const sicDecoderEngine = new Z30SicDecoderEngine();

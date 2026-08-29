@@ -5,6 +5,7 @@
 import React, { useState } from 'react';
 import { PYTHON_SOURCE_FILES, PythonFile } from '../data/pythonSource';
 import { Code2, Copy, Check, Download, Play, Terminal, ShieldCheck, FileCode, CheckCircle2 } from 'lucide-react';
+import { MonteCarloSimulationEngine } from '../dsp/monteCarloEngine';
 
 export const PythonSourceViewer: React.FC = () => {
   const [selectedFileIdx, setSelectedFileIdx] = useState<number>(0);
@@ -45,36 +46,63 @@ export const PythonSourceViewer: React.FC = () => {
     URL.revokeObjectURL(url);
   };
 
-  const runBenchmarkAnalysis = () => {
+  const runBenchmarkAnalysis = async () => {
     setIsRunningBenchmark(true);
-    setBenchmarkOutput('Calculating theoretical AWGN channel capacity across SNR curve...\nEvaluating (216, 77) LDPC belief-propagation Shannon limit performance...\n');
+    setBenchmarkOutput('Initializing Monte Carlo testbench: synthesizing continuous-phase 16-MFSK frames...\nInjecting calibrated AWGN across SNR grid and running Normalized Min-Sum LDPC (216, 77) decoding...\n\n');
 
-    setTimeout(() => {
-      let out = `=============================================================\n`;
-      out += `  z-30 16-MFSK (50 Hz / 30s) vs FT8 (50 Hz / 15s) BENCHMARK \n`;
-      out += `=============================================================\n`;
-      out += `SNR (dB / 2500Hz)    | z-30 Decode %    | FT8 Decode %     | Sensitivity Gain\n`;
+    try {
+      const engine = new MonteCarloSimulationEngine();
+      const snrPoints = [-30.0, -28.0, -26.0, -25.0, -24.0, -23.0, -22.0, -20.0];
+      const framesPerPoint = 20;
+
+      let out = `=========================================================================\n`;
+      out += `   z-30 EMPIRICAL MONTE CARLO DSP & LDPC BENCHMARK (LIVE EXECUTION)      \n`;
+      out += `=========================================================================\n`;
+      out += `Channel: AWGN (2500 Hz Ref BW) | FEC: Systematic (216, 77) IRA LDPC\n`;
+      out += `Frames per SNR point: ${framesPerPoint} | Decoder: Normalized Min-Sum BP (alpha=0.75)\n`;
+      out += `-------------------------------------------------------------------------\n`;
+      out += `SNR (dB)    | Tested | Success | FER      | Decode % | Raw BER  | Avg Iters\n`;
       out += `-------------------------------------------------------------------------\n`;
 
-      const snrList = [-33.0, -31.5, -30.0, -28.5, -27.0, -25.5, -24.0, -22.5, -21.0, -19.5, -18.0];
-      snrList.forEach((snr) => {
-        const z30_prob = (1.0 / (1.0 + Math.exp(-1.4 * (snr - (-29.5))))) * 100.0;
-        const ft8_prob = (1.0 / (1.0 + Math.exp(-1.4 * (snr - (-21.0))))) * 100.0;
-        const gain = snr < -25 ? '+8.5 dB' : '+8.2 dB';
-        const snrStr = `${snr >= 0 ? '+' : ''}${snr.toFixed(1)} dB`.padEnd(20);
-        const z30Str = `${z30_prob.toFixed(1)}%`.padStart(16);
-        const ft8Str = `${ft8_prob.toFixed(1)}%`.padStart(16);
-        out += `${snrStr} | ${z30Str} | ${ft8Str} | ${gain.padStart(16)}\n`;
-      });
+      for (const snr of snrPoints) {
+        setBenchmarkOutput((prev) => prev + `Testing SNR: ${snr >= 0 ? '+' : ''}${snr.toFixed(1)} dB (running ${framesPerPoint} physical frames)...\n`);
+        
+        const ptResults = await engine.runSimulation({
+          minSnrDb: snr,
+          maxSnrDb: snr,
+          snrStepDb: 1.0,
+          framesPerPoint: framesPerPoint,
+          sampleRateHz: 6000,
+          audioCenterFreqHz: 1250,
+          channelModel: 'AWGN',
+          simulationMode: 'MATCHED_FILTER_CORRELATOR_BANK',
+          maxLdpcIterations: 45,
+          alphaMinSum: 0.75,
+        });
 
-      out += `=============================================================\n`;
-      out += `[RESULT] z-30 achieves 50% decoding threshold at -29.5 dB SNR in 2500 Hz noise,\n`;
-      out += `surpassing FT8 (-21.0 dB) by +8.5 dB of sensitivity advantage!\n`;
-      out += `Successive Interference Cancellation (SIC) extracts 94.2% of co-channel collisions.\n`;
+        if (ptResults.length > 0) {
+          const r = ptResults[0];
+          const snrStr = `${r.snrDb >= 0 ? '+' : ''}${r.snrDb.toFixed(1)} dB`.padEnd(11);
+          const framesStr = `${r.totalFrames}`.padStart(6);
+          const succStr = `${r.successCount}`.padStart(7);
+          const ferStr = `${r.frameErrorRate.toFixed(4)}`.padStart(8);
+          const decStr = `${r.decodeSuccessRate.toFixed(1)}%`.padStart(8);
+          const berStr = `${(r.rawChannelBer * 100).toFixed(1)}%`.padStart(8);
+          const iterStr = `${r.avgLdpcIterations.toFixed(1)}`.padStart(9);
+          out += `${snrStr} | ${framesStr} | ${succStr} | ${ferStr} | ${decStr} | ${berStr} | ${iterStr}\n`;
+        }
+      }
+
+      out += `=========================================================================\n`;
+      out += `[COMPLETED] Empirical Monte Carlo benchmark finished.\n`;
+      out += `All results above are derived from live, real-time LDPC decodes and calibrated noise.\n`;
 
       setBenchmarkOutput(out);
+    } catch (err) {
+      setBenchmarkOutput((prev) => prev + `\n[ERROR] Benchmark execution failed: ${err}\n`);
+    } finally {
       setIsRunningBenchmark(false);
-    }, 900);
+    }
   };
 
   return (

@@ -1,38 +1,86 @@
 /**
  * z-30 DSP Audio Engine
+ * =====================
+ * 
  * High-performance Web Audio API continuous-phase 16-MFSK tone synthesis,
- * real-time spectral analyzer, and microphone/receiver stream processor.
+ * real-time spectral waterfall analyzer, and audio receiver/microphone stream processor.
+ * 
+ * Audio Graph Architecture:
+ * 
+ * [ Microphones / USB Soundcard / Line-In ] 
+ *       | (MediaStreamAudioSourceNode)
+ *       v
+ * [ AnalyserNode (FFT 2048 / Waterfall & Spectrum) ] ── (Isolated, NO direct destination feed to prevent acoustic feedback loop)
+ * 
+ * [ Continuous-Phase 16-MFSK Tone Generators / CW Tune Oscillator ]
+ *       |
+ *       v
+ * [ TX Gain Node (with Optional Stereo Right-Channel PTT Tone Panner) ]
+ *       |
+ *       +──> [ Master Gain Node ] ──> [ AudioContext.destination (Line-Out / Speakers) ]
+ *       |
+ *       +──> [ AnalyserNode ] (Loopback for visual TX spectrum monitoring)
  */
 
 import { Z30_SPECS } from './z30Constants';
 
+/**
+ * Real-time audio signal level metering diagnostics.
+ */
 export interface AudioMeterData {
+  /** Peak amplitude converted to decibels relative to full scale (dBFS, 0 to -100) */
   peakDb: number;
+  /** Root Mean Square power converted to dBFS */
   rmsDb: number;
+  /** Normalized linear peak level (0.0 to 1.0) */
   linearLevel: number;
+  /** True if peak signal reaches or exceeds 0 dBFS clipping threshold (>= 0.98 linear) */
   isClipping: boolean;
 }
 
+/**
+ * Enumerated operating system audio endpoint metadata.
+ */
 export interface SystemAudioDevice {
+  /** Unique browser device identifier or GUID */
   deviceId: string;
+  /** Human-readable hardware name (e.g. 'USB Audio CODEC', 'RigBlaster Advantage') */
   label: string;
+  /** Hardware endpoint role */
   kind: 'audioinput' | 'audiooutput';
+  /** Hardware device group identifier */
   groupId: string;
 }
 
+/**
+ * Complete runtime audio subsystem status and capability report.
+ */
 export interface AudioSystemDiagnostics {
+  /** True if Web Audio API is supported in current browser environment */
   isSupported: boolean;
+  /** Current browser microphone/soundcard permission status */
   permissionState: 'prompt' | 'granted' | 'denied' | 'unknown';
+  /** AudioContext operational state */
   contextState: AudioContextState | 'uninitialized';
+  /** Hardware DAC/ADC sampling rate in Hertz (e.g. 48000, 44100) */
   sampleRate: number;
+  /** Estimated base audio hardware output latency in milliseconds */
   baseLatencyMs: number;
+  /** Total count of detected system audio input interfaces */
   inputDeviceCount: number;
+  /** Total count of detected system audio output interfaces */
   outputDeviceCount: number;
+  /** Descriptive name of currently active audio input interface */
   activeInputLabel: string;
+  /** True if microphone/soundcard stream is actively streaming audio samples */
   isMicActive: boolean;
+  /** True if browser supports setSinkId output device redirection */
   sinkIdSupported: boolean;
 }
 
+/**
+ * Primary Web Audio API digital signal processor and synthesis engine.
+ */
 class Z30AudioEngine {
   private ctx: AudioContext | null = null;
   private analyser: AnalyserNode | null = null;

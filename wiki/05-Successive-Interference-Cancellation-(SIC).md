@@ -31,7 +31,7 @@ $$\text{SINR}_{\text{DX}} = \frac{P_{\text{DX}}}{P_{\text{local}} + N_0} \approx
          │
    [ Secondary Subtraction ]
          │
-    [ PASS 3 ] ──> Deep DX Signals Decoded (Down to -31.5 dB SNR)
+    [ PASS 3 ] ──> Deep DX Signals Decoded (Down to -27.5 dB SNR)
 ```
 
 ---

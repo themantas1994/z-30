@@ -27,6 +27,7 @@ import { BandManagerModal } from './components/BandManagerModal';
 import { RfTimeSyncModal } from './components/RfTimeSyncModal';
 import { WikiModal } from './components/WikiModal';
 import { UpdateModal } from './components/UpdateModal';
+import { MonteCarloBenchmarkModal } from './components/MonteCarloBenchmarkModal';
 import { updateEngine } from './dsp/updateEngine';
 
 export default function App() {
@@ -68,6 +69,7 @@ export default function App() {
   const [isBandManagerOpen, setIsBandManagerOpen] = useState<boolean>(false);
   const [isTimeSyncOpen, setIsTimeSyncOpen] = useState<boolean>(false);
   const [isUpdateOpen, setIsUpdateOpen] = useState<boolean>(false);
+  const [isBenchmarkOpen, setIsBenchmarkOpen] = useState<boolean>(false);
 
   // Background update check on application startup
   useEffect(() => {
@@ -422,6 +424,7 @@ export default function App() {
         onOpenSettings={() => setIsSettingsOpen(true)}
         onOpenWizard={() => setIsWizardOpen(true)}
         onOpenSpecs={() => setIsSpecsOpen(true)}
+        onOpenBenchmark={() => setIsBenchmarkOpen(true)}
         onOpenWiki={(slug) => {
           if (slug) setWikiSlug(slug);
           setIsWikiOpen(true);
@@ -585,6 +588,12 @@ export default function App() {
       <SpecsModal
         isOpen={isSpecsOpen}
         onClose={() => setIsSpecsOpen(false)}
+        onOpenBenchmark={() => setIsBenchmarkOpen(true)}
+      />
+
+      <MonteCarloBenchmarkModal
+        isOpen={isBenchmarkOpen}
+        onClose={() => setIsBenchmarkOpen(false)}
       />
 
       <WikiModal

@@ -157,6 +157,12 @@ export interface RfDecodeResult {
  * High-performance DSP Utilities for Audio Time-Signal Demodulation
  */
 export class RfDspUtils {
+  /**
+   * Normalized mathematical sinc function: sinc(x) = sin(pi * x) / (pi * x)
+   * 
+   * @param x - Input value
+   * @returns Sinc value (1.0 at x = 0)
+   */
   public static sinc(x: number): number {
     if (Math.abs(x) < 1e-9) return 1.0;
     const px = Math.PI * x;
@@ -164,7 +170,14 @@ export class RfDspUtils {
   }
 
   /**
-   * Windowed-Sinc FIR Bandpass Filter
+   * Windowed-Sinc FIR Bandpass Filter with Hamming Windowing.
+   * 
+   * @param samples - Raw floating-point audio PCM samples
+   * @param sampleRate - Sampling frequency in Hz (e.g. 48000 Hz)
+   * @param lowCut - Lower cutoff frequency in Hz
+   * @param highCut - Upper cutoff frequency in Hz
+   * @param numTaps - Number of symmetric FIR filter taps (default 61)
+   * @returns Filtered audio sample buffer
    */
   public static bandpassFir(
     samples: Float32Array | number[],
@@ -216,7 +229,12 @@ export class RfDspUtils {
   }
 
   /**
-   * Envelope detector via rectification and single-pole IIR lowpass smoothing
+   * Non-coherent envelope detector via full-wave rectification and single-pole IIR lowpass smoothing.
+   * 
+   * @param samples - Input audio samples
+   * @param sampleRate - Audio sampling rate in Hz
+   * @param lpfCutoffHz - Lowpass cutoff frequency in Hz (default 25.0 Hz)
+   * @returns Smoothed envelope magnitude trajectory
    */
   public static envelopeDetector(
     samples: Float32Array | number[],
@@ -238,7 +256,13 @@ export class RfDspUtils {
   }
 
   /**
-   * Goertzel algorithm for single-frequency power estimation
+   * Goertzel single-frequency discrete Fourier transform power estimator.
+   * Provides O(N) tone magnitude detection without full FFT overhead.
+   * 
+   * @param samples - Audio sample array
+   * @param sampleRate - Audio sampling rate in Hz
+   * @param targetFreq - Center tone frequency to evaluate in Hz
+   * @returns Normalized spectral power at the target frequency
    */
   public static goertzel(samples: Float32Array | number[], sampleRate: number, targetFreq: number): number {
     const n = samples.length;
@@ -260,7 +284,12 @@ export class RfDspUtils {
   }
 
   /**
-   * Estimates SNR in dB of a target tone relative to adjacent noise bands
+   * Estimates tone Signal-to-Noise Ratio (SNR) in dB relative to symmetrical adjacent guard bands.
+   * 
+   * @param samples - Audio sample window
+   * @param sampleRate - Sampling rate in Hz
+   * @param centerFreqHz - Tone frequency under analysis (e.g. 1000 Hz)
+   * @returns SNR in dB, signal power, and estimated noise floor power
    */
   public static estimateCarrierSnr(
     samples: Float32Array | number[],

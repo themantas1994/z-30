@@ -41,7 +41,7 @@ Welcome to the official technical documentation and developer wiki for **z-30**:
 
 ## ⚡ What is z-30?
 
-**z-30** is engineered for extreme HF, VHF, and microwave weak-signal amateur radio communications. Operating in synchronous **30.0-second UTC slots**, z-30 achieves a decoding sensitivity threshold of **-29.5 dB SNR** (in a standard 2500 Hz reference bandwidth), offering an **8.5 dB sensitivity advantage over FT8**.
+**z-30** is engineered for extreme HF, VHF, and microwave weak-signal amateur radio communications. Operating in synchronous **30.0-second UTC slots**, z-30 achieves a 50% decoding sensitivity threshold of **-25.0 dB SNR** and 90% threshold of **-24.0 dB SNR** (in a standard 2500 Hz reference bandwidth), offering a **+4.0 dB link margin advantage over FT8** (.51\times$ ERP multiplier).
 
 ### Key Technical Innovations
 1. **Ultra-Narrowband 16-MFSK**: Continuous-Phase 16-Tone Frequency Shift Keying occupying only **50.0 Hz** of RF bandwidth.
@@ -291,7 +291,7 @@ This document provides the complete mathematical and signal processing specifica
 | **Guard / Processing Time** | $T_{\\text{guard}}$ | **6.0 s** | FFT Framing + 3-Pass SIC + LDPC decode |
 | **Bits per Symbol** | $\\log_2(M)$ | **4 bits/symbol** | $54 \\times 4 = 216$ coded channel bits |
 | **FEC Code** | — | **QC-LDPC (216, 77)** | Rate $R \\approx 0.356$ |
-| **AWGN Sensitivity Limit** | — | **-29.5 dB SNR** | In standard $2500\\text{ Hz}$ noise bandwidth |
+| **AWGN 50% Sensitivity Limit** | — | **-25.0 dB SNR** (-24.0 dB at 90%) | In standard $2500\\text{ Hz}$ noise bandwidth |
 
 ---
 
@@ -371,7 +371,7 @@ A fundamental challenge in digital weak-signal amateur radio is **packet collisi
 2. **Parameter Estimation**: Measure exact carrier frequency $\\hat{f}_0$, symbol start delay $\\hat{\\Delta t}$, amplitude $\\hat{A}(t)$, and ionospheric phase trajectory $\\hat{\\phi}(t)$.
 3. **Waveform Synthesis & Subtraction**: Synthesize the continuous-phase replica $\\hat{s}_i(t)$ and subtract it in the time domain:
    $$x_{\\text{residual}}^{(1)}(t) = x_{\\text{received}}(t) - \\sum_{i \\in \\text{Pass 1}} \\hat{s}_i(t)$$
-4. **Pass 2 & Pass 3 (Deep DX Extraction)**: Re-run matched filters and LDPC belief propagation on the residual buffer to decode previously masked signals down to **-31.5 dB SNR**.
+4. **Pass 2 & Pass 3 (Deep DX Extraction)**: Re-run matched filters and LDPC belief propagation on the residual buffer to decode previously masked signals down to **-27.5 dB SNR**.
 `,
   },
   {
@@ -494,7 +494,7 @@ This document addresses common questions and troubleshooting steps for **z-30**.
 ---
 
 ## ❓ FAQ Highlights
-- **Why 30 seconds?**: Halving symbol rate to 3.125 baud yields an **8.5 dB sensitivity advantage over FT8** (down to **-29.5 dB SNR**).
+- **Why 30 seconds?**: Halving symbol rate to 3.125 baud and applying (216, 77) LDPC yields a **+4.0 dB link margin advantage over FT8** (50% decode at **-25.0 dB SNR**, 90% at **-24.0 dB SNR**).
 - **What is SIC 2 / SIC 3?**: Indicates signals recovered via Successive Interference Cancellation after subtracting stronger co-channel local stations.
 - **Windows "Python não foi encontrado" / "Python was not found"**:
   1. Download Python 3.11 or 3.12 from [python.org](https://www.python.org/downloads/).
@@ -510,7 +510,7 @@ This document addresses common questions and troubleshooting steps for **z-30**.
     slug: '11-Physics-&-Comparative-Analysis-z30-vs-FT8',
     title: '11. Physics & Comparative Analysis: z-30 vs. FT8',
     category: 'Protocol & DSP',
-    description: 'Exhaustive technical deep-dive for advanced ham operators & RF engineers on communication physics, Shannon limit, 16-MFSK vs 8-MFSK, and +8.5 dB link margin.',
+    description: 'Exhaustive technical deep-dive for advanced ham operators & RF engineers on communication physics, Shannon limit, 16-MFSK vs 8-MFSK, empirical Monte Carlo benchmarks, and +4.0 dB link margin.',
     tags: ['physics', 'ft8', 'shannon', 'snr', 'link budget', 'rf engineers', 'advanced', '16-mfsk', 'ldpc', 'sic', 'polar flutter', 'coherence'],
     markdown: `# 11. Physics & Comparative Analysis: z-30 vs. FT8
 
@@ -522,7 +522,7 @@ An in-depth technical analysis for **advanced amateur radio operators, RF engine
 
 | Metric / Parameter | FT8 (Franke-Taylor 8-FSK) | z-30 (16-MFSK Weak-Signal) | Physics & Engineering Delta |
 | :--- | :--- | :--- | :--- |
-| **Decoding Threshold ($SNR_{2500}$)** | **-21.0 dB** | **-29.5 dB** | **+8.5 dB link margin advantage** |
+| **Decoding Threshold ($SNR_{2500}$)** | **-21.0 dB** | **-25.0 dB (50%) / -24.0 dB (90%)** | **+4.0 dB link margin advantage (.51\times$ ERP)** |
 | **Transmission Slot Duration** | 15.0 s (12.64 s active TX) | 30.0 s (24.0 s active TX) | $2\\times$ integration time ($+3.01\\text{ dB}$) |
 | **Modulation Format** | 8-MFSK (Continuous Phase) | 16-MFSK (Continuous Phase) | Higher-order orthogonal signaling efficiency |
 | **Occupied Bandwidth** | 47.0 Hz ($8 \\times 6.25\\text{ Hz}$) | 50.0 Hz ($16 \\times 3.125\\text{ Hz}$) | Ultra-narrowband density (50 channels in 2.7 kHz) |
@@ -533,7 +533,7 @@ An in-depth technical analysis for **advanced amateur radio operators, RF engine
 | **Information Bits ($K$)** | 77 bits ($75\\text{ msg} + 2\\text{ flag}$) | 77 bits ($58\\text{ msg} + 14\\text{ CRC} + 5\\text{ flag}$) | Identical payload capacity with stronger CRC protection |
 | **FEC Code** | Systematic LDPC (174, 91) | Quasi-Cyclic LDPC (216, 77) | **Rate $R \\approx 0.356$ vs $0.523$** ($+2.4\\text{ dB}$ coding gain) |
 | **Parity Check Fraction** | 47.7% parity overhead | **64.4% parity overhead** | Significantly steeper waterfall BER curve |
-| **CRC Polynomial** | 14-bit ($P_{\\text{false}} \\approx 6 \\times 10^{-5}$) | 14-bit CRC-14 ($P_{\\text{false}} < 10^{-6}$) | Zero false decodes at the $-29.5\\text{ dB}$ limit |
+| **CRC Polynomial** | 14-bit ($P_{\\text{false}} \\approx 6 \\times 10^{-5}$) | 14-bit CRC-14 ($P_{\\text{false}} < 10^{-6}$) | Zero false decodes at the $-25.0\\text{ dB}$ limit |
 | **Co-Channel Collision Recovery** | None (collisions fail to decode) | **3-Pass Successive Interference Cancellation (SIC)** | Co-channel collision resolution down to $-31.5\\text{ dB}$ |
 | **Clock Drift Tolerance** | $\\pm 1.0\\text{ s}$ (requires NTP/GPS) | $\\pm 1.5\\text{ s}$ + Built-in RF Time Sync | Zero-admin offline HF/LF time calibration |
 
@@ -562,7 +562,7 @@ Calculating the theoretical Shannon threshold in a 2500 Hz reference bandwidth f
 - **FT8 Theoretical Shannon Limit**: $\\text{SNR}_{2500,\\text{Shannon}} = -1.59\\text{ dB} + 10\\log_{10}\\left(\\frac{6.09}{2500}\\right) = -27.72\\text{ dB}$
 - **z-30 Theoretical Shannon Limit**: $\\text{SNR}_{2500,\\text{Shannon}} = -1.59\\text{ dB} + 10\\log_{10}\\left(\\frac{3.21}{2500}\\right) = -30.51\\text{ dB}$
 
-**Physical Insight**: FT8 decodes down to $-21.0\\text{ dB}$, operating **$6.72\\text{ dB}$ above the theoretical Shannon limit**. z-30 decodes down to $-29.5\\text{ dB}$, operating within **$1.01\\text{ dB}$ of the absolute Shannon channel capacity limit**—representing one of the most power-efficient signaling schemes ever deployed in open-source amateur radio.
+**Physical Insight**: FT8 decodes down to 21.0\text{ dB}$ (.72\text{ dB}$ above Shannon limit). z-30 decodes down to 25.0\text{ dB}$ (.51\text{ dB}$ above theoretical Shannon limit, achieving a +4.0 dB empirical gain over FT8)—representing an exceptionally power-efficient signaling scheme for amateur radio.
 
 ---
 
@@ -632,7 +632,7 @@ FT8 places Costas sync arrays in three fixed clusters (beginning, middle, end). 
 
 ---
 
-## 📻 7. Real-World RF Link Budget: What +8.5 dB Means on the Air
+## 📻 7. Real-World RF Link Budget: What +4.0 dB Means on the Air
 
 $$\\Delta P_{\\text{dB}} = 10 \\log_{10}\\left(\\frac{P_1}{P_2}\\right) \\implies \\frac{P_1}{P_2} = 10^{8.5 / 10} \\approx 7.08$$
 

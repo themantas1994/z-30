@@ -187,6 +187,9 @@ export class Z30QsoLogger {
 
   /**
    * Generates ADIF 3.1.4 standard compliant text string.
+   * 
+   * @param entriesToExport - Optional array of entries to serialize (defaults to all logbook entries)
+   * @returns Formatted ADIF text payload with header and EOR delimiters
    */
   public exportToAdif(entriesToExport?: LogEntry[]): string {
     const data = entriesToExport || this.entries;
@@ -242,6 +245,9 @@ Generated on: ${new Date().toUTCString()}
 
   /**
    * Generates standard RFC 4180 CSV string.
+   * 
+   * @param entriesToExport - Optional array of entries to serialize
+   * @returns Formatted comma-separated values text with escaped quotes
    */
   public exportToCsv(entriesToExport?: LogEntry[]): string {
     const data = entriesToExport || this.entries;
@@ -290,6 +296,9 @@ Generated on: ${new Date().toUTCString()}
 
   /**
    * Generates SQLite SQL Table schema & INSERT statements.
+   * 
+   * @param entriesToExport - Optional array of entries to export
+   * @returns SQL script creating table and indexes and inserting records inside a single transaction
    */
   public exportToSqliteDump(entriesToExport?: LogEntry[]): string {
     const data = entriesToExport || this.entries;

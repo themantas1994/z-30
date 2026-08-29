@@ -1,30 +1,64 @@
 /**
  * z-30 Automated QSO Sequencing Engine & Maidenhead Geometry
+ * ==========================================================
+ * 
+ * Manages the amateur radio QSO state machine (Auto-Seq) for automated standard DX exchanges:
+ * - Calling CQ -> CQ DX CALL GRID (TX1)
+ * - Answering CQ -> DXCALL MYCALL MYGRID (TX2)
+ * - Exchanging Signal Reports -> DXCALL MYCALL -15 (TX3)
+ * - Roger + Report Confirmation -> DXCALL MYCALL R-15 (TX4)
+ * - Final Confirmation & Logging -> DXCALL MYCALL RR73 / 73 (TX5/TX6)
+ * - Automatic ADIF-compliant QSO logging upon receipt of final roger.
+ * - Spherical Great Circle distance and initial true azimuth calculation between 4/6-character Maidenhead grid locators.
+ * - Pileup resolution algorithm prioritizing callers by First, Last, Strongest, Weakest, Nearest, or Farthest.
  */
 
 import { DecodedSignal, LogEntry, QsoStage, StationConfig, TxSlot } from '../types/z30';
 import { buildQsoMacros } from './z30Codec';
 
+/**
+ * Transient state of the active QSO exchange and transceiver sequencing.
+ */
 export interface QsoState {
+  /** Current phase of the amateur contact state machine */
   stage: QsoStage;
+  /** Callsign of target remote station */
   targetDxCall: string;
+  /** 4 or 6 character Maidenhead grid of target remote station */
   targetDxGrid: string;
+  /** Signal report sent by DX station (e.g. '-12') */
   targetDxReport: string;
+  /** Signal report sent from our station to DX (e.g. '-18') */
   mySentReport: string;
+  /** Signal report received by our station from DX */
   myRcvdReport: string;
+  /** Active transmission macro slot */
   currentTxMacro: 'tx1' | 'tx2' | 'tx3' | 'tx4' | 'tx5' | 'tx6' | 'free';
+  /** Free-text message string for custom transmissions */
   customTxMessage: string;
+  /** Master transmitter arming toggle */
   txEnabled: boolean;
+  /** Synchronous even/odd transmission slot designation */
   txSlot: TxSlot;
+  /** Baseband receiver audio carrier frequency in Hz (200 - 3000 Hz) */
   rxFreqHz: number;
+  /** Baseband transmitter audio carrier frequency in Hz (200 - 3000 Hz) */
   txFreqHz: number;
+  /** Consecutive decode cycles elapsed without a response from the target station */
   idleCyclesCount: number;
+  /** Total consecutive transmissions sent without interruption */
   consecutiveTxCount: number;
+  /** Most recently completed and logged QSO record */
   lastQsoLogged: LogEntry | null;
 }
 
 /**
- * Calculate Great Circle Distance (km) and Bearing (deg) between two Maidenhead Locators
+ * Calculates Great Circle Distance (km) and initial True Azimuth bearing (degrees)
+ * between two Maidenhead Grid Locators using the Haversine formula on the WGS-84 reference sphere.
+ * 
+ * @param grid1 - Origin station Maidenhead grid (4 or 6 characters, e.g. 'FN31pr')
+ * @param grid2 - Destination station Maidenhead grid (4 or 6 characters, e.g. 'PM95')
+ * @returns Object containing great-circle distance in kilometers and azimuth in degrees (0-359)
  */
 export function calculateMaidenheadDistanceAndAzimuth(
   grid1: string,

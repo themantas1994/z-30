@@ -1,7 +1,16 @@
 /**
  * Hamlib rigctl & Web Serial CAT Hardware Transceiver Controller
- * Direct hardware transceiver interface supporting Web Serial API, physical RTS/DTR PTT pins,
- * audio VOX keying, and Hamlib rigctld daemon network links.
+ * =============================================================
+ * 
+ * Direct hardware transceiver interface supporting:
+ * - Web Serial API for native browser-to-radio UART serial communications
+ * - Physical RS-232 / USB UART pin keying (RTS & DTR)
+ * - Audio Right-Channel PTT Tone generation (Pseudo-FSK hardware keying)
+ * - CM108 / C-Media USB soundcard GPIO PTT keying
+ * - Raspberry Pi & SBC direct GPIO BCM keying
+ * - TCI (Transceiver Control Interface) network protocol for Expert Electronics SDRs
+ * - WinKeyer hardware CW / PTT keyer interface
+ * - Hamlib rigctl TCP daemon protocol (127.0.0.1:4532)
  */
 
 import { HAM_BANDS } from './z30Constants';
@@ -9,44 +18,85 @@ import { audioEngine } from './audioEngine';
 import { StationConfig, PttMethodType } from '../types/z30';
 import { getRigByName, CURRENT_HAMLIB_VERSION } from './hamlibCatalog';
 
+/**
+ * Diagnostic log item recording rigctl or serial hardware interactions.
+ */
 export interface RigctlLogItem {
+  /** Unique log entry identifier */
   id: string;
+  /** ISO UTC timestamp string */
   timestamp: string;
+  /** Command stream direction ('IN' for rig response, 'OUT' for host command) */
   direction: 'IN' | 'OUT';
+  /** Exact rigctl or raw ASCII command sent/received */
   command: string;
+  /** Radio response or status message */
   response: string;
+  /** Execution status */
   status: 'OK' | 'ERROR' | 'TIMEOUT';
 }
 
+/**
+ * Diagnostic result of a transceiver CAT link verification probe.
+ */
 export interface CatTestResult {
+  /** True if transceiver responded correctly to CAT frequency/mode queries */
   success: boolean;
+  /** Human-readable explanation of CAT test outcome */
   message: string;
+  /** Verified VFO dial frequency in Hertz if read from radio */
   vfoHz?: number;
+  /** Verified operating mode (e.g. 'PKTUSB', 'USB-D') */
   mode?: string;
+  /** Verified radio model name */
   rigName?: string;
+  /** Serial port or TCP host:port used for communication */
   portUsed?: string;
+  /** Extended hardware diagnostic details */
   details?: string;
 }
 
+/**
+ * Diagnostic result of a PTT line keying test.
+ */
 export interface PttTestResult {
+  /** True if PTT line was successfully asserted */
   success: boolean;
+  /** Descriptive test outcome message */
   message: string;
+  /** Active PTT method tested */
   method: PttMethodType;
+  /** True if transmitter line is currently asserted */
   isKeyed: boolean;
+  /** Logic level or voltage state of physical pin */
   pinState?: string;
+  /** Specific hardware interface details */
   hardwareDetail?: string;
 }
 
+/**
+ * Enumerated hardware serial communication port.
+ */
 export interface DiscoveredSerialPort {
+  /** System identifier or path */
   id: string;
+  /** COM port or dev node path (e.g. 'COM3', '/dev/ttyUSB0') */
   path: string;
+  /** User-friendly hardware display name */
   displayName: string;
+  /** USB Vendor ID (e.g. 0x10C4 for Silicon Labs) */
   vendorId?: number;
+  /** USB Product ID */
   productId?: number;
+  /** Recognized manufacturer name */
   vendorName?: string;
+  /** True if discovered via browser Web Serial API */
   isWebSerial: boolean;
+  /** True if user has authorized access to this port */
   isPaired: boolean;
+  /** True if port is actively opened */
   isOpen: boolean;
+  /** Raw browser SerialPort reference */
   nativePort?: any;
 }
 
@@ -65,6 +115,9 @@ const USB_VENDOR_MAP: Record<number, string> = {
   0x303a: 'Espressif Systems (ESP32 USB-JTAG/Serial)',
 };
 
+/**
+ * CAT (Computer-Aided Transceiver) controller and hardware keying manager.
+ */
 export class CatController {
   private currentFreqHz: number = 14076000; // 20m z-30 default
   private currentMode: string = 'PKTUSB';

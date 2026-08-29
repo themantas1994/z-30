@@ -1,35 +1,75 @@
 /**
  * z-30 Message Packer, LDPC Codec & 16-MFSK Symbol Synthesizer / Demodulator
+ * =========================================================================
+ * 
+ * Data Framing and Bit Allocation:
+ * - Total Information Vector: K = 77 bits
+ *   - Bits 0..27 (28 bits): Destination callsign integer (Base-37 standard amateur callsign representation)
+ *   - Bits 28..55 (28 bits): Source callsign integer (Base-37 representation)
+ *   - Bits 56..62 (7 bits): Extra field / Grid / SNR report (-30 to +30 dB or 64 compressed common grids)
+ *   - Bits 63..76 (14 bits): Cyclic Redundancy Check (CRC-14) polynomial: 0x2443 with seed 0x2757
+ * 
+ * Channel Coding:
+ * - Systematic (N=216, K=77) Irregular Repeat Accumulate (IRA) LDPC Code
+ * - Information block: 77 bits
+ * - Parity block: 139 bits (dual-diagonal accumulator topology)
+ * - Modulation Mapping: 216 channel coded bits / 4 bits/symbol = 54 data symbols
+ * - Physical Framing: 54 data symbols + 21 Costas-like sync symbols = 75 total 16-MFSK symbols
  */
 
-import { Z30_SPECS } from './z30Constants';
+import { Z30_SPECS, Z30_CHECK_TO_INFO } from './z30Constants';
 
+/**
+ * Structured container for fully packed, encoded, and modulated z-30 messages.
+ */
 export interface PackedMessage {
+  /** Original human-readable ASCII representation */
   rawText: string;
+  /** Categorized QSO message exchange type */
   type: 'CQ' | 'REPLY' | 'REPORT' | 'ROGER_REPORT' | 'RRR_73' | 'FREE_TEXT';
+  /** Transmitting station amateur callsign */
   callFrom?: string;
+  /** Destination station amateur callsign or CQ specifier */
   callTo?: string;
+  /** 4-character Maidenhead locator grid */
   grid?: string;
+  /** Signal report string (e.g. "-14", "R-08", "RRR", "73") */
   report?: string;
-  infoBits: number[]; // 77 bits
-  codedBits: number[]; // 216 bits
-  symbols: number[]; // 75 symbols (0-15)
+  /** 77-bit information vector (63 payload bits + 14 CRC bits) */
+  infoBits: number[];
+  /** 216-bit systematic LDPC channel coded bit vector */
+  codedBits: number[];
+  /** 75 modulated 16-MFSK symbol indexes (values 0 through 15) */
+  symbols: number[];
 }
 
-// Common Maidenhead grids list for 7-bit index compression
+/**
+ * High-density dictionary of common Maidenhead grid locators for 7-bit indexed compression.
+ */
 const COMMON_GRIDS = [
   'FN31', 'FN20', 'FN30', 'FM19', 'FM29', 'EM00', 'EM10', 'EM29', 'EM79', 'EL98',
   'EL89', 'DM79', 'DM04', 'DM13', 'CM87', 'CM97', 'CN87', 'CN88', 'IO91', 'IO82',
   'IO92', 'IO93', 'JO21', 'JO31', 'JO22', 'JO32', 'JN88', 'JN58', 'JN48', 'JN65',
   'PM95', 'PM85', 'PM74', 'QM05', 'QM06', 'QF22', 'QF56', 'QF57', 'RE78', 'GG87',
-  'GH52', 'GF05', 'FF49', 'KG46', 'KF29', 'OL93', 'NL18', 'OF78', 'NF48', 'PF95',
+  'GF05', 'FF49', 'KG46', 'KF29', 'OL93', 'NL18', 'OF78', 'NF48', 'PF95',
   'KO85', 'KO94', 'KP04', 'KP15', 'KP20', 'KN87', 'KN99', 'KM17', 'KM68', 'KL78',
   'BL11', 'BK29', 'AJ81', 'AH21'
 ];
 
 /**
- * Reversible 28-bit Amateur Radio Callsign Encoder (Base-37 / Alphanumeric)
- * Encodes any standard callsign (up to 6 alphanumeric chars) into an integer in [0, 268435455]
+ * Reversible 28-bit Amateur Radio Callsign Encoder.
+ * 
+ * Maps standard international amateur callsigns (e.g. W1AW, K1ABC, EA8/G4XYZ)
+ * or operational tokens (CQ, CQ DX, QRZ) into an integer in [0, 2^28 - 1].
+ * 
+ * Encoding Scheme:
+ * - Prefix: 1-2 alphanumeric characters represented in Radix-37.
+ * - Digit: Single decimal digit 0-9.
+ * - Suffix: 1-3 alphabetic characters represented in Radix-27 (27^3 = 19,683 states).
+ * - Total states: 37^2 * 10 * 27^3 = 269,460,270 (fits within 28 bits).
+ * 
+ * @param call - Plaintext amateur radio callsign
+ * @returns 28-bit packed unsigned integer representation
  */
 export function encodeCallsign28(call: string): number {
   const clean = call.trim().toUpperCase().replace(/[^A-Z0-9 ]/g, '');
@@ -40,7 +80,6 @@ export function encodeCallsign28(call: string): number {
 
   // Split into prefix, digit, suffix
   // Standard amateur callsign format: [1-2 prefix chars][1 digit][1-3 suffix chars]
-  // Pad or align to 6 characters: C1 C2 C3 C4 C5 C6
   let formatted = clean;
   if (formatted.length > 6) formatted = formatted.substring(0, 6);
 
@@ -61,7 +100,7 @@ export function encodeCallsign28(call: string): number {
     return packed & 0x0fffffff;
   }
 
-  // Generic 6-character Base-37 encoding for non-standard calls
+  // Generic 6-character Base-37 encoding for non-standard or special event calls
   let acc = 0;
   for (let i = 0; i < Math.min(6, formatted.length); i++) {
     const c = formatted[i];
@@ -72,7 +111,12 @@ export function encodeCallsign28(call: string): number {
 }
 
 /**
- * Reversible 28-bit Callsign Decoder
+ * Reversible 28-bit Callsign Decoder.
+ * 
+ * Reconstitutes the original amateur radio callsign string from its 28-bit packed integer form.
+ * 
+ * @param num - 28-bit unsigned integer value
+ * @returns Decoded plaintext callsign string
  */
 export function decodeCallsign28(num: number): string {
   if (num === 0) return 'CQ';
@@ -109,7 +153,13 @@ export function decodeCallsign28(num: number): string {
   return 'DX';
 }
 
-// Encode Maidenhead 4-char grid (15 bits standard or 7 bits index)
+/**
+ * Encodes a 4-character Maidenhead locator grid into a compact 7-bit field (values 0..127).
+ * Uses common-grid indexed table lookups for top global locations and mathematical hashing for other grids.
+ * 
+ * @param grid - 4-character Maidenhead locator string (e.g. "FN31", "IO91")
+ * @returns 7-bit integer representation (0..127)
+ */
 export function encodeGrid(grid: string): number {
   const clean = grid.trim().toUpperCase();
   const idx = COMMON_GRIDS.indexOf(clean);
@@ -125,6 +175,12 @@ export function encodeGrid(grid: string): number {
   return 64 + (code % 64);
 }
 
+/**
+ * Decodes a 7-bit compressed grid index back into a 4-character Maidenhead locator string.
+ * 
+ * @param val - 7-bit integer value (0..127)
+ * @returns 4-character Maidenhead locator string
+ */
 export function decodeGrid(val: number): string {
   if (val >= 64 && val < 64 + COMMON_GRIDS.length) {
     return COMMON_GRIDS[val - 64];
@@ -132,9 +188,19 @@ export function decodeGrid(val: number): string {
   return 'FN31';
 }
 
-// 14-bit CRC polynomial for error detection
+/**
+ * Computes a 14-bit Cyclic Redundancy Check (CRC-14) over an arbitrary bit sequence.
+ * 
+ * Polynomial Definition:
+ * - Generator: P(x) = x^14 + x^11 + x^2 + 1 (Hex: 0x2443)
+ * - Initial Seed: 0x2757
+ * - Residual Error Probability: P_undetected < 6.1 x 10^-5
+ * 
+ * @param bits - Array of discrete binary numbers (0 or 1) representing the payload
+ * @returns 14-bit integer CRC checksum (0x0000 to 0x3FFF)
+ */
 export function computeCrc14(bits: number[]): number {
-  let crc = 0x2757; // Init
+  let crc = 0x2757; // Initialization vector
   const poly = 0x2443; // x^14 + x^11 + x^2 + 1
   for (const b of bits) {
     const msb = (crc >> 13) & 1;
@@ -144,8 +210,18 @@ export function computeCrc14(bits: number[]): number {
 }
 
 /**
- * Systematic (216, 77) LDPC parity generator
- * Vectorized generator mapping 77 information bits to 216 channel coded bits
+ * Systematic (N=216, K=77) Irregular Repeat Accumulate (IRA) LDPC Encoder.
+ * 
+ * Maps 77 information bits (63 payload + 14 CRC) into a 216-bit channel codeword.
+ * 
+ * Parity Bit Generation Algorithm:
+ * - Parity bits p_0 ... p_138 are generated sequentially via dual-diagonal accumulation:
+ *   p_0 = sum_{j in V_0} u_j (mod 2)
+ *   p_k = p_{k-1} + sum_{j in V_k} u_j (mod 2) for k = 1 ... 138
+ * - Yields linear encoding complexity O(N).
+ * 
+ * @param infoBits - 77-element array of information bits (0 or 1)
+ * @returns 216-element array of channel coded bits (0 or 1)
  */
 export function encodeLdpc216_77(infoBits: number[]): number[] {
   const coded = new Array(216).fill(0);
@@ -155,9 +231,9 @@ export function encodeLdpc216_77(infoBits: number[]): number[] {
 
   for (let p = 0; p < 139; p++) {
     let parity = 0;
-    for (let k = 0; k < 5; k++) {
-      const infoIdx = (p * 17 + k * 23 + 7) % 77;
-      parity ^= coded[infoIdx];
+    const infoVars = Z30_CHECK_TO_INFO[p] || [];
+    for (const infoIdx of infoVars) {
+      parity ^= coded[infoIdx] || 0;
     }
     if (p > 0) {
       parity ^= coded[77 + p - 1];
@@ -169,7 +245,18 @@ export function encodeLdpc216_77(infoBits: number[]): number[] {
 }
 
 /**
- * Pack natural text message into 77-bit z-30 payload and 75-symbol 16-MFSK frame
+ * Encodes, modulates, and frames standard amateur text messages into 75 16-MFSK symbols.
+ * 
+ * Processing Steps:
+ * 1. Tokenizes input text into standard QSO syntax (CQ, Reply, Report, Roger, 73).
+ * 2. Compresses fields into 63 raw information bits (28-bit To, 28-bit From, 7-bit Extra).
+ * 3. Computes 14-bit CRC-14 and appends it to form a 77-bit systematic block.
+ * 4. Applies LDPC (216, 77) encoding to generate 139 parity bits.
+ * 5. Groups 216 coded bits into 54 4-bit nibbles mapped to 16-MFSK data symbols.
+ * 6. Interleaves 21 Costas synchronization pilot tones into predefined symbol slots.
+ * 
+ * @param text - Plaintext amateur radio transmission (e.g. "CQ W1AW FN31", "K1ABC W1AW -12")
+ * @returns PackedMessage structure containing bits, symbols, and parsed QSO tokens
  */
 export function packZ30Message(text: string): PackedMessage {
   const trimmed = text.trim().toUpperCase();
@@ -293,7 +380,12 @@ export function packZ30Message(text: string): PackedMessage {
 }
 
 /**
- * Unpack 77 decoded information bits back into text message and structured fields
+ * Unpacks 77 decoded information bits back into a structured amateur message.
+ * 
+ * Verifies CRC-14 consistency and reconstructs callsigns, grids, and signal reports.
+ * 
+ * @param infoBits - 77-element array of decoded hard decision information bits
+ * @returns Parsed message object including CRC validation flag
  */
 export function unpackZ30Message(infoBits: number[]): {
   rawText: string;
@@ -367,7 +459,15 @@ export function unpackZ30Message(infoBits: number[]): {
 }
 
 /**
- * Format standard amateur radio QSO messages
+ * Generates standard 6-stage amateur radio QSO macro messages (Tx1 through Tx6).
+ * 
+ * @param myCall - Local operator callsign (e.g. "W1AW")
+ * @param myGrid - Local Maidenhead grid locator (e.g. "FN31pr")
+ * @param dxCall - Target DX station callsign
+ * @param dxGrid - Target DX station grid locator
+ * @param rptSent - SNR report to send (e.g. "-12")
+ * @param rptRcvd - SNR report received from target
+ * @returns Object with macro text templates for Tx1 through Tx6
  */
 export function buildQsoMacros(myCall: string, myGrid: string, dxCall: string, dxGrid: string, rptSent: string, rptRcvd: string) {
   const cleanDx = dxCall.trim().toUpperCase() || 'DX';
@@ -376,11 +476,17 @@ export function buildQsoMacros(myCall: string, myGrid: string, dxCall: string, d
   const cleanMyGrid = myGrid.trim().toUpperCase() || 'FN31';
 
   return {
+    /** Tx1: Standard CQ call */
     tx1: `CQ ${cleanMy} ${cleanMyGrid}`,
+    /** Tx2: Direct reply to calling station */
     tx2: `${cleanDx} ${cleanMy} ${cleanMyGrid}`,
+    /** Tx3: Initial signal report exchange */
     tx3: `${cleanDx} ${cleanMy} ${rptSent.startsWith('-') || rptSent.startsWith('+') ? rptSent : '-' + rptSent}`,
+    /** Tx4: Roger + signal report confirmation */
     tx4: `${cleanDx} ${cleanMy} R${rptSent.startsWith('-') || rptSent.startsWith('+') ? rptSent : '-' + rptSent}`,
+    /** Tx5: Final 73 signoff */
     tx5: `${cleanDx} ${cleanMy} 73`,
+    /** Tx6: Targeted CQ DX call */
     tx6: `CQ DX ${cleanMy} ${cleanMyGrid}`,
   };
 }
