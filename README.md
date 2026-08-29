@@ -6,7 +6,7 @@
 [![Radio Mode](https://img.shields.io/badge/mode-16--MFSK%20|%20LDPC--SIC%20|%2030s%20Cycle-orange.svg)]()
 [![PWA Ready](https://img.shields.io/badge/PWA-Installable%20Offline-blueviolet.svg)]()
 
-**z-30** is an open-source, next-generation amateur radio weak-signal digital communications and DSP engineering suite. Engineered for extreme HF, VHF, and microwave propagation conditions (down to **-29.5 dB SNR** in 2500 Hz reference bandwidth), z-30 combines an ultra-narrow **50.0 Hz occupied bandwidth** 16-MFSK modulation scheme, Rate-1/3 Quasi-Cyclic Low-Density Parity-Check (LDPC) forward error correction, and multi-pass **Successive Interference Cancellation (SIC)** to decode co-channel signals with zero packet collision dropouts.
+**z-30** is an open-source, next-generation amateur radio weak-signal digital communications and DSP engineering suite. Engineered for extreme HF, VHF, and microwave propagation conditions (down to **-25.0 dB SNR** 50% decode threshold / **-24.0 dB SNR** 90% decode threshold in 2500 Hz reference bandwidth), z-30 combines an ultra-narrow **50.0 Hz occupied bandwidth** 16-MFSK modulation scheme, Rate-1/3 Quasi-Cyclic Low-Density Parity-Check (LDPC) forward error correction, and multi-pass **Successive Interference Cancellation (SIC)** to decode co-channel signals with zero packet collision dropouts.
 
 The project provides both a high-performance **interactive Web/PWA GUI** (featuring a 60 FPS HTML5 spectral waterfall, Web Audio 12/48 kHz DSP pipeline, live S-meter, and ADIF logbook) and a **native Python 3 DSP package (`z30_dsp`)** with Hamlib CAT transceiver control (`rigctld`), 9 PTT keying methods, 6 auto-reply sequencing algorithms, and automated RF time calibration against international time standards (**WWV, CHU, DCF77, MSF, WWVB, JJY**).
 
@@ -46,7 +46,7 @@ The project provides both a high-performance **interactive Web/PWA GUI** (featur
 
 ## Key Features & Capabilities
 
-- **Ultra-Weak Signal Threshold**: Decodes signals down to **-29.5 dB SNR** on AWGN channels and **-27.0 dB SNR** under severe Rayleigh and polar flutter fading (delivering an **8.5 dB sensitivity advantage over FT8**).
+- **Empirical Weak-Signal Threshold**: Decodes signals down to **-25.0 dB SNR** (50% decode threshold) and **-24.0 dB SNR** (90% decode threshold) on AWGN channels and **-22.5 dB SNR** under severe Rayleigh and polar flutter fading (delivering a **+4.0 dB link margin advantage over FT8**, equivalent to a $2.5\times$ Effective Radiated Power boost).
 - **Spectrum Efficiency**: Requires only **50.0 Hz** of RF bandwidth per transmission (allowing up to **50 simultaneous QSOs** in a standard 2.7 kHz SSB transceiver passband).
 - **Multi-Pass SIC Engine**: Automatically reconstructs, synthesizes, and subtracts strong decoded carrier waveforms from the time-domain audio buffer to uncover and decode overlapping weak signals buried up to 25 dB underneath stronger stations.
 - **Sub-Millisecond RF Time Synchronization**: Embedded DSP time calibration tool (`rf_time_sync.py`) scans international standard stations (WWV/WWVH, CHU, DCF77, MSF, WWVB, JJY) using 61-tap Windowed-Sinc FIR filtering and normalized cross-correlation to eliminate clock drift ($\Delta t$) down to $<1.5\text{ ms}$ without needing administrative or root privileges.
@@ -73,7 +73,8 @@ The following table benchmarks **z-30** against standard amateur radio digital m
 | **Tone Spacing ($\Delta f$)** | **3.125 Hz** | 6.25 Hz | 20.83 Hz | 1.4648 Hz | 6.25 Hz |
 | **Active TX Duration** | **24.0 s (75 symbols)** | 12.64 s | 4.48 s | 110.6 s | 12.64 s |
 | **Decode / Guard Window** | **6.0 s** | 2.36 s | 3.02 s | 9.4 s | 2.36 s |
-| **Sensitivity Limit (AWGN)**| **-29.5 dB SNR** | -21.0 dB SNR | -17.5 dB SNR | -31.0 dB SNR | -24.0 dB SNR |
+| **Sensitivity (50% AWGN)** | **-25.0 dB SNR** | -21.0 dB SNR | -17.5 dB SNR | -28.0 dB SNR | -24.0 dB SNR |
+| **Sensitivity (90% AWGN)** | **-24.0 dB SNR** | -20.0 dB SNR | -16.5 dB SNR | -27.0 dB SNR | -22.5 dB SNR |
 | **FEC Code** | **LDPC (216, 77) Rate ~0.356** | LDPC (174, 91) Rate 0.52 | LDPC (174, 91) Rate 0.52 | Convol. $K=32, r=1/2$ | LDPC (174, 91) |
 | **Payload Capacity** | **77 bits (58-bit info + CRC-14)** | 77 bits (CRC-14) | 77 bits (CRC-14) | 28 bits (Call+Loc+Pwr) | Free text (var) |
 | **Collision Recovery** | **Multi-Pass SIC (3 passes)** | Single pass (limited) | None | Non-coherent | Single pass |
@@ -82,8 +83,49 @@ The following table benchmarks **z-30** against standard amateur radio digital m
 | **Spectral Density** | **50 QSOs per 2.7 kHz band** | ~40 QSOs per band | ~25 QSOs per band | N/A (One-way) | ~30 QSOs per band |
 
 ### Why 16-MFSK and a 30-Second Cycle?
-1. **8.5 dB Sensitivity Advantage Over FT8**: By reducing symbol rate from 6.25 baud to 3.125 baud and applying a low Rate-0.356 LDPC code with 75 total symbols, z-30 recovers signals buried **8.5 dB lower than FT8**. This opens openings across 160m, 6m, 2m EME, and high-latitude paths during solar geomagnetic disturbances.
+1. **+4.0 dB Sensitivity Advantage Over FT8**: By reducing symbol rate from 6.25 baud to 3.125 baud and applying a low Rate-0.356 LDPC code with 75 total symbols, z-30 recovers signals **4.0 dB lower than FT8** (50% threshold at $-25.0\text{ dB}$ vs $-21.0\text{ dB}$). This $2.51\times$ power multiplier turns a 40W station into the effective link margin of a 100W station, opening paths across 160m, 6m, 2m EME, and high-latitude paths during solar geomagnetic disturbances.
 2. **True Co-Channel Collision Recovery**: Traditional FT8 fails when two signals occupy the same audio frequency bins. z-30 incorporates a 3-pass **Successive Interference Cancellation (SIC)** algorithm: when a strong signal is decoded, its exact RF phase and amplitude are synthesized and cleanly subtracted from the raw FFT bins, enabling a second and third decoding pass on previously obscured weak signals.
+
+---
+
+### Empirical Monte Carlo Physical Waveform & LDPC Benchmark Results
+
+The following empirical benchmark was executed across **7,500 total physical frames** (300 independent frames per 0.5 dB SNR point) using the native z-30 continuous-phase 16-MFSK modulator, AWGN channel model, and (216, 77) Log-Min-Sum LDPC belief propagation decoder:
+
+```
+z-30 Monte Carlo Physical Waveform & LDPC Decoder Benchmark Results
+====================================================================
+Channel: AWGN | Frames/Pt: 300 | Code: (216, 77) LDPC R=0.356
+--------------------------------------------------------------------
+SNR (dB) | Frames | Success | Failed | FER     | Decode % | Avg Iters
+--------------------------------------------------------------------
+-34.0    | 300    | 0       | 300    | 1.0000  | 0.0%     | 105.0
+-33.5    | 300    | 0       | 300    | 1.0000  | 0.0%     | 105.0
+-33.0    | 300    | 0       | 300    | 1.0000  | 0.0%     | 105.0
+-32.5    | 300    | 0       | 300    | 1.0000  | 0.0%     | 105.0
+-32.0    | 300    | 0       | 300    | 1.0000  | 0.0%     | 105.0
+-31.5    | 300    | 0       | 300    | 1.0000  | 0.0%     | 105.0
+-31.0    | 300    | 0       | 300    | 1.0000  | 0.0%     | 105.0
+-30.5    | 300    | 0       | 300    | 1.0000  | 0.0%     | 105.0
+-30.0    | 300    | 0       | 300    | 1.0000  | 0.0%     | 105.0
+-29.5    | 300    | 0       | 300    | 1.0000  | 0.0%     | 105.0
+-29.0    | 300    | 0       | 300    | 1.0000  | 0.0%     | 105.0
+-28.5    | 300    | 1       | 299    | 0.9967  | 0.3%     | 104.7
+-28.0    | 300    | 0       | 300    | 1.0000  | 0.0%     | 105.0
+-27.5    | 300    | 1       | 299    | 0.9967  | 0.3%     | 105.0
+-27.0    | 300    | 10      | 290    | 0.9667  | 3.3%     | 102.3
+-26.5    | 300    | 20      | 280    | 0.9333  | 6.7%     | 99.3
+-26.0    | 300    | 40      | 260    | 0.8667  | 13.3%    | 93.8
+-25.5    | 300    | 114     | 186    | 0.6200  | 38.0%    | 72.7
+-25.0    | 300    | 177     | 123    | 0.4100  | 59.0%    | 50.6   <-- 50% Decode Threshold (-25.0 dB)
+-24.5    | 300    | 254     | 46     | 0.1533  | 84.7%    | 24.3
+-24.0    | 300    | 284     | 16     | 0.0533  | 94.7%    | 11.9   <-- 90% Decode Threshold (-24.0 dB)
+-23.5    | 300    | 298     | 2      | 0.0067  | 99.3%    | 5.4
+-23.0    | 300    | 299     | 1      | 0.0033  | 99.7%    | 3.1
+-22.5    | 300    | 299     | 1      | 0.0033  | 99.7%    | 2.7
+-22.0    | 300    | 300     | 0      | 0.0000  | 100.0%   | 1.7
+--------------------------------------------------------------------
+```
 
 ---
 
@@ -343,7 +385,7 @@ python3 build_all_platforms.py
 The primary canvas delivers continuous, non-blocking 60 FPS spectral analysis:
 - **Colormaps**: Switch between 10 specialized scientific palettes: `Turbo`, `Inferno`, `Viridis`, `Plasma`, `Magma`, `WSJT-X Classic`, `Night Vision Green`, `Amber CRT`, `High-Contrast B&W`, and `Spectral Heatmap`.
 - **Passband Presets**: Quickly toggle frequency boundaries between `200–3000 Hz (Standard)`, `500–2000 Hz (Narrow)`, `800–1800 Hz (Digital Focus)`, `100–3500 Hz (Wide)`, and `0–4000 Hz (Extended)`.
-- **Trace Visibility Boost**: Enhance weak 16-MFSK tone tracks (down to $-29.5\text{ dB}$) with the 3-level contrast multiplier (`1x`, `1.6x`, `2.2x`).
+- **Trace Visibility Boost**: Enhance weak 16-MFSK tone tracks (down to $-25.0\text{ dB}$) with the 3-level contrast multiplier (`1x`, `1.6x`, `2.2x`).
 - **Interactive Tuning**:
   - **Single Click**: Set Audio RX Center Frequency.
   - **Shift + Click**: Set Audio TX Center Frequency.
@@ -374,7 +416,7 @@ When multiple stations respond to your CQ in the same 30-second slot, z-30 autom
 1. **First Decoded (Chrono)**: Answers the first decoded caller in the current time slot (standard WSJT-X Call 1st behavior).
 2. **Last Decoded**: Answers the last decoded caller in the current cycle.
 3. **Strongest Signal (Max SNR)**: Answers the loudest station with the highest SNR (e.g., $-4\text{ dB}$ before $-24\text{ dB}$).
-4. **Weakest Signal (Deep DX)**: Prioritizes stations near the LDPC noise threshold (e.g., $-28\text{ dB}$ before $-6\text{ dB}$).
+4. **Weakest Signal (Deep DX)**: Prioritizes stations near the LDPC noise threshold (e.g., $-24.5\text{ dB}$ before $-6\text{ dB}$).
 5. **Nearest Station (Closest km)**: Answers the geographically closest station based on Maidenhead grid distance.
 6. **Farthest DX (Max Distance)**: Answers the station with the greatest Maidenhead great-circle distance (furthest DX).
 
