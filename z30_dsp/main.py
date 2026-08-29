@@ -5,7 +5,10 @@ z-30 Transceiver CLI / GUI / Web Main Entrypoint
 import sys
 
 def main():
-    if "--benchmark" in sys.argv or "-b" in sys.argv:
+    if "--update" in sys.argv or "-u" in sys.argv:
+        from z30_dsp.updater import main as updater_main
+        updater_main()
+    elif "--benchmark" in sys.argv or "-b" in sys.argv:
         from z30_dsp.benchmark import run_benchmark
         run_benchmark()
     elif "--wizard" in sys.argv or "-w" in sys.argv:

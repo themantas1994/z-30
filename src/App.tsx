@@ -26,6 +26,8 @@ import { SpecsModal } from './components/SpecsModal';
 import { BandManagerModal } from './components/BandManagerModal';
 import { RfTimeSyncModal } from './components/RfTimeSyncModal';
 import { WikiModal } from './components/WikiModal';
+import { UpdateModal } from './components/UpdateModal';
+import { updateEngine } from './dsp/updateEngine';
 
 export default function App() {
   // Station & Hardware Config (Initialized from LocalStorage if available)
@@ -65,6 +67,22 @@ export default function App() {
   const [wikiSlug, setWikiSlug] = useState<string>('Home');
   const [isBandManagerOpen, setIsBandManagerOpen] = useState<boolean>(false);
   const [isTimeSyncOpen, setIsTimeSyncOpen] = useState<boolean>(false);
+  const [isUpdateOpen, setIsUpdateOpen] = useState<boolean>(false);
+
+  // Background update check on application startup
+  useEffect(() => {
+    try {
+      const autoCheck = localStorage.getItem('z30_auto_check_updates') !== 'false';
+      if (autoCheck) {
+        // Run update check in background without blocking startup
+        setTimeout(() => {
+          updateEngine.checkForUpdates('STABLE', false).catch(() => {});
+        }, 2500);
+      }
+    } catch {
+      // ignore
+    }
+  }, []);
 
   // Auto-connect audio receiver if system permission was already granted
   useEffect(() => {
@@ -409,6 +427,7 @@ export default function App() {
           setIsWikiOpen(true);
         }}
         onOpenTimeSync={() => setIsTimeSyncOpen(true)}
+        onOpenUpdate={() => setIsUpdateOpen(true)}
         timeOffsetMs={timeOffsetMs}
         onTriggerDecode={executeDecodeCycle}
         onStartTx={handleStartTx}
@@ -549,6 +568,7 @@ export default function App() {
         config={config}
         onSaveConfig={handleSaveStationConfig}
         onExecuteDecodeNow={executeDecodeCycle}
+        onOpenUpdate={() => setIsUpdateOpen(true)}
         onOpenWizard={() => {
           setIsSettingsOpen(false);
           setIsWizardOpen(true);
@@ -582,6 +602,11 @@ export default function App() {
           setTimeOffsetMs(offsetMs);
           handleUpdateConfig({ appTimeOffsetMs: offsetMs });
         }}
+      />
+
+      <UpdateModal
+        isOpen={isUpdateOpen}
+        onClose={() => setIsUpdateOpen(false)}
       />
     </div>
   );

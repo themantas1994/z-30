@@ -7,7 +7,8 @@ import { StationConfig, TxSlot } from '../types/z30';
 import { Z30_SPECS, evaluateSlotTiming } from '../dsp/z30Constants';
 import { audioEngine } from '../dsp/audioEngine';
 import { formatUtcTime, formatTimeInTimezone } from '../dsp/timeUtils';
-import { Radio, Mic, MicOff, Volume2, VolumeX, BookOpen, Settings, HelpCircle, Sparkles, Activity, Play, Cpu, Square, Zap, Clock, Wand2, Maximize2, Minimize2, Globe } from 'lucide-react';
+import { Radio, Mic, MicOff, Volume2, VolumeX, BookOpen, Settings, HelpCircle, Sparkles, Activity, Play, Cpu, Square, Zap, Clock, Wand2, Maximize2, Minimize2, Globe, DownloadCloud } from 'lucide-react';
+import { updateEngine, UpdateCheckResult } from '../dsp/updateEngine';
 
 interface HeaderProps {
   config: StationConfig;
@@ -23,6 +24,7 @@ interface HeaderProps {
   onOpenSpecs: () => void;
   onOpenWiki?: (slug?: string) => void;
   onOpenTimeSync?: () => void;
+  onOpenUpdate?: () => void;
   timeOffsetMs?: number;
   onTriggerDecode: () => void;
   onStartTx?: () => void;
@@ -46,6 +48,7 @@ export const Header: React.FC<HeaderProps> = ({
   onOpenSpecs,
   onOpenWiki,
   onOpenTimeSync,
+  onOpenUpdate,
   timeOffsetMs = 0,
   onTriggerDecode,
   onStartTx,
@@ -59,6 +62,14 @@ export const Header: React.FC<HeaderProps> = ({
   const [isMuted, setIsMuted] = useState<boolean>(() => audioEngine.getIsMuted());
   const [micEnabled, setMicEnabled] = useState<boolean>(() => audioEngine.getIsMicrophoneActive());
   const [isFullscreen, setIsFullscreen] = useState<boolean>(false);
+  const [updateInfo, setUpdateInfo] = useState<UpdateCheckResult | null>(() => updateEngine.getCachedResult());
+
+  useEffect(() => {
+    const unsub = updateEngine.subscribe((res) => {
+      setUpdateInfo(res);
+    });
+    return unsub;
+  }, []);
 
   // Synchronize mic and mute state with audioEngine
   useEffect(() => {
@@ -379,6 +390,32 @@ export const Header: React.FC<HeaderProps> = ({
             >
               <BookOpen className="w-3.5 h-3.5 text-yellow-400" />
               <span className="hidden md:inline text-[11px] font-bold text-yellow-400">Wiki</span>
+            </button>
+          )}
+
+          {/* GitHub Upstream Update & Sync */}
+          {onOpenUpdate && (
+            <button
+              id="open-update-btn"
+              onClick={onOpenUpdate}
+              title={
+                updateInfo?.hasUpdate
+                  ? `Update Available: v${updateInfo.latestVersion} on https://github.com/themantas1994/z-30`
+                  : 'Check for Updates from https://github.com/themantas1994/z-30'
+              }
+              className={`p-1.5 border text-xs flex items-center space-x-1 transition-all ${
+                updateInfo?.hasUpdate
+                  ? 'bg-[#00FF41]/20 hover:bg-[#00FF41]/30 text-[#00FF41] border-[#00FF41] shadow-[0_0_10px_rgba(0,255,65,0.4)] animate-pulse'
+                  : 'bg-[#141414] hover:bg-[#1A1A1A] text-cyan-400 hover:text-cyan-300 border-cyan-900/60'
+              }`}
+            >
+              <DownloadCloud className="w-3.5 h-3.5 text-cyan-400" />
+              <span className="hidden md:inline text-[11px] font-bold">
+                {updateInfo?.hasUpdate ? 'Update Available' : 'Update'}
+              </span>
+              {updateInfo?.hasUpdate && (
+                <span className="w-2 h-2 rounded-full bg-[#00FF41] animate-ping ml-0.5" />
+              )}
             </button>
           )}
 

@@ -64,6 +64,7 @@ interface StationSettingsModalProps {
   onSaveConfig: (cfg: StationConfig) => void;
   onOpenWizard?: () => void;
   onExecuteDecodeNow?: () => void;
+  onOpenUpdate?: () => void;
 }
 
 // Helpers for validation
@@ -96,6 +97,7 @@ export const StationSettingsModal: React.FC<StationSettingsModalProps> = ({
   onSaveConfig,
   onOpenWizard,
   onExecuteDecodeNow,
+  onOpenUpdate,
 }) => {
   const [form, setForm] = useState<StationConfig>({ ...config });
   const [activeTab, setActiveTab] = useState<'STATION' | 'AUDIO' | 'RADIO' | 'AUTOMATION' | 'TESTING'>('STATION');
@@ -703,6 +705,44 @@ export const StationSettingsModal: React.FC<StationSettingsModalProps> = ({
                   <div>
                     <strong className="text-zinc-200">Time Sync & Slot Behavior:</strong> All 30-second z-30 digital mode frames and RF standard time calibrations (WWV, CHU, DCF77, JJY) always synchronize strictly against <strong>Universal Coordinated Time (UTC)</strong>. Selecting a local timezone customizes station clock displays and log timestamps while keeping RF synchronization grounded to UTC second zero.
                   </div>
+                </div>
+              </div>
+
+              {/* Software Version & GitHub Upstream Update Synchronizer */}
+              <div className="bg-[#050505] p-3 border border-[#333] space-y-2.5">
+                <div className="flex items-center justify-between">
+                  <span className="font-bold text-[#D4D4D4] uppercase text-[11px] flex items-center space-x-1.5">
+                    <DownloadCloud className="w-3.5 h-3.5 text-cyan-400" />
+                    <span>Software Version & Upstream Repository</span>
+                  </span>
+                  <span className="text-[9px] uppercase px-1.5 py-0.5 bg-[#00FF41]/10 text-[#00FF41] border border-[#00FF41]/30 font-bold font-mono">
+                    Installed: v1.0.0
+                  </span>
+                </div>
+
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 p-2 bg-[#0A0A0A] border border-[#222]">
+                  <div className="space-y-0.5">
+                    <div className="text-[10px] text-zinc-300 font-mono">
+                      Upstream: <a href="https://github.com/themantas1994/z-30" target="_blank" rel="noreferrer" className="text-cyan-400 hover:underline">github.com/themantas1994/z-30</a>
+                    </div>
+                    <div className="text-[9px] text-[#777]">
+                      Sync with latest GitHub releases, git commits, or update native soundcard DSP modules.
+                    </div>
+                  </div>
+
+                  {onOpenUpdate && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        onClose();
+                        onOpenUpdate();
+                      }}
+                      className="px-3 py-1.5 bg-[#141414] hover:bg-[#202020] text-[#00FF41] border border-[#00FF41]/40 text-[10px] font-bold uppercase flex items-center space-x-1.5 flex-shrink-0 transition-colors"
+                    >
+                      <DownloadCloud className="w-3 h-3 text-[#00FF41]" />
+                      <span>Check / Apply Updates</span>
+                    </button>
+                  )}
                 </div>
               </div>
             </div>

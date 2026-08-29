@@ -485,8 +485,8 @@ This document provides packaging and deployment guides for all platforms.
     slug: '10-Troubleshooting-&-FAQ',
     title: '10. Troubleshooting & FAQ',
     category: 'Getting Started',
-    description: 'Frequently asked questions, common audio soundcard setup issues, CAT permission fixes, and ALC level calibration.',
-    tags: ['faq', 'troubleshooting', 'errors', 'audio', 'alc', 'permissions', 'dialout', 'linux'],
+    description: 'Frequently asked questions, common audio soundcard setup issues, Windows Python PATH fixes, CAT permission fixes, and ALC level calibration.',
+    tags: ['faq', 'troubleshooting', 'errors', 'windows', 'python', 'audio', 'alc', 'permissions', 'dialout', 'linux'],
     markdown: `# 10. Troubleshooting & FAQ
 
 This document addresses common questions and troubleshooting steps for **z-30**.
@@ -496,6 +496,11 @@ This document addresses common questions and troubleshooting steps for **z-30**.
 ## ❓ FAQ Highlights
 - **Why 30 seconds?**: Halving symbol rate to 3.125 baud yields an **8.5 dB sensitivity advantage over FT8** (down to **-29.5 dB SNR**).
 - **What is SIC 2 / SIC 3?**: Indicates signals recovered via Successive Interference Cancellation after subtracting stronger co-channel local stations.
+- **Windows "Python não foi encontrado" / "Python was not found"**:
+  1. Download Python 3.11 or 3.12 from [python.org](https://www.python.org/downloads/).
+  2. **Crucial**: During installation, check the box **"Add python.exe to PATH"** at the bottom of the installer.
+  3. If Python is already installed, disable Windows Store app execution aliases: Go to **Settings > Apps > Advanced app settings > App execution aliases** and toggle OFF **python.exe** and **python3.exe**.
+  4. Or simply run in PowerShell/CMD: \`winget install Python.Python.3.11\`.
 - **Linux Serial Permissions**: If you receive \`Permission denied: '/dev/ttyUSB0'\`, add your user to \`dialout\` (Ubuntu) or \`uucp\` (Arch Linux): \`sudo usermod -a -G dialout $USER\`.
 - **ALC Overdriving**: Ensure transceiver ALC shows minimal or zero deflection to prevent splatter and ensure clean 16-MFSK tones.
 `,
@@ -634,6 +639,98 @@ $$\\Delta P_{\\text{dB}} = 10 \\log_{10}\\left(\\frac{P_1}{P_2}\\right) \\implie
 1. **Equivalent Transmit Power**: A **100 Watt** z-30 transmission has the same completion rate as an FT8 station transmitting **708 Watts**. A QRP operator running **5 Watts** achieves the equivalent of **35.5 Watts** on FT8.
 2. **Antenna Equivalency**: $+8.5\\text{ dB}$ is equivalent to upgrading from a wire dipole ($0\\text{ dBd}$) to a **4-element monoband Yagi ($+8.5\\text{ dBd}$)** or overcoming **1.4 S-units of noise floor**.
 3. **Extended Openings**: Extends marginal grey-line, solar minimum, and 6m/160m propagation openings by **2 to 4 hours**.
+`,
+  },
+  {
+    id: 'github-updates',
+    slug: '10-Software-Updates-&-GitHub-Sync',
+    title: '10. Software Updates & GitHub Upstream Sync',
+    category: 'Advanced & Packaging',
+    description: 'How to check for updates, sync upstream git commits from themantas1994/z-30, and perform zero-downtime updates across Linux, Windows, Android, and Web PWA.',
+    tags: ['update', 'github', 'git', 'sync', 'upgrade', 'releases', 'pwa', 'termux', 'ubuntu', 'arch'],
+    markdown: `# 🔄 Software Updates & GitHub Upstream Synchronization
+
+The **z-30 Amateur Radio Transceiver Suite** is actively developed on GitHub at:
+**[https://github.com/themantas1994/z-30](https://github.com/themantas1994/z-30)**
+
+---
+
+## 🌟 Update Channels
+
+z-30 provides two upstream update channels:
+
+1. **Stable Releases**: Official GitHub releases tagged by version (e.g. \`v1.0.0\`, \`v1.0.1\`). Recommended for field stations and daily operations.
+2. **Main Branch (Nightly / Development)**: Tracks the latest bleeding-edge commits on \`main\` branch. Includes experimental DSP filters, new rig CAT definitions, and performance optimizations.
+
+---
+
+## 🖥️ 1. In-App Web GUI & PWA Updates
+
+When running the Web UI / PWA:
+1. Click the **Update** button (with the download cloud icon) in the top right navigation bar or open **Station Settings ➔ 1. Station & Operator ➔ Software Version**.
+2. Click **Check Now** to query the GitHub API (\`api.github.com/repos/themantas1994/z-30\`).
+3. If an update is detected, click **Reload / Refresh PWA**. This automatically:
+   - Unregisters legacy Service Workers.
+   - Clears the browser \`CacheStorage\` and Web Audio buffers.
+   - Reloads the page with the latest compiled assets from network.
+
+---
+
+## ⚡ 2. Native Terminal & CLI Update Tool (\`z30 --update\`)
+
+The native Python package includes an automated upstream synchronizer:
+
+\`\`\`bash
+# Run the built-in updater
+z30 --update
+
+# Or run non-interactively with auto-pull
+z30 --update -y
+\`\`\`
+
+---
+
+## 🐧 3. Platform Specific Terminal Commands
+
+### Ubuntu / Debian / Raspberry Pi OS (DigiPi)
+\`\`\`bash
+cd z-30
+git pull origin main
+chmod +x install_ubuntu.sh
+./install_ubuntu.sh
+\`\`\`
+
+### Arch Linux / Manjaro / EndeavourOS
+\`\`\`bash
+cd z-30
+git pull origin main
+chmod +x install_arch.sh
+./install_arch.sh
+# Or rebuild AUR package:
+makepkg -si
+\`\`\`
+
+### Windows 10 & 11
+\`\`\`cmd
+cd z-30
+git pull origin main
+run_windows.bat
+\`\`\`
+
+### Android Termux (Mobile Field Radio)
+\`\`\`bash
+cd z-30
+git pull origin main
+chmod +x install_android_termux.sh
+./install_android_termux.sh
+\`\`\`
+
+### Generic Python Pip
+\`\`\`bash
+git pull origin main
+pip install --upgrade -e .
+npm install && npm run build
+\`\`\`
 `,
   },
 ];

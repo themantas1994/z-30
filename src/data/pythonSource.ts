@@ -4487,28 +4487,230 @@ echo "z-30 Transceiver installed successfully on Arch Linux."
   {
     filename: 'run_windows.bat',
     path: 'run_windows.bat',
-    description: 'Windows 10/11 automated environment initializer and React Web native app window launcher.',
+    description: 'Windows 10/11 automated environment initializer with multi-path Python detection and React Web launcher.',
     code: `@echo off
+setlocal enabledelayedexpansion
+
 TITLE z-30 Digital Mode Transceiver (Windows)
 COLOR 0A
 
-IF NOT EXIST "%USERPROFILE%\\.z30-venv" (
-    python -m venv "%USERPROFILE%\\.z30-venv"
+echo ================================================================
+echo       z-30 Transceiver ^& DSP Suite (Windows Launcher)
+echo ================================================================
+echo.
+
+REM -----------------------------------------------------------------
+REM Step 1: Detect working Python 3.9+ installation
+REM -----------------------------------------------------------------
+set "PYTHON_EXE="
+
+REM Test if existing venv python is already available and functional
+if exist "%USERPROFILE%\\.z30-venv\\Scripts\\python.exe" (
+    "%USERPROFILE%\\.z30-venv\\Scripts\\python.exe" -c "import sys; sys.exit(0 if sys.version_info >= (3, 8) else 1)" >nul 2>nul
+    if !errorlevel! EQU 0 (
+        set "PYTHON_EXE=%USERPROFILE%\\.z30-venv\\Scripts\\python.exe"
+        goto :python_found
+    )
 )
-call "%USERPROFILE%\\.z30-venv\\Scripts\\activate.bat"
 
-python -m pip install --upgrade pip setuptools wheel
-python -m pip install numpy scipy sounddevice pyaudio pyserial cffi requests windows-curses
+REM Test standard Windows Python Launcher (py -3)
+py -3 -c "import sys; sys.exit(0 if sys.version_info >= (3, 8) else 1)" >nul 2>nul
+if %errorlevel% EQU 0 (
+    set "PYTHON_BOOTSTRAP=py -3"
+    goto :create_venv
+)
 
-WHERE npm >nul 2>nul
-IF %ERRORLEVEL% EQU 0 (
-    IF NOT EXIST "dist\\index.html" (
-        call npm install
+REM Test standard python in PATH
+python -c "import sys; sys.exit(0 if sys.version_info >= (3, 8) else 1)" >nul 2>nul
+if %errorlevel% EQU 0 (
+    set "PYTHON_BOOTSTRAP=python"
+    goto :create_venv
+)
+
+REM Test python3 in PATH
+python3 -c "import sys; sys.exit(0 if sys.version_info >= (3, 8) else 1)" >nul 2>nul
+if %errorlevel% EQU 0 (
+    set "PYTHON_BOOTSTRAP=python3"
+    goto :create_venv
+)
+
+REM Scan common Windows Python installation directories
+for %%P in (
+    "%LOCALAPPDATA%\\Programs\\Python\\Python313\\python.exe"
+    "%LOCALAPPDATA%\\Programs\\Python\\Python312\\python.exe"
+    "%LOCALAPPDATA%\\Programs\\Python\\Python311\\python.exe"
+    "%LOCALAPPDATA%\\Programs\\Python\\Python310\\python.exe"
+    "%LOCALAPPDATA%\\Programs\\Python\\Python39\\python.exe"
+    "%ProgramFiles%\\Python313\\python.exe"
+    "%ProgramFiles%\\Python312\\python.exe"
+    "%ProgramFiles%\\Python311\\python.exe"
+    "%ProgramFiles%\\Python310\\python.exe"
+    "%ProgramFiles%\\Python39\\python.exe"
+    "C:\\Python313\\python.exe"
+    "C:\\Python312\\python.exe"
+    "C:\\Python311\\python.exe"
+    "C:\\Python310\\python.exe"
+    "C:\\Python39\\python.exe"
+) do (
+    if exist "%%~P" (
+        "%%~P" -c "import sys; sys.exit(0 if sys.version_info >= (3, 8) else 1)" >nul 2>nul
+        if !errorlevel! EQU 0 (
+            set "PYTHON_BOOTSTRAP=%%~P"
+            goto :create_venv
+        )
+    )
+)
+
+REM -----------------------------------------------------------------
+REM If no Python found, display clear instructions
+REM -----------------------------------------------------------------
+COLOR 0C
+echo [ERROR] Python 3.9+ was not found on your Windows system!
+echo.
+echo ================================================================
+echo                     HOW TO FIX THIS:
+echo ================================================================
+echo.
+echo Option 1 (Recommended - Official Python Installer):
+echo   1. Download Python 3.11 or 3.12 from:
+echo      https://www.python.org/downloads/
+echo   2. Run the installer and CRITICALLY check the box:
+echo      [X] "Add python.exe to PATH" (at the bottom of installer)
+echo   3. Click "Install Now", then relaunch this run_windows.bat script.
+echo.
+echo Option 2 (Windows Terminal / Winget):
+echo   Open Command Prompt or PowerShell and run:
+echo      winget install Python.Python.3.11
+echo.
+echo Option 3 (Fix Windows Store alias issue):
+echo   If you already installed Python, Windows may be intercepting it:
+echo   Go to: Windows Settings ^> Apps ^> Advanced app settings ^> App execution aliases
+echo   Turn OFF the toggles for "python.exe" and "python3.exe".
+echo.
+echo ================================================================
+echo.
+pause
+exit /b 1
+
+REM -----------------------------------------------------------------
+REM Step 2: Initialize / Activate Virtual Environment
+REM -----------------------------------------------------------------
+:create_venv
+if not exist "%USERPROFILE%\\.z30-venv" (
+    echo [INFO] Initializing Python virtual environment at "%USERPROFILE%\\.z30-venv"...
+    %PYTHON_BOOTSTRAP% -m venv "%USERPROFILE%\\.z30-venv"
+)
+
+set "PYTHON_EXE=%USERPROFILE%\\.z30-venv\\Scripts\\python.exe"
+
+:python_found
+if not exist "%PYTHON_EXE%" (
+    echo [ERROR] Virtual environment python executable not found at:
+    echo "%PYTHON_EXE%"
+    pause
+    exit /b 1
+)
+
+echo [OK] Using Python environment: %PYTHON_EXE%
+echo.
+
+REM -----------------------------------------------------------------
+REM Step 3: Check & Install Python Dependencies
+REM -----------------------------------------------------------------
+echo [INFO] Verifying and updating Python DSP dependencies...
+"%PYTHON_EXE%" -m pip install --upgrade pip setuptools wheel --quiet >nul 2>nul
+"%PYTHON_EXE%" -m pip install numpy scipy sounddevice pyserial cffi requests windows-curses --quiet
+
+REM -----------------------------------------------------------------
+REM Step 4: Check & Build Web DSP Assets if needed
+REM -----------------------------------------------------------------
+where npm >nul 2>nul
+if %errorlevel% EQU 0 (
+    if not exist "dist\\index.html" (
+        echo [INFO] Building Web DSP user interface assets...
+        call npm install --silent
         call npm run build
     )
 )
 
-python -c "import sys; from z30_dsp.main import main; main()" %*
+REM -----------------------------------------------------------------
+REM Step 5: Launch Transceiver
+REM -----------------------------------------------------------------
+echo.
+echo ================================================================
+echo        Starting z-30 Digital Transceiver ^& DSP Engine...
+echo ================================================================
+echo.
+
+"%PYTHON_EXE%" -c "import sys; from z30_dsp.main import main; main()" %*
+pause
+`
+  },
+  {
+    filename: 'build_windows.bat',
+    path: 'build_windows.bat',
+    description: 'Windows standalone .EXE PyInstaller compilation script with automated dependency management.',
+    code: `@echo off
+setlocal enabledelayedexpansion
+
+TITLE z-30 PyInstaller Executable Builder
+COLOR 0B
+
+echo ================================================================
+echo   Building z-30 Standalone Windows Binary (z30-transceiver.exe)
+echo ================================================================
+echo.
+
+REM Detect working Python
+py -3 -c "import sys; sys.exit(0)" >nul 2>nul
+if %errorlevel% EQU 0 (
+    set "PYTHON_BOOTSTRAP=py -3"
+) else (
+    set "PYTHON_BOOTSTRAP=python"
+)
+
+if not exist "%USERPROFILE%\\.z30-venv" (
+    %PYTHON_BOOTSTRAP% -m venv "%USERPROFILE%\\.z30-venv"
+)
+set "PYTHON_EXE=%USERPROFILE%\\.z30-venv\\Scripts\\python.exe"
+
+echo [INFO] Upgrading pip and build tools...
+"%PYTHON_EXE%" -m pip install --upgrade pip setuptools wheel --quiet
+
+echo [INFO] Installing PyInstaller builder...
+"%PYTHON_EXE%" -m pip install pyinstaller
+
+echo [INFO] Installing z-30 DSP dependencies...
+"%PYTHON_EXE%" -m pip install numpy scipy sounddevice pyserial cffi requests windows-curses
+
+where npm >nul 2>nul
+if %errorlevel% EQU 0 (
+    call npm run build
+)
+
+set "WEB_DATA_ARG="
+if exist "z30_dsp\\web_dist" (
+    set "WEB_DATA_ARG=--add-data z30_dsp\\web_dist;z30_dsp\\web_dist"
+) else if exist "dist" (
+    set "WEB_DATA_ARG=--add-data dist;dist"
+)
+
+"%PYTHON_EXE%" -m PyInstaller --noconfirm --onedir --windowed ^
+    --name "z30-transceiver" ^
+    --add-data "config.json;." ^
+    --add-data "band_manager.py;." ^
+    --add-data "rf_time_sync.py;." ^
+    !WEB_DATA_ARG! ^
+    --collect-all "sounddevice" ^
+    --hidden-import "numpy" ^
+    --hidden-import "scipy" ^
+    --hidden-import "sounddevice" ^
+    --hidden-import "pyserial" ^
+    --hidden-import "cffi" ^
+    --hidden-import "requests" ^
+    z30_dsp/main.py
+
+echo Build completed in dist\\z30-transceiver\\z30-transceiver.exe
 pause
 `
   },
@@ -4543,6 +4745,179 @@ EOF
 chmod +x "$HOME/bin/z30"
 
 echo "Android Termux installation complete. Run 'z30' to start transceiver."
+`
+  },
+  {
+    filename: 'updater.py',
+    path: 'z30_dsp/updater.py',
+    description: 'GitHub Upstream Update Engine (https://github.com/themantas1994/z-30) for automatic version comparison, git synchronization, and package rebuilds.',
+    code: `#!/usr/bin/env python3
+"""
+z-30 Transceiver & DSP Suite - GitHub Upstream Updater
+======================================================
+Repository: https://github.com/themantas1994/z-30
+
+Checks for updates, pulls latest git commits, rebuilds Web UI assets,
+and updates native Python DSP dependencies.
+"""
+
+import os
+import sys
+import json
+import urllib.request
+import urllib.error
+import subprocess
+import shutil
+from typing import Dict, Any, Optional
+
+GITHUB_REPO = "themantas1994/z-30"
+API_URL = f"https://api.github.com/repos/{GITHUB_REPO}"
+RAW_URL = f"https://raw.githubusercontent.com/{GITHUB_REPO}/main"
+CURRENT_VERSION = "1.0.0"
+
+
+def print_banner():
+    print("==================================================================")
+    print("      z-30 TRANSCEIVER - GITHUB UPSTREAM UPDATER ENGINE           ")
+    print("      Repository: https://github.com/themantas1994/z-30           ")
+    print("==================================================================")
+
+
+def check_remote_version() -> Dict[str, Any]:
+    """Fetches latest release and commits from GitHub."""
+    headers = {"User-Agent": "z30-Updater/1.0", "Accept": "application/vnd.github.v3+json"}
+    result: Dict[str, Any] = {
+        "current_version": CURRENT_VERSION,
+        "latest_version": CURRENT_VERSION,
+        "has_update": False,
+        "release_name": "",
+        "release_body": "",
+        "latest_commit": "",
+        "commit_message": "",
+        "html_url": f"https://github.com/{GITHUB_REPO}",
+    }
+
+    # 1. Query latest release
+    try:
+        req = urllib.request.Request(f"{API_URL}/releases/latest", headers=headers)
+        with urllib.request.urlopen(req, timeout=5) as response:
+            data = json.loads(response.read().decode("utf-8"))
+            tag = data.get("tag_name", "").lstrip("v")
+            result["latest_version"] = tag
+            result["release_name"] = data.get("name", tag)
+            result["release_body"] = data.get("body", "")
+            result["html_url"] = data.get("html_url", result["html_url"])
+            if tag and tag != CURRENT_VERSION:
+                result["has_update"] = True
+    except Exception as e:
+        # Fallback to checking raw package.json
+        try:
+            req = urllib.request.Request(f"{RAW_URL}/package.json", headers=headers)
+            with urllib.request.urlopen(req, timeout=5) as response:
+                data = json.loads(response.read().decode("utf-8"))
+                remote_v = data.get("version", CURRENT_VERSION)
+                result["latest_version"] = remote_v
+                if remote_v != CURRENT_VERSION:
+                    result["has_update"] = True
+        except Exception:
+            pass
+
+    # 2. Query latest commit
+    try:
+        req = urllib.request.Request(f"{API_URL}/commits?per_page=1", headers=headers)
+        with urllib.request.urlopen(req, timeout=5) as response:
+            commits = json.loads(response.read().decode("utf-8"))
+            if commits and isinstance(commits, list):
+                c = commits[0]
+                result["latest_commit"] = c.get("sha", "")[:7]
+                result["commit_message"] = c.get("commit", {}).get("message", "").split("\\n")[0]
+    except Exception:
+        pass
+
+    return result
+
+
+def is_git_repo(path: str = ".") -> bool:
+    """Checks if directory is a git repository."""
+    return os.path.exists(os.path.join(path, ".git"))
+
+
+def perform_git_update(repo_dir: str = ".") -> bool:
+    """Executes git pull and updates local dependencies."""
+    print(f"\\n[Updater] Fetching latest changes from git origin (https://github.com/{GITHUB_REPO})...")
+    try:
+        subprocess.run(["git", "fetch", "--all"], cwd=repo_dir, check=True)
+        subprocess.run(["git", "pull", "origin", "main"], cwd=repo_dir, check=True)
+        print("[Updater] ✓ Git repository successfully updated to latest commit.")
+    except Exception as e:
+        print(f"[Updater] ✗ Git pull failed: {e}")
+        return False
+
+    # Check for npm and rebuild web UI if available
+    pkg_json = os.path.join(repo_dir, "package.json")
+    if os.path.exists(pkg_json) and shutil.which("npm"):
+        print("[Updater] Rebuilding Web DSP distribution bundle (npm run build)...")
+        try:
+            subprocess.run(["npm", "run", "build"], cwd=repo_dir, check=True)
+            print("[Updater] ✓ Web UI distribution built successfully.")
+        except Exception as e:
+            print(f"[Updater] ⚠ Web build warning: {e}")
+
+    # Update Python editable package
+    if shutil.which("pip"):
+        print("[Updater] Refreshing Python package installation (pip install -e .)...")
+        try:
+            subprocess.run([sys.executable, "-m", "pip", "install", "-e", "."], cwd=repo_dir, check=True)
+            print("[Updater] ✓ Python DSP suite refreshed.")
+        except Exception as e:
+            print(f"[Updater] ⚠ Pip install notice: {e}")
+
+    print("\\n[Updater] ✓ Update process complete! You can now run 'z30' to start the latest version.")
+    return True
+
+
+def run_updater(interactive: bool = True):
+    print_banner()
+    print(f"Current Installed Version: v{CURRENT_VERSION}")
+    print(f"Checking https://github.com/{GITHUB_REPO} for updates...\\n")
+
+    info = check_remote_version()
+
+    print(f"Latest Upstream Version:  v{info['latest_version']}")
+    if info.get("latest_commit"):
+        print(f"Latest GitHub Commit:     {info['latest_commit']} ({info.get('commit_message', '')})")
+
+    if info["has_update"]:
+        print(f"\\n★ A NEW UPDATE IS AVAILABLE: v{info['latest_version']} (Current: v{CURRENT_VERSION})")
+        if info.get("release_name"):
+            print(f"Release: {info['release_name']}")
+        if info.get("release_body"):
+            print(f"\\nRelease Notes:\\n{info['release_body']}\\n")
+    else:
+        print("\\n✓ Your z-30 Transceiver is up to date!")
+
+    # If in git repo, offer automatic pull
+    root_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+    if is_git_repo(root_dir):
+        if interactive and info["has_update"]:
+            ans = input("\\nWould you like to pull and apply the update now? [Y/n]: ").strip().lower()
+            if ans in ("", "y", "yes"):
+                perform_git_update(root_dir)
+        elif not interactive:
+            perform_git_update(root_dir)
+    else:
+        print("\\nTo update manually from GitHub:")
+        print(f"  git clone https://github.com/{GITHUB_REPO}.git")
+        print("  cd z-30 && ./install_ubuntu.sh (or install_arch.sh / run_windows.bat)")
+
+
+def main():
+    interactive = "--yes" not in sys.argv and "-y" not in sys.argv
+    run_updater(interactive=interactive)
+
+
+if __name__ == "__main__":
+    main()
 `
   }
 ];
