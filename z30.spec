@@ -14,10 +14,11 @@ a = Analysis(
     ['z30_dsp/main.py'],
     pathex=[os.path.abspath('.')],
     binaries=[],
+    # band_manager / rf_time_sync / config_wizard live inside the z30_dsp package and are
+    # collected as ordinary imports; they used to also exist as drifted root-level copies that
+    # were bundled here as data files. config.json is per-user runtime state written to the
+    # user data directory, not something to bake into the executable.
     datas=[
-        ('config.json', '.'),
-        ('band_manager.py', '.'),
-        ('rf_time_sync.py', '.'),
         ('z30_dsp/web_dist', 'z30_dsp/web_dist'),
     ],
     hiddenimports=[
@@ -64,5 +65,5 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    icon='icon-512.svg'
+    icon='public/icon-512.svg'
 )

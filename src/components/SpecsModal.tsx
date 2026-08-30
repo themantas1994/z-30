@@ -3,8 +3,7 @@
  */
 
 import React from 'react';
-import { Z30_SPECS } from '../dsp/z30Constants';
-import { HelpCircle, X, ShieldCheck, Zap, Radio, Layers, Activity } from 'lucide-react';
+import { X, ShieldCheck, Zap, Radio, Layers, Activity } from 'lucide-react';
 
 interface SpecsModalProps {
   isOpen: boolean;

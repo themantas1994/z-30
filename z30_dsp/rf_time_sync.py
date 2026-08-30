@@ -34,12 +34,19 @@ import math
 import os
 import queue
 import random
+import shutil
 import socket
 import struct
+import subprocess
 import sys
 import threading
 import time
 from typing import Optional, Dict, List, Tuple, Callable, Any, Sequence, Union
+
+try:
+    from .paths import default_config_path
+except ImportError:  # executed as a plain script rather than as part of the package
+    from z30_dsp.paths import default_config_path
 
 # Optional NumPy/SciPy import with robust pure-Python standard library fallbacks
 try:
@@ -781,15 +788,29 @@ class CatTuner:
 # 7. TIME OFFSET PERSISTENCE & SETTINGS INTEGRATION
 # ============================================================================
 
+#: Largest jump z-30 will ever apply to the system clock, in seconds. A genuine drift
+#: correction is milliseconds to seconds; anything larger is a misdecode or a spoof.
+MAX_OS_CLOCK_STEP_SEC: float = 300.0
+
+
 class TimeSyncSettingsManager:
-    """Saves and updates application clock drift offset in config.json."""
+    """
+    Saves and updates the application clock drift offset in the user's config.json.
+
+    z-30 keeps its own `app_time_offset_ms` and applies it internally to every slot boundary
+    calculation. For essentially every operator that internal offset is the right and
+    sufficient behaviour: it gives the decoder accurate slot timing without the app touching
+    anything outside itself. Setting the machine's clock is a separate, opt-in action - see
+    try_set_os_system_time.
+    """
 
     @staticmethod
-    def update_app_time_offset(delta_ms: float, config_path: str = "config.json") -> bool:
+    def update_app_time_offset(delta_ms: float, config_path: Optional[str] = None) -> bool:
         """
-        Updates `app_time_offset_ms` in `config.json` without requiring
+        Updates `app_time_offset_ms` in the user's config.json without requiring
         Administrator / root OS privileges.
         """
+        config_path = config_path or default_config_path()
         data: Dict[str, Any] = {}
         if os.path.exists(config_path):
             try:
@@ -811,8 +832,9 @@ class TimeSyncSettingsManager:
             return False
 
     @staticmethod
-    def get_app_time_offset(config_path: str = "config.json") -> float:
+    def get_app_time_offset(config_path: Optional[str] = None) -> float:
         """Loads persisted clock offset in milliseconds."""
+        config_path = config_path or default_config_path()
         if not os.path.exists(config_path):
             return 0.0
         try:
@@ -822,16 +844,115 @@ class TimeSyncSettingsManager:
         except Exception:
             return 0.0
 
+    # ------------------------------------------------------------------
+    # OS clock setting - opt-in, bounded, and never the default
+    # ------------------------------------------------------------------
+    #
+    # An RF time station is an unauthenticated broadcast. Anyone with a transmitter can put a
+    # WWV-shaped signal on the air, and a marginal decode can produce a wrong timestamp with
+    # no adversary at all. Handing that timestamp straight to the operating system moves the
+    # machine's clock arbitrarily, and everything else on the host - TLS certificate validity,
+    # log timestamps, cron, backups, other radio software - moves with it. So z-30's default
+    # is to keep the correction to itself in `app_time_offset_ms`, which is all the decoder
+    # actually needs.
+    #
+    # When an operator does want the system clock disciplined from RF, all of the following
+    # must hold: the feature is enabled explicitly, the caller has confirmed this particular
+    # change, and the proposed time is within MAX_OS_CLOCK_STEP_SEC of the current clock.
+
+
+    #: Environment variable that enables OS clock setting for headless / service use.
+    ENABLE_ENV_VAR: str = "Z30_ALLOW_SET_SYSTEM_CLOCK"
+
     @staticmethod
-    def try_set_os_system_time(target_utc: datetime) -> bool:
+    def is_os_clock_setting_enabled(config_path: Optional[str] = None) -> bool:
         """
-        Optional helper: Attempts to set the OS system time if running with
-        Administrator (Windows) or root (Linux/macOS) privileges.
+        True only if the operator has explicitly turned OS clock setting on, either in the
+        persisted config (`allow_set_system_clock: true`) or via the environment variable.
+        Absent configuration means disabled - this fails closed.
         """
+        if os.environ.get(TimeSyncSettingsManager.ENABLE_ENV_VAR, "").strip().lower() in ("1", "true", "yes", "on"):
+            return True
+        config_path = config_path or default_config_path()
+        try:
+            with open(config_path, "r", encoding="utf-8") as f:
+                return bool(json.load(f).get("allow_set_system_clock", False))
+        except (OSError, ValueError):
+            return False
+
+    @staticmethod
+    def describe_clock_ownership() -> Optional[str]:
+        """
+        Returns a description of the daemon that already owns the clock, or None.
+
+        systemd-timesyncd, chrony and ntpd all discipline the clock continuously and will
+        simply undo an external step, so an apparently successful set silently reverts. The
+        previous implementation shelled out to `date -u -s`, whose failure on exactly those
+        hosts was invisible: `os.system` returns a wait status, and the `res == 0` check
+        happened to read it correctly only by coincidence.
+        """
+        if not sys.platform.startswith("linux"):
+            return None
+        timedatectl = shutil.which("timedatectl")
+        if not timedatectl:
+            return None
+        try:
+            proc = subprocess.run([timedatectl, "show", "--property=NTPSynchronized", "--value"],
+                                  capture_output=True, text=True, timeout=3.0)
+        except (OSError, subprocess.SubprocessError):
+            return None
+        if proc.returncode == 0 and proc.stdout.strip().lower() == "yes":
+            return ("an NTP service (systemd-timesyncd / chrony / ntpd) is disciplining this "
+                    "clock; disable it first with 'timedatectl set-ntp false' if you really "
+                    "want the clock driven from RF")
+        return None
+
+    @staticmethod
+    def try_set_os_system_time(
+        target_utc: datetime,
+        allow: bool = False,
+        confirmed: bool = False,
+        max_step_sec: Optional[float] = None,
+    ) -> Tuple[bool, str]:
+        """
+        Sets the OS clock to `target_utc`, if and only if every guard passes.
+
+        Args:
+            target_utc: Timestamp demodulated from the time station (timezone-aware UTC).
+            allow: The feature is enabled for this station (see is_os_clock_setting_enabled).
+            confirmed: This specific change was confirmed at the moment it fires. A UI passes
+                the operator's answer here; a headless service passes True deliberately.
+            max_step_sec: Override for MAX_OS_CLOCK_STEP_SEC.
+
+        Returns:
+            (applied, human-readable reason). `applied` is False for every refusal, and the
+            reason says which guard rejected it - this never fails silently.
+        """
+        limit = MAX_OS_CLOCK_STEP_SEC if max_step_sec is None else max_step_sec
+        if not allow:
+            return False, ("OS clock setting is disabled (default). z-30 applied the correction "
+                           "internally as app_time_offset_ms instead.")
+        if not confirmed:
+            return False, "OS clock setting was not confirmed for this decode; nothing was changed."
+
+        if target_utc.tzinfo is None:
+            target_utc = target_utc.replace(tzinfo=timezone.utc)
+        delta_sec = (target_utc - datetime.now(timezone.utc)).total_seconds()
+        if abs(delta_sec) > limit:
+            return False, (f"Refused: the decoded time differs from this machine's clock by "
+                           f"{delta_sec:+.1f}s, beyond the {limit:.0f}s sanity bound. A jump that "
+                           f"large is a misdecode or a spoofed transmission, not clock drift.")
+
+        owner = TimeSyncSettingsManager.describe_clock_ownership()
+        if owner:
+            return False, f"Refused: {owner}."
+
+        target_epoch = target_utc.timestamp()
         try:
             if sys.platform == "win32":
                 import ctypes
                 import ctypes.wintypes
+
                 class SYSTEMTIME(ctypes.Structure):
                     _fields_ = [
                         ("wYear", ctypes.wintypes.WORD),
@@ -843,6 +964,7 @@ class TimeSyncSettingsManager:
                         ("wSecond", ctypes.wintypes.WORD),
                         ("wMilliseconds", ctypes.wintypes.WORD),
                     ]
+
                 st = SYSTEMTIME(
                     target_utc.year,
                     target_utc.month,
@@ -851,18 +973,23 @@ class TimeSyncSettingsManager:
                     target_utc.hour,
                     target_utc.minute,
                     target_utc.second,
-                    int(target_utc.microsecond / 1000)
+                    int(target_utc.microsecond / 1000),
                 )
-                res = ctypes.windll.kernel32.SetSystemTime(ctypes.byref(st))
-                return bool(res)
-            elif sys.platform.startswith("linux") or sys.platform == "darwin":
-                time_str = target_utc.strftime("%Y-%m-%d %H:%M:%S")
-                res = os.system(f"date -u -s '{time_str}' > /dev/null 2>&1")
-                return res == 0
-        except Exception as ex:
-            logger.debug(f"OS system time update skipped: {ex}")
-            return False
-        return False
+                if not ctypes.windll.kernel32.SetSystemTime(ctypes.byref(st)):
+                    err = ctypes.windll.kernel32.GetLastError()
+                    return False, f"SetSystemTime failed (Windows error {err}); Administrator rights are required."
+                return True, f"System clock set to {target_utc.isoformat()} ({delta_sec:+.3f}s step)."
+
+            # POSIX: clock_settime takes a float and keeps sub-second precision. The old
+            # implementation formatted "%Y-%m-%d %H:%M:%S" and shelled out to date(1), which
+            # truncated to whole seconds - discarding the very precision that decoding a time
+            # standard exists to obtain.
+            time.clock_settime(time.CLOCK_REALTIME, target_epoch)
+            return True, f"System clock set to {target_utc.isoformat()} ({delta_sec:+.3f}s step)."
+        except PermissionError:
+            return False, "Permission denied setting the system clock; root privileges are required."
+        except (OSError, AttributeError, ValueError) as ex:
+            return False, f"System clock update failed: {ex}"
 
 
 # ============================================================================
@@ -883,11 +1010,13 @@ class RFTimeSyncThread(threading.Thread):
         pre_check_seconds: int = 5,
         cat_tuner: Optional[CatTuner] = None,
         audio_engine: Optional[AudioCaptureEngine] = None,
-        config_path: str = "config.json",
+        config_path: Optional[str] = None,
         on_status_callback: Optional[Callable[[str, float, str, int, float], None]] = None,
         on_complete_callback: Optional[Callable[[TimeSyncResult], None]] = None,
         on_error_callback: Optional[Callable[[str], None]] = None,
-        simulate_dwell_speed: float = 1.0
+        simulate_dwell_speed: float = 1.0,
+        allow_set_system_clock: Optional[bool] = None,
+        confirm_system_clock_callback: Optional[Callable[["TimeSyncResult"], bool]] = None,
     ):
         super().__init__(daemon=True, name="RFTimeSyncWorker")
         self.station_queue = station_queue or list(PRIORITY_REGIONS["North America (Default)"])
@@ -900,6 +1029,13 @@ class RFTimeSyncThread(threading.Thread):
         self.on_complete_callback = on_complete_callback
         self.on_error_callback = on_error_callback
         self.simulate_dwell_speed = simulate_dwell_speed
+        # Defaults to whatever the operator persisted, which itself defaults to off.
+        self.allow_set_system_clock = (
+            TimeSyncSettingsManager.is_os_clock_setting_enabled(config_path)
+            if allow_set_system_clock is None
+            else bool(allow_set_system_clock)
+        )
+        self.confirm_system_clock_callback = confirm_system_clock_callback
 
         self.cancel_event = threading.Event()
         self.last_result: Optional[TimeSyncResult] = None
@@ -979,10 +1115,22 @@ class RFTimeSyncThread(threading.Thread):
             if result and result.success:
                 logger.info(result.summary())
                 self.last_result = result
-                # Persist to config.json
+                # Persist the internal offset. This alone is what z-30's own slot timing
+                # uses, and for almost every operator it is the whole of the correction.
                 TimeSyncSettingsManager.update_app_time_offset(result.delta_ms, self.config_path)
-                # Attempt system clock if privileged
-                TimeSyncSettingsManager.try_set_os_system_time(result.rf_timestamp_utc)
+
+                # Touching the machine's system clock is opt-in and confirmed per decode; see
+                # TimeSyncSettingsManager.try_set_os_system_time for why. A refusal is logged
+                # rather than swallowed, so an operator who did enable it can see what stopped
+                # it instead of wondering whether it worked.
+                if self.allow_set_system_clock:
+                    confirmed = True
+                    if self.confirm_system_clock_callback is not None:
+                        confirmed = bool(self.confirm_system_clock_callback(result))
+                    applied, reason = TimeSyncSettingsManager.try_set_os_system_time(
+                        result.rf_timestamp_utc, allow=True, confirmed=confirmed
+                    )
+                    (logger.info if applied else logger.warning)(f"OS clock: {reason}")
 
                 self._notify_status(f"Sync Complete: {result.summary()}", 100.0, stn_name, freq_hz, result.snr_db)
                 if self.on_complete_callback:
@@ -1008,7 +1156,7 @@ class RFTimeSyncThread(threading.Thread):
 # 9. STANDALONE TKINTER GUI DIALOG & TIMING DISPLAY
 # ============================================================================
 
-def launch_rf_time_sync_dialog(parent: Optional[Any] = None, config_path: str = "config.json") -> None:
+def launch_rf_time_sync_dialog(parent: Optional[Any] = None, config_path: Optional[str] = None) -> None:
     """
     Launches a dedicated Tkinter dialog for RF Time Synchronization.
     """

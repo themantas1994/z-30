@@ -1,28 +1,57 @@
 """
-z-30 Physical Layer Waveform Generator, AWGN Calibrator & Real LDPC Decoder Benchmark
-=====================================================================================
-1. Generates authentic continuous-phase 16-MFSK physical waveforms with raised-cosine shaping.
+z-30 Physical Layer Waveform Generator, AWGN Calibrator & LDPC Decoder Benchmark
+================================================================================
+1. Generates continuous-phase 16-MFSK physical waveforms with GFSK frequency shaping.
 2. Injects calibrated Gaussian noise (AWGN) referenced to standard 2500 Hz audio bandwidth:
      sigma = sqrt( P_signal / ( 10^(SNR_dB / 10) * (5000 / Fs) ) )
 3. Demodulates noisy waveforms using 16-tone matched filters and calculates soft channel LLRs.
 4. Executes the actual Systematic (216, 77) Normalized Min-Sum LDPC Belief Propagation Decoder.
-5. Counts actual decode successes, failures, empirical Frame Error Rate (FER), and plots FER vs SNR.
+5. Counts decode successes, failures, empirical Frame Error Rate (FER), and plots FER vs SNR.
+
+WHAT THIS NUMBER IS, AND WHAT IT IS NOT
+---------------------------------------
+This is a **genie-aided idealised AWGN bound**, not an over-the-air decode threshold. The
+demodulator is handed things a real receiver has to work out for itself:
+
+  * the exact noise sigma used to generate the frame;
+  * the exact carrier frequency (no frequency error, no AFC, no Doppler);
+  * perfect symbol timing - `start_samp = f * samples_per_symbol`, zero offset, because the
+    same code generated the waveform;
+  * a clean channel: no fading, no interference, no band noise, no ALC.
+
+Every one of those is a real loss in a real contact, and none of them is present here. Quoting
+this figure beside a mode's published over-the-air threshold - FT8's -21 dB, say, which is
+WSJT-X's measured number and *includes* all of those losses - compares two different
+quantities and flatters this one. The README states the comparison in exactly these terms.
+
+Reproducibility: every run is seeded (`--seed`, default DEFAULT_BENCHMARK_SEED). Record the
+seed alongside any published curve; an unseeded number cannot be reproduced, bisected, or
+verified by anyone else.
 """
 
 import time
 import argparse
-from typing import List, Tuple, Dict
+from typing import List, Optional, Tuple, Dict
 import numpy as np
 
 from z30_dsp.modem import Z30Modulator, Z30Config
 from z30_dsp.ldpc import Z30LdpcCodec
 
-def generate_random_frame(codec: Z30LdpcCodec, cfg: Z30Config) -> Tuple[np.ndarray, np.ndarray, List[int], List[int]]:
+#: Default PRNG seed. Fixed so the default run is reproducible; override with --seed.
+DEFAULT_BENCHMARK_SEED: int = 20260830
+
+
+def generate_random_frame(
+    codec: Z30LdpcCodec,
+    cfg: Z30Config,
+    rng: Optional[np.random.Generator] = None,
+) -> Tuple[np.ndarray, np.ndarray, List[int], List[int]]:
     """
     Generates a random 63-bit amateur payload, encodes to 216-bit LDPC codeword,
     and assembles the 75-symbol 16-MFSK transmission sequence.
     """
-    payload_63 = np.random.randint(0, 2, 63, dtype=np.uint8)
+    rng = rng if rng is not None else np.random.default_rng(DEFAULT_BENCHMARK_SEED)
+    payload_63 = rng.integers(0, 2, 63, dtype=np.uint8)
     codeword_216 = codec.encode(payload_63)
     
     # 54 data symbols (4 bits/symbol)
@@ -49,17 +78,23 @@ def generate_random_frame(codec: Z30LdpcCodec, cfg: Z30Config) -> Tuple[np.ndarr
             
     return payload_63, codeword_216, data_symbols_54, full_symbols_75
 
-def add_calibrated_awgn(clean_wave: np.ndarray, snr_2500hz_db: float, sample_rate_hz: int) -> Tuple[np.ndarray, float]:
+def add_calibrated_awgn(
+    clean_wave: np.ndarray,
+    snr_2500hz_db: float,
+    sample_rate_hz: int,
+    rng: Optional[np.random.Generator] = None,
+) -> Tuple[np.ndarray, float]:
     """
     Adds calibrated AWGN to reach a known SNR referenced to 2500 Hz noise bandwidth.
     """
+    rng = rng if rng is not None else np.random.default_rng(DEFAULT_BENCHMARK_SEED)
     signal_power = np.mean(clean_wave ** 2)
     snr_linear = 10.0 ** (snr_2500hz_db / 10.0)
     # Bandwidth correction factor: 2500 Hz noise bandwidth relative to Nyquist (Fs/2)
     bw_factor = 5000.0 / sample_rate_hz
     sigma = np.sqrt(signal_power / (snr_linear * bw_factor))
     
-    noise = np.random.normal(0.0, sigma, size=len(clean_wave)).astype(np.float32)
+    noise = rng.normal(0.0, sigma, size=len(clean_wave)).astype(np.float32)
     noisy_wave = clean_wave + noise
     return noisy_wave, sigma
 
@@ -167,11 +202,16 @@ def run_monte_carlo_snr_sweep(
     max_snr_db: float = -23.0,
     step_snr_db: float = 1.0,
     frames_per_snr: int = 50,
-    sample_rate_hz: int = 6000
+    sample_rate_hz: int = 6000,
+    seed: int = DEFAULT_BENCHMARK_SEED,
 ) -> List[Dict]:
     """
-    Runs real physical waveform generation, calibrated AWGN, and LDPC decoding across SNR points.
+    Runs physical waveform generation, calibrated AWGN, and LDPC decoding across SNR points.
+
+    See the module docstring: this measures an idealised AWGN bound with perfect
+    synchronisation, not an over-the-air decode threshold.
     """
+    rng = np.random.default_rng(seed)
     cfg = Z30Config(sample_rate_hz=sample_rate_hz)
     modulator = Z30Modulator(cfg)
     codec = Z30LdpcCodec(max_iterations=45, alpha=0.75)
@@ -181,7 +221,12 @@ def run_monte_carlo_snr_sweep(
     
     print("=" * 80)
     print("  z-30 PHYSICAL WAVEFORM & CALIBRATED AWGN MONTE CARLO DECODER BENCHMARK")
-    print(f"  Configuration: {frames_per_snr} frames/point | Sample Rate: {sample_rate_hz} Hz | Max Iterations: 45")
+    print(f"  Configuration: {frames_per_snr} frames/point | Sample Rate: {sample_rate_hz} Hz | "
+          f"Max Iterations: 45 | Seed: {seed}")
+    print("  IDEALISED AWGN BOUND: exact noise sigma, exact carrier frequency and perfect symbol")
+    print("  timing are given to the demodulator. No frequency error, timing error, Doppler,")
+    print("  fading or interference. This is NOT an over-the-air decode threshold and is not")
+    print("  comparable with the published on-air figures for FT8 or other modes.")
     print("=" * 80)
     print(f"{'SNR (2500Hz)':<14} | {'Frames':<8} | {'Success':<8} | {'Failed':<8} | {'FER':<10} | {'Decode %':<10} | {'Avg Iters':<10}")
     print("-" * 80)
@@ -194,13 +239,13 @@ def run_monte_carlo_snr_sweep(
         
         for f in range(frames_per_snr):
             # 1. Generate real random payload and symbols
-            payload, codeword, data_symbols, full_symbols = generate_random_frame(codec, cfg)
+            payload, codeword, data_symbols, full_symbols = generate_random_frame(codec, cfg, rng)
             
             # 2. Synthesize physical continuous-phase 16-MFSK waveform
             clean_wave = modulator.synthesize_frame(full_symbols, base_audio_freq_hz=1250.0)
             
             # 3. Add calibrated Gaussian noise (AWGN in 2500 Hz reference BW)
-            noisy_wave, sigma = add_calibrated_awgn(clean_wave, snr, cfg.sample_rate_hz)
+            noisy_wave, sigma = add_calibrated_awgn(clean_wave, snr, cfg.sample_rate_hz, rng)
             
             # 4. Demodulate via 16-tone matched filters -> Soft LLRs
             channel_llrs = demodulate_mfsk_llrs(noisy_wave, cfg, sigma, audio_center_hz=1250.0)
@@ -233,7 +278,8 @@ def run_monte_carlo_snr_sweep(
             "fer": fer,
             "decode_pct": decode_pct,
             "avg_iters": avg_iters,
-            "elapsed_sec": elapsed
+            "elapsed_sec": elapsed,
+            "seed": seed,
         }
         results.append(res)
         
@@ -294,13 +340,14 @@ def plot_ascii_curves(results: List[Dict]):
     print(snr_header + " (dB / 2500Hz)")
     print("=" * 80 + "\n")
 
-def run_benchmark():
+def run_benchmark(seed: int = DEFAULT_BENCHMARK_SEED):
     run_monte_carlo_snr_sweep(
-        min_snr_db=-33.0,
-        max_snr_db=-23.0,
+        min_snr_db=-30.0,
+        max_snr_db=-20.0,
         step_snr_db=1.0,
         frames_per_snr=25,
-        sample_rate_hz=6000
+        sample_rate_hz=6000,
+        seed=seed,
     )
 
 run_self_test = run_benchmark
@@ -308,15 +355,18 @@ main = run_benchmark
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="z-30 Monte Carlo Physical Waveform & SNR Decoder Benchmark")
-    parser.add_argument("--min-snr", type=float, default=-33.0, help="Minimum SNR in dB (2500Hz reference)")
-    parser.add_argument("--max-snr", type=float, default=-23.0, help="Maximum SNR in dB (2500Hz reference)")
+    parser.add_argument("--min-snr", type=float, default=-30.0, help="Minimum SNR in dB (2500Hz reference)")
+    parser.add_argument("--max-snr", type=float, default=-20.0, help="Maximum SNR in dB (2500Hz reference)")
     parser.add_argument("--step", type=float, default=1.0, help="SNR step in dB")
     parser.add_argument("--frames", type=int, default=30, help="Frames per SNR test point")
+    parser.add_argument("--seed", type=int, default=DEFAULT_BENCHMARK_SEED,
+                        help="PRNG seed. Record it with any published result.")
     args = parser.parse_args()
-    
+
     run_monte_carlo_snr_sweep(
         min_snr_db=args.min_snr,
         max_snr_db=args.max_snr,
         step_snr_db=args.step,
-        frames_per_snr=args.frames
+        frames_per_snr=args.frames,
+        seed=args.seed,
     )

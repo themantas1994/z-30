@@ -17,7 +17,7 @@ An in-depth technical analysis for **advanced amateur radio operators, RF engine
 | **Total Frame Symbols** | 79 symbols (58 data + 21 Costas) | 75 symbols (54 data + 21 Costas) | Optimized symbol packing & channel utilization |
 | **Raw Channel Bits** | 174 bits ($58 \times 3\text{ bits}$) | 216 bits ($54 \times 4\text{ bits}$) | Higher total channel codeword dimensionality |
 | **Information Bits ($K$)** | 77 bits ($75\text{ msg} + 2\text{ flag}$) | 77 bits ($58\text{ msg} + 14\text{ CRC} + 5\text{ flag}$) | Identical payload capacity with stronger CRC protection |
-| **FEC Code** | Systematic LDPC (174, 91) | Quasi-Cyclic LDPC (216, 77) | **Rate $R \approx 0.356$ vs $0.523$** ($+2.4\text{ dB}$ coding gain) |
+| **FEC Code** | Systematic LDPC (174, 91) | IRA LDPC (216, 77) | **Rate $R \approx 0.356$ vs $0.523$** ($+2.4\text{ dB}$ coding gain) |
 | **Parity Check Fraction** | 47.7% parity overhead | **64.4% parity overhead** | Significantly steeper waterfall BER curve |
 | **CRC Polynomial** | 14-bit ($P_{\text{false}} \approx 6 \times 10^{-5}$) | 14-bit CRC-14 ($P_{\text{false}} < 10^{-6}$) | Zero false decodes at the $-25.0\text{ dB}$ limit |
 | **Co-Channel Collision Recovery** | None (collisions fail to decode) | **3-Pass Successive Interference Cancellation (SIC)** | Co-channel collision resolution down to $-31.5\text{ dB}$ |

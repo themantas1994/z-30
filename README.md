@@ -6,7 +6,7 @@
 [![Radio Mode](https://img.shields.io/badge/mode-16--MFSK%20|%20LDPC--SIC%20|%2030s%20Cycle-orange.svg)]()
 [![PWA Ready](https://img.shields.io/badge/PWA-Installable%20Offline-blueviolet.svg)]()
 
-**z-30** is an open-source, next-generation amateur radio weak-signal digital communications and DSP engineering suite. Engineered for extreme HF, VHF, and microwave propagation conditions (down to **-25.0 dB SNR** 50% decode threshold / **-24.0 dB SNR** 90% decode threshold in 2500 Hz reference bandwidth), z-30 combines an ultra-narrow **50.0 Hz occupied bandwidth** 16-MFSK modulation scheme, Rate-1/3 Quasi-Cyclic Low-Density Parity-Check (LDPC) forward error correction, and multi-pass **Successive Interference Cancellation (SIC)** to decode co-channel signals with zero packet collision dropouts.
+**z-30** is an open-source, next-generation amateur radio weak-signal digital communications and DSP engineering suite. Engineered for extreme HF, VHF, and microwave propagation conditions (down to **-25.0 dB SNR** 50% decode threshold / **-24.0 dB SNR** 90% decode threshold in 2500 Hz reference bandwidth), z-30 combines an ultra-narrow **50.0 Hz occupied bandwidth** 16-MFSK modulation scheme, a rate-0.356 irregular repeat-accumulate (IRA) Low-Density Parity-Check (LDPC) forward error correction code, and multi-pass **Successive Interference Cancellation (SIC)** to decode co-channel signals with zero packet collision dropouts.
 
 The project provides both a high-performance **interactive Web/PWA GUI** (featuring a 60 FPS HTML5 spectral waterfall, Web Audio 12/48 kHz DSP pipeline, live S-meter, and ADIF logbook) and a **native Python 3 DSP package (`z30_dsp`)** with Hamlib CAT transceiver control (`rigctld`), 9 PTT keying methods, 6 auto-reply sequencing algorithms, and automated RF time calibration against international time standards (**WWV, CHU, DCF77, MSF, WWVB, JJY**).
 
@@ -16,20 +16,21 @@ The project provides both a high-performance **interactive Web/PWA GUI** (featur
 
 1. [Key Features & Capabilities](#key-features--capabilities)
 2. [Comparison with Other Digital Modes (FT8, FT4, WSPR, JS8Call)](#comparison-with-other-digital-modes)
-3. [Deep-Dive: Protocol & DSP Architecture](#deep-dive-protocol--dsp-architecture)
+3. [Operating Safety, Compliance & Local Security](#operating-safety-compliance--local-security)
+4. [Deep-Dive: Protocol & DSP Architecture](#deep-dive-protocol--dsp-architecture)
    - [Modulation & Waveform Parameters](#modulation--waveform-parameters)
    - [Synchronous 30-Second Cycle Timing](#synchronous-30-second-cycle-timing)
    - [LDPC (216, 77) & CRC-14 Forward Error Correction](#ldpc-216-77--crc-14-forward-error-correction)
    - [Iterative Successive Interference Cancellation (SIC)](#iterative-successive-interference-cancellation-sic)
-   - [Automatic RF Standard Station Time Sync (`rf_time_sync.py`)](#automatic-rf-standard-station-time-sync)
-4. [Cross-Platform Installation & Build Guide](#cross-platform-installation--build-guide)
+   - [Automatic RF Standard Station Time Sync](#automatic-rf-standard-station-time-sync)
+5. [Cross-Platform Installation & Build Guide](#cross-platform-installation--build-guide)
    - [Ubuntu & Debian (20.04 / 22.04 / 24.04)](#ubuntu--debian)
    - [Arch Linux, Manjaro, EndeavourOS & CachyOS](#arch-linux-manjaro-endeavouros--cachyos)
    - [Windows 10 & 11](#windows-10--11)
    - [Android (PWA & Termux Field Operations)](#android-pwa--termux)
    - [Raspberry Pi & Embedded Linux (DigiPi / SBCs)](#raspberry-pi--embedded-linux)
    - [Generic Linux & PyPI Package](#generic-linux--pypi)
-5. [User Interface & Operation Guide](#user-interface--operation-guide)
+6. [User Interface & Operation Guide](#user-interface--operation-guide)
    - [60 FPS Spectral Waterfall & Spectrogram](#60-fps-spectral-waterfall--spectrogram)
    - [QSO State Machine & Auto-Sequencing](#qso-state-machine--auto-sequencing)
    - [Auto-Reply Priority Strategies](#auto-reply-priority-strategies)
@@ -38,9 +39,10 @@ The project provides both a high-performance **interactive Web/PWA GUI** (featur
    - [Interactive Station Setup Wizard](#interactive-station-setup-wizard)
    - [Band Manager & Presets (160m – 70cm)](#band-manager--presets)
    - [ADIF 3.1.4 Logbook & Contest Export](#adif-314-logbook--contest-export)
-6. [Python CLI & Native Tools](#python-cli--native-tools)
-7. [Repository Structure](#repository-structure)
-8. [Contributing & License](#contributing--license)
+7. [Python CLI & Native Tools](#python-cli--native-tools)
+8. [Development, Tests & CI](#development-tests--ci)
+9. [Repository Structure](#repository-structure)
+10. [Contributing & License](#contributing--license)
 
 ---
 
@@ -49,7 +51,7 @@ The project provides both a high-performance **interactive Web/PWA GUI** (featur
 - **Empirical Weak-Signal Threshold**: Decodes signals down to **-25.0 dB SNR** (50% decode threshold) and **-24.0 dB SNR** (90% decode threshold) on AWGN channels and **-22.5 dB SNR** under severe Rayleigh and polar flutter fading (delivering a **+4.0 dB link margin advantage over FT8**, equivalent to a $2.5\times$ Effective Radiated Power boost).
 - **Spectrum Efficiency**: Requires only **50.0 Hz** of RF bandwidth per transmission (allowing up to **50 simultaneous QSOs** in a standard 2.7 kHz SSB transceiver passband).
 - **Multi-Pass SIC Engine**: Automatically reconstructs, synthesizes, and subtracts strong decoded carrier waveforms from the time-domain audio buffer to uncover and decode overlapping weak signals buried up to 25 dB underneath stronger stations.
-- **Sub-Millisecond RF Time Synchronization**: Embedded DSP time calibration tool (`rf_time_sync.py`) scans international standard stations (WWV/WWVH, CHU, DCF77, MSF, WWVB, JJY) using 61-tap Windowed-Sinc FIR filtering and normalized cross-correlation to eliminate clock drift ($\Delta t$) down to $<1.5\text{ ms}$ without needing administrative or root privileges.
+- **Sub-Millisecond RF Time Synchronization**: Embedded DSP time calibration tool (`z30_dsp/rf_time_sync.py`) scans international standard stations (WWV/WWVH, CHU, DCF77, MSF, WWVB, JJY) using 61-tap Windowed-Sinc FIR filtering and normalized cross-correlation to eliminate clock drift ($\Delta t$) down to $<1.5\text{ ms}$ without needing administrative or root privileges.
 - **Hardware Agnostic Transceiver Control**: Fully supports physical transceivers via **Hamlib (`rigctld`)**, audio interfaces (SignaLink, Digirig, microHAM, DRA-30/50/70, USB soundcards, Icom/Yaesu/Kenwood/Elecraft/Xiegu internal USB audio), and standalone SDRs (via TCI network protocol).
 - **9 PTT Keying Methods**: Supports CAT Software Commands, RTS Hardware Serial Line, DTR Hardware Serial Line, Right-Channel Audio PTT Tone (1000/1500 Hz), C-Media CM108/CM119 USB GPIO, Raspberry Pi / Linux SBC GPIO, VOX, TCI Network Socket, and K1EL WinKeyer 2/3.
 - **6 Intelligent Auto-Reply Priority Modes**: Configurable QSO answer rules: *First Decoded (Chrono)*, *Last Decoded*, *Strongest Signal (Max SNR)*, *Weakest Signal (Deep DX)*, *Nearest Station (Min Distance)*, and *Farthest DX (Max Distance)*.
@@ -85,6 +87,83 @@ The following table benchmarks **z-30** against standard amateur radio digital m
 ### Why 16-MFSK and a 30-Second Cycle?
 1. **+4.0 dB Sensitivity Advantage Over FT8**: By reducing symbol rate from 6.25 baud to 3.125 baud and applying a low Rate-0.356 LDPC code with 75 total symbols, z-30 recovers signals **4.0 dB lower than FT8** (50% threshold at $-25.0\text{ dB}$ vs $-21.0\text{ dB}$). This $2.51\times$ power multiplier turns a 40W station into the effective link margin of a 100W station, opening paths across 160m, 6m, 2m EME, and high-latitude paths during solar geomagnetic disturbances.
 2. **True Co-Channel Collision Recovery**: Traditional FT8 fails when two signals occupy the same audio frequency bins. z-30 incorporates a 3-pass **Successive Interference Cancellation (SIC)** algorithm: when a strong signal is decoded, its exact RF phase and amplitude are synthesized and cleanly subtracted from the raw FFT bins, enabling a second and third decoding pass on previously obscured weak signals.
+
+---
+
+## Operating Safety, Compliance & Local Security
+
+This application keys real transmitters over serial, CM108, GPIO and audio VOX, and it exposes
+a local HTTP API to do it. The following behaviours are deliberate and are not configurable
+away casually.
+
+### Before it will transmit at all
+
+Every transmit entry point - the automatic QSO sequencer, the manual TX button, and the tune
+carrier - passes through a single gate (`canTransmit()` in `src/dsp/catController.ts`). It
+**fails closed**, and any refusal names the exact condition that failed:
+
+| Condition | Why |
+| --- | --- |
+| A syntactically valid callsign that is not the shipped `W1AW` placeholder | An unidentified transmission, or one under someone else's call, is a licence problem |
+| A configured regulatory region and licence class | Band edges and sub-band privileges differ by country and by class; there is no safe way to guess either |
+| Dial frequency **plus audio offset** inside a data-mode segment your class holds | The radiated frequency is not the dial frequency, and this is what puts a station out of band |
+
+The band plan lives in `src/dsp/bandPlan.ts` and covers IARU Regions 1-3 plus the FCC Part 97
+sub-band structure, with the date each entry was last checked. National rules vary and change:
+the gate catches a mistuned VFO or a wrong band button, it does not replace knowing your own
+licence conditions.
+
+### Stuck-transmitter protection
+
+Three independent layers, because the failure being defended against is "the software stopped
+running":
+
+1. **Browser-side maximum-transmission timer.** A frame is 24 s; `MAX_TX_SECONDS` is 40 s.
+   Past that, PTT is force-released across every keying path.
+2. **Server-side dead-man switch on the GPIO PTT line.** The browser must re-assert PTT every
+   ~500 ms; if it stops, `z30_dsp/web_server.py` drops the pin within about two seconds. A
+   crashed tab, a killed renderer or a sleeping machine cannot send a keepalive - and cannot
+   run a browser-side timer either, which is why this layer has to exist separately. A hard
+   40 s ceiling applies even if keepalives keep arriving.
+3. **`atexit` and `SIGTERM`/`SIGINT` handlers** that release every claimed GPIO pin, so killing
+   the server does not leave a radio keyed.
+
+### The local API is authenticated
+
+`z30_dsp/web_server.py` binds `127.0.0.1` only, but **loopback is not an authentication
+boundary**: any page in any browser tab can `fetch()` a loopback URL, and a `text/plain` POST
+is a CORS simple request that is sent with no preflight. Every `/api/` request must therefore
+satisfy all three of:
+
+- a bearer token (`X-Z30-Token`) minted fresh at each server start and injected only into the
+  `index.html` that this process serves;
+- an `Origin` header that is absent or exactly this server's own origin;
+- a `Host` header naming this server's own loopback address and port, which blocks DNS
+  rebinding.
+
+No wildcard `Access-Control-Allow-Origin` header is sent anywhere, only the single configured
+BCM pin can be driven, and the rigctld relay will only talk to loopback daemons.
+
+### The system clock
+
+z-30 keeps its clock correction to itself as `app_time_offset_ms`, which is all its slot timing
+needs. Stepping the machine's clock from a decoded time station is opt-in, confirmed, bounded
+to 5 minutes, and refused when an NTP daemon already owns the clock. See
+[Automatic RF Standard Station Time Sync](#automatic-rf-standard-station-time-sync).
+
+### Your logbook is a file
+
+Contacts are mirrored to `~/.z30/logbook.json` with an ADIF export written beside them
+(`XDG_CONFIG_HOME` is honoured). The browser copy is a cache. Clearing browsing data, a private
+window, a different browser or a different port number all lose `localStorage`; none of them
+touch the file. A failed save is shown in the UI rather than logged to a console nobody reads.
+
+### What is still on you
+
+Rendering a clean waveform in software is necessary, not sufficient. **Capture your
+transmitter's actual output and check the occupied bandwidth on a spectrum analyser before
+using this on the air** - sound-card clipping and rig ALC will re-broaden a clean signal, and
+no amount of correct DSP upstream prevents that.
 
 ---
 
@@ -181,8 +260,8 @@ The UTC clock cycle is divided into even and odd 30-second transmission slots:
 ### LDPC (216, 77) & CRC-14 Forward Error Correction
 
 1. **Payload**: 63 bits of user information (28-bit Radix-37/27 destination callsign + 28-bit Radix-37/27 source callsign + 7-bit grid/report field covering 4-character Maidenhead grid locators, SNR signal reports, and standard modifiers like `CQ`, `RR73`, `73`).
-2. **CRC Parity**: A 14-bit cyclic redundancy check polynomial ($x^{14} + x^{11} + x^2 + 1$) guarantees a false-decode rate lower than $10^{-6}$.
-3. **Encoding**: The 77-bit protected vector is mapped into 216 bits using a Rate-0.356 Quasi-Cyclic LDPC parity check matrix and modulated onto $54 \times \log_2(16)$ channel symbols.
+2. **CRC Parity**: A 14-bit cyclic redundancy check, generator polynomial $x^{14} + x^{13} + x^{10} + x^{6} + x + 1$ (register constant `0x2443` with $x^{14}$ implicit, init `0x2757`, MSB-first). Its undetected frame error probability for random errors is $2^{-14} \approx 6.1 \times 10^{-5}$. Earlier revisions of this document and of both source files quoted $x^{14} + x^{11} + x^2 + 1$ and a $10^{-6}$ figure; neither was what the code implements, and the false-decode rate was overstated by about sixty times.
+3. **Encoding**: The 77-bit protected vector is mapped into 216 bits by an **irregular repeat-accumulate (IRA)** LDPC code with a dual-diagonal parity structure and an explicit degree-5 girth-6 connection table, at rate $77/216 \approx 0.356$, then modulated onto $54 \times \log_2(16)$ channel symbols. (It is not quasi-cyclic; earlier revisions of this document called it "Rate-1/3 Quasi-Cyclic", which was wrong on both counts.)
 4. **Decoding**: Log-domain Min-Sum Belief Propagation running up to 50 iterations per carrier candidate.
 
 ### Iterative Successive Interference Cancellation (SIC)
@@ -196,11 +275,12 @@ When high-power local stations mask weak DX stations transmitting within the sam
 
 ### Automatic RF Standard Station Time Sync
 
-In remote or field locations without NTP internet access, z-30 includes `rf_time_sync.py`:
+In remote or field locations without NTP internet access, z-30 includes `z30_dsp/rf_time_sync.py`:
 - Scans global HF/LF time standard broadcast stations (**WWV/WWVH** at 2.5/5/10/15/20 MHz, **CHU** at 3.33/7.85/14.67 MHz, **DCF77** at 77.5 kHz, **MSF/WWVB/JJY** at 40/60 kHz).
 - Executes rapid 5-second carrier pre-validation followed by audio subcarrier demodulation (100 Hz BCD, 300-baud Bell 103 AFSK, 1 Hz PWM amplitude dips).
 - Uses a 61-tap Windowed-Sinc FIR Bandpass filter and normalized cross-correlation against standard second/minute pulses.
 - Measures system clock offset $\Delta t = T_{\text{RF}} - T_{\text{System}}$ in milliseconds and applies zero-admin application-level offset calibration.
+- **Does not touch the machine's system clock by default.** A time station is an unauthenticated broadcast; a marginal decode - or a deliberately transmitted spoof - would otherwise move the host clock arbitrarily, taking TLS validity, log timestamps and cron with it. The internal `app_time_offset_ms` is all the decoder needs. Stepping the OS clock is opt-in (`"allow_set_system_clock": true` in `~/.z30/config.json`, or `Z30_ALLOW_SET_SYSTEM_CLOCK=1`), bounded to 5 minutes, and declines to fight an NTP daemon that already owns the clock.
 
 ---
 
@@ -512,18 +592,60 @@ z30 --update -y
 
 ---
 
+## Development, Tests & CI
+
+```bash
+# Python DSP suite
+pip install -r requirements.txt pytest
+python -m pytest tests -v
+
+# TypeScript: typecheck (strict mode is on) plus the codec and DSP module tests
+npm ci
+npm run lint
+npm run test:ts
+
+# Production web bundle (regenerates src/data/pythonSource.ts first)
+npm run build
+```
+
+What the suite covers, and why each test is there:
+
+| Test | Guards against |
+| --- | --- |
+| `tests/test_ldpc_codec.py` | An encoder that disagrees with its own parity-check matrix, a connection table that loses its girth-6 property, a CRC that stops detecting single-bit errors |
+| `tests/test_modem_spectrum.py` | A transmitter that splatters. Asserts the 99 % occupied bandwidth and the -40 dB bandwidth against fixed budgets, and asserts that the old per-symbol-gated waveform **fails** them, so the test can demonstrably tell the difference |
+| `tests/test_cross_language_parity.py` and `tests/crc14.test.mjs` | The Python and TypeScript codecs silently drifting apart - each half keeps working perfectly on its own while losing the ability to decode the other. Shared known-answer vectors in `tests/vectors/crc14_vectors.json` |
+| `tests/test_web_server_api.py` | The local API losing its token, `Origin` or `Host` checks; the GPIO pin whitelist; the PTT dead-man switch actually releasing |
+| `tests/test_time_sync_guards.py` | The system clock becoming settable by default, or an unbounded step from a spoofed time signal |
+| `tests/frontend.test.mjs` | The transmit gate admitting an out-of-band frequency, an unseeded benchmark PRNG, an amplitude-gated waveform, and unvalidated station config |
+
+`.github/workflows/ci.yml` runs all of this on every push across Python 3.10 and 3.12, plus a
+wheel build-and-import check, the production web build, verification that the PWA ships its
+service worker and both icons, and repository hygiene checks (a LICENSE file, no committed
+build artifacts, exactly one lockfile).
+
+---
+
 ## Repository Structure
 
 ```
 ├── README.md                     # Master Technical Documentation
+├── LICENSE                       # MIT licence text
 ├── package.json                  # Web DSP / React 19 / Vite / Tailwind configuration
-├── pyproject.toml                # Standard PEP 517/621 Python packaging metadata
-├── setup.py                      # Setuptools multi-platform setup script
+├── pyproject.toml                # PEP 517/621 packaging metadata (the only build config)
+├── requirements.txt              # Pinned Python runtime dependencies
 ├── PKGBUILD                      # Arch Linux / Manjaro package build specification
 ├── z30.spec                      # PyInstaller standalone Windows/Linux spec
 ├── z30.desktop                   # Freedesktop Application Menu specification
-├── manifest.json                 # PWA Web App manifest for Android / Desktop
-├── sw.js                         # Offline Service Worker cache engine
+│
+├── .github/workflows/ci.yml      # Tests, typecheck, build and hygiene checks on every push
+├── tests/                        # pytest suite + Node codec/DSP tests
+├── scripts/                      # Build-time generators (pythonSource.ts)
+├── public/                       # Static PWA assets copied verbatim into the build
+│   ├── manifest.json             # PWA Web App manifest for Android / Desktop
+│   ├── sw.js                     # Network-first Service Worker (build-stamped cache name)
+│   ├── icon-192.svg              # PWA icon
+│   └── icon-512.svg              # PWA icon
 │
 ├── install_ubuntu.sh             # Automated installer for Ubuntu/Debian
 ├── install_arch.sh               # Automated installer for Arch Linux / Manjaro
@@ -533,15 +655,11 @@ z30 --update -y
 ├── build_all_platforms.sh        # Multi-platform shell verification pipeline
 ├── build_all_platforms.py        # Multi-platform Python test and verification script
 │
-├── config_wizard.py              # CLI station configuration wizard
-├── rf_time_sync.py               # International time station scanner & DSP clock sync
-├── band_manager.py               # Dial frequency & band plan manager
-│
 ├── z30_dsp/                      # Native Python DSP Package
 │   ├── __init__.py               # Package metadata
 │   ├── main.py                   # Master entrypoint CLI/GUI router
-│   ├── modem.py                  # 16-MFSK modulator/demodulator & CPFSK engine
-│   ├── ldpc.py                   # Quasi-Cyclic LDPC (216, 77) encoder & decoder
+│   ├── modem.py                  # Continuous-phase 16-MFSK modulator (GFSK-shaped)
+│   ├── ldpc.py                   # IRA LDPC (216, 77) encoder & Min-Sum decoder
 │   ├── sic_decoder.py            # Multi-pass Successive Interference Cancellation
 │   ├── rf_time_sync.py           # Audio DSP time standard calibration scanner
 │   ├── band_manager.py           # Band plan & dial frequency manager
@@ -550,7 +668,8 @@ z30 --update -y
 │   ├── benchmark.py              # Monte Carlo BER/FER simulation suite
 │   ├── gui.py                    # High-level desktop GUI orchestrator
 │   ├── gui_tkinter.py            # Zero-dependency Tkinter desktop GUI
-│   ├── web_server.py             # Embedded HTTP/App mode web server
+│   ├── paths.py                  # Per-user config / logbook directory resolution
+│   ├── web_server.py             # Local server: token-authed hardware API, rigctld relay
 │   └── web_dist/                 # Embedded pre-compiled web assets
 │
 └── src/                          # Web DSP & GUI Source Code (TypeScript + React)
@@ -562,10 +681,15 @@ z30 --update -y
     ├── data/
     │   └── pythonSource.ts       # Embedded Python DSP source reference
     ├── dsp/                      # Pure Web Audio, DSP, Modems, and Decoders
-    │   ├── audioEngine.ts        # Web Audio API 12/48 kHz pipeline & synthesizer
+    │   ├── audioEngine.ts        # Web Audio API 12/48 kHz pipeline & AudioWorklet capture
+    │   ├── z30Waveform.ts        # Continuous-phase 16-MFSK generator (twin of modem.py)
+    │   ├── bandPlan.ts           # Band edges & licence privileges behind canTransmit()
+    │   ├── localServerApi.ts     # Token-authenticated client for the native server's API
+    │   ├── stationConfigStore.ts # Validated, versioned station config persistence
+    │   ├── seededRandom.ts       # Deterministic PRNG for reproducible benchmarks
     │   ├── z30Constants.ts       # 16-MFSK specs, Costas arrays, and PTT catalog
     │   ├── z30Codec.ts           # 63-bit Radix-37/27 packing & CRC-14 engine
-    │   ├── ldpcCodec.ts          # Rate-0.356 LDPC Belief Propagation decoder
+    │   ├── ldpcCodec.ts          # Rate-0.356 IRA LDPC Belief Propagation decoder
     │   ├── sicDecoder.ts         # 3-pass Successive Interference Cancellation
     │   ├── rfTimeSyncEngine.ts   # Audio DSP time station cross-correlation engine
     │   ├── qsoEngine.ts          # 6-stage QSO state machine & auto-sequencer

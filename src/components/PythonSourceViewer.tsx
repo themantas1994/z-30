@@ -4,7 +4,7 @@
 
 import React, { useState } from 'react';
 import { PYTHON_SOURCE_FILES, PythonFile } from '../data/pythonSource';
-import { Code2, Copy, Check, Download, Play, Terminal, ShieldCheck, FileCode, CheckCircle2 } from 'lucide-react';
+import { Code2, Copy, Check, Download, Play, Terminal, FileCode } from 'lucide-react';
 import { MonteCarloSimulationEngine } from '../dsp/monteCarloEngine';
 
 export const PythonSourceViewer: React.FC = () => {

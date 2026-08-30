@@ -99,6 +99,7 @@ function toDecodedSignal(
 export class Z30SicDecoderEngine {
   private decodedHistory: DecodedSignal[] = [];
   private lastIterationSteps: SicIterationStep[] = [];
+  /** Decodes accumulated during the current 30 s cycle; written by each SIC pass. */
   private currentCycleDecodes: DecodedSignal[] = [];
 
   /**
@@ -264,6 +265,17 @@ export class Z30SicDecoderEngine {
   public getHistory(): DecodedSignal[] {
     this.pruneHistory();
     return this.decodedHistory;
+  }
+
+  /**
+   * Retrieves the signals decoded in the most recent 30 s cycle only, as opposed to
+   * `getHistory()`, which spans several slots. The engine has always maintained this
+   * separately - it just had no accessor, so nothing could use it.
+   *
+   * @returns Array of DecodedSignal objects from the latest cycle
+   */
+  public getCurrentCycleDecodes(): DecodedSignal[] {
+    return [...this.currentCycleDecodes];
   }
 
   /**

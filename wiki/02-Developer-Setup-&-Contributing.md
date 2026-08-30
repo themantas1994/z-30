@@ -117,20 +117,24 @@ python3 build_all_platforms.py
 ├── wiki/                         # Master GitHub Wiki markdown documentation
 ├── PKGBUILD                      # Arch Linux / Manjaro package build specification
 ├── pyproject.toml                # Standard PEP 517/621 Python packaging metadata
-├── setup.py                      # Setuptools multi-platform setup script
+├── requirements.txt              # Pinned Python runtime dependencies
 ├── z30.spec                      # PyInstaller standalone Windows/Linux spec
 │
 ├── z30_dsp/                      # Native Python DSP Package
 │   ├── __init__.py               # Package metadata and version info
 │   ├── main.py                   # Master entrypoint router (CLI & GUI)
 │   ├── modem.py                  # 16-MFSK continuous-phase modulator & demodulator
-│   ├── ldpc.py                   # QC-LDPC (216, 77) parity matrices & Min-Sum decoder
+│   ├── ldpc.py                   # IRA LDPC (216, 77) parity matrices & Min-Sum decoder
 │   ├── sic_decoder.py            # 3-Pass Successive Interference Cancellation
 │   ├── rf_time_sync.py           # FIR matched filter time station demodulator
+│   ├── paths.py                  # Per-user config / logbook directory resolution
 │   ├── auto_logger.py            # ADIF 3.1.4 logbook engine
 │   ├── benchmark.py              # Monte Carlo AWGN/Rayleigh simulation suite
 │   ├── gui_tkinter.py            # Zero-dependency desktop GUI
-│   └── web_server.py             # Embedded HTTP/App mode web server
+│   └── web_server.py             # Local HTTP server: token-authed hardware API, rigctld relay
+│
+├── tests/                        # pytest suite (codec, spectrum, local API, time-sync guards)
+├── public/                       # Static PWA assets copied verbatim into the build
 │
 └── src/                          # Web DSP & GUI Source Code (TypeScript + React)
     ├── App.tsx                   # Master transceiver workspace orchestrator

@@ -24,7 +24,9 @@ pkg update -y
 # exist there and would make this whole `pkg install` line fail).
 pkg install -y python python-numpy python-scipy clang fftw libportaudio2 termux-api nodejs git
 pip install --upgrade pip setuptools wheel
-pip install sounddevice pyserial requests
+# Pinned versions - see requirements.txt. numpy and scipy come from the Termux packages above
+# (building them from source under Termux is impractical), so they are excluded here.
+grep -vE '^(numpy|scipy)==' requirements.txt | pip install -r /dev/stdin
 
 # KNOWN LIMITATION (not something this script can fix): sounddevice/PortAudio have no reliable
 # access to Android's audio devices from inside Termux - device lists commonly come back empty

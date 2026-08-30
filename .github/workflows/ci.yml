@@ -1,0 +1,110 @@
+name: CI
+
+# Every finding this workflow guards was previously a change to 36,000 lines of code with no
+# safety net beneath it - and the codec, the modem and the decoder are exactly the kind of code
+# where a subtle regression produces plausible-looking output that is quietly wrong.
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  python:
+    name: Python DSP suite (${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ['3.10', '3.12']
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install numpy scipy pytest
+
+      - name: Run the test suite
+        run: python -m pytest tests -v
+
+      - name: Verify the package builds and imports cleanly
+        run: |
+          python -m pip install --upgrade build
+          python -m build --wheel --outdir dist-wheel
+          python -m pip install dist-wheel/*.whl
+          python -c "import z30_dsp.ldpc, z30_dsp.modem, z30_dsp.web_server, z30_dsp.paths; print('package imports OK')"
+
+  frontend:
+    name: TypeScript frontend
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run lint
+
+      - name: Codec and DSP module tests
+        run: npm run test:ts
+
+      - name: Production build
+        run: npm run build
+
+      - name: Verify the PWA ships its service worker and icons
+        # The bundle used to be built without sw.js or either icon: there was no public/
+        # directory for Vite to copy them from, so main.tsx registered a /sw.js that 404'd and
+        # installing the PWA got no icon at all.
+        run: |
+          set -e
+          for asset in dist/index.html dist/sw.js dist/manifest.json dist/icon-192.svg dist/icon-512.svg; do
+            test -f "$asset" || { echo "missing from the build: $asset"; exit 1; }
+          done
+          grep -q '__Z30_BUILD_ID__' dist/sw.js && {
+            echo "sw.js still contains the build-id placeholder; the cache name would never change"
+            exit 1
+          }
+          echo "PWA assets present and the service worker cache name is stamped."
+
+  license:
+    name: Repository hygiene
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: LICENSE file must exist
+        # Four places declare MIT. Without the licence text the default is exclusive copyright,
+        # which blocks redistribution and the AUR/Debian packaging the README documents.
+        run: test -f LICENSE && grep -q 'MIT License' LICENSE
+
+      - name: No build artifacts or bytecode may be committed
+        run: |
+          set -e
+          if git ls-files | grep -E '(^|/)__pycache__/|\.pyc$|^dist/'; then
+            echo "Build artifacts are tracked in git; remove them and rely on .gitignore."
+            exit 1
+          fi
+          echo "No tracked build artifacts."
+
+      - name: Exactly one JavaScript lockfile
+        run: |
+          set -e
+          count=$(git ls-files | grep -cE '^(package-lock\.json|bun\.lock|bun\.lockb|yarn\.lock|pnpm-lock\.yaml)$' || true)
+          test "$count" -eq 1 || { echo "Found $count lockfiles; the built dependency tree must not depend on which package manager is run."; exit 1; }

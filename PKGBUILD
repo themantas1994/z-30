@@ -30,7 +30,7 @@ sha256sums=('SKIP')
 build() {
     if [ -d "$srcdir/z-30" ]; then
         cd "$srcdir/z-30"
-    elif [ -f "$startdir/setup.py" ]; then
+    elif [ -f "$startdir/pyproject.toml" ]; then
         cd "$startdir"
     else
         cd "$srcdir"
@@ -49,7 +49,7 @@ build() {
 package() {
     if [ -d "$srcdir/z-30" ]; then
         cd "$srcdir/z-30"
-    elif [ -f "$startdir/setup.py" ]; then
+    elif [ -f "$startdir/pyproject.toml" ]; then
         cd "$startdir"
     else
         cd "$srcdir"
@@ -61,7 +61,12 @@ package() {
     if [ -f z30.desktop ]; then
         install -Dm644 z30.desktop "$pkgdir/usr/share/applications/z30.desktop"
     fi
-    if [ -f icon-512.svg ]; then
-        install -Dm644 icon-512.svg "$pkgdir/usr/share/icons/hicolor/scalable/apps/z30.svg"
+    if [ -f public/icon-512.svg ]; then
+        install -Dm644 public/icon-512.svg "$pkgdir/usr/share/icons/hicolor/scalable/apps/z30.svg"
     fi
+
+    # The AUR requires the licence text to be installed. There was no LICENSE file in the tree
+    # at all until recently, despite four places declaring MIT - which made this package (and
+    # Debian packaging, and any fork) legally undistributable.
+    install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
 }

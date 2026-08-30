@@ -3,14 +3,14 @@
  * 16-MFSK / 50 Hz Bandwidth / 30s Sync Cycle / LDPC + SIC
  */
 
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { DecodedSignal, LogEntry, StationConfig } from './types/z30';
-import { DEFAULT_STATION_CONFIG, HAM_BANDS, Z30_SPECS, evaluateSlotTiming } from './dsp/z30Constants';
+import { HAM_BANDS, Z30_SPECS, evaluateSlotTiming } from './dsp/z30Constants';
 import { audioEngine } from './dsp/audioEngine';
 import { packZ30Message } from './dsp/z30Codec';
 import { sicDecoderEngine } from './dsp/sicDecoder';
 import { qsoEngine, QsoState } from './dsp/qsoEngine';
-import { qsoLogger } from './dsp/qsoLogger';
+import { qsoLogger, StorageStatus } from './dsp/qsoLogger';
 import { rigctl } from './dsp/catController';
 
 import { Header } from './components/Header';
@@ -29,20 +29,17 @@ import { WikiModal } from './components/WikiModal';
 import { UpdateModal } from './components/UpdateModal';
 import { MonteCarloBenchmarkModal } from './components/MonteCarloBenchmarkModal';
 import { updateEngine } from './dsp/updateEngine';
+import {
+  loadStationConfigFromBrowser,
+  loadStationConfigFromServer,
+  saveStationConfig,
+} from './dsp/stationConfigStore';
 
 export default function App() {
   // Station & Hardware Config (Initialized from LocalStorage if available)
-  const [config, setConfig] = useState<StationConfig>(() => {
-    try {
-      const saved = localStorage.getItem('z30_station_config');
-      if (saved) {
-        return { ...DEFAULT_STATION_CONFIG, ...JSON.parse(saved) };
-      }
-    } catch {
-      // fallback
-    }
-    return DEFAULT_STATION_CONFIG;
-  });
+  // Validated on load rather than spread in blind: these fields feed the transmit path, and a
+  // truncated write or a hand-edited store must not put a wrong-typed value on that path.
+  const [config, setConfig] = useState<StationConfig>(() => loadStationConfigFromBrowser().config);
 
   const [currentBandIdx, setCurrentBandIdx] = useState<number>(5); // 20m default (14.076 MHz)
   const [dialFreqHz, setDialFreqHz] = useState<number>(HAM_BANDS[5].dialFreqHz);
@@ -86,12 +83,33 @@ export default function App() {
     }
   }, []);
 
+  useEffect(() => qsoLogger.subscribeToStorageStatus(setStorageStatus), []);
+
+  // The native server keeps a copy of the station config on disk. It outlives cleared browsing
+  // data and a changed port number, both of which wipe localStorage, so prefer it on startup.
+  useEffect(() => {
+    let cancelled = false;
+    void loadStationConfigFromServer().then((serverConfig) => {
+      if (!cancelled && serverConfig) setConfig(serverConfig);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   // Keep the CAT controller's active protocol family (CI-V / Kenwood-ASCII / none) and
   // CI-V address in sync with the configured rig model, so setFreqHz/setMode/setPtt send the
   // right real hardware protocol whenever the operator changes rigs.
   useEffect(() => {
     rigctl.configureRig(config.rigModel);
-  }, [config.rigModel]);
+    // Hamlib network mode routes frequency/mode/PTT through the native server's rigctld TCP
+    // relay, which is the only way a browser can reach the daemon at all.
+    rigctl.configureHamlibEndpoint(
+      config.hamlibHost,
+      config.hamlibPort,
+      config.catEnabled && config.catMethod === 'Hamlib'
+    );
+  }, [config.rigModel, config.hamlibHost, config.hamlibPort, config.catEnabled, config.catMethod]);
 
   // Auto-connect audio receiver if system permission was already granted
   useEffect(() => {
@@ -128,7 +146,17 @@ export default function App() {
   const [isTuning, setIsTuning] = useState<boolean>(false);
   const [cycleProgressSec, setCycleProgressSec] = useState<number>(0);
   const [fwdWatts, setFwdWatts] = useState<number>(0);
-  const [swr, setSwr] = useState<number>(1.0);
+  /**
+   * Reasons the last transmit attempt was refused by rigctl.canTransmit(). Non-empty means a
+   * carrier was never generated - the gate runs before PTT is asserted, not after.
+   */
+  const [txBlockReasons, setTxBlockReasons] = useState<string[]>([]);
+  /**
+   * Where the logbook is actually being persisted, and whether the last write succeeded. A
+   * quota-exceeded localStorage write used to be caught and logged to the console only, so an
+   * operator could log contacts all evening into a store that was silently discarding them.
+   */
+  const [storageStatus, setStorageStatus] = useState<StorageStatus>(() => qsoLogger.getStorageStatus());
 
   // Mirrors isTransmitting/isTuning for the page-unload safety handler below, which needs to
   // read the CURRENT value at unload time without re-registering its listener on every change.
@@ -208,9 +236,31 @@ export default function App() {
 
   const tuneTimeoutRef = useRef<number | null>(null);
 
+  /**
+   * The one gate every transmit path in this component goes through.
+   *
+   * Runs rigctl.canTransmit() and, on refusal, disarms TX and surfaces the reasons in the
+   * banner rather than failing silently. Everything that can key a radio - the automatic QSO
+   * sequencer, the manual TX button, and the tune carrier - calls this first, because a check
+   * that only some transmit paths perform is not a check.
+   */
+  const assertCanTransmit = useCallback(
+    (audioOffsetHz: number): boolean => {
+      const permission = rigctl.canTransmit(config, audioOffsetHz, dialFreqHz);
+      setTxBlockReasons(permission.allowed ? [] : permission.violations);
+      if (!permission.allowed) {
+        qsoEngine.setTxEnabled(false);
+        setQsoState(qsoEngine.getState());
+      }
+      return permission.allowed;
+    },
+    [config, dialFreqHz]
+  );
+
   // Helper to start the 24.0s 16-MFSK physical transmission
   const startActiveTransmission = useCallback(() => {
     if (isTransmitting) return;
+    if (!assertCanTransmit(qsoEngine.getState().txFreqHz)) return;
     if (isTuning) {
       if (tuneTimeoutRef.current) clearTimeout(tuneTimeoutRef.current);
       tuneTimeoutRef.current = null;
@@ -233,7 +283,6 @@ export default function App() {
       winkeyerPort: config.winkeyerPort,
     });
     setFwdWatts(config.txPowerWatts);
-    setSwr(1.18);
 
     // Register active signal into local audio frame history with isLocalTx = true (for waterfall display only, not for decoder)
     audioEngine.registerActiveSignal(currentState.txFreqHz, txText, packed.symbols, 6, true);
@@ -246,8 +295,7 @@ export default function App() {
         setIsTransmitting(false);
         rigctl.setPtt(false, config.pttMethod, config.pttPolarity);
         setFwdWatts(0);
-        setSwr(1.0);
-      },
+          },
       {
         enableRightTone: config.pttMethod === 'AUDIO_TONE_RIGHT',
         toneFreqHz: config.pttToneFreqHz || 1000,
@@ -255,7 +303,7 @@ export default function App() {
         hangTimeMs: config.pttHangTimeMs || 30,
       }
     );
-  }, [config, isTransmitting, isTuning]);
+  }, [config, isTransmitting, isTuning, assertCanTransmit]);
 
   // Main Synchronous 30-Second Cycle Clock Engine
   useEffect(() => {
@@ -338,7 +386,6 @@ export default function App() {
     setIsTuning(false);
     rigctl.setPtt(false, config.pttMethod, config.pttPolarity);
     setFwdWatts(0);
-    setSwr(1.0);
     qsoEngine.setTxEnabled(false);
     setQsoState(qsoEngine.getState());
   };
@@ -356,6 +403,7 @@ export default function App() {
 
   // Tune Tone (CW Carrier for antenna matching with 15s auto-safety cutoff)
   const handleStartTune = () => {
+    if (!assertCanTransmit(qsoState.txFreqHz)) return;
     if (isTransmitting) {
       audioEngine.stopTransmission();
       setIsTransmitting(false);
@@ -371,7 +419,6 @@ export default function App() {
       winkeyerPort: config.winkeyerPort,
     });
     setFwdWatts(config.txPowerWatts);
-    setSwr(1.15);
     audioEngine.startTuneTone(qsoState.txFreqHz, {
       enableRightTone: config.pttMethod === 'AUDIO_TONE_RIGHT',
       toneFreqHz: config.pttToneFreqHz || 1000,
@@ -391,7 +438,6 @@ export default function App() {
     setIsTuning(false);
     rigctl.setPtt(false, config.pttMethod, config.pttPolarity);
     setFwdWatts(0);
-    setSwr(1.0);
     audioEngine.stopTransmission();
   };
 
@@ -413,8 +459,8 @@ export default function App() {
 
   const handleSaveStationConfig = useCallback((newCfg: StationConfig) => {
     setConfig(newCfg);
+    saveStationConfig(newCfg);
     try {
-      localStorage.setItem('z30_station_config', JSON.stringify(newCfg));
       localStorage.setItem('z30_wizard_completed', 'true');
     } catch {
       // ignore
@@ -426,11 +472,7 @@ export default function App() {
   const handleUpdateConfig = useCallback((partial: Partial<StationConfig>) => {
     setConfig((prev) => {
       const next = { ...prev, ...partial };
-      try {
-        localStorage.setItem('z30_station_config', JSON.stringify(next));
-      } catch {
-        // ignore
-      }
+      saveStationConfig(next);
       return next;
     });
   }, []);
@@ -449,6 +491,43 @@ export default function App() {
 
   return (
     <div className="flex flex-col h-screen w-screen bg-[#0A0A0A] text-[#D4D4D4] font-mono select-none overflow-hidden">
+      {/* Transmit refused: the gate ran before any carrier was generated. */}
+      {txBlockReasons.length > 0 && (
+        <div className="bg-[#3a1111] border-b-2 border-red-500 px-4 py-2 text-xs text-red-200">
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <strong className="text-red-400">TRANSMIT BLOCKED — nothing was keyed.</strong>
+              <ul className="mt-1 list-disc list-inside space-y-0.5">
+                {txBlockReasons.map((reason, idx) => (
+                  <li key={idx}>{reason}</li>
+                ))}
+              </ul>
+            </div>
+            <button
+              type="button"
+              className="shrink-0 border border-red-500 px-2 py-0.5 hover:bg-red-900"
+              onClick={() => setTxBlockReasons([])}
+            >
+              Dismiss
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Logbook persistence: a failed or browser-only save is stated, not hidden. */}
+      {(!storageStatus.ok || storageStatus.error) && (
+        <div
+          className={`px-4 py-1.5 text-[11px] border-b ${
+            storageStatus.ok
+              ? 'bg-[#1a1405] border-[#3a2f0a] text-yellow-200'
+              : 'bg-[#3a1111] border-red-500 text-red-200'
+          }`}
+        >
+          <strong>{storageStatus.ok ? 'LOGBOOK STORAGE' : 'LOGBOOK NOT SAVED'}:</strong>{' '}
+          {storageStatus.error}
+        </div>
+      )}
+
       {/* Top Header & 30s Cycle Clock */}
       <Header
         config={config}
@@ -498,7 +577,6 @@ export default function App() {
               onBandChange={handleBandChange}
               onOpenBandManager={() => setIsBandManagerOpen(true)}
               fwdWatts={fwdWatts}
-              swr={swr}
             />
           </div>
 
@@ -550,8 +628,7 @@ export default function App() {
                   onUpdateState={handleUpdateQsoState}
                   onUpdateConfig={handleUpdateConfig}
                   fwdWatts={fwdWatts}
-                  swr={swr}
-                  isTuning={isTuning}
+                      isTuning={isTuning}
                 />
               </div>
 

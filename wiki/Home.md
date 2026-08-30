@@ -24,7 +24,7 @@ Welcome to the official technical documentation and developer wiki for **z-30**:
 1. **Ultra-Narrowband 16-MFSK**: Continuous-Phase 16-Tone Frequency Shift Keying occupying only **50.0 Hz** of RF bandwidth.
 2. **Rate-0.356 QC-LDPC + CRC-14**: Systematic (216, 77) Low-Density Parity-Check forward error correction with a 14-bit polynomial CRC yielding a false decode probability $< 10^{-6}$.
 3. **Multi-Pass Successive Interference Cancellation (SIC)**: 3-pass DSP cancellation engine that synthesizes and subtracts strong decoded carrier waveforms to recover hidden co-channel DX signals.
-4. **Sub-Millisecond RF Time Calibration (`rf_time_sync.py`)**: Embedded FIR matched-filter receiver that calibrates clock drift ($\Delta t$) against global standard stations (**WWV, WWVH, CHU, DCF77, MSF, WWVB, JJY**) without needing internet or administrator privileges.
+4. **Sub-Millisecond RF Time Calibration (`z30_dsp/rf_time_sync.py`)**: Embedded FIR matched-filter receiver that calibrates clock drift ($\Delta t$) against global standard stations (**WWV, WWVH, CHU, DCF77, MSF, WWVB, JJY**) without needing internet or administrator privileges.
 5. **Universal Cross-Platform Architecture**: Dual-stack engine featuring an interactive Web Audio 60 FPS HTML5/PWA GUI and a native Python 3 DSP package (`z30_dsp`) with Hamlib CAT and 9 PTT keying methods.
 
 ---

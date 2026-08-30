@@ -4,7 +4,7 @@
 
 import React, { useState, useMemo, useEffect } from 'react';
 import { DecodedSignal } from '../types/z30';
-import { Radio, Sparkles, Filter, Search, Trash2, ArrowUpRight, ShieldCheck, Zap } from 'lucide-react';
+import { Radio, Sparkles, Search, Trash2, ArrowUpRight, ShieldCheck, Zap } from 'lucide-react';
 
 interface ActivityLogTableProps {
   decodes: DecodedSignal[];

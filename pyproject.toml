@@ -9,6 +9,7 @@ description = "Amateur Radio 16-MFSK Weak-Signal Digital Transceiver & DSP Suite
 readme = "README.md"
 authors = [{ name = "Paulo Mantas", email = "paulomantas2009@gmail.com" }]
 license = { text = "MIT" }
+keywords = ["ham radio", "amateur radio", "digital mode", "MFSK", "LDPC", "DSP", "weak signal"]
 requires-python = ">=3.9"
 dependencies = [
     "numpy>=1.22.0",
@@ -17,6 +18,23 @@ dependencies = [
     "cffi>=1.15.0",
     "pyserial>=3.5",
     "requests>=2.28.0"
+]
+
+classifiers = [
+    # The README frames z-30 as experimental and asks operators to verify their signal before
+    # transmitting; setup.py used to claim "5 - Production/Stable", which contradicted it.
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Telecommunications Industry",
+    "Topic :: Communications :: Ham Radio",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: POSIX :: Linux",
+    "Operating System :: Microsoft :: Windows",
+    "Operating System :: MacOS",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
 ]
 
 [project.urls]
@@ -31,13 +49,19 @@ plots = ["matplotlib>=3.5.0"]
 # /api/gpio bridge - see z30_dsp/web_server.py:GpioBridge). Not required for any other feature.
 gpio = ["gpiozero>=2.0"]
 
+# Every console script points at the z30_dsp package. Three of these used to resolve to
+# top-level modules installed straight into site-packages (config_wizard, rf_time_sync,
+# band_manager) - duplicates of the packaged versions that had drifted away from them, so
+# `z30 --wizard` and `z30-wizard` ran different code, and those very generic names shadowed
+# anything else by the same name in the environment.
 [project.scripts]
 z30 = "z30_dsp.main:main"
+z30-transceiver = "z30_dsp.main:main"
 z30-web = "z30_dsp.web_server:main"
 z30-gui = "z30_dsp.gui:main"
-z30-wizard = "config_wizard:main"
-z30-sync = "rf_time_sync:main"
-z30-bands = "band_manager:main"
+z30-wizard = "z30_dsp.config_wizard:main"
+z30-sync = "z30_dsp.rf_time_sync:main"
+z30-bands = "z30_dsp.band_manager:main"
 
 [tool.setuptools]
 packages = ["z30_dsp"]
@@ -45,3 +69,6 @@ packages = ["z30_dsp"]
 [tool.setuptools.package-data]
 z30_dsp = ["web_dist/**/*", "web_dist/*"]
 
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

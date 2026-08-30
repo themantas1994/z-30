@@ -1,0 +1,27 @@
+# z-30 Python runtime dependencies, pinned to exact versions.
+#
+# The installers used to run `pip install numpy scipy sounddevice ...` with no version
+# constraints, so two installs a month apart produced different software with no record of what
+# changed - and a DSP suite whose numerical behaviour depends on its NumPy and SciPy versions is
+# the last place that belongs.
+#
+# Install with:
+#     pip install -r requirements.txt
+#
+# For a fully hash-verified install (recommended for anything shipping to other operators),
+# generate a locked file from this one:
+#     pip install pip-tools
+#     pip-compile --generate-hashes --output-file requirements.lock requirements.txt
+#     pip install --require-hashes -r requirements.lock
+#
+# Bump these deliberately, together, and re-run the test suite afterwards.
+
+numpy==2.2.6
+scipy==1.15.3
+sounddevice==0.5.2
+cffi==1.17.1
+pyserial==3.5
+requests==2.32.4
+
+# Optional: real GPIO PTT keying on a Raspberry Pi or similar SBC.
+# gpiozero==2.0.1

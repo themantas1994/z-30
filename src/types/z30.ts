@@ -58,6 +58,14 @@ export type PttMethodType =
 export interface StationConfig {
   myCall: string;
   myGrid: string;
+  /**
+   * Regulatory framework the operator is licensed under. Required before the app will
+   * transmit: `canTransmit()` fails closed without it, because band edges are not the same
+   * everywhere and guessing on the operator's behalf is how you end up out of band.
+   */
+  regulatoryRegion?: import('../dsp/bandPlan').RegulatoryRegion;
+  /** Licence class within that region. Also required before transmitting. */
+  licenseClass?: import('../dsp/bandPlan').LicenseClass;
   operatorName?: string;
   qthDescription?: string;
   txPowerWatts: number;

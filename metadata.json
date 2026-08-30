@@ -1,6 +1,5 @@
 {
   "name": "z-30 Digital Mode Transceiver & DSP Suite",
   "description": "Experimental amateur radio 16-MFSK weak-signal digital mode transceiver, DSP waterfall analyzer, LDPC-SIC decoder, CAT controller, and Python engineering workbench.",
-  "requestFramePermissions": ["microphone"],
-  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+  "requestFramePermissions": ["microphone"]
 }

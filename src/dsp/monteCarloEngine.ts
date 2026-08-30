@@ -15,8 +15,9 @@
  *    and LDPC iteration convergence across user-configured SNR sweeps.
  */
 
+import { createSeededRandom, DEFAULT_MONTE_CARLO_SEED, RandomSource } from './seededRandom';
 import { Z30_SPECS } from './z30Constants';
-import { Z30LdpcEngine, ldpcCodec } from './ldpcCodec';
+import { Z30LdpcEngine } from './ldpcCodec';
 import { encodeLdpc216_77, computeCrc14 } from './z30Codec';
 
 export type ChannelModelType = 'AWGN' | 'RAYLEIGH_FADING' | 'CO_CHANNEL_QRM';
@@ -78,6 +79,14 @@ export interface MonteCarloConfig {
   qrmSirDb?: number; // Signal to Interference Ratio in dB
   maxLdpcIterations: number;
   alphaMinSum: number;
+  /**
+   * PRNG seed for the payloads, the noise and the fading process.
+   *
+   * Both benchmark engines used to draw from unseeded `Math.random()`, so two runs of the same
+   * configuration gave different curves and no published number could be reproduced, bisected
+   * or independently checked. Record this seed alongside any result you publish.
+   */
+  seed?: number;
 }
 
 export const DEFAULT_MONTE_CARLO_CONFIG: MonteCarloConfig = {
@@ -94,9 +103,15 @@ export const DEFAULT_MONTE_CARLO_CONFIG: MonteCarloConfig = {
   qrmSirDb: -6.0,
   maxLdpcIterations: 45,
   alphaMinSum: 0.75,
+  seed: DEFAULT_MONTE_CARLO_SEED,
 };
 
 export class MonteCarloSimulationEngine {
+  /**
+   * Random source for the current run. Re-seeded at the start of every `runSimulation` call,
+   * so a given seed always produces the same curve.
+   */
+  private rng: RandomSource = createSeededRandom();
   private isCancelled: boolean = false;
   private isPaused: boolean = false;
   private currentProgress: MonteCarloProgress = {
@@ -163,14 +178,14 @@ export class MonteCarloSimulationEngine {
   }
 
 /**
- * Generates random 63-bit amateur payload.
- * 
+ * Generates a random 63-bit amateur payload from the run's seeded PRNG.
+ *
  * @returns 63-element binary array (0 or 1)
  */
 public generateRandomPayload(): number[] {
   const payload = new Array(63);
   for (let i = 0; i < 63; i++) {
-    payload[i] = Math.random() < 0.5 ? 0 : 1;
+    payload[i] = this.rng.next() < 0.5 ? 0 : 1;
   }
   return payload;
 }
@@ -323,8 +338,8 @@ public synthesizePhysicalWaveform(
 
     // Box-Muller Gaussian Noise Generator
     for (let i = 0; i < len; i += 2) {
-      const u1 = Math.max(1e-12, Math.random());
-      const u2 = Math.random();
+      const u1 = Math.max(1e-12, this.rng.next());
+      const u2 = this.rng.next();
       const mag = sigma * Math.sqrt(-2.0 * Math.log(u1));
       const z0 = mag * Math.cos(2.0 * Math.PI * u2);
       const z1 = mag * Math.sin(2.0 * Math.PI * u2);
@@ -355,8 +370,8 @@ public synthesizePhysicalWaveform(
     const faded = new Float32Array(len);
 
     // Two-path Watterson model: Direct path + Delayed path with slow random Rayleigh amplitude & phase
-    let phase1 = Math.random() * 2 * Math.PI;
-    let phase2 = Math.random() * 2 * Math.PI;
+    let phase1 = this.rng.next() * 2 * Math.PI;
+    let phase2 = this.rng.next() * 2 * Math.PI;
     let gain1 = 1.0;
     let gain2 = 0.7;
 
@@ -364,8 +379,8 @@ public synthesizePhysicalWaveform(
     const dPhi = 2 * Math.PI * dopplerHz * dt;
 
     for (let i = 0; i < len; i++) {
-      phase1 += dPhi * (0.8 + 0.4 * Math.random());
-      phase2 += dPhi * 1.3 * (0.8 + 0.4 * Math.random());
+      phase1 += dPhi * (0.8 + 0.4 * this.rng.next());
+      phase2 += dPhi * 1.3 * (0.8 + 0.4 * this.rng.next());
       gain1 = 0.8 + 0.4 * Math.sin(phase1);
       gain2 = 0.5 + 0.3 * Math.cos(phase2);
 
@@ -620,8 +635,8 @@ public synthesizePhysicalWaveform(
       // Fading channel amplitude multiplier: Rayleigh distribution
       let fadeAmp = 1.0;
       if (channelModel === 'RAYLEIGH_FADING') {
-        const g1 = Math.max(1e-12, Math.random());
-        const g2 = Math.random();
+        const g1 = Math.max(1e-12, this.rng.next());
+        const g2 = this.rng.next();
         const rI = Math.sqrt(-Math.log(g1)) * Math.cos(2.0 * Math.PI * g2);
         const rQ = Math.sqrt(-Math.log(g1)) * Math.sin(2.0 * Math.PI * g2);
         fadeAmp = Math.sqrt(rI * rI + rQ * rQ);
@@ -629,19 +644,19 @@ public synthesizePhysicalWaveform(
 
       const effAmp = signalAmp * fadeAmp;
       // Carrier phase on current symbol
-      const carrierPhase = Math.random() * 2.0 * Math.PI;
+      const carrierPhase = this.rng.next() * 2.0 * Math.PI;
 
       // Pilot phase estimation tracking variance from 21 Costas sync symbols
       const pilotPhaseErrorStd = 1.0 / Math.sqrt(Math.max(0.1, 2.0 * esN0Linear * 1.5));
-      const estCarrierPhase = carrierPhase + (Math.random() - 0.5) * 2.0 * pilotPhaseErrorStd;
+      const estCarrierPhase = carrierPhase + (this.rng.next() - 0.5) * 2.0 * pilotPhaseErrorStd;
       const pilotWeight = Math.max(0.2, Math.min(0.95, esN0Linear / (esN0Linear + 1.5)));
 
       for (let t = 0; t < 16; t++) {
         // Complex circular Gaussian noise: N_I, N_Q ~ N(0, 1)
-        const u1 = Math.max(1e-12, Math.random());
-        const u2 = Math.random();
-        const u3 = Math.max(1e-12, Math.random());
-        const u4 = Math.random();
+        const u1 = Math.max(1e-12, this.rng.next());
+        const u2 = this.rng.next();
+        const u3 = Math.max(1e-12, this.rng.next());
+        const u4 = this.rng.next();
 
         const nI = Math.sqrt(-2.0 * Math.log(u1)) * Math.cos(2.0 * Math.PI * u2);
         const nQ = Math.sqrt(-2.0 * Math.log(u3)) * Math.sin(2.0 * Math.PI * u4);
@@ -717,6 +732,9 @@ public synthesizePhysicalWaveform(
    * Executes complete Monte Carlo simulation across user-defined SNR points
    */
   public async runSimulation(config: MonteCarloConfig = DEFAULT_MONTE_CARLO_CONFIG): Promise<SnrPointResult[]> {
+    // Re-seed at the top of every run so the same configuration always produces the same
+    // curve, whatever ran before it in this session.
+    this.rng = createSeededRandom(config.seed ?? DEFAULT_MONTE_CARLO_SEED);
     this.isCancelled = false;
     this.isPaused = false;
 

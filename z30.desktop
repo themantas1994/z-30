@@ -11,3 +11,4 @@ Categories=HamRadio;AudioVideo;Audio;Science;Engineering;
 Keywords=HamRadio;DigitalMode;MFSK;WSJTX;FT8;JS8Call;DSP;Transceiver;
 StartupNotify=true
 MimeType=application/x-z30-log;
+# Icon 'z30' is installed from public/icon-512.svg by PKGBUILD and the install scripts.

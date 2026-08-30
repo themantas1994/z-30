@@ -472,7 +472,6 @@ export function unpackZ30Message(infoBits: number[]): {
 export function buildQsoMacros(myCall: string, myGrid: string, dxCall: string, dxGrid: string, rptSent: string, rptRcvd: string) {
   const cleanDx = dxCall.trim().toUpperCase() || 'DX';
   const cleanMy = myCall.trim().toUpperCase() || 'W1AW';
-  const cleanGrid = dxGrid.trim().toUpperCase() || 'EM00';
   const cleanMyGrid = myGrid.trim().toUpperCase() || 'FN31';
 
   return {

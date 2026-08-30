@@ -27,8 +27,13 @@
  *    This allows zero-latency encoding without computing or storing a dense generator matrix G.
  * 
  * 4. Error Detection (CRC-14):
- *    Generator polynomial: g(x) = x^14 + x^11 + x^2 + 1 (Hex 0x2443, Init 0x2757).
- *    Guarantees undetected frame error probability P_ue < 6.1e-5 under severe noise.
+ *    Generator polynomial, as implemented: g(x) = x^14 + x^13 + x^10 + x^6 + x + 1.
+ *    Register constant 0x2443 (the low 14 coefficients; x^14 is implicit), Init 0x2757,
+ *    MSB-first. This comment, its counterpart in z30_dsp/ldpc.py, and the README previously
+ *    stated "x^14 + x^11 + x^2 + 1" - a different polynomial (register constant 0x0805). Both
+ *    shipped implementations agreed with each other so nothing broke, but a third
+ *    implementation written from that specification would have failed against both.
+ *    Undetected frame error probability P_ue ~= 2^-14 = 6.1e-5 for random errors.
  * 
  * 5. Vectorized Normalized Min-Sum Belief Propagation Decoder:
  *    - Check node update: L_{c->v} = alpha * prod(sign(L_{v'->c})) * min_{v' != v}(|L_{v'->c}|)
@@ -85,7 +90,9 @@ export class Z30LdpcEngine {
   private readonly n = Z30_LDPC_PARAMS.n;
   private readonly k = Z30_LDPC_PARAMS.k;
   private readonly m = Z30_LDPC_PARAMS.m;
-  private readonly alpha = Z30_LDPC_PARAMS.alphaMinSum;
+  // The min-sum normalisation factor is not a single constant: decodeMinSum() runs four
+  // schedules, each with its own alpha (0.74 to 0.95). Z30_LDPC_PARAMS.alphaMinSum documents
+  // the nominal 0.75 for the spec; the schedules below are what actually runs.
 
   // Parity check matrix sparse graph representation
   // checkToVarEdges[c] = array of variable node indices connected to check c
@@ -151,7 +158,7 @@ export class Z30LdpcEngine {
 
   /**
    * 14-bit CRC computation for 63-bit amateur payload.
-   * Polynomial: x^14 + x^11 + x^2 + 1 (Hex 0x2443, Init 0x2757)
+   * Polynomial: g(x) = x^14 + x^13 + x^10 + x^6 + x + 1 (register constant 0x2443, x^14 implicit; Init 0x2757)
    * 
    * @param bits - Array or TypedArray of binary payload bits
    * @returns 14-bit integer CRC checksum (0x0000 to 0x3FFF)

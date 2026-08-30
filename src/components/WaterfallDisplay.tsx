@@ -21,20 +21,14 @@ import {
   Palette,
   ZoomIn,
   ZoomOut,
-  Move,
-  Eye,
   Radio,
   Sparkles,
-  SlidersHorizontal,
   RefreshCw,
-  Volume2,
   Sliders,
   Zap,
   Gauge,
   Layers,
-  ArrowUpRight,
-  ShieldAlert,
-} from 'lucide-react';
+  } from 'lucide-react';
 
 interface WaterfallDisplayProps {
   rxFreqHz: number;
@@ -52,7 +46,6 @@ interface WaterfallDisplayProps {
   onBandChange?: (bandName: string) => void;
   onOpenBandManager?: () => void;
   fwdWatts?: number;
-  swr?: number;
 }
 
 export type FreqRangePreset =
@@ -163,7 +156,6 @@ export const WaterfallDisplay: React.FC<WaterfallDisplayProps> = ({
   onBandChange,
   onOpenBandManager,
   fwdWatts = 50.0,
-  swr = 1.12,
 }) => {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -210,7 +202,7 @@ export const WaterfallDisplay: React.FC<WaterfallDisplayProps> = ({
   // Display, Speed & Colormap State
   const [palette, setPalette] = useState<ColorPaletteName>('turbo');
   const [gainDb, setGainDb] = useState<number>(14);
-  const [contrast, setContrast] = useState<number>(75);
+  const [contrast] = useState<number>(75);
   const [signalBoost, setSignalBoost] = useState<number>(1.6); // 1.0 = normal, 1.6 = enhanced, 2.2 = ultra visibility
   const [speed, setSpeed] = useState<number>(2); // 1 = Slow, 2 = Normal, 3 = Fast, 4 = Max
   const [showSpectrum, setShowSpectrum] = useState<boolean>(true);
@@ -411,7 +403,6 @@ export const WaterfallDisplay: React.FC<WaterfallDisplayProps> = ({
         const binCount = analyser ? analyser.frequencyBinCount : 2048;
         const sampleRate = audioEngine.getAudioContext()?.sampleRate || 48000;
         const nyquist = sampleRate / 2;
-        const nowTime = Date.now();
 
         for (let x = 0; x < offscreen.width; x++) {
           const freqAtX = fullMinFreq + (x / offscreen.width) * fullSpan;
@@ -1227,7 +1218,7 @@ export const WaterfallDisplay: React.FC<WaterfallDisplayProps> = ({
             }`}
           >
             {isTransmitting
-              ? `TX 100% (${fwdWatts.toFixed(1)}W • SWR ${swr.toFixed(2)})`
+              ? `TX 100% (${fwdWatts.toFixed(1)}W set)`
               : isTuning
               ? `TUNE CW (${fwdWatts.toFixed(1)}W)`
               : `${sMeterInfo.sUnit} (${sMeterDb.toFixed(0)} dBm)`}

@@ -18,26 +18,20 @@ import {
   RefreshCw,
   Play,
   Square,
-  Sparkles,
   MapPin,
   AlertCircle,
   FileCheck,
-  Sliders,
   DownloadCloud,
   CheckCircle,
   AlertTriangle,
   Terminal,
   Cable,
-  Radio as RadioIcon,
-  Globe,
-  Clock,
-} from 'lucide-react';
+  Radio as Globe,
+  } from 'lucide-react';
 import { audioEngine, SystemAudioDevice, AudioSystemDiagnostics } from '../dsp/audioEngine';
 import { PTT_METHODS_CATALOG } from '../dsp/z30Constants';
 import {
   TIMEZONE_CATALOG,
-  formatUtcTime,
-  formatTimeInTimezone,
   getTimezoneOffsetString,
 } from '../dsp/timeUtils';
 import {
@@ -105,7 +99,6 @@ export const SetupWizardModal: React.FC<SetupWizardModalProps> = ({
   // Real Hardware Serial / COM Ports
   const [discoveredPorts, setDiscoveredPorts] = useState<DiscoveredSerialPort[]>([]);
   const [isQueryingSerial, setIsQueryingSerial] = useState<boolean>(false);
-  const [customPortInput, setCustomPortInput] = useState<string>('');
   const [isCustomPortMode, setIsCustomPortMode] = useState<boolean>(false);
 
   // Audio meter test state
@@ -430,7 +423,6 @@ export const SetupWizardModal: React.FC<SetupWizardModalProps> = ({
     { title: 'Summary', icon: FileCheck, desc: 'Review & Complete' },
   ];
 
-  const dbVal = vuLevel > 0 ? (20 * Math.log10(vuLevel)).toFixed(1) : '-inf';
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/85 p-4 font-mono select-none">
@@ -468,7 +460,6 @@ export const SetupWizardModal: React.FC<SetupWizardModalProps> = ({
               </div>
 
               {steps.map((step, idx) => {
-                const Icon = step.icon;
                 const isActive = currentStep === idx;
                 const isDone = currentStep > idx;
                 return (
