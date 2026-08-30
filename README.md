@@ -6,7 +6,7 @@
 [![Radio Mode](https://img.shields.io/badge/mode-16--MFSK%20|%20LDPC--SIC%20|%2030s%20Cycle-orange.svg)]()
 [![PWA Ready](https://img.shields.io/badge/PWA-Installable%20Offline-blueviolet.svg)]()
 
-**z-30** is an open-source, next-generation amateur radio weak-signal digital communications and DSP engineering suite. Engineered for extreme HF, VHF, and microwave propagation conditions (down to **-25.0 dB SNR** 50% decode threshold / **-24.0 dB SNR** 90% decode threshold in 2500 Hz reference bandwidth), z-30 combines an ultra-narrow **50.0 Hz occupied bandwidth** 16-MFSK modulation scheme, a rate-0.356 irregular repeat-accumulate (IRA) Low-Density Parity-Check (LDPC) forward error correction code, and multi-pass **Successive Interference Cancellation (SIC)** to decode co-channel signals with zero packet collision dropouts.
+**z-30** is an open-source, next-generation amateur radio weak-signal digital communications and DSP engineering suite. Engineered for extreme HF, VHF, and microwave propagation conditions, z-30 combines an ultra-narrow **50.0 Hz occupied bandwidth** 16-MFSK modulation scheme, a rate-0.356 irregular repeat-accumulate (IRA) Low-Density Parity-Check (LDPC) forward error correction code, and multi-pass **Successive Interference Cancellation (SIC)** to decode co-channel signals with zero packet collision dropouts.
 
 The project provides both a high-performance **interactive Web/PWA GUI** (featuring a 60 FPS HTML5 spectral waterfall, Web Audio 12/48 kHz DSP pipeline, live S-meter, and ADIF logbook) and a **native Python 3 DSP package (`z30_dsp`)** with Hamlib CAT transceiver control (`rigctld`), 9 PTT keying methods, 6 auto-reply sequencing algorithms, and automated RF time calibration against international time standards (**WWV, CHU, DCF77, MSF, WWVB, JJY**).
 
@@ -48,8 +48,8 @@ The project provides both a high-performance **interactive Web/PWA GUI** (featur
 
 ## Key Features & Capabilities
 
-- **Empirical Weak-Signal Threshold**: Decodes signals down to **-25.0 dB SNR** (50% decode threshold) and **-24.0 dB SNR** (90% decode threshold) on AWGN channels and **-22.5 dB SNR** under severe Rayleigh and polar flutter fading (delivering a **+4.0 dB link margin advantage over FT8**, equivalent to a $2.5\times$ Effective Radiated Power boost).
-- **Spectrum Efficiency**: Requires only **50.0 Hz** of RF bandwidth per transmission (allowing up to **50 simultaneous QSOs** in a standard 2.7 kHz SSB transceiver passband).
+- **Weak-Signal Performance (measured as an idealised bound, not an on-air threshold)**: The seeded AWGN benchmark with perfect synchronisation crosses 50% decode near **-24.6 dB SNR** and 90% near **-23.6 dB SNR** in a 2500 Hz reference bandwidth. That measures the code and the demodulator under ideal detection; it is **not** comparable with the published over-the-air figures for FT8 or FT4, which include the sync and AFC losses this benchmark excludes. See [the benchmark section](#monte-carlo-waveform--ldpc-benchmark-an-idealised-awgn-bound) for exactly what is and is not being measured, and how to reproduce the table.
+- **Spectrum Efficiency**: **49.8 Hz** of 99% occupied bandwidth measured on random frames (66 Hz at -40 dB), from a continuous-phase, constant-envelope GFSK-shaped waveform. `tests/test_modem_spectrum.py` asserts both against fixed budgets on every commit.
 - **Multi-Pass SIC Engine**: Automatically reconstructs, synthesizes, and subtracts strong decoded carrier waveforms from the time-domain audio buffer to uncover and decode overlapping weak signals buried up to 25 dB underneath stronger stations.
 - **Sub-Millisecond RF Time Synchronization**: Embedded DSP time calibration tool (`z30_dsp/rf_time_sync.py`) scans international standard stations (WWV/WWVH, CHU, DCF77, MSF, WWVB, JJY) using 61-tap Windowed-Sinc FIR filtering and normalized cross-correlation to eliminate clock drift ($\Delta t$) down to $<1.5\text{ ms}$ without needing administrative or root privileges.
 - **Hardware Agnostic Transceiver Control**: Fully supports physical transceivers via **Hamlib (`rigctld`)**, audio interfaces (SignaLink, Digirig, microHAM, DRA-30/50/70, USB soundcards, Icom/Yaesu/Kenwood/Elecraft/Xiegu internal USB audio), and standalone SDRs (via TCI network protocol).
@@ -75,8 +75,8 @@ The following table benchmarks **z-30** against standard amateur radio digital m
 | **Tone Spacing ($\Delta f$)** | **3.125 Hz** | 6.25 Hz | 20.83 Hz | 1.4648 Hz | 6.25 Hz |
 | **Active TX Duration** | **24.0 s (75 symbols)** | 12.64 s | 4.48 s | 110.6 s | 12.64 s |
 | **Decode / Guard Window** | **6.0 s** | 2.36 s | 3.02 s | 9.4 s | 2.36 s |
-| **Sensitivity (50% AWGN)** | **-25.0 dB SNR** | -21.0 dB SNR | -17.5 dB SNR | -28.0 dB SNR | -24.0 dB SNR |
-| **Sensitivity (90% AWGN)** | **-24.0 dB SNR** | -20.0 dB SNR | -16.5 dB SNR | -27.0 dB SNR | -22.5 dB SNR |
+| **Sensitivity (50%)** | **-24.6 dB SNR †** | -21.0 dB SNR ‡ | -17.5 dB SNR ‡ | -28.0 dB SNR ‡ | -24.0 dB SNR ‡ |
+| **Sensitivity (90%)** | **-23.6 dB SNR †** | -20.0 dB SNR ‡ | -16.5 dB SNR ‡ | -27.0 dB SNR ‡ | -22.5 dB SNR ‡ |
 | **FEC Code** | **LDPC (216, 77) Rate ~0.356** | LDPC (174, 91) Rate 0.52 | LDPC (174, 91) Rate 0.52 | Convol. $K=32, r=1/2$ | LDPC (174, 91) |
 | **Payload Capacity** | **77 bits (63-bit info + CRC-14)** | 77 bits (CRC-14) | 77 bits (CRC-14) | 28 bits (Call+Loc+Pwr) | Free text (var) |
 | **Collision Recovery** | **Multi-Pass SIC (3 passes)** | Single pass (limited) | None | Non-coherent | Single pass |
@@ -84,8 +84,22 @@ The following table benchmarks **z-30** against standard amateur radio digital m
 | **Clock Drift Tolerance** | **$\pm 1.5\text{ s}$ (with RF Auto-Sync)** | $\pm 1.0\text{ s}$ | $\pm 0.5\text{ s}$ | $\pm 2.0\text{ s}$ | $\pm 1.0\text{ s}$ |
 | **Spectral Density** | **50 QSOs per 2.7 kHz band** | ~40 QSOs per band | ~25 QSOs per band | N/A (One-way) | ~30 QSOs per band |
 
+> **† and ‡ are different measurements, and the difference matters.**
+> **†** is z-30's own AWGN benchmark with the noise level, carrier frequency and symbol timing
+> given to the demodulator - an idealised bound on the code's performance under ideal
+> detection. **‡** are the published over-the-air thresholds for those modes, which *include*
+> acquisition, AFC and timing losses. Reading down this pair of rows as though the numbers were
+> comparable overstates z-30 by an unknown margin. Earlier revisions of this table did that and
+> concluded a "+4.0 dB advantage over FT8"; that claim has been withdrawn, and the honest
+> comparison needs z-30's own decode driven through its real acquisition path with impairments
+> injected. Until that measurement exists, treat z-30's on-air sensitivity as unquantified.
+
 ### Why 16-MFSK and a 30-Second Cycle?
-1. **+4.0 dB Sensitivity Advantage Over FT8**: By reducing symbol rate from 6.25 baud to 3.125 baud and applying a low Rate-0.356 LDPC code with 75 total symbols, z-30 recovers signals **4.0 dB lower than FT8** (50% threshold at $-25.0\text{ dB}$ vs $-21.0\text{ dB}$). This $2.51\times$ power multiplier turns a 40W station into the effective link margin of a 100W station, opening paths across 160m, 6m, 2m EME, and high-latitude paths during solar geomagnetic disturbances.
+1. **A longer, more heavily coded frame**: halving the symbol rate from 6.25 to 3.125 baud
+   doubles the energy per symbol, and a rate-0.356 code over 75 symbols spends considerably
+   more redundancy per information bit than FT8's rate-0.52 (174, 91). Both changes buy coding
+   gain, at the cost of a 30-second cycle instead of 15. How much of that gain survives real
+   acquisition on a real channel is the measurement described above, and it has not been made.
 2. **True Co-Channel Collision Recovery**: Traditional FT8 fails when two signals occupy the same audio frequency bins. z-30 incorporates a 3-pass **Successive Interference Cancellation (SIC)** algorithm: when a strong signal is decoded, its exact RF phase and amplitude are synthesized and cleanly subtracted from the raw FFT bins, enabling a second and third decoding pass on previously obscured weak signals.
 
 ---
@@ -167,43 +181,51 @@ no amount of correct DSP upstream prevents that.
 
 ---
 
-### Empirical Monte Carlo Physical Waveform & LDPC Benchmark Results
+### Monte Carlo Waveform & LDPC Benchmark: an idealised AWGN bound
 
-The following empirical benchmark was executed across **7,500 total physical frames** (300 independent frames per 0.5 dB SNR point) using the native z-30 continuous-phase 16-MFSK modulator, AWGN channel model, and (216, 77) Log-Min-Sum LDPC belief propagation decoder:
+**Read this before quoting the numbers below.** They are a *genie-aided idealised AWGN bound*,
+not an over-the-air decode threshold. The benchmark's demodulator is handed things a real
+receiver has to work out for itself:
+
+- the exact noise sigma used to generate the frame;
+- the exact carrier frequency - no frequency error, no AFC, no Doppler;
+- perfect symbol timing (`start_samp = f * samples_per_symbol`, zero offset), because the same
+  code generated the waveform;
+- a clean channel: no fading, no interference, no band noise, no ALC.
+
+Every one of those is a real loss in a real contact. Putting this figure beside a mode's
+published on-air threshold - FT8's -21 dB, which is WSJT-X's measured number and *includes*
+all of those losses - compares two different quantities and flatters this one. Earlier
+revisions of this document did exactly that and concluded a "+4.0 dB link margin advantage over
+FT8"; that comparison did not hold and has been withdrawn. Measuring the honest number means
+driving the decode through the real acquisition path with timing offset, carrier offset and
+Watterson fading injected, which has not been done yet.
+
+Run it yourself - it is seeded, so you will get this table back:
+
+```bash
+python -m z30_dsp.benchmark --min-snr -28 --max-snr -18 --frames 60 --seed 20260830
+```
 
 ```
-z-30 Monte Carlo Physical Waveform & LDPC Decoder Benchmark Results
-====================================================================
-Channel: AWGN | Frames/Pt: 300 | Code: (216, 77) LDPC R=0.356
---------------------------------------------------------------------
+z-30 Monte Carlo Waveform & LDPC Decoder Benchmark - IDEALISED AWGN BOUND
+=========================================================================
+Channel: AWGN, perfect sync | Frames/Pt: 60 | Fs: 6000 Hz | Seed: 20260830
+Code: (216, 77) IRA LDPC R=0.356 | Waveform: GFSK-shaped CPFSK, BT=2.0
+-------------------------------------------------------------------------
 SNR (dB) | Frames | Success | Failed | FER     | Decode % | Avg Iters
---------------------------------------------------------------------
--34.0    | 300    | 0       | 300    | 1.0000  | 0.0%     | 105.0
--33.5    | 300    | 0       | 300    | 1.0000  | 0.0%     | 105.0
--33.0    | 300    | 0       | 300    | 1.0000  | 0.0%     | 105.0
--32.5    | 300    | 0       | 300    | 1.0000  | 0.0%     | 105.0
--32.0    | 300    | 0       | 300    | 1.0000  | 0.0%     | 105.0
--31.5    | 300    | 0       | 300    | 1.0000  | 0.0%     | 105.0
--31.0    | 300    | 0       | 300    | 1.0000  | 0.0%     | 105.0
--30.5    | 300    | 0       | 300    | 1.0000  | 0.0%     | 105.0
--30.0    | 300    | 0       | 300    | 1.0000  | 0.0%     | 105.0
--29.5    | 300    | 0       | 300    | 1.0000  | 0.0%     | 105.0
--29.0    | 300    | 0       | 300    | 1.0000  | 0.0%     | 105.0
--28.5    | 300    | 1       | 299    | 0.9967  | 0.3%     | 104.7
--28.0    | 300    | 0       | 300    | 1.0000  | 0.0%     | 105.0
--27.5    | 300    | 1       | 299    | 0.9967  | 0.3%     | 105.0
--27.0    | 300    | 10      | 290    | 0.9667  | 3.3%     | 102.3
--26.5    | 300    | 20      | 280    | 0.9333  | 6.7%     | 99.3
--26.0    | 300    | 40      | 260    | 0.8667  | 13.3%    | 93.8
--25.5    | 300    | 114     | 186    | 0.6200  | 38.0%    | 72.7
--25.0    | 300    | 177     | 123    | 0.4100  | 59.0%    | 50.6   <-- 50% Decode Threshold (-25.0 dB)
--24.5    | 300    | 254     | 46     | 0.1533  | 84.7%    | 24.3
--24.0    | 300    | 284     | 16     | 0.0533  | 94.7%    | 11.9   <-- 90% Decode Threshold (-24.0 dB)
--23.5    | 300    | 298     | 2      | 0.0067  | 99.3%    | 5.4
--23.0    | 300    | 299     | 1      | 0.0033  | 99.7%    | 3.1
--22.5    | 300    | 299     | 1      | 0.0033  | 99.7%    | 2.7
--22.0    | 300    | 300     | 0      | 0.0000  | 100.0%   | 1.7
---------------------------------------------------------------------
+-------------------------------------------------------------------------
+-28.0    | 60     | 0       | 60     | 1.0000  | 0.0%     | 150.0
+-27.0    | 60     | 0       | 60     | 1.0000  | 0.0%     | 150.0
+-26.0    | 60     | 3       | 57     | 0.9500  | 5.0%     | 143.2
+-25.0    | 60     | 23      | 37     | 0.6167  | 38.3%    | 99.5
+-24.0    | 60     | 48      | 12     | 0.2000  | 80.0%    | 37.9   <-- 50% crossing is near -24.6 dB
+-23.0    | 60     | 60      | 0      | 0.0000  | 100.0%   | 2.4    <-- 90% crossing is near -23.6 dB
+-22.0    | 60     | 60      | 0      | 0.0000  | 100.0%   | 1.2
+-21.0    | 60     | 60      | 0      | 0.0000  | 100.0%   | 1.0
+-20.0    | 60     | 60      | 0      | 0.0000  | 100.0%   | 1.0
+-19.0    | 60     | 60      | 0      | 0.0000  | 100.0%   | 1.0
+-18.0    | 60     | 60      | 0      | 0.0000  | 100.0%   | 1.0
 ```
 
 ---
@@ -240,7 +262,7 @@ SNR (dB) | Frames | Success | Failed | FER     | Decode % | Avg Iters
 
 ### Modulation & Waveform Parameters
 
-- **Modulation**: 16-Tone Multiple Frequency-Shift Keying (16-MFSK) with continuous phase and raised-cosine symbol shaping to eliminate spectral sideband splatter.
+- **Modulation**: 16-tone multiple frequency-shift keying (16-MFSK). One phase accumulator runs across the entire frame, and the *frequency* transition between symbols is Gaussian-shaped (GFSK, $BT = 2.0$, as WSJT-X does for FT8). Amplitude is constant from the first symbol to the last; the only envelope shaping is a single 20 ms raised-cosine ramp at the start and end of the transmission. Smoothing the frequency narrows the spectrum - smoothing the amplitude per symbol is amplitude keying at the symbol rate, and widens it.
 - **Symbol Duration ($T_s$)**: $320.0\text{ ms} = 1 / 3.125\text{ Hz}$.
 - **Tone Spacing ($\Delta f$)**: $3.125\text{ Hz}$.
 - **Total Occupied Bandwidth**: $16 \times 3.125\text{ Hz} = 50.0\text{ Hz}$.

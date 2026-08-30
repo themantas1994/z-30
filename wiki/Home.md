@@ -18,7 +18,7 @@ Welcome to the official technical documentation and developer wiki for **z-30**:
 
 ## ⚡ What is z-30?
 
-**z-30** is engineered for extreme HF, VHF, and microwave weak-signal amateur radio communications. Operating in synchronous **30.0-second UTC slots**, z-30 achieves a 50% decoding sensitivity threshold of **-25.0 dB SNR** and 90% threshold of **-24.0 dB SNR** (in a standard 2500 Hz reference bandwidth), offering a **+4.0 dB link margin advantage over FT8** ($2.51\times$ ERP multiplier).
+**z-30** is engineered for extreme HF, VHF, and microwave weak-signal amateur radio communications. Operating in synchronous **30.0-second UTC slots**, z-30's seeded AWGN benchmark crosses 50% decode near **-24.6 dB SNR** and 90% near **-23.6 dB SNR** in a 2500 Hz reference bandwidth. That is an idealised bound measured with the noise level, carrier frequency and symbol timing handed to the demodulator; it is **not** an on-air threshold and is not comparable with FT8's published -21 dB, which includes the acquisition losses this bound excludes. z-30's on-air sensitivity is currently unquantified.
 
 ### Key Technical Innovations
 1. **Ultra-Narrowband 16-MFSK**: Continuous-Phase 16-Tone Frequency Shift Keying occupying only **50.0 Hz** of RF bandwidth.

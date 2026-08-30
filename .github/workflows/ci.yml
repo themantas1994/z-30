@@ -59,6 +59,13 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Generated sources are up to date
+        # src/data/pythonSource.ts and src/data/wikiArticles.ts are produced from the real
+        # Python files and the wiki markdown. Both were hand-copied snapshots that had drifted
+        # from what they claimed to show - the wiki copy still carried retracted sensitivity
+        # claims long after the markdown was corrected.
+        run: npm run check:generated
+
       - name: Typecheck
         run: npm run lint
 

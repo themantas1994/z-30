@@ -183,4 +183,4 @@ Please use Conventional Commits:
 1. All TypeScript code must pass `npm run lint` without errors or warnings.
 2. Production bundle must build cleanly via `npm run build`.
 3. Python modifications must maintain compatibility with Python 3.9 through 3.13.
-4. If modifying DSP code, run `python3 -m z30_dsp.benchmark` to verify decoding threshold does not regress below **-25.0 dB SNR (50%) / -24.0 dB SNR (90%)**.
+4. If modifying DSP code, run `python -m pytest tests` (which includes the codec round trip and the occupied-bandwidth budget) and `python -m z30_dsp.benchmark --seed 20260830` to check the seeded AWGN bound has not regressed below **-24.6 dB SNR (50%) / -23.6 dB SNR (90%)**. That bound is measured with the noise level, carrier frequency and symbol timing handed to the demodulator; it is not an on-air decode threshold.

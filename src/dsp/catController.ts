@@ -129,6 +129,44 @@ export interface PttTestResult {
 }
 
 /**
+ * Minimal structural types for the Web Serial and WebHID surfaces this controller uses.
+ *
+ * Neither API is in TypeScript's DOM lib, so the calls used to be made through `any` - on the
+ * exact code paths where a type error becomes a hardware command. These describe only the
+ * members z-30 actually touches, which is enough to catch a typo or a wrong argument shape
+ * without pretending to model the full specifications.
+ */
+export interface WebSerialSignals {
+  requestToSend?: boolean;
+  dataTerminalReady?: boolean;
+}
+
+export interface WebSerialPortLike {
+  open(options: {
+    baudRate: number;
+    dataBits?: number;
+    stopBits?: number;
+    parity?: string;
+    flowControl?: string;
+  }): Promise<void>;
+  close(): Promise<void>;
+  setSignals?(signals: WebSerialSignals): Promise<void>;
+  getInfo?(): { usbVendorId?: number; usbProductId?: number };
+  readable: ReadableStream<Uint8Array> | null;
+  writable: WritableStream<Uint8Array> | null;
+}
+
+export interface WebHidDeviceLike {
+  opened: boolean;
+  productName?: string;
+  vendorId?: number;
+  productId?: number;
+  open(): Promise<void>;
+  close(): Promise<void>;
+  sendReport(reportId: number, data: BufferSource): Promise<void>;
+}
+
+/**
  * Enumerated hardware serial communication port.
  */
 export interface DiscoveredSerialPort {
@@ -187,8 +225,8 @@ export class CatController {
   private currentBandIdx: number = 5; // 20m
 
   // Hardware Web Serial Port handle
-  private serialPort: any = null;
-  private serialReader: any = null;
+  private serialPort: WebSerialPortLike | null = null;
+  private serialReader: ReadableStreamDefaultReader<Uint8Array> | null = null;
   private serialWriter: WritableStreamDefaultWriter<Uint8Array> | null = null;
   private isSerialConnected: boolean = false;
   private pairedSerialPorts: DiscoveredSerialPort[] = [];
@@ -218,7 +256,7 @@ export class CatController {
 
   // WebHID handle for CM108/CM119 USB Audio GPIO PTT (separate from the Web Serial CAT link -
   // a station commonly uses a CM108-based audio interface for PTT with no serial CAT at all).
-  private hidDevice: any = null;
+  private hidDevice: WebHidDeviceLike | null = null;
 
   // TCI (Transceiver Control Interface) WebSocket handle for Expert Electronics SDRs.
   private tciSocket: WebSocket | null = null;
@@ -824,11 +862,12 @@ export class CatController {
         await this.disconnectWebSerial();
       }
 
-      this.serialPort = selectedPort;
+      const port: WebSerialPortLike = selectedPort;
+      this.serialPort = port;
 
       // Try opening port with chosen baud rate
       try {
-        await this.serialPort.open({ baudRate });
+        await port.open({ baudRate });
         this.isSerialConnected = true;
         this.isConnected = true;
       } catch (openErr: any) {
@@ -1408,11 +1447,12 @@ export class CatController {
       if (!devices || devices.length === 0) {
         return { success: false, message: 'No CM108/CM119 HID device selected.' };
       }
-      this.hidDevice = devices[0];
-      if (!this.hidDevice.opened) {
-        await this.hidDevice.open();
+      const device: WebHidDeviceLike = devices[0];
+      this.hidDevice = device;
+      if (!device.opened) {
+        await device.open();
       }
-      const name = this.hidDevice.productName || 'CM108/CM119 USB Audio GPIO device';
+      const name = device.productName || 'CM108/CM119 USB Audio GPIO device';
       this.logCommand('CM108_HID_PAIR', `Paired ${name}`, 'OK');
       return { success: true, message: `✓ CM108/CM119 HID device paired: ${name}` };
     } catch (e: any) {

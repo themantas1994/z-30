@@ -19,7 +19,7 @@ This document provides the complete mathematical and signal processing specifica
 | **Guard / Processing Time** | $T_{\text{guard}}$ | **6.0 s** | FFT Framing + 3-Pass SIC + LDPC decode |
 | **Bits per Symbol** | $\log_2(M)$ | **4 bits/symbol** | $54 \times 4 = 216$ coded channel bits |
 | **FEC Code** | — | **QC-LDPC (216, 77)** | Rate $R \approx 0.356$ |
-| **AWGN Sensitivity Limit** | — | **-25.0 dB SNR (50%) / -24.0 dB SNR (90%)** | In standard $2500\text{ Hz}$ noise bandwidth |
+| **AWGN Sensitivity Bound** | — | **-24.6 dB SNR (50%) / -23.6 dB SNR (90%)** | In a $2500\text{ Hz}$ noise bandwidth, with exact noise sigma, exact carrier frequency and perfect symbol timing given to the demodulator. An idealised bound, **not** an on-air threshold, and not comparable with the published figures for FT8 or FT4. |
 
 ---
 

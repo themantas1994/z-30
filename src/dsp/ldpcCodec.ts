@@ -8,7 +8,10 @@
  *    - Code length (n) = 216 channel coded bits
  *    - Information block length (k) = 77 bits (63 payload bits + 14-bit CRC)
  *    - Parity check equations (m = n - k) = 139 checks
- *    - Code Rate R = 77 / 216 ≈ 0.3564 (optimal for ultra-weak AWGN/Fading channels down to -25.0 dB SNR 50% / -24.0 dB SNR 90% threshold)
+ *    - Code Rate R = 77 / 216 ≈ 0.3564. Against an idealised AWGN channel with perfect
+ *      synchronisation, the seeded benchmark crosses 50% decode near -24.6 dB SNR and 90% near
+ *      -23.6 dB (2500 Hz reference bandwidth). That is a bound on the code under ideal
+ *      detection, not an over-the-air threshold - see z30_dsp/benchmark.py.
  *    - Modulation Symbol Mapping: 216 coded bits / (4 bits/symbol) = 54 data symbols in 16-MFSK.
  *      With 21 Costas synchronization symbols, total frame length = 75 symbols (24.0s duration at Ts=320ms).
  * 
@@ -361,7 +364,7 @@ export class Z30LdpcEngine {
    * Algorithmic Architecture:
    * 1. Check direct hard decisions for instant zero-iteration decode.
    * 2. Schedule 1: Layered Damped Normalized Min-Sum (fast convergence, alpha=0.82, beta=0.08).
-   * 3. Schedule 2: Full Log-SPA with Jacobian correction for deep sub-noise decode (-25 dB SNR).
+   * 3. Schedule 2: Full Log-SPA with Jacobian correction for deep sub-noise decode.
    * 4. Schedule 3: Reverse-order Layering to escape asymmetric cycle traps.
    * 5. Schedule 4: Dithered Stochastic Resonance injection to resolve symmetric pseudocodewords.
    * 6. Post-Processing: CRC-14-Constrained Ordered Statistics Decoding (OSD-2 / Chase reliability search).

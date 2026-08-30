@@ -35,7 +35,10 @@ Mathematical Specification & Design Rationale:
    - Codeword length (n): 216 channel coded bits.
    - Information block length (k): 77 bits (63-bit amateur payload + 14-bit CRC-14).
    - Parity check equations (m = n - k): 139 checks.
-   - Code rate (R): R = 77 / 216 ≈ 0.3564 (optimal for extreme weak-signal AWGN/Fading channels down to -25.0 dB SNR 50% / -24.0 dB SNR 90% threshold).
+   - Code rate (R): R = 77 / 216 ≈ 0.3564. Against an idealised AWGN channel with perfect
+     synchronisation, the seeded benchmark crosses 50% decode near -24.6 dB SNR and 90% near
+     -23.6 dB (2500 Hz reference bandwidth). That is a bound on the code under ideal detection,
+     not an over-the-air threshold - see the docstring of z30_dsp/benchmark.py.
    - Modulation Symbol Mapping: 216 coded bits / (4 bits/symbol) = 54 data symbols in 16-MFSK.
      Coupled with 21 Costas synchronization symbols, total frame = 75 symbols (24.0s duration at Ts=320ms).
 

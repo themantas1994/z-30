@@ -4,7 +4,8 @@
  * 
  * End-to-end DSP simulation pipeline:
  * 1. Generates authentic z-30 (216, 77) LDPC frames + 21 Costas sync symbols.
- * 2. Synthesizes physical 16-MFSK continuous-phase (CPFSK) waveforms with raised-cosine edge shaping.
+ * 2. Synthesizes physical 16-MFSK continuous-phase waveforms with GFSK frequency shaping and a
+ *    constant amplitude envelope (see src/dsp/z30Waveform.ts).
  * 3. Injects calibrated Gaussian Noise (AWGN) calibrated strictly to the amateur standard 2500 Hz reference bandwidth:
  *      SNR_2500Hz = 10 * log10( P_signal / ( N0 * 2500 Hz ) )
  *      sigma^2 = P_signal / ( 10^(SNR_dB / 10) * (5000 / Fs) )
@@ -16,6 +17,7 @@
  */
 
 import { createSeededRandom, DEFAULT_MONTE_CARLO_SEED, RandomSource } from './seededRandom';
+import { synthesizeFrameSamples } from './z30Waveform';
 import { Z30_SPECS } from './z30Constants';
 import { Z30LdpcEngine } from './ldpcCodec';
 import { encodeLdpc216_77, computeCrc14 } from './z30Codec';
@@ -256,17 +258,20 @@ public assembleFrameSymbols(payload63: number[]): {
 }
 
 /**
- * Synthesizes physical continuous-phase 16-MFSK (CPFSK) baseband audio waveform with raised cosine shaping.
- * 
- * Waveform Properties:
- * - Tone Spacing Delta_f = 3.125 Hz
- * - Symbol Period T_s = 320 ms
- * - Continuous phase trajectory across symbol boundaries prevents high-frequency spectral splatter
- * - 8ms raised-cosine pulse transition ramps on symbol envelopes ensure sharp 50 Hz occupied bandwidth containment
- * 
+ * Synthesizes the physical continuous-phase 16-MFSK baseband waveform for a frame.
+ *
+ * Delegates to the shared generator in src/dsp/z30Waveform.ts, which is the same code the
+ * transmitter uses and the twin of z30_dsp/modem.py. This function used to contain a third
+ * copy of the modulator carrying the same defect the other two did: an 8 ms raised-cosine ramp
+ * applied to *every symbol*, taking the envelope to zero at each of the 75 symbol boundaries.
+ * That is amplitude keying at 3.125 baud on top of the tone sequence, and it widens the
+ * spectrum far beyond 50 Hz - so the benchmark was measuring a waveform the protocol does not
+ * describe and the transmitter no longer emits. Frequency transitions are GFSK-shaped instead;
+ * the only amplitude shaping is one ramp at the start and end of the frame.
+ *
  * @param symbols75 - 75-element array of 16-MFSK symbol indexes (0 to 15)
  * @param sampleRateHz - Audio sample rate (e.g. 6000 Hz for DSP simulation, 48000 Hz for soundcard)
- * @param audioCenterFreqHz - Center frequency of the 16-tone grid in Hertz (e.g. 1250 Hz)
+ * @param audioCenterFreqHz - Centre frequency of the 16-tone grid in Hertz (e.g. 1250 Hz)
  * @returns Floating-point PCM waveform buffer
  */
 public synthesizePhysicalWaveform(
@@ -274,38 +279,10 @@ public synthesizePhysicalWaveform(
   sampleRateHz: number = 6000,
   audioCenterFreqHz: number = 1250
 ): Float32Array {
-    const symbolDurationSec = Z30_SPECS.SYMBOL_DURATION_SEC; // 0.320s
-    const toneSpacingHz = Z30_SPECS.TONE_SPACING_HZ; // 3.125 Hz
-    const samplesPerSymbol = Math.round(sampleRateHz * symbolDurationSec);
-    const totalSamples = symbols75.length * samplesPerSymbol;
-
-    const waveform = new Float32Array(totalSamples);
-    const rampLen = Math.round(0.008 * sampleRateHz); // 8ms raised-cosine pulse edge ramp
-
-    const envelope = new Float32Array(samplesPerSymbol);
-    envelope.fill(1.0);
-    for (let i = 0; i < rampLen; i++) {
-      const taper = 0.5 * (1.0 - Math.cos((Math.PI * i) / rampLen));
-      envelope[i] = taper;
-      envelope[samplesPerSymbol - 1 - i] = taper;
-    }
-
-    let phase = 0.0;
-    const dt = 1.0 / sampleRateHz;
-
-    for (let sIdx = 0; sIdx < symbols75.length; sIdx++) {
-      const toneIdx = symbols75[sIdx];
-      const toneFreq = audioCenterFreqHz + (toneIdx - 7.5) * toneSpacingHz;
-      const startSamp = sIdx * samplesPerSymbol;
-
-      for (let n = 0; n < samplesPerSymbol; n++) {
-        phase += 2.0 * Math.PI * toneFreq * dt;
-        if (phase > 2.0 * Math.PI) phase -= 2.0 * Math.PI;
-        waveform[startSamp + n] = Math.sin(phase) * envelope[n];
-      }
-    }
-
-    return waveform;
+    // The benchmark centres the tone grid on audioCenterFreqHz, so tone 0 sits 7.5 spacings
+    // below it; the generator takes the frequency of tone 0 directly.
+    const baseFreqHz = audioCenterFreqHz - 7.5 * Z30_SPECS.TONE_SPACING_HZ;
+    return synthesizeFrameSamples(symbols75, baseFreqHz, sampleRateHz, 1.0);
   }
 
   /**
