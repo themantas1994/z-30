@@ -23,6 +23,59 @@ An in-depth technical analysis for **advanced amateur radio operators, RF engine
 | **Co-Channel Collision Recovery** | None (collisions fail to decode) | **3-Pass Successive Interference Cancellation (SIC)** | Co-channel collision resolution down to $-31.5\text{ dB}$ |
 | **Clock Drift Tolerance** | $\pm 1.0\text{ s}$ (requires NTP/GPS) | $\pm 1.5\text{ s}$ + Built-in RF Time Sync | Zero-admin offline HF/LF time calibration |
 
+
+### 1.1 Against the wider mode set
+
+The same measurement placed beside the published on-air figures for the other common
+weak-signal modes:
+
+| Metric / Parameter | **z-30** | **FT8** | **FT4** | **WSPR** | **JS8Call** |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| **Cycle duration** | **30.0 s** | 15.0 s | 7.5 s | 120.0 s | 15.0 s (var) |
+| **Occupied bandwidth** | **50.0 Hz** | 47.0 Hz | 83.0 Hz | 5.9 Hz | 50.0 Hz |
+| **Modulation** | **16-MFSK (CPFSK)** | 8-GFSK | 4-GFSK | 4-FSK | 8-GFSK |
+| **Symbol rate** | **3.125 baud** | 6.25 baud | 20.83 baud | 1.4648 baud | 6.25 baud |
+| **Tone spacing ($\Delta f$)** | **3.125 Hz** | 6.25 Hz | 20.83 Hz | 1.4648 Hz | 6.25 Hz |
+| **Active TX duration** | **24.0 s (75 symbols)** | 12.64 s | 4.48 s | 110.6 s | 12.64 s |
+| **Decode / guard window** | **6.0 s** | 2.36 s | 3.02 s | 9.4 s | 2.36 s |
+| **Sensitivity (50%), AWGN** | **-21.1 dB SNR †** | -21.0 dB SNR ‡ | -17.5 dB SNR ‡ | -28.0 dB SNR ‡ | -24.0 dB SNR ‡ |
+| **Sensitivity (90%), AWGN** | **-18.0 dB SNR †** | -20.0 dB SNR ‡ | -16.5 dB SNR ‡ | -27.0 dB SNR ‡ | -22.5 dB SNR ‡ |
+| **FEC code** | **LDPC (216, 77), $R \approx 0.356$** | LDPC (174, 91), $R = 0.52$ | LDPC (174, 91), $R = 0.52$ | Convolutional $K=32$, $r=1/2$ | LDPC (174, 91) |
+| **Payload capacity** | **77 bits (63-bit info + CRC-14)** | 77 bits (CRC-14) | 77 bits (CRC-14) | 28 bits (call + loc + pwr) | Free text (var) |
+| **Collision recovery** | **Multi-pass SIC (3 passes)** | Single pass (limited) | None | Non-coherent | Single pass |
+| **Primary use case** | **Deep DX / EME / solar minima** | General DX / contesting | Rapid contesting | Propagation beaconing | Conversational keyboard |
+| **Clock drift tolerance** | **$\pm 1.5\text{ s}$ (with RF auto-sync)** | $\pm 1.0\text{ s}$ | $\pm 0.5\text{ s}$ | $\pm 2.0\text{ s}$ | $\pm 1.0\text{ s}$ |
+| **Spectral density** | **50 QSOs per 2.7 kHz band** | ~40 QSOs per band | ~25 QSOs per band | N/A (one-way) | ~30 QSOs per band |
+
+**† is a like-for-like measurement with ‡.** **†** is z-30's own benchmark run in
+`--mode realistic`: each frame gets a random carrier offset (±5 Hz) and timing offset (±0.5 s),
+and the receiver is handed nothing but audio — it locates the frame and estimates the noise
+floor itself, exactly as it must on the air. **‡** are the published over-the-air thresholds
+for those modes, which include the same acquisition, AFC and timing losses. Reproduce † with
+the commands in
+[16. Benchmarking, Testing & CI](16-Benchmarking-Testing-&-CI.md).
+
+**z-30 is level with FT8 on AWGN, not ahead of it.** Earlier revisions of this table quoted a
+genie-aided bound against FT8's on-air figure and concluded a "+4.0 dB advantage"; that claim
+was withdrawn, and this is the measurement that replaces it. z-30 spends twice the airtime of
+FT8 for the same 77-bit payload, and the extra 3 dB that buys the codec is spent again on
+acquiring a 3.125 Hz-spaced signal. Where z-30 does differ is in occupied bandwidth, multi-pass
+SIC, and behaviour on a disturbed path — not in raw AWGN sensitivity.
+
+### 1.2 Why 16-MFSK and a 30-second cycle at all?
+
+1. **A longer, more heavily coded frame.** Halving the symbol rate from 6.25 to 3.125 baud
+   doubles the energy per symbol, and a rate-0.356 code over 75 symbols spends considerably
+   more redundancy per information bit than FT8's rate-0.52 (174, 91). Both changes buy coding
+   gain, at the cost of a 30-second cycle instead of 15 — and, as the measurements above show,
+   most of that gain is handed back at the acquisition stage.
+2. **True co-channel collision recovery.** FT8 fails when two signals occupy the same audio
+   frequency bins. z-30 runs a 3-pass **Successive Interference Cancellation** engine: when a
+   strong signal is decoded, its phase and amplitude are synthesised and subtracted from the
+   time-domain buffer, enabling second and third decoding passes on previously obscured weak
+   signals. See
+   [05. Successive Interference Cancellation (SIC)](05-Successive-Interference-Cancellation-(SIC).md).
+
 ---
 
 ## 📐 2. The Shannon-Hartley Capacity & Information Theory Foundation
@@ -53,7 +106,9 @@ Calculating the theoretical Shannon threshold in a 2500 Hz reference bandwidth f
 - **FT8 Theoretical Shannon Limit**: $\text{SNR}_{2500,\text{Shannon}} = -1.59\text{ dB} + 10\log_{10}\left(\frac{6.09}{2500}\right) = -27.72\text{ dB}$
 - **z-30 Theoretical Shannon Limit**: $\text{SNR}_{2500,\text{Shannon}} = -1.59\text{ dB} + 10\log_{10}\left(\frac{3.21}{2500}\right) = -30.51\text{ dB}$
 
-**Physical Insight**: FT8 decodes down to $-21.0\text{ dB}$, operating **$6.72\text{ dB}$ above the theoretical Shannon limit**. z-30 decodes down to $-25.0\text{ dB}$ (50% threshold), operating **$5.51\text{ dB}$ above its theoretical Shannon limit**—a comparable, empirically-verified gap to Shannon capacity, achieved via the lower-rate (216, 77) LDPC code and doubled symbol integration time rather than by approaching the unconstrained capacity bound.
+**Physical Insight**: FT8 decodes down to $-21.0\text{ dB}$, operating **$6.72\text{ dB}$ above its theoretical Shannon limit**. z-30's measured 50% threshold through blind acquisition is $-21.1\text{ dB}$, which is **$9.4\text{ dB}$ above its own limit of $-30.51\text{ dB}$**; its genie-aided bound of $-24.6\text{ dB}$ sits $5.9\text{ dB}$ above that limit.
+
+The comparison to draw from those three numbers is not "z-30 is closer to Shannon". It is that halving the bit rate moves the *limit* down by 2.8 dB, and z-30 converts most of that into coding gain only when acquisition is free. On the air, where it is not, the two modes land level. The gap between z-30's bound and its measured threshold — 3.5 dB of acquisition loss on a 3.125 Hz-spaced signal — is exactly the part that a genie-aided comparison hides, in this mode and in every other.
 
 ---
 

@@ -34,58 +34,119 @@ export const WIKI_ARTICLES: WikiArticle[] = [
     category: "Getting Started",
     description: "Master index, system overview, and quick navigation matrix for z-30.",
     tags: ["overview","index","navigation","summary","introduction"],
-    markdown: `# z-30 GitHub Wiki
+    markdown: `# z-30 Wiki — The Source of Truth
 
-Welcome to the official technical documentation and developer wiki for **z-30**: an experimental open-source amateur radio 16-MFSK weak-signal digital transceiver and digital signal processing (DSP) suite.
+Welcome to the technical documentation for **z-30**: an experimental open-source amateur radio
+16-MFSK weak-signal digital transceiver and DSP suite.
+
+> **This wiki is the project's source of truth.** Protocol specifications, install procedures,
+> operating reference, safety behaviour, measured figures and developer process all live here
+> and are maintained here. The repository \`README.md\` is a front page that introduces z-30 and
+> links back to these pages; where the two ever disagree, **the wiki is correct and the README
+> is the bug**.
+>
+> The same markdown is served inside the application itself (the **Wiki** button in the header)
+> — it is generated from these files at build time, so the in-app copy cannot drift from what
+> the repository says.
 
 ---
 
 ## 🧭 Navigation Matrix
 
-| 👤 I am a... | 🚀 Start Here | 📖 Key Documents |
+| 👤 I am a... | 🚀 Start here | 📖 Key documents |
 | :--- | :--- | :--- |
-| **New Ham Operator / User** | [Getting Started & First Steps](01-New-User-Guide-&-First-Steps.md) | [CAT & PTT Wiring](06-Transceiver-CAT-Control-&-PTT-Wiring.md), [Time Synchronization](07-RF-Time-Synchronization-Engine.md), [Troubleshooting & FAQ](10-Troubleshooting-&-FAQ.md) |
-| **DSP / Protocol Developer** | [Developer Setup & Contributing](02-Developer-Setup-&-Contributing.md) | [Physics & FT8 Comparison](11-Physics-&-Comparative-Analysis-z30-vs-FT8.md), [DSP & Physical Layer Specs](03-DSP-&-Physical-Layer-Specification.md), [LDPC FEC](04-Forward-Error-Correction-&-LDPC.md), [SIC Co-Channel Engine](05-Successive-Interference-Cancellation-(SIC).md) |
-| **Advanced Ham / RF Engineer** | [Physics & FT8 Comparison](11-Physics-&-Comparative-Analysis-z30-vs-FT8.md) | [DSP Specs](03-DSP-&-Physical-Layer-Specification.md), [SIC Engine](05-Successive-Interference-Cancellation-(SIC).md), [RF Time Sync](07-RF-Time-Synchronization-Engine.md) |
-| **Hardware & Rig Integrator** | [CAT & PTT Wiring](06-Transceiver-CAT-Control-&-PTT-Wiring.md) | [Hamlib Setup](06-Transceiver-CAT-Control-&-PTT-Wiring.md), [Raspberry Pi / DigiPi](09-Cross-Platform-Build-&-Packaging.md), [RF Time Sync](07-RF-Time-Synchronization-Engine.md) |
-| **Frontend / Web Developer** | [Developer Setup & Contributing](02-Developer-Setup-&-Contributing.md) | [Web & PWA Architecture](08-Web-&-PWA-Architecture.md), [Cross-Platform Packaging](09-Cross-Platform-Build-&-Packaging.md) |
+| **New ham operator / user** | [Getting Started & First Steps](01-New-User-Guide-&-First-Steps.md) | [Operating Reference](14-User-Interface-&-Operation-Reference.md), [CAT & PTT Wiring](06-Transceiver-CAT-Control-&-PTT-Wiring.md), [Time Synchronization](07-RF-Time-Synchronization-Engine.md), [Troubleshooting & FAQ](10-Troubleshooting-&-FAQ.md) |
+| **Operator about to transmit** | [Operating Safety & Compliance](13-Operating-Safety-Compliance-&-Security.md) | [Operating Reference](14-User-Interface-&-Operation-Reference.md), [Troubleshooting & FAQ](10-Troubleshooting-&-FAQ.md) |
+| **DSP / protocol developer** | [Developer Setup & Contributing](02-Developer-Setup-&-Contributing.md) | [DSP & Physical Layer Specs](03-DSP-&-Physical-Layer-Specification.md), [LDPC FEC](04-Forward-Error-Correction-&-LDPC.md), [SIC Engine](05-Successive-Interference-Cancellation-(SIC).md), [Benchmarking & CI](16-Benchmarking-Testing-&-CI.md) |
+| **Advanced ham / RF engineer** | [Physics & FT8 Comparison](11-Physics-&-Comparative-Analysis-z30-vs-FT8.md) | [DSP Specs](03-DSP-&-Physical-Layer-Specification.md), [SIC Engine](05-Successive-Interference-Cancellation-(SIC).md), [Benchmarking & CI](16-Benchmarking-Testing-&-CI.md) |
+| **Hardware & rig integrator** | [CAT & PTT Wiring](06-Transceiver-CAT-Control-&-PTT-Wiring.md) | [Raspberry Pi / DigiPi](09-Cross-Platform-Build-&-Packaging.md), [RF Time Sync](07-RF-Time-Synchronization-Engine.md), [CLI & Configuration](15-Command-Line-Tools-&-Configuration.md) |
+| **Frontend / web developer** | [Developer Setup & Contributing](02-Developer-Setup-&-Contributing.md) | [Web & PWA Architecture](08-Web-&-PWA-Architecture.md), [Cross-Platform Packaging](09-Cross-Platform-Build-&-Packaging.md) |
+| **Coding assistant / LLM** | \`AGENTS.md\` in the repository root | [Developer Setup](02-Developer-Setup-&-Contributing.md), [Operating Safety](13-Operating-Safety-Compliance-&-Security.md), [Benchmarking & CI](16-Benchmarking-Testing-&-CI.md) |
 
 ---
 
 ## ⚡ What is z-30?
 
-**z-30** is engineered for extreme HF, VHF, and microwave weak-signal amateur radio communications. Operating in synchronous **30.0-second UTC slots**, z-30's seeded benchmark - run through its real acquisition path, with random carrier and timing offsets and no knowledge of the noise level - crosses 50% decode at **-21.1 dB SNR** on AWGN and **-18.8 dB** on a CCIR-moderate fading path, in a 2500 Hz reference bandwidth. That is level with FT8's published -21 dB, measured the same way. The genie-aided bound, with exact carrier, timing and noise level handed to the demodulator, is 3.5 dB better at -24.6 dB; it is reported separately because no other mode's published figure is measured that way.
+**z-30** is engineered for extreme HF, VHF, and microwave weak-signal amateur radio
+communications. It operates in synchronous **30.0-second UTC slots**, occupies **50.0 Hz**, and
+carries a 77-bit protected payload behind a rate-0.356 LDPC code.
 
-### Key Technical Innovations
-1. **Ultra-Narrowband 16-MFSK**: Continuous-Phase 16-Tone Frequency Shift Keying occupying only **50.0 Hz** of RF bandwidth.
-2. **Rate-0.356 IRA-LDPC + CRC-14**: Systematic (216, 77) irregular repeat-accumulate Low-Density Parity-Check forward error correction with a dual-diagonal parity structure, plus a 14-bit CRC whose undetected-error probability is $2^{-14} \\approx 6.1 \\times 10^{-5}$. (Earlier revisions called the code quasi-cyclic, which it is not, and quoted $< 10^{-6}$ for the CRC, which is about sixty times better than a 14-bit CRC can be.)
-3. **Multi-Pass Successive Interference Cancellation (SIC)**: 3-pass DSP cancellation engine that synthesizes and subtracts strong decoded carrier waveforms to recover hidden co-channel DX signals.
-4. **Sub-Millisecond RF Time Calibration (\`z30_dsp/rf_time_sync.py\`)**: Embedded FIR matched-filter receiver that calibrates clock drift ($\\Delta t$) against global standard stations (**WWV, WWVH, CHU, DCF77, MSF, WWVB, JJY**) without needing internet or administrator privileges.
-5. **Universal Cross-Platform Architecture**: Dual-stack engine featuring an interactive Web Audio 60 FPS HTML5/PWA GUI and a native Python 3 DSP package (\`z30_dsp\`) with Hamlib CAT and 9 PTT keying methods.
+Its seeded benchmark — run through the real acquisition path, with random carrier and timing
+offsets and no knowledge of the noise level — crosses 50% decode at **-21.1 dB SNR** on AWGN
+and **-18.8 dB** on a CCIR-moderate fading path, in a 2500 Hz reference bandwidth. **That is
+level with FT8's published -21 dB, measured the same way.** The genie-aided bound, with exact
+carrier, timing and noise level handed to the demodulator, is 3.5 dB better at -24.6 dB; it is
+reported separately because no other mode's published figure is measured that way. See
+[16. Benchmarking, Testing & CI](16-Benchmarking-Testing-&-CI.md).
+
+### Key technical innovations
+
+1. **Ultra-narrowband 16-MFSK**: continuous-phase 16-tone FSK with Gaussian frequency-pulse
+   shaping ($BT = 2.0$), occupying **50.0 Hz** (49.8 Hz measured at 99% occupancy).
+2. **Rate-0.356 IRA-LDPC + CRC-14**: systematic (216, 77) irregular repeat-accumulate code with
+   a dual-diagonal parity structure, plus a 14-bit CRC whose undetected-error probability is
+   $2^{-14} \\approx 6.1 \\times 10^{-5}$. (Earlier revisions called the code quasi-cyclic, which
+   it is not, and quoted $< 10^{-6}$ for the CRC, which is about sixty times better than a
+   14-bit CRC can be.)
+3. **Multi-pass Successive Interference Cancellation**: a 3-pass engine that synthesises and
+   subtracts strong decoded carriers to recover hidden co-channel DX signals.
+4. **Sub-millisecond RF time calibration** (\`z30_dsp/rf_time_sync.py\`): an FIR matched-filter
+   receiver that calibrates clock drift against global standard stations (**WWV, WWVH, CHU,
+   DCF77, MSF, WWVB, JJY**) without internet or administrator privileges.
+5. **Universal cross-platform architecture**: an interactive Web Audio 60 FPS HTML5/PWA GUI and
+   a native Python 3 DSP package (\`z30_dsp\`) with Hamlib CAT and 9 PTT keying methods.
 
 ---
 
 ## 📚 Complete Wiki Table of Contents
 
+### Getting started & operating
 1. [01. New User Guide & First Steps](01-New-User-Guide-&-First-Steps.md)
-2. [02. Developer Setup & Contributing](02-Developer-Setup-&-Contributing.md)
-3. [03. DSP & Physical Layer Specification](03-DSP-&-Physical-Layer-Specification.md)
-4. [04. Forward Error Correction & LDPC](04-Forward-Error-Correction-&-LDPC.md)
-5. [05. Successive Interference Cancellation (SIC)](05-Successive-Interference-Cancellation-(SIC).md)
-6. [06. Transceiver CAT Control & PTT Wiring](06-Transceiver-CAT-Control-&-PTT-Wiring.md)
-7. [07. RF Time Synchronization Engine](07-RF-Time-Synchronization-Engine.md)
-8. [08. Web & PWA Architecture](08-Web-&-PWA-Architecture.md)
-9. [09. Cross-Platform Build & Packaging](09-Cross-Platform-Build-&-Packaging.md)
-10. [10. Troubleshooting & FAQ](10-Troubleshooting-&-FAQ.md)
-11. [11. Physics & Comparative Analysis: z-30 vs. FT8](11-Physics-&-Comparative-Analysis-z30-vs-FT8.md)
+2. [10. Troubleshooting & FAQ](10-Troubleshooting-&-FAQ.md)
+3. [13. Operating Safety, Compliance & Local Security](13-Operating-Safety-Compliance-&-Security.md)
+4. [14. User Interface & Operation Reference](14-User-Interface-&-Operation-Reference.md)
+
+### Protocol & DSP core
+5. [03. DSP & Physical Layer Specification](03-DSP-&-Physical-Layer-Specification.md)
+6. [04. Forward Error Correction & LDPC](04-Forward-Error-Correction-&-LDPC.md)
+7. [05. Successive Interference Cancellation (SIC)](05-Successive-Interference-Cancellation-(SIC).md)
+8. [11. Physics & Comparative Analysis: z-30 vs. FT8](11-Physics-&-Comparative-Analysis-z30-vs-FT8.md)
+
+### Hardware & rig control
+9. [06. Transceiver CAT Control & PTT Wiring](06-Transceiver-CAT-Control-&-PTT-Wiring.md)
+10. [07. RF Time Synchronization Engine](07-RF-Time-Synchronization-Engine.md)
+
+### Development, build & packaging
+11. [02. Developer Setup & Contributing](02-Developer-Setup-&-Contributing.md)
+12. [08. Web & PWA Architecture](08-Web-&-PWA-Architecture.md)
+13. [09. Cross-Platform Build & Packaging](09-Cross-Platform-Build-&-Packaging.md)
+14. [12. Software Updates & GitHub Sync](12-Software-Updates-&-GitHub-Sync.md)
+15. [15. Command-Line Tools & Configuration](15-Command-Line-Tools-&-Configuration.md)
+16. [16. Benchmarking, Testing & CI](16-Benchmarking-Testing-&-CI.md)
+
+---
+
+## ✍️ Editing this wiki
+
+These pages are files in the repository under \`wiki/\`, not a separately hosted GitHub wiki, so
+they are edited by pull request like any other change.
+
+- Edit the markdown under \`wiki/\`.
+- Run \`npm run generate:wiki\` and commit the regenerated \`src/data/wikiArticles.ts\`; CI fails
+  the build if the in-app copy is stale.
+- Adding a page also means registering it in \`scripts/generate_wiki_articles.mjs\` and adding it
+  to this page and to \`_Sidebar.md\`.
+
+The full policy — including which content belongs in the README and which belongs here — is in
+[02. Developer Setup & Contributing](02-Developer-Setup-&-Contributing.md).
 
 ---
 
 ## 🤝 Community & Support
 
-- **GitHub Repository**: [https://github.com/themantas1994/z-30](https://github.com/themantas1994/z-30)
-- **Issue Tracker**: Bug reports, feature suggestions, and hardware test reports.
-- **License**: Distributed under the permissive [MIT License](../README.md#contributing--license).
+- **GitHub repository**: [https://github.com/themantas1994/z-30](https://github.com/themantas1994/z-30)
+- **Issue tracker**: bug reports, feature suggestions, and hardware test reports.
+- **License**: distributed under the permissive [MIT License](../LICENSE).
 `,
   },
   {
@@ -379,6 +440,43 @@ python3 build_all_platforms.py
 
 ---
 
+## 📚 Documentation: where things belong
+
+**This wiki is the source of truth for z-30's documentation.** The repository \`README.md\` is a
+front page: it introduces the project, gets a new operator to a working install, and links
+here. It deliberately does not carry reference material.
+
+| If you are writing... | It belongs in... |
+| :--- | :--- |
+| A protocol, DSP or FEC detail | \`wiki/03\`, \`wiki/04\`, \`wiki/05\` |
+| Install or packaging steps for a platform | \`wiki/09\` |
+| A UI control, macro or operating procedure | \`wiki/14\`, or \`wiki/01\` if it is onboarding |
+| Hardware, CAT or PTT wiring | \`wiki/06\` |
+| A safety, compliance or local-security behaviour | \`wiki/13\` |
+| A CLI flag, config key or environment variable | \`wiki/15\` |
+| A benchmark figure, test or CI check | \`wiki/16\` |
+| A sentence that makes someone want to try z-30 | \`README.md\` |
+
+Two rules follow from that:
+
+1. **Do not duplicate reference material into the README.** If the README and a wiki page
+   disagree, the wiki page is correct and the README is the bug. Link instead of copying.
+2. **\`src/data/wikiArticles.ts\` is generated.** The in-app wiki viewer needs the documentation
+   as JavaScript strings because the browser cannot read the repository. After editing anything
+   under \`wiki/\`, run \`npm run generate:wiki\` (or \`npm run build\`, which does it first) and
+   commit the regenerated file. CI runs \`npm run check:generated\` and fails if you forget. The
+   same applies to \`src/data/pythonSource.ts\` and \`npm run generate:python-source\`.
+
+Adding a **new** wiki page also means registering it in the \`ARTICLES\` list in
+\`scripts/generate_wiki_articles.mjs\` (id, file, slug, title, category, description, tags), and
+adding it to \`wiki/Home.md\` and \`wiki/_Sidebar.md\`. Existing \`slug\` values are routing keys for
+in-app links — do not change one without changing every reference to it.
+
+\`AGENTS.md\` in the repository root is the condensed version of all of this, written for coding
+assistants and for anyone who wants the invariants on one page.
+
+---
+
 ## 🤝 Contribution Guidelines
 
 We welcome contributions of all kinds! Please follow these standards:
@@ -399,6 +497,8 @@ Please use Conventional Commits:
 2. Production bundle must build cleanly via \`npm run build\`.
 3. Python modifications must maintain compatibility with Python 3.9 through 3.13.
 4. If modifying DSP code, run \`python -m pytest tests\` (which includes the codec round trip, the occupied-bandwidth budget, and the acquisition tests) and \`python -m z30_dsp.benchmark --mode realistic --fading none --min-snr -28 --max-snr -17 --frames 40 --seed 20260830\` to check the decode threshold has not regressed below **-21.1 dB SNR (50%) / -18.0 dB SNR (90%)**. That is measured through the real acquisition path with random carrier and timing offsets. \`--mode ideal\` gives the genie-aided bound (-24.6 dB / -23.4 dB) for comparison; it is not an on-air threshold.
+5. Documentation changes go in \`wiki/\`, not the README, and the generated in-app copy is regenerated (\`npm run generate:wiki\`) and committed. See [Documentation: where things belong](#-documentation-where-things-belong).
+6. Any change to the transmit gate, the local API, the GPIO bridge or the time-sync guards keeps its tests passing unchanged, or explains in the pull request why the guarantee in [13. Operating Safety, Compliance & Local Security](13-Operating-Safety-Compliance-&-Security.md) is still met.
 `,
   },
   {
@@ -434,6 +534,42 @@ This document provides the complete mathematical and signal processing specifica
 
 ---
 
+## 🔄 End-to-End Signal Chain
+
+\`\`\`
+                                      z-30 DSP Transmit / Receive Flow
+                                      ================================
+
+       [ Structured QSO Message ]                           [ Raw Audio In (12 / 48 kHz / 16-bit) ]
+                 |                                                          |
+       [ 63-bit Radix-37/27 Packing ]                             [ Audio Buffer (24.0s Window) ]
+                 |                                                          |
+       [ 14-bit CRC Parity Insertion ]                             [ Downsample & Matched Filter ]
+                 |                                                          |
+       [ R=0.356 IRA-LDPC Encoder (216, 77) ]                     [ FFT Energy Binning (16 Tones) ]
+                 |                                                          |
+       [ 21-Symbol Costas Synchronization ]                        [ Costas Array Sync Detection ]
+                 |                                                          |
+       [ 16-MFSK Continuous Phase FSK ]                            [ Non-Coherent Metric Slicer ]
+                 |                                                          |
+       [ Gaussian Frequency-Pulse Shaping ]                        [ Log-Likelihood Ratio (LLR) ]
+                 |                                                          |
+       [ Transceiver Soundcard / CAT ]                            [ Belief Propagation LDPC Decoder ]
+                                                                            |
+                                                                   +--------+--------+
+                                                                 Valid CRC?       Corrupt / Clash?
+                                                                   |                 |
+                                                            [ Output Decode ]   [ SIC Engine ]
+                                                                                     |
+                                                                           (Subtract & Re-decode)
+\`\`\`
+
+The transmit path is implemented twice, once per stack, and the two must stay bit-exact:
+\`z30_dsp/modem.py\` and \`src/dsp/z30Waveform.ts\`. \`tests/test_cross_language_parity.py\` and
+\`tests/crc14.test.mjs\` hold them together against shared known-answer vectors.
+
+---
+
 ## 🌊 Waveform Synthesis & Keying
 
 The transmitted continuous-phase baseband signal $s(t)$ over the frame duration $0 \\le t \\le 24.0\\text{ s}$ is defined as:
@@ -444,8 +580,49 @@ Where:
 - $S_k \\in \\{0, 1, \\dots, 15\\}$ is the integer tone index for symbol $k$.
 - $\\Delta f = 3.125\\text{ Hz}$ is the tone spacing.
 - $T_s = 0.320\\text{ s}$ is the symbol period.
-- $g(t)$ is a raised-cosine shaping filter with roll-off factor $\\beta = 0.20$ to suppress sideband splatter.
-- $A(t)$ is the envelope amplitude with a 20 ms raised-cosine ramp at the start ($t=0$) and end ($t=24.0\\text{ s}$) to prevent key clicks.
+- $g(t)$ is a **Gaussian frequency pulse** with bandwidth-time product $BT = 2.0$ — the value
+  WSJT-X uses for FT8. The piecewise-constant tone sequence is convolved with $g(t)$ *before*
+  it is integrated into phase.
+- $A(t)$ is the envelope: **unity throughout the frame**, with a single 20 ms raised-cosine
+  ramp at the start ($t=0$) and at the end ($t=24.0\\text{ s}$).
+
+Two properties define this waveform, and both are load-bearing:
+
+1. **Continuous phase.** One phase accumulator runs across the entire frame. A phase
+   discontinuity at a symbol boundary is an impulse in frequency and radiates across the whole
+   passband.
+2. **Constant amplitude.** Smoothing the *frequency* narrows the spectrum; smoothing the
+   *amplitude* per symbol is amplitude keying at 3.125 baud laid over the tone sequence, and
+   widens it. An earlier modulator did exactly that — an 8 ms ramp on every one of the 75
+   symbols — and discarded the benefit of the phase accumulator sitting next to it.
+
+Lowering $BT$ to 1.0 buys back roughly 6 Hz of -40 dB occupied bandwidth but costs about 2 dB
+of decode threshold, because the extra smoothing is inter-symbol interference the per-symbol
+matched-filter demodulator does not model. That is a bad trade for a weak-signal mode.
+\`tests/test_modem_spectrum.py\` asserts the 99% occupied bandwidth (**49.8 Hz** measured) and
+the -40 dB bandwidth (**66 Hz**) against fixed budgets, and asserts that the old per-symbol
+gated waveform *fails* them — so the test can demonstrably tell the difference.
+
+---
+
+## ⏱️ Synchronous 30-Second Cycle Timing
+
+The UTC clock is divided into even and odd 30-second transmission slots:
+
+- **\`EVEN\` slot**: begins exactly at \`:00\` of each UTC minute (span \`:00\`–\`:30\`).
+- **\`ODD\` slot**: begins exactly at \`:30\` of each UTC minute (span \`:30\`–\`:00\`).
+
+Within a slot:
+
+| Window | Span | Purpose |
+| :--- | :--- | :--- |
+| **Active transmission** | $0.00\\text{ s}$ – $24.00\\text{ s}$ | The 75-symbol frame |
+| **Decode & SIC processing** | $24.00\\text{ s}$ – $28.50\\text{ s}$ | $4.50\\text{ s}$ compute budget for FFT framing, LDPC and 3-pass SIC |
+| **Sequencing & CAT guard** | $28.50\\text{ s}$ – $30.00\\text{ s}$ | $1.50\\text{ s}$ of rig turnaround |
+
+Slot alignment is what makes the mode work at all; see
+[07. RF Time Synchronization Engine](07-RF-Time-Synchronization-Engine.md) for how z-30
+calibrates its clock without internet access.
 
 ---
 
@@ -1104,6 +1281,59 @@ An in-depth technical analysis for **advanced amateur radio operators, RF engine
 | **Co-Channel Collision Recovery** | None (collisions fail to decode) | **3-Pass Successive Interference Cancellation (SIC)** | Co-channel collision resolution down to $-31.5\\text{ dB}$ |
 | **Clock Drift Tolerance** | $\\pm 1.0\\text{ s}$ (requires NTP/GPS) | $\\pm 1.5\\text{ s}$ + Built-in RF Time Sync | Zero-admin offline HF/LF time calibration |
 
+
+### 1.1 Against the wider mode set
+
+The same measurement placed beside the published on-air figures for the other common
+weak-signal modes:
+
+| Metric / Parameter | **z-30** | **FT8** | **FT4** | **WSPR** | **JS8Call** |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| **Cycle duration** | **30.0 s** | 15.0 s | 7.5 s | 120.0 s | 15.0 s (var) |
+| **Occupied bandwidth** | **50.0 Hz** | 47.0 Hz | 83.0 Hz | 5.9 Hz | 50.0 Hz |
+| **Modulation** | **16-MFSK (CPFSK)** | 8-GFSK | 4-GFSK | 4-FSK | 8-GFSK |
+| **Symbol rate** | **3.125 baud** | 6.25 baud | 20.83 baud | 1.4648 baud | 6.25 baud |
+| **Tone spacing ($\\Delta f$)** | **3.125 Hz** | 6.25 Hz | 20.83 Hz | 1.4648 Hz | 6.25 Hz |
+| **Active TX duration** | **24.0 s (75 symbols)** | 12.64 s | 4.48 s | 110.6 s | 12.64 s |
+| **Decode / guard window** | **6.0 s** | 2.36 s | 3.02 s | 9.4 s | 2.36 s |
+| **Sensitivity (50%), AWGN** | **-21.1 dB SNR †** | -21.0 dB SNR ‡ | -17.5 dB SNR ‡ | -28.0 dB SNR ‡ | -24.0 dB SNR ‡ |
+| **Sensitivity (90%), AWGN** | **-18.0 dB SNR †** | -20.0 dB SNR ‡ | -16.5 dB SNR ‡ | -27.0 dB SNR ‡ | -22.5 dB SNR ‡ |
+| **FEC code** | **LDPC (216, 77), $R \\approx 0.356$** | LDPC (174, 91), $R = 0.52$ | LDPC (174, 91), $R = 0.52$ | Convolutional $K=32$, $r=1/2$ | LDPC (174, 91) |
+| **Payload capacity** | **77 bits (63-bit info + CRC-14)** | 77 bits (CRC-14) | 77 bits (CRC-14) | 28 bits (call + loc + pwr) | Free text (var) |
+| **Collision recovery** | **Multi-pass SIC (3 passes)** | Single pass (limited) | None | Non-coherent | Single pass |
+| **Primary use case** | **Deep DX / EME / solar minima** | General DX / contesting | Rapid contesting | Propagation beaconing | Conversational keyboard |
+| **Clock drift tolerance** | **$\\pm 1.5\\text{ s}$ (with RF auto-sync)** | $\\pm 1.0\\text{ s}$ | $\\pm 0.5\\text{ s}$ | $\\pm 2.0\\text{ s}$ | $\\pm 1.0\\text{ s}$ |
+| **Spectral density** | **50 QSOs per 2.7 kHz band** | ~40 QSOs per band | ~25 QSOs per band | N/A (one-way) | ~30 QSOs per band |
+
+**† is a like-for-like measurement with ‡.** **†** is z-30's own benchmark run in
+\`--mode realistic\`: each frame gets a random carrier offset (±5 Hz) and timing offset (±0.5 s),
+and the receiver is handed nothing but audio — it locates the frame and estimates the noise
+floor itself, exactly as it must on the air. **‡** are the published over-the-air thresholds
+for those modes, which include the same acquisition, AFC and timing losses. Reproduce † with
+the commands in
+[16. Benchmarking, Testing & CI](16-Benchmarking-Testing-&-CI.md).
+
+**z-30 is level with FT8 on AWGN, not ahead of it.** Earlier revisions of this table quoted a
+genie-aided bound against FT8's on-air figure and concluded a "+4.0 dB advantage"; that claim
+was withdrawn, and this is the measurement that replaces it. z-30 spends twice the airtime of
+FT8 for the same 77-bit payload, and the extra 3 dB that buys the codec is spent again on
+acquiring a 3.125 Hz-spaced signal. Where z-30 does differ is in occupied bandwidth, multi-pass
+SIC, and behaviour on a disturbed path — not in raw AWGN sensitivity.
+
+### 1.2 Why 16-MFSK and a 30-second cycle at all?
+
+1. **A longer, more heavily coded frame.** Halving the symbol rate from 6.25 to 3.125 baud
+   doubles the energy per symbol, and a rate-0.356 code over 75 symbols spends considerably
+   more redundancy per information bit than FT8's rate-0.52 (174, 91). Both changes buy coding
+   gain, at the cost of a 30-second cycle instead of 15 — and, as the measurements above show,
+   most of that gain is handed back at the acquisition stage.
+2. **True co-channel collision recovery.** FT8 fails when two signals occupy the same audio
+   frequency bins. z-30 runs a 3-pass **Successive Interference Cancellation** engine: when a
+   strong signal is decoded, its phase and amplitude are synthesised and subtracted from the
+   time-domain buffer, enabling second and third decoding passes on previously obscured weak
+   signals. See
+   [05. Successive Interference Cancellation (SIC)](05-Successive-Interference-Cancellation-(SIC).md).
+
 ---
 
 ## 📐 2. The Shannon-Hartley Capacity & Information Theory Foundation
@@ -1134,7 +1364,9 @@ Calculating the theoretical Shannon threshold in a 2500 Hz reference bandwidth f
 - **FT8 Theoretical Shannon Limit**: $\\text{SNR}_{2500,\\text{Shannon}} = -1.59\\text{ dB} + 10\\log_{10}\\left(\\frac{6.09}{2500}\\right) = -27.72\\text{ dB}$
 - **z-30 Theoretical Shannon Limit**: $\\text{SNR}_{2500,\\text{Shannon}} = -1.59\\text{ dB} + 10\\log_{10}\\left(\\frac{3.21}{2500}\\right) = -30.51\\text{ dB}$
 
-**Physical Insight**: FT8 decodes down to $-21.0\\text{ dB}$, operating **$6.72\\text{ dB}$ above the theoretical Shannon limit**. z-30 decodes down to $-25.0\\text{ dB}$ (50% threshold), operating **$5.51\\text{ dB}$ above its theoretical Shannon limit**—a comparable, empirically-verified gap to Shannon capacity, achieved via the lower-rate (216, 77) LDPC code and doubled symbol integration time rather than by approaching the unconstrained capacity bound.
+**Physical Insight**: FT8 decodes down to $-21.0\\text{ dB}$, operating **$6.72\\text{ dB}$ above its theoretical Shannon limit**. z-30's measured 50% threshold through blind acquisition is $-21.1\\text{ dB}$, which is **$9.4\\text{ dB}$ above its own limit of $-30.51\\text{ dB}$**; its genie-aided bound of $-24.6\\text{ dB}$ sits $5.9\\text{ dB}$ above that limit.
+
+The comparison to draw from those three numbers is not "z-30 is closer to Shannon". It is that halving the bit rate moves the *limit* down by 2.8 dB, and z-30 converts most of that into coding gain only when acquisition is free. On the air, where it is not, the two modes land level. The gap between z-30's bound and its measured threshold — 3.5 dB of acquisition loss on a 3.125 Hz-spaced signal — is exactly the part that a genie-aided comparison hides, in this mode and in every other.
 
 ---
 
@@ -1370,8 +1602,8 @@ cross-platform hardware CAT integration.
   },
   {
     id: "github-updates",
-    slug: "10-Software-Updates-&-GitHub-Sync",
-    title: "10. Software Updates & GitHub Upstream Sync",
+    slug: "12-Software-Updates-&-GitHub-Sync",
+    title: "12. Software Updates & GitHub Upstream Sync",
     category: "Advanced & Packaging",
     description: "How to check for updates, sync upstream git commits from themantas1994/z-30, and perform zero-downtime updates across Linux, Windows, Android, and Web PWA.",
     tags: ["update","github","git","sync","upgrade","releases","pwa","termux","ubuntu","arch"],
@@ -1458,6 +1690,576 @@ git pull origin main
 pip install --upgrade -e .
 npm install && npm run build
 \`\`\`
+`,
+  },
+  {
+    id: "operating-safety",
+    slug: "13-Operating-Safety-Compliance-&-Security",
+    title: "13. Operating Safety, Compliance & Local Security",
+    category: "Getting Started",
+    description: "The transmit gate, the three stuck-transmitter layers, local API authentication, system-clock and logbook handling - and what is still the operator's responsibility.",
+    tags: ["safety","compliance","band plan","licence","transmit gate","ptt watchdog","security","api token","alc"],
+    markdown: `# 13. Operating Safety, Compliance & Local Security
+
+This application keys real transmitters over serial, CM108, GPIO and audio VOX, and it exposes
+a local HTTP API to do it. The behaviours on this page are deliberate, they are covered by
+tests, and they are not configurable away casually. If you are changing code that touches
+transmit, the local API or the system clock, read this page first — every rule here exists
+because the failure it prevents is expensive on the air.
+
+---
+
+## 🚦 Before z-30 will transmit at all
+
+Every transmit entry point — the automatic QSO sequencer, the manual TX button, and the tune
+carrier — passes through a single gate (\`canTransmit()\` in \`src/dsp/catController.ts\`). It
+**fails closed**, and any refusal names the exact condition that failed:
+
+| Condition | Why |
+| :--- | :--- |
+| A syntactically valid callsign that is not the shipped \`W1AW\` placeholder | An unidentified transmission, or one under someone else's call, is a licence problem |
+| A configured regulatory region and licence class | Band edges and sub-band privileges differ by country and by class; there is no safe way to guess either |
+| Dial frequency **plus audio offset** inside a data-mode segment your class holds | The radiated frequency is not the dial frequency, and this is what puts a station out of band |
+
+The band plan lives in \`src/dsp/bandPlan.ts\` and covers IARU Regions 1–3 plus the FCC Part 97
+sub-band structure, with the date each entry was last checked. National rules vary and change:
+the gate catches a mistuned VFO or a wrong band button, it does not replace knowing your own
+licence conditions.
+
+---
+
+## ⏱️ Stuck-transmitter protection
+
+Three independent layers, because the failure being defended against is "the software stopped
+running":
+
+1. **Browser-side maximum-transmission timer.** A frame is 24 s; \`MAX_TX_SECONDS\` is 40 s.
+   Past that, PTT is force-released across every keying path.
+2. **Server-side dead-man switch on the GPIO PTT line.** The browser must re-assert PTT every
+   ~500 ms; if it stops, \`z30_dsp/web_server.py\` drops the pin within about two seconds. A
+   crashed tab, a killed renderer or a sleeping machine cannot send a keepalive — and cannot
+   run a browser-side timer either, which is why this layer has to exist separately. A hard
+   40 s ceiling applies even if keepalives keep arriving.
+3. **\`atexit\` and \`SIGTERM\`/\`SIGINT\` handlers** that release every claimed GPIO pin, so killing
+   the server does not leave a radio keyed.
+
+---
+
+## 🔐 The local API is authenticated
+
+\`z30_dsp/web_server.py\` binds \`127.0.0.1\` only, but **loopback is not an authentication
+boundary**: any page in any browser tab can \`fetch()\` a loopback URL, and a \`text/plain\` POST
+is a CORS simple request that is sent with no preflight. Every \`/api/\` request must therefore
+satisfy all three of:
+
+- a bearer token (\`X-Z30-Token\`) minted fresh at each server start and injected only into the
+  \`index.html\` that this process serves;
+- an \`Origin\` header that is absent or exactly this server's own origin;
+- a \`Host\` header naming this server's own loopback address and port, which blocks DNS
+  rebinding.
+
+No wildcard \`Access-Control-Allow-Origin\` header is sent anywhere, only the single configured
+BCM pin can be driven, and the rigctld relay will only talk to loopback daemons.
+
+\`tests/test_web_server_api.py\` asserts every one of these. A change that makes any of them pass
+without the token, from a foreign \`Origin\`, or against an arbitrary GPIO pin is a regression,
+not a convenience.
+
+---
+
+## 🕐 The system clock
+
+z-30 keeps its clock correction to itself as \`app_time_offset_ms\`, which is all its slot timing
+needs. A time station is an unauthenticated broadcast; a marginal decode — or a deliberately
+transmitted spoof — would otherwise move the host clock arbitrarily, taking TLS validity, log
+timestamps and cron with it.
+
+Stepping the machine's clock from a decoded time station is therefore:
+
+- **opt-in** (\`"allow_set_system_clock": true\` in \`~/.z30/config.json\`, or
+  \`Z30_ALLOW_SET_SYSTEM_CLOCK=1\`),
+- **confirmed** interactively,
+- **bounded to 5 minutes**, and
+- **refused** when an NTP daemon already owns the clock.
+
+\`tests/test_time_sync_guards.py\` guards the default and the bound. See
+[07. RF Time Synchronization Engine](07-RF-Time-Synchronization-Engine.md).
+
+---
+
+## 📓 Your logbook is a file
+
+Contacts are mirrored to \`~/.z30/logbook.json\` with an ADIF export written beside them
+(\`XDG_CONFIG_HOME\` is honoured; see \`z30_dsp/paths.py\` for the full resolution order). The
+browser copy is a cache. Clearing browsing data, a private window, a different browser or a
+different port number all lose \`localStorage\`; none of them touch the file. A failed save is
+shown in the UI rather than logged to a console nobody reads.
+
+---
+
+## ⚠️ What is still on you
+
+Rendering a clean waveform in software is necessary, not sufficient.
+
+**Capture your transmitter's actual output and check the occupied bandwidth on a spectrum
+analyser before using this on the air** — sound-card clipping and rig ALC will re-broaden a
+clean signal, and no amount of correct DSP upstream prevents that.
+
+z-30 is an experimental mode. It is not coordinated with any band plan authority, it has no
+established calling-frequency convention beyond the defaults shipped in the Band Manager, and
+you remain responsible for your licence conditions, your ALC levels, and everything your
+station radiates.
+`,
+  },
+  {
+    id: "operation-reference",
+    slug: "14-User-Interface-&-Operation-Reference",
+    title: "14. User Interface & Operation Reference",
+    category: "Getting Started",
+    description: "Reference for every control surface: waterfall, QSO macros and auto-sequencing, auto-reply strategies, CAT and S-meter, setup wizard, band manager, and the ADIF logbook.",
+    tags: ["ui","waterfall","qso","macros","auto reply","cat","s-meter","wizard","band manager","logbook","adif"],
+    markdown: `# 14. User Interface & Operation Reference
+
+A reference for every control surface in the z-30 workspace: what it does, where it lives in
+the source, and what it changes on the air. If you are setting a station up for the first time,
+start at [01. New User Guide & First Steps](01-New-User-Guide-&-First-Steps.md) instead — this
+page is the reference you come back to.
+
+---
+
+## 🌊 60 FPS Spectral Waterfall & Spectrogram
+
+\`src/components/WaterfallDisplay.tsx\`
+
+The primary canvas delivers continuous, non-blocking 60 FPS spectral analysis:
+
+- **Colormaps**: 10 scientific palettes — \`Turbo\`, \`Inferno\`, \`Viridis\`, \`Plasma\`, \`Magma\`,
+  \`WSJT-X Classic\`, \`Night Vision Green\`, \`Amber CRT\`, \`High-Contrast B&W\`, \`Spectral Heatmap\`.
+- **Passband presets**: \`200–3000 Hz (Standard)\`, \`500–2000 Hz (Narrow)\`,
+  \`800–1800 Hz (Digital Focus)\`, \`100–3500 Hz (Wide)\`, \`0–4000 Hz (Extended)\`.
+- **Trace visibility boost**: a 3-level contrast multiplier (\`1x\`, \`1.6x\`, \`2.2x\`) that lifts
+  weak 16-MFSK tone tracks down to about $-25.0\\text{ dB}$ out of the background.
+- **Interactive tuning**:
+  - **Single click** — set the audio RX centre frequency.
+  - **Shift + click** — set the audio TX centre frequency.
+  - **Double click on a carrier** — arm the transmitter (\`txEnabled = true\`) and prepare the
+    sequencing macro that calls that station on the upcoming cycle.
+  - **Mouse wheel** — smooth zoom ($1\\times$ to $8\\times$), with drag-to-pan inspection.
+
+Remember that the frequency you radiate is the dial frequency **plus** this audio offset. That
+sum is what the transmit gate checks against the band plan — see
+[13. Operating Safety, Compliance & Local Security](13-Operating-Safety-Compliance-&-Security.md).
+
+---
+
+## 🔁 QSO State Machine & Auto-Sequencing
+
+\`src/dsp/qsoEngine.ts\`, \`src/components/QsoMacrosTransmitPanel.tsx\`
+
+z-30 automates standard amateur contact exchanges via a 6-stage finite state machine:
+
+| Macro | Description | Transmitted payload example |
+| :--- | :--- | :--- |
+| **TX 1** | Directed or general CQ call | \`CQ W1AW FN31\` |
+| **TX 2** | Signal report response | \`W1AW K1ABC -12\` |
+| **TX 3** | Signal report acknowledgment | \`K1ABC W1AW R-08\` |
+| **TX 4** | Mutual confirmation (RRR / RR73) | \`W1AW K1ABC RR73\` |
+| **TX 5** | Final 73 sign-off | \`K1ABC W1AW 73\` |
+| **TX 6** | Free text / special grid | \`CQ DX W1AW FN31\` |
+
+- **Auto-sequence** advances through the macros on each valid CRC-verified reply.
+- **Auto-log** commits the contact on RR73/73 and exports ADIF (\`.adi\`) accepted by LoTW, QRZ,
+  ClubLog and eQSL.
+- **Watchdog safety** disarms the transmitter after a configurable number of unanswered cycles
+  (1 to 10), so an unattended station cannot call CQ indefinitely.
+
+---
+
+## 🎯 Auto-Reply Priority Strategies
+
+When several stations answer your CQ inside the same 30-second slot, z-30 sorts the callers and
+picks one according to the configured rule:
+
+1. **First decoded (chrono)** — the first caller decoded in the slot (WSJT-X "Call 1st" behaviour).
+2. **Last decoded** — the last caller decoded in the cycle.
+3. **Strongest signal (max SNR)** — the loudest station first (e.g. $-4\\text{ dB}$ before $-24\\text{ dB}$).
+4. **Weakest signal (deep DX)** — stations closest to the LDPC threshold first (e.g. $-24.5\\text{ dB}$ before $-6\\text{ dB}$).
+5. **Nearest station (min distance)** — smallest Maidenhead great-circle distance.
+6. **Farthest DX (max distance)** — greatest Maidenhead great-circle distance.
+
+---
+
+## 🎛️ CAT Rig Control & S-Meter Integration
+
+\`src/dsp/catController.ts\`, \`src/dsp/hamlibCatalog.ts\`, \`src/components/RigControlPanel.tsx\`
+
+- Bidirectional serial communication over Hamlib \`rigctld\` (default port \`4532\`) or native
+  serial ports (\`COM1..COM32\`, \`/dev/ttyUSB*\`, \`/dev/ttyACM*\`).
+- Reads VFO dial frequency, operating mode (\`USB\` / \`PKTUSB\`) and live hardware S-meter power
+  in dBm.
+- A live CAT terminal for raw Hamlib commands (\`\\get_freq\`, \`\\set_freq\`, \`\\get_mode\`,
+  \`\\set_ptt\`, \`\\get_level\`).
+- Synchronous PTT keying via CAT commands, RTS/DTR serial pins, or audio tones.
+
+Full wiring, daemon invocation and per-rig notes live in
+[06. Transceiver CAT Control & PTT Wiring](06-Transceiver-CAT-Control-&-PTT-Wiring.md).
+
+---
+
+## ⚡ Supported PTT Keying Architectures
+
+Nine keying methods are supported natively. The summary below is the index; the wiring diagrams
+and per-method caveats are in
+[06. Transceiver CAT Control & PTT Wiring](06-Transceiver-CAT-Control-&-PTT-Wiring.md).
+
+| # | Method | Typical hardware |
+| :--- | :--- | :--- |
+| 1 | **CAT command** (\`\\set_ptt 1\` over USB/serial or the Hamlib TCP daemon) | Icom IC-7300/705/7610, Yaesu FT-991A/710/891, Kenwood TS-590SG, Elecraft K3/K4, Xiegu G90/X6100 |
+| 2 | **RTS serial pin** | Digirig, Rigblaster, microHAM |
+| 3 | **DTR serial pin** | Dual-line and legacy interfaces |
+| 4 | **Right-channel audio PTT tone** (1000/1500 Hz on R, data on L) | SignaLink USB, HT cables, smartphone audio jacks |
+| 5 | **C-Media CM108 / CM119 USB GPIO** (GPIO3/GPIO4 via HID reports) | DRA-30/50/70, RIM, URIxB |
+| 6 | **Raspberry Pi / SBC direct GPIO** (BCM 17/27) | DigiPi, backpack field boxes |
+| 7 | **VOX** | Transceiver's internal voice-operated exchange |
+| 8 | **TCI network socket** | ExpertSDR, SunSDR2 and other SDRs |
+| 9 | **K1EL WinKeyer 2/3** | WinKeyer, microHAM CW Keyer |
+
+---
+
+## 🧭 Interactive Station Setup Wizard
+
+\`src/components/SetupWizardModal.tsx\` (terminal equivalent: \`z30 --wizard\`)
+
+Four guided steps:
+
+1. **Station identity** — callsign format validation, 4/6-character Maidenhead locator
+   resolution, operator name, QTH, timezone.
+2. **Audio & soundcard I/O** — device enumeration, live VU meters, test-tone verification.
+3. **Rig control & Hamlib** — a searchable catalogue of 200+ transceivers, daemon host/port,
+   serial ports, baud rate, data bits.
+4. **PTT keying & hardware test** — method selection, wiring guidance, polarity, lead-in and
+   hang-time sliders, and a live PTT test trigger.
+
+---
+
+## 📡 Band Manager & Presets
+
+\`src/dsp/bandPlan.ts\`, \`src/components/BandManagerModal.tsx\` (terminal equivalent: \`z30 --bands\`)
+
+Default calling frequencies, all customisable:
+
+| Band | Dial frequency | Band | Dial frequency |
+| :--- | :--- | :--- | :--- |
+| **160 m** | 1.842000 MHz | **17 m** | 18.102000 MHz |
+| **80 m** | 3.576000 MHz | **15 m** | 21.076000 MHz |
+| **60 m** | 5.359000 MHz | **12 m** | 24.917000 MHz |
+| **40 m** | 7.076000 MHz | **10 m** | 28.076000 MHz |
+| **30 m** | 10.139000 MHz | **6 m** | 50.316000 MHz |
+| **20 m** | 14.076000 MHz *(primary activity)* | **2 m** | 144.176000 MHz |
+| **70 cm** | 432.176000 MHz | | |
+
+The same module supplies the band-edge and licence-class data the transmit gate enforces, so a
+custom preset outside your privileges is refused at transmit time rather than silently keyed.
+
+---
+
+## 📒 ADIF 3.1.4 Logbook & Contest Export
+
+\`src/dsp/qsoLogger.ts\`, \`src/components/LogbookModal.tsx\`, \`z30_dsp/auto_logger.py\`
+
+- Tabular logbook recording date, UTC time, callsign, band, dial frequency, mode (\`Z-30\`),
+  sent/received reports, Maidenhead grid, distance (km/mi) and operator notes.
+- One-click export to **ADIF 3.1.4 (\`.adi\`)**, **Cabrillo**, **JSON** and **CSV**.
+- Search and filter by callsign, band or date range.
+- The authoritative copy is the file on disk (\`~/.z30/logbook.json\` plus an ADIF export beside
+  it); the browser store is a cache. See
+  [13. Operating Safety, Compliance & Local Security](13-Operating-Safety-Compliance-&-Security.md).
+`,
+  },
+  {
+    id: "cli-configuration",
+    slug: "15-Command-Line-Tools-&-Configuration",
+    title: "15. Command-Line Tools & Configuration",
+    category: "Advanced & Packaging",
+    description: "The z30 command and its subcommands, where z-30 stores configuration and logs, the environment variables it honours, and how the local web server locates its bundle.",
+    tags: ["cli","command line","z30","config","environment variables","xdg","paths","web server"],
+    markdown: `# 15. Command-Line Tools & Configuration
+
+Everything the \`z30_dsp\` package exposes from a terminal, plus where z-30 keeps its files and
+which environment variables change its behaviour.
+
+---
+
+## 🖥️ The \`z30\` command
+
+Installing the wheel (or any of the platform installers in
+[09. Cross-Platform Build & Packaging](09-Cross-Platform-Build-&-Packaging.md)) puts a single
+\`z30\` entry point on the path. Every subcommand is also reachable as a module, which is what to
+use from a source checkout without installing:
+
+\`\`\`bash
+# Launch the default web DSP transceiver application window
+z30
+# or: python3 -m z30_dsp.main
+
+# Monte Carlo channel simulation and decode-threshold benchmark
+z30 --benchmark
+# or: python3 -m z30_dsp.benchmark
+
+# Terminal station configuration wizard
+z30 --wizard
+# or: python3 -m z30_dsp.config_wizard
+
+# RF standard station time sync scanner (WWV, CHU, DCF77, MSF, WWVB, JJY)
+z30 --sync
+# or: python3 -m z30_dsp.rf_time_sync
+
+# CLI band preset manager
+z30 --bands
+# or: python3 -m z30_dsp.band_manager
+
+# Native zero-dependency Tkinter desktop GUI
+z30 --tkinter
+# or: python3 -m z30_dsp.gui_tkinter
+
+# Check for updates and sync from GitHub
+z30 --update
+# or: python3 -m z30_dsp.updater
+# Non-interactive auto-pull:
+z30 --update -y
+\`\`\`
+
+\`pyproject.toml\` also installs direct aliases for the same entry points, which are handy in
+\`.desktop\` files and systemd units: \`z30-transceiver\`, \`z30-web\`, \`z30-gui\`, \`z30-wizard\`,
+\`z30-sync\`, \`z30-bands\`.
+
+---
+
+## 📂 Where z-30 keeps your files
+
+Resolved by \`z30_dsp/paths.py\`, in this order:
+
+1. \`$Z30_HOME\`, if set — an explicit override, mainly for tests and packaging.
+2. \`$XDG_CONFIG_HOME/z30\`, if \`XDG_CONFIG_HOME\` is set (Linux/BSD desktop convention).
+3. \`~/.z30\` — the historical location, and the fallback everywhere else.
+
+| File | Contents |
+| :--- | :--- |
+| \`config.json\` | Station configuration, clock calibration (\`app_time_offset_ms\`), CAT and PTT settings |
+| \`logbook.json\` | The authoritative QSO log; the browser copy is only a cache |
+| \`logbook.adi\` | ADIF 3.1.4 export written alongside the JSON log |
+| \`web_dist/\` | An optional pre-built copy of the web GUI, searched before the packaged one |
+
+A per-machine \`config.json\` is deliberately never repository-relative: an earlier version
+defaulted to the bare string \`"config.json"\`, so the file landed wherever the app happened to
+be launched from and a personal calibration file could be committed by accident.
+
+---
+
+## 🌱 Environment variables
+
+| Variable | Effect |
+| :--- | :--- |
+| \`Z30_HOME\` | Overrides the per-user data directory entirely |
+| \`XDG_CONFIG_HOME\` | Used as \`$XDG_CONFIG_HOME/z30\` when \`Z30_HOME\` is unset |
+| \`Z30_ALLOW_SET_SYSTEM_CLOCK=1\` | Permits the opt-in, bounded, confirmed system-clock step described in [13. Operating Safety](13-Operating-Safety-Compliance-&-Security.md) |
+| \`DISABLE_HMR=true\` | Turns off Vite HMR and file watching in development (used by automated tooling) |
+| \`APP_URL\` | Public URL when the web UI is hosted somewhere other than the local \`127.0.0.1\` server; used for self-referential links only |
+
+\`.env.example\` in the repository root documents anything else the build honours. Never commit a
+real \`.env\`; \`.gitignore\` excludes it.
+
+---
+
+## 🌐 The local web server
+
+\`z30_dsp/web_server.py\` serves the built web GUI and the hardware API that the browser cannot
+reach on its own — serial CAT, CM108 HID, GPIO PTT and the \`rigctld\` relay.
+
+- It binds \`127.0.0.1\` only, and every \`/api/\` request must carry the per-start bearer token
+  plus a matching \`Origin\` and \`Host\`. Loopback is not an authentication boundary; see
+  [13. Operating Safety, Compliance & Local Security](13-Operating-Safety-Compliance-&-Security.md).
+- It locates the web bundle in order: \`dist/\` (in the working directory, then next to the
+  package), the packaged \`z30_dsp/web_dist/\`, then \`~/.z30/web_dist/\` and \`~/.z30/dist/\`. So a
+  stale \`web_dist\` snapshot never wins over a bundle you just built. Serving is read-only and
+  never triggers a build; pass \`--rebuild\` to run \`npm run build\` in the foreground first.
+- The GPIO PTT line is held by a dead-man switch: the browser re-asserts it about every 500 ms
+  and the pin drops within roughly two seconds of silence.
+
+---
+
+## 🔄 Updating
+
+\`z30 --update\` wraps the git/pip update paths for each platform. Channel-by-channel
+instructions — including the PWA and Termux — are in
+[12. Software Updates & GitHub Sync](12-Software-Updates-&-GitHub-Sync.md).
+`,
+  },
+  {
+    id: "benchmarking-ci",
+    slug: "16-Benchmarking-Testing-&-CI",
+    title: "16. Benchmarking, Testing & CI",
+    category: "Developer Guide",
+    description: "The two benchmark modes and why the difference matters, the measured decode curves and how to reproduce them, what each test guards, and what CI enforces on every push.",
+    tags: ["benchmark","monte carlo","snr","threshold","tests","pytest","ci","reproducibility","seed"],
+    markdown: `# 16. Benchmarking, Testing & Continuous Integration
+
+How z-30's numbers are produced, how to reproduce them, and what the test suite is defending.
+**Any sensitivity figure quoted anywhere in this project must come from a seeded run of the
+benchmark described here, and must say which mode produced it.**
+
+---
+
+## 🎲 The two benchmark modes, and why the difference matters
+
+**\`--mode realistic\` (default) measures a decode threshold.** Every frame gets a random carrier
+offset and a random timing offset, and optionally Watterson HF fading. The receiver is then
+handed nothing but audio: it locates the frame using only the 21 Costas sync symbols
+(\`z30_dsp/acquisition.py\`), estimates the noise floor from the spectrum itself, and decodes
+from whatever it found. **This is the number that is comparable with other modes' published
+on-air figures.**
+
+**\`--mode ideal\` measures a genie-aided bound, which is not a threshold.** The demodulator is
+handed the exact noise sigma, the exact carrier frequency and perfect symbol timing, on a clean
+channel. It bounds what the code can do under ideal detection, and nothing more.
+
+Earlier revisions of the project's documentation quoted the \`ideal\` number against FT8's on-air
+-21 dB and concluded a "+4.0 dB link margin advantage". That comparison did not hold and has
+been withdrawn. Both curves are now measured, and the gap between them is the answer to why.
+
+---
+
+## 📉 The measured set
+
+Seed \`20260830\`, 40 frames per SNR point, 2500 Hz reference bandwidth, carrier offset ±5 Hz,
+timing offset ±0.5 s:
+
+| Channel | 50% decode | 90% decode |
+| :--- | :--- | :--- |
+| Idealised AWGN bound (genie-aided sync — **not** an on-air figure) | -24.6 dB | -23.4 dB |
+| AWGN, blind acquisition | **-21.1 dB** | **-18.0 dB** |
+| CCIR *moderate* fading (1.0 ms / 0.5 Hz), blind acquisition | -18.8 dB | -14.0 dB |
+| CCIR *poor* fading (2.0 ms / 1.0 Hz), blind acquisition | -15.4 dB | above -11 dB |
+
+**3.5 dB of the bound is spent simply finding the signal.** That gap is the acquisition loss —
+what it costs to *find* the signal rather than be told where it is. Any mode's genie-aided
+bound is optimistic by a similar margin, which is why the two must never be compared across
+that line. See
+[11. Physics & Comparative Analysis](11-Physics-&-Comparative-Analysis-z30-vs-FT8.md) for what
+this does and does not mean against FT8.
+
+---
+
+## 🔁 Reproducing the curves
+
+Every run is seeded, so these are reproducible rather than anecdotal — record the seed with any
+figure you publish:
+
+\`\`\`bash
+# The honest curve (the default).
+python -m z30_dsp.benchmark --mode realistic --fading none --min-snr -28 --max-snr -17 --frames 40
+
+# On a disturbed ionospheric path.
+python -m z30_dsp.benchmark --mode realistic --fading moderate --min-snr -25 --max-snr -13 --frames 40
+
+# The genie-aided bound, for comparison only.
+python -m z30_dsp.benchmark --mode ideal --min-snr -30 --max-snr -20 --frames 40
+\`\`\`
+
+Sample output from the default mode:
+
+\`\`\`
+================================================================================================
+  z-30 DECODE THRESHOLD (blind acquisition through the real receive chain)
+  Carrier offset +/-5.0 Hz | timing offset +/-0.50 s | fading: No fading (AWGN only) (0.0 ms / 0.0 Hz)
+  The receiver is given only audio: it finds the frame and estimates the noise itself.
+  40 frames/point | Sample Rate: 6000 Hz | Max Iterations: 45 | Seed: 20260830
+================================================================================================
+SNR (2500Hz)   | Frames  | Success  | FER       | Decode %  | Avg Iters  | Acq fail | Timing RMS  | Freq RMS
+------------------------------------------------------------------------------------------------
+ -28.0 dB      | 40      | 0        | 1.0000    |     0.0%  |  150.0     | 25       |   1330.7 ms |   6.19 Hz
+ -27.0 dB      | 40      | 0        | 1.0000    |     0.0%  |  150.0     | 17       |   1251.3 ms |   5.06 Hz
+ -26.0 dB      | 40      | 0        | 1.0000    |     0.0%  |  150.0     | 3        |    281.3 ms |   3.46 Hz
+ -25.0 dB      | 40      | 3        | 0.9250    |     7.5%  |  138.9     | 1        |    104.7 ms |   0.99 Hz
+ -24.0 dB      | 40      | 4        | 0.9000    |    10.0%  |  138.6     | 0        |     17.8 ms |   0.32 Hz
+ -23.0 dB      | 40      | 7        | 0.8250    |    17.5%  |  124.2     | 0        |     13.7 ms |   0.18 Hz
+ -22.0 dB      | 40      | 13       | 0.6750    |    32.5%  |  106.3     | 0        |     13.5 ms |   0.18 Hz
+ -21.0 dB      | 40      | 21       | 0.4750    |    52.5%  |   74.3     | 0        |      9.6 ms |   0.14 Hz  <-- 50% crossing interpolates to -21.1 dB
+ -20.0 dB      | 40      | 27       | 0.3250    |    67.5%  |   51.1     | 0        |      7.2 ms |   0.12 Hz
+ -19.0 dB      | 40      | 32       | 0.2000    |    80.0%  |   36.0     | 0        |      7.5 ms |   0.10 Hz
+ -18.0 dB      | 40      | 36       | 0.1000    |    90.0%  |   19.0     | 0        |      4.4 ms |   0.09 Hz  <-- 90% crossing
+ -17.0 dB      | 40      | 40       | 0.0000    |   100.0%  |    2.5     | 0        |      3.9 ms |   0.07 Hz
+================================================================================================
+\`\`\`
+
+The \`Acq fail\`, \`Timing RMS\` and \`Freq RMS\` columns report the acquisition stage's own error —
+how often it landed more than half a symbol away, and how far off it was in time and frequency.
+Below about -24 dB the sync pattern stops being findable at all, and that shows up in those
+columns rather than being hidden inside the frame error rate.
+
+---
+
+## 🧪 The test suite
+
+\`\`\`bash
+# Python DSP suite
+pip install -r requirements.txt pytest
+python -m pytest tests -v
+
+# TypeScript: typecheck (strict mode is on) plus the codec and DSP module tests
+npm ci
+npm run lint
+npm run test:ts
+
+# Production web bundle (regenerates the embedded Python source and wiki articles first)
+npm run build
+\`\`\`
+
+What the suite covers, and why each test is there:
+
+| Test | Guards against |
+| :--- | :--- |
+| \`tests/test_ldpc_codec.py\` | An encoder that disagrees with its own parity-check matrix, a connection table that loses its girth-6 property, a CRC that stops detecting single-bit errors |
+| \`tests/test_modem_spectrum.py\` | A transmitter that splatters. Asserts the 99% occupied bandwidth and the -40 dB bandwidth against fixed budgets, and asserts that the old per-symbol-gated waveform **fails** them, so the test can demonstrably tell the difference |
+| \`tests/test_channel_acquisition.py\` | A channel model or acquisition stage that stops being reproducible under a fixed seed |
+| \`tests/test_cross_language_parity.py\` and \`tests/crc14.test.mjs\` | The Python and TypeScript codecs silently drifting apart — each half keeps working perfectly on its own while losing the ability to decode the other. Shared known-answer vectors live in \`tests/vectors/crc14_vectors.json\` |
+| \`tests/test_web_server_api.py\` | The local API losing its token, \`Origin\` or \`Host\` checks; the GPIO pin whitelist; the PTT dead-man switch actually releasing |
+| \`tests/test_time_sync_guards.py\` | The system clock becoming settable by default, or an unbounded step from a spoofed time signal |
+| \`tests/frontend.test.mjs\` | The transmit gate admitting an out-of-band frequency, an unseeded benchmark PRNG, an amplitude-gated waveform, and unvalidated station config |
+
+---
+
+## 🤖 What CI enforces
+
+\`.github/workflows/ci.yml\` runs on every push and pull request:
+
+- **Python DSP suite** on 3.10 and 3.12, plus a wheel build-and-import check.
+- **Benchmark smoke test**: a short seeded sweep in both modes, run twice, asserting identical
+  results. This catches non-determinism in the channel/acquisition path, which would otherwise
+  only surface when someone tried to reproduce a published curve.
+- **Generated sources are up to date** (\`npm run check:generated\`): \`src/data/pythonSource.ts\`
+  and \`src/data/wikiArticles.ts\` are produced from the real Python files and the markdown in
+  \`wiki/\`. Both were once hand-copied snapshots that drifted — the in-app wiki still showed
+  retracted sensitivity claims long after the markdown was corrected.
+- **Typecheck, TypeScript tests and the production web build.**
+- **PWA assets**: \`sw.js\`, \`manifest.json\` and both icons must be present in the build, and the
+  service-worker cache name must be build-stamped rather than left as the placeholder.
+- **Repository hygiene**: a LICENSE file containing the MIT text, no tracked build artifacts or
+  bytecode, and exactly one JavaScript lockfile.
+
+---
+
+## ✅ Before you publish a number
+
+1. Run the benchmark seeded, and quote the seed, frame count and mode alongside the figure.
+2. Never compare a \`--mode ideal\` figure with another mode's published on-air threshold.
+3. If a DSP change moves the threshold, update **every** place the figure appears: this page,
+   [03. DSP & Physical Layer Specification](03-DSP-&-Physical-Layer-Specification.md),
+   [11. Physics & Comparative Analysis](11-Physics-&-Comparative-Analysis-z30-vs-FT8.md),
+   the pull request checklist in
+   [02. Developer Setup & Contributing](02-Developer-Setup-&-Contributing.md),
+   \`Home.md\`, and the summary line in the repository \`README.md\`.
+4. Regenerate the in-app copy afterwards (\`npm run generate:wiki\`), or CI will fail.
 `,
   },
 ];
