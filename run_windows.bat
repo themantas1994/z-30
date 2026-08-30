@@ -10,6 +10,31 @@ echo ================================================================
 echo.
 
 REM -----------------------------------------------------------------
+REM Step 0: Sanity check - must be run from inside the z-30 project
+REM directory (the one containing package.json and pyproject.toml).
+REM Double-clicking this file in Explorer already sets the working
+REM directory correctly; this only matters if it's launched from a
+REM shortcut or a cmd.exe session in the wrong folder.
+REM -----------------------------------------------------------------
+if not exist "package.json" (
+    goto :wrong_dir
+)
+if not exist "pyproject.toml" (
+    goto :wrong_dir
+)
+goto :dir_ok
+:wrong_dir
+COLOR 0C
+echo [ERROR] This script must be run from inside the z-30 project directory.
+echo Expected to find "package.json" and "pyproject.toml" in: %CD%
+echo.
+echo Fix: right-click run_windows.bat inside the z-30 folder and choose
+echo "Run" - or open a Command Prompt, cd into that folder, then run it.
+pause
+exit /b 1
+:dir_ok
+
+REM -----------------------------------------------------------------
 REM Step 1: Detect working Python 3.9+ installation
 REM -----------------------------------------------------------------
 set "PYTHON_EXE="
@@ -141,14 +166,20 @@ if %errorlevel% NEQ 0 (
 )
 
 REM -----------------------------------------------------------------
-REM Step 4: Check & Build Web DSP Assets if needed
+REM Step 4: Keep npm dependencies current for the Web DSP assets
 REM -----------------------------------------------------------------
+REM NOTE: the actual "is the web bundle up to date" decision is now made in Python
+REM (z30_dsp/web_server.py:locate_web_dist), which compares dist/index.html's timestamp
+REM against package.json and src/ and rebuilds whenever the source is newer - not just when
+REM dist/index.html is missing. A previous version of this step only checked for absence,
+REM which meant any dist/ left over from a prior build was served forever after an update
+REM (git pull / re-extracted zip), regardless of source changes. This step just ensures
+REM node_modules exists so that rebuild (when Python decides it's needed) can actually run.
 where npm >nul 2>nul
 if %errorlevel% EQU 0 (
-    if not exist "dist\index.html" (
-        echo [INFO] Building Web DSP user interface assets...
+    if not exist "node_modules" (
+        echo [INFO] Installing Web DSP npm dependencies...
         call npm install --silent
-        call npm run build
     )
 )
 

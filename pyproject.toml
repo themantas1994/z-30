@@ -27,6 +27,9 @@ Issues = "https://github.com/themantas1994/z-30/issues"
 [project.optional-dependencies]
 audio = ["pyaudio>=0.2.13"]
 plots = ["matplotlib>=3.5.0"]
+# Only needed for RASPBERRY_PI_GPIO PTT keying (real GPIO writes via the local web server's
+# /api/gpio bridge - see z30_dsp/web_server.py:GpioBridge). Not required for any other feature.
+gpio = ["gpiozero>=2.0"]
 
 [project.scripts]
 z30 = "z30_dsp.main:main"

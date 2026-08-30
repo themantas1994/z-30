@@ -1,16 +1,24 @@
 # -*- mode: python ; coding: utf-8 -*-
 # PyInstaller Spec for z-30 Digital Mode Transceiver
+#
+# NOTE: build_windows.bat does NOT use this spec file - it invokes PyInstaller directly via
+# CLI args against z30_dsp/main.py. This spec is provided as the reusable, "proper" PyInstaller
+# entry point (`pyinstaller z30.spec`) and must be kept consistent with it: same real launcher
+# entry point and the same real hidden-import module names.
+
+import os
 
 block_cipher = None
 
 a = Analysis(
-    ['config_wizard.py'],
-    pathex=[],
+    ['z30_dsp/main.py'],
+    pathex=[os.path.abspath('.')],
     binaries=[],
     datas=[
         ('config.json', '.'),
         ('band_manager.py', '.'),
         ('rf_time_sync.py', '.'),
+        ('z30_dsp/web_dist', 'z30_dsp/web_dist'),
     ],
     hiddenimports=[
         'numpy',
@@ -18,7 +26,10 @@ a = Analysis(
         'scipy.signal',
         'scipy.fft',
         'sounddevice',
-        'pyserial',
+        'serial',
+        'serial.tools.list_ports',
+        'cffi',
+        'requests',
         'tkinter',
     ],
     hookspath=[],

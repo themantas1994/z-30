@@ -22,6 +22,20 @@ if ! command -v pacman &> /dev/null; then
     exit 1
 fi
 
+# Sanity check: this script must be run from inside the z-30 project directory (the one
+# containing package.json and pyproject.toml), not from $HOME or anywhere else - otherwise
+# later steps fail with confusing errors (npm looking for package.json in the wrong place,
+# `python -m build` finding no pyproject.toml) far from their actual cause.
+if [ ! -f "package.json" ] || [ ! -f "pyproject.toml" ]; then
+    echo -e "${RED}[ERROR] This script must be run from inside the z-30 project directory.${NC}"
+    echo "Expected to find 'package.json' and 'pyproject.toml' in the current directory: $(pwd)"
+    echo ""
+    echo "Fix: cd into the folder you cloned/extracted z-30 into, then re-run this script, e.g.:"
+    echo "  cd ~/z-30   # or wherever you extracted/cloned it"
+    echo "  ./install_arch.sh"
+    exit 1
+fi
+
 echo -e "${YELLOW}[1/4] Installing official dependencies via pacman...${NC}"
 sudo pacman -Syu --needed --noconfirm \
     python \
@@ -53,12 +67,16 @@ pip install --upgrade sounddevice
 
 if command -v npm &> /dev/null; then
   echo -e "${YELLOW}[3/4] Compiling React Web DSP interface bundle...${NC}"
-  npm install --silent || true
-  npm run build || true
-  mkdir -p "$HOME/.z30/web_dist"
-  cp -r dist/* "$HOME/.z30/web_dist/" 2>/dev/null || true
-  mkdir -p z30_dsp/web_dist
-  cp -r dist/* z30_dsp/web_dist/ 2>/dev/null || true
+  # Non-fatal (package install below doesn't depend on this succeeding), but a real failure is
+  # now printed loudly instead of silently discarded by a blanket `|| true`.
+  if npm install --silent && npm run build; then
+    mkdir -p "$HOME/.z30/web_dist"
+    cp -r dist/* "$HOME/.z30/web_dist/" 2>/dev/null || true
+    mkdir -p z30_dsp/web_dist
+    cp -r dist/* z30_dsp/web_dist/ 2>/dev/null || true
+  else
+    echo -e "${RED}[WARN] Web UI build failed (see npm output above) - continuing without it. Re-run 'npm run build' manually from this directory once the error is fixed.${NC}"
+  fi
 fi
 
 # Build and install z-30 package (including web bundle)

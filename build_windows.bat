@@ -14,6 +14,33 @@ echo ================================================================
 echo.
 
 REM -----------------------------------------------------------------
+REM Step 0: Sanity check - must be run from inside the z-30 project
+REM directory (the one containing package.json and pyproject.toml),
+REM not from some other folder. Otherwise later steps (npm, PyInstaller
+REM --add-data "config.json;.") fail with confusing errors far from
+REM their actual cause. Double-clicking this file in Explorer already
+REM sets the working directory correctly; this only matters if it's
+REM launched from a shortcut or a cmd.exe session in the wrong folder.
+REM -----------------------------------------------------------------
+if not exist "package.json" (
+    goto :wrong_dir
+)
+if not exist "pyproject.toml" (
+    goto :wrong_dir
+)
+goto :dir_ok
+:wrong_dir
+COLOR 0C
+echo [ERROR] This script must be run from inside the z-30 project directory.
+echo Expected to find "package.json" and "pyproject.toml" in: %CD%
+echo.
+echo Fix: right-click build_windows.bat inside the z-30 folder and choose
+echo "Run" - or open a Command Prompt, cd into that folder, then run it.
+pause
+exit /b 1
+:dir_ok
+
+REM -----------------------------------------------------------------
 REM Step 1: Detect working Python 3.9+ installation
 REM -----------------------------------------------------------------
 set "PYTHON_EXE="
@@ -159,11 +186,18 @@ REM -----------------------------------------------------------------
 echo.
 echo [INFO] Compiling standalone Windows binary with PyInstaller...
 
+REM IMPORTANT: prefer the "dist" folder Step 4 just rebuilt from CURRENT source over the
+REM z30_dsp\web_dist snapshot (a pre-built copy shipped in the repo that only gets updated
+REM manually). Checking web_dist first - as a previous version of this script did - meant the
+REM freshly rebuilt web UI was silently discarded on every single build: the .exe always got
+REM whatever web_dist last happened to contain, so rebuilding after a source/UI update kept
+REM producing an .exe that opened the SAME old interface. web_dist is now only a fallback for
+REM when npm wasn't available in Step 4 and no fresh "dist" was produced at all.
 set "WEB_DATA_ARG="
-if exist "z30_dsp\web_dist" (
-    set "WEB_DATA_ARG=--add-data z30_dsp\web_dist;z30_dsp\web_dist"
-) else if exist "dist" (
+if exist "dist\index.html" (
     set "WEB_DATA_ARG=--add-data dist;dist"
+) else if exist "z30_dsp\web_dist" (
+    set "WEB_DATA_ARG=--add-data z30_dsp\web_dist;z30_dsp\web_dist"
 )
 
 "%PYTHON_EXE%" -m PyInstaller --noconfirm --onedir --windowed ^
@@ -176,7 +210,8 @@ if exist "z30_dsp\web_dist" (
     --hidden-import "numpy" ^
     --hidden-import "scipy" ^
     --hidden-import "sounddevice" ^
-    --hidden-import "pyserial" ^
+    --hidden-import "serial" ^
+    --hidden-import "serial.tools.list_ports" ^
     --hidden-import "cffi" ^
     --hidden-import "requests" ^
     z30_dsp/main.py

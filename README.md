@@ -76,7 +76,7 @@ The following table benchmarks **z-30** against standard amateur radio digital m
 | **Sensitivity (50% AWGN)** | **-25.0 dB SNR** | -21.0 dB SNR | -17.5 dB SNR | -28.0 dB SNR | -24.0 dB SNR |
 | **Sensitivity (90% AWGN)** | **-24.0 dB SNR** | -20.0 dB SNR | -16.5 dB SNR | -27.0 dB SNR | -22.5 dB SNR |
 | **FEC Code** | **LDPC (216, 77) Rate ~0.356** | LDPC (174, 91) Rate 0.52 | LDPC (174, 91) Rate 0.52 | Convol. $K=32, r=1/2$ | LDPC (174, 91) |
-| **Payload Capacity** | **77 bits (58-bit info + CRC-14)** | 77 bits (CRC-14) | 77 bits (CRC-14) | 28 bits (Call+Loc+Pwr) | Free text (var) |
+| **Payload Capacity** | **77 bits (63-bit info + CRC-14)** | 77 bits (CRC-14) | 77 bits (CRC-14) | 28 bits (Call+Loc+Pwr) | Free text (var) |
 | **Collision Recovery** | **Multi-Pass SIC (3 passes)** | Single pass (limited) | None | Non-coherent | Single pass |
 | **Primary Use-Case** | **Deep DX / EME / Solar Minima** | General DX / Contesting | Rapid Contesting | Propagation Beaconing| Conversational Keyboard |
 | **Clock Drift Tolerance** | **$\pm 1.5\text{ s}$ (with RF Auto-Sync)** | $\pm 1.0\text{ s}$ | $\pm 0.5\text{ s}$ | $\pm 2.0\text{ s}$ | $\pm 1.0\text{ s}$ |
@@ -137,7 +137,7 @@ SNR (dB) | Frames | Success | Failed | FER     | Decode % | Avg Iters
 
        [ Structured QSO Message ]                           [ Raw Audio In (12 / 48 kHz / 16-bit) ]
                  │                                                          │
-       [ 58-bit Base-40 Packing ]                                 [ Audio Buffer (24.0s Window) ]
+       [ 63-bit Radix-37/27 Packing ]                             [ Audio Buffer (24.0s Window) ]
                  │                                                          │
        [ 14-bit CRC Parity Insertion ]                             [ Downsample & Matched Filter ]
                  │                                                          │
@@ -180,7 +180,7 @@ The UTC clock cycle is divided into even and odd 30-second transmission slots:
 
 ### LDPC (216, 77) & CRC-14 Forward Error Correction
 
-1. **Payload**: 58 bits of user information (compressed using Base-40 representation for standard callsigns, Maidenhead 4/6-digit grid locators, SNR signal reports from $-50\text{ dB}$ to $+49\text{ dB}$, and standard modifiers like `CQ`, `RR73`, `73`).
+1. **Payload**: 63 bits of user information (28-bit Radix-37/27 destination callsign + 28-bit Radix-37/27 source callsign + 7-bit grid/report field covering 4-character Maidenhead grid locators, SNR signal reports, and standard modifiers like `CQ`, `RR73`, `73`).
 2. **CRC Parity**: A 14-bit cyclic redundancy check polynomial ($x^{14} + x^{11} + x^2 + 1$) guarantees a false-decode rate lower than $10^{-6}$.
 3. **Encoding**: The 77-bit protected vector is mapped into 216 bits using a Rate-0.356 Quasi-Cyclic LDPC parity check matrix and modulated onto $54 \times \log_2(16)$ channel symbols.
 4. **Decoding**: Log-domain Min-Sum Belief Propagation running up to 50 iterations per carrier candidate.
@@ -564,7 +564,7 @@ z30 --update -y
     ├── dsp/                      # Pure Web Audio, DSP, Modems, and Decoders
     │   ├── audioEngine.ts        # Web Audio API 12/48 kHz pipeline & synthesizer
     │   ├── z30Constants.ts       # 16-MFSK specs, Costas arrays, and PTT catalog
-    │   ├── z30Codec.ts           # 77-bit Base-40 packing & CRC-14 engine
+    │   ├── z30Codec.ts           # 63-bit Radix-37/27 packing & CRC-14 engine
     │   ├── ldpcCodec.ts          # Rate-0.356 LDPC Belief Propagation decoder
     │   ├── sicDecoder.ts         # 3-pass Successive Interference Cancellation
     │   ├── rfTimeSyncEngine.ts   # Audio DSP time station cross-correlation engine
