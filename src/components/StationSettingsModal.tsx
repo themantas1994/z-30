@@ -151,6 +151,8 @@ export const StationSettingsModal: React.FC<StationSettingsModalProps> = ({
   const [hamlibMfg, setHamlibMfg] = useState<string>('ALL');
   const [isConnectingSerial, setIsConnectingSerial] = useState<boolean>(false);
   const [serialFeedback, setSerialFeedback] = useState<string>('');
+  const [isPairingCm108, setIsPairingCm108] = useState<boolean>(false);
+  const [cm108Feedback, setCm108Feedback] = useState<string>('');
   const [discoveredPorts, setDiscoveredPorts] = useState<DiscoveredSerialPort[]>([]);
   const [isQueryingSerial, setIsQueryingSerial] = useState<boolean>(false);
   const [isCustomPortMode, setIsCustomPortMode] = useState<boolean>(false);
@@ -315,7 +317,7 @@ export const StationSettingsModal: React.FC<StationSettingsModalProps> = ({
   // Update Hamlib Library Handler
   const handleUpdateHamlib = async () => {
     setIsUpdatingHamlib(true);
-    setHamlibUpdateMsg('Connecting to Hamlib upstream repository to update transceiver models & CI-V tables...');
+    setHamlibUpdateMsg('Checking Hamlib upstream repository for the latest release version...');
     try {
       const res = await updateHamlibLibrary();
       setHamlibLibVersion(res.version);
@@ -345,6 +347,20 @@ export const StationSettingsModal: React.FC<StationSettingsModalProps> = ({
       setSerialFeedback(`✗ Serial error: ${e?.message || 'Hardware device query cancelled'}`);
     } finally {
       setIsConnectingSerial(false);
+    }
+  };
+
+  // Real WebHID CM108/CM119 USB Audio GPIO Pairing Handler
+  const handlePairCm108 = async () => {
+    setIsPairingCm108(true);
+    setCm108Feedback('Requesting CM108/CM119 USB HID device selection...');
+    try {
+      const res = await catController.requestAndPairCm108Device();
+      setCm108Feedback(res.success ? `✓ ${res.message}` : `✗ ${res.message}`);
+    } catch (e: any) {
+      setCm108Feedback(`✗ HID pairing error: ${e?.message || 'Device selection cancelled'}`);
+    } finally {
+      setIsPairingCm108(false);
     }
   };
 
@@ -1311,7 +1327,18 @@ export const StationSettingsModal: React.FC<StationSettingsModalProps> = ({
                   {/* CM108 GPIO Pin */}
                   {form.pttMethod === 'CM108_GPIO' && (
                     <div>
-                      <label className="text-[9px] uppercase text-[#888] block mb-1">CM108 / CM119 GPIO Pin</label>
+                      <div className="flex items-center justify-between mb-1">
+                        <label className="text-[9px] uppercase text-[#888]">CM108 / CM119 GPIO Pin</label>
+                        <button
+                          type="button"
+                          onClick={handlePairCm108}
+                          disabled={isPairingCm108}
+                          className="text-[9px] bg-[#1E1E1E] hover:bg-[#2A2A2A] text-[#00FF41] border border-[#00FF41]/40 px-1.5 py-0.5 flex items-center space-x-1 font-bold"
+                        >
+                          <Cable className="w-2.5 h-2.5" />
+                          <span>{catController.isCm108Paired() ? '✓ HID Device Paired' : isPairingCm108 ? 'Pairing...' : 'Pair CM108/CM119 Device'}</span>
+                        </button>
+                      </div>
                       <select
                         value={form.cm108GpioPin || 3}
                         onChange={(e) => setForm({ ...form, cm108GpioPin: Number(e.target.value) })}
@@ -1321,6 +1348,12 @@ export const StationSettingsModal: React.FC<StationSettingsModalProps> = ({
                         <option value={4}>GPIO 4 (Pin 14 - Digirig CM108 / custom)</option>
                         <option value={1}>GPIO 1 (Pin 11 - Alternate RIM interface)</option>
                       </select>
+                      {cm108Feedback && <p className="text-[9px] text-[#888] mt-1">{cm108Feedback}</p>}
+                      {!(typeof navigator !== 'undefined' && (navigator as any).hid) && (
+                        <p className="text-[9px] text-yellow-500 mt-1">
+                          WebHID is not available in this browser - use a desktop Chromium-based browser (Chrome/Edge) to pair a real CM108/CM119 device.
+                        </p>
+                      )}
                     </div>
                   )}
 
@@ -1912,7 +1945,7 @@ export const StationSettingsModal: React.FC<StationSettingsModalProps> = ({
                     </div>
 
                     <p className="text-[#888] text-[11px] leading-relaxed">
-                      Executes the full LDPC(174,91) belief-propagation decoder and 3-pass Successive Interference
+                      Executes the full LDPC(216,77) belief-propagation decoder and 3-pass Successive Interference
                       Cancellation on the current soundcard audio buffer. All decoded station callsigns automatically
                       expire after 60 seconds.
                     </p>

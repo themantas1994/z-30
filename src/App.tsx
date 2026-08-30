@@ -86,6 +86,13 @@ export default function App() {
     }
   }, []);
 
+  // Keep the CAT controller's active protocol family (CI-V / Kenwood-ASCII / none) and
+  // CI-V address in sync with the configured rig model, so setFreqHz/setMode/setPtt send the
+  // right real hardware protocol whenever the operator changes rigs.
+  useEffect(() => {
+    rigctl.configureRig(config.rigModel);
+  }, [config.rigModel]);
+
   // Auto-connect audio receiver if system permission was already granted
   useEffect(() => {
     if (typeof navigator !== 'undefined' && navigator.permissions && navigator.permissions.query) {
@@ -123,6 +130,36 @@ export default function App() {
   const [fwdWatts, setFwdWatts] = useState<number>(0);
   const [swr, setSwr] = useState<number>(1.0);
 
+  // Mirrors isTransmitting/isTuning for the page-unload safety handler below, which needs to
+  // read the CURRENT value at unload time without re-registering its listener on every change.
+  const isTransmittingRef = useRef(false);
+  const isTuningRef = useRef(false);
+  useEffect(() => {
+    isTransmittingRef.current = isTransmitting;
+    isTuningRef.current = isTuning;
+  }, [isTransmitting, isTuning]);
+
+  // SAFETY: release PTT across every hardware path if the page is closed, reloaded, or
+  // navigated away from while actively transmitting or tuning. Without this, closing the
+  // browser tab (or a crash, or the OS sleeping the machine) mid-transmission leaves a real
+  // transmitter keyed indefinitely - a regulatory violation and an equipment-damage risk that
+  // this app previously had zero protection against; releasePttEmergency() existed but was
+  // never actually wired to any page-lifecycle event.
+  useEffect(() => {
+    const releaseIfTransmitting = () => {
+      if (isTransmittingRef.current || isTuningRef.current) {
+        rigctl.releasePttEmergency();
+        audioEngine.stopTransmission();
+      }
+    };
+    window.addEventListener('beforeunload', releaseIfTransmitting);
+    window.addEventListener('pagehide', releaseIfTransmitting);
+    return () => {
+      window.removeEventListener('beforeunload', releaseIfTransmitting);
+      window.removeEventListener('pagehide', releaseIfTransmitting);
+    };
+  }, []);
+
   // Track if decode was already run for the current 30s cycle
   const lastDecodedCycleRef = useRef<number>(-1);
 
@@ -146,7 +183,8 @@ export default function App() {
       config.myCall,
       config.myGrid,
       isTransmitting,
-      qsoState.txFreqHz
+      qsoState.txFreqHz,
+      timeOffsetMs
     );
 
     setDecodes(sicDecoderEngine.getHistory());
@@ -166,7 +204,7 @@ export default function App() {
         qsoLogger.logQsoAsync(autoResult.autoLogged);
       }
     }
-  }, [dialFreqHz, config, isTransmitting, qsoState.txFreqHz, currentBandIdx]);
+  }, [dialFreqHz, config, isTransmitting, qsoState.txFreqHz, currentBandIdx, timeOffsetMs]);
 
   const tuneTimeoutRef = useRef<number | null>(null);
 

@@ -41,7 +41,7 @@ Welcome to the official technical documentation and developer wiki for **z-30**:
 
 ## ⚡ What is z-30?
 
-**z-30** is engineered for extreme HF, VHF, and microwave weak-signal amateur radio communications. Operating in synchronous **30.0-second UTC slots**, z-30 achieves a 50% decoding sensitivity threshold of **-25.0 dB SNR** and 90% threshold of **-24.0 dB SNR** (in a standard 2500 Hz reference bandwidth), offering a **+4.0 dB link margin advantage over FT8** (.51\times$ ERP multiplier).
+**z-30** is engineered for extreme HF, VHF, and microwave weak-signal amateur radio communications. Operating in synchronous **30.0-second UTC slots**, z-30 achieves a 50% decoding sensitivity threshold of **-25.0 dB SNR** and 90% threshold of **-24.0 dB SNR** (in a standard 2500 Hz reference bandwidth), offering a **+4.0 dB link margin advantage over FT8** ($2.51\\times$ ERP multiplier).
 
 ### Key Technical Innovations
 1. **Ultra-Narrowband 16-MFSK**: Continuous-Phase 16-Tone Frequency Shift Keying occupying only **50.0 Hz** of RF bandwidth.
@@ -306,7 +306,7 @@ Indices: [0, 1, 2,  7, 8, 9,  17, 18, 19,  27, 28, 29,  37, 38, 39,  47, 48, 49,
 
 ### Costas Tone Pattern:
 \`\`\`
-Sync Tones: [3, 14, 1,  9, 6, 12,  2, 11, 5,  13, 0, 8,  4, 15, 7,  10, 3, 14,  1, 9, 6]
+Sync Tones: [3, 11, 7,  14, 2, 9,  5, 12, 1,  15, 6, 10,  4, 8, 13,  0, 9, 3,  14, 6, 11]
 \`\`\`
 `,
   },
@@ -315,28 +315,28 @@ Sync Tones: [3, 14, 1,  9, 6, 12,  2, 11, 5,  13, 0, 8,  4, 15, 7,  10, 3, 14,  
     slug: '04-Forward-Error-Correction-&-LDPC',
     title: '04. Forward Error Correction & LDPC',
     category: 'Protocol & DSP',
-    description: '58-bit Base-40 message packing, CRC-14 polynomial, and Systematic Rate-0.356 QC-LDPC (216, 77) Belief Propagation decoder.',
-    tags: ['ldpc', 'fec', 'crc', 'base-40', 'belief propagation', 'min-sum', 'tanner graph'],
+    description: '63-bit Radix-37/27 message packing, CRC-14 polynomial, and Systematic Rate-0.356 QC-LDPC (216, 77) Belief Propagation decoder.',
+    tags: ['ldpc', 'fec', 'crc', 'radix-37', 'belief propagation', 'min-sum', 'tanner graph'],
     markdown: `# 04. Forward Error Correction & LDPC
 
 This document details the source coding, message compression, Low-Density Parity-Check (LDPC) forward error correction matrix, and belief-propagation decoding algorithm used in **z-30**.
 
 ---
 
-## 📦 Message Structure & 58-Bit Source Packing
+## 📦 Message Structure & 63-Bit Source Packing
 
-Amateur radio transmissions in z-30 encode structured contact messages into a compact **58-bit information vector**, structured as follows:
-- **Callsign 1 (Sender / CQ)**: 28 bits (Base-40 character mapping)
-- **Callsign 2 (Recipient)**: 28 bits (Base-40 character mapping)
-- **Grid / Report / Modifiers**: 2 bits (4-char Maidenhead grid / SNR $-50$ to $+49\\text{ dB}$ / \`RR73\` / \`73\`)
+Amateur radio transmissions in z-30 encode structured contact messages into a compact **63-bit information vector**, structured as follows:
+- **Callsign 1 (Destination)**: 28 bits (Radix-37 prefix + digit + Radix-27 suffix packing)
+- **Callsign 2 (Source)**: 28 bits (Radix-37 prefix + digit + Radix-27 suffix packing)
+- **Grid / Report / Extra**: 7 bits (4-char Maidenhead grid via indexed table + hashed fallback, or SNR report)
 
 ---
 
 ## 🛡️ 14-Bit Cyclic Redundancy Check (CRC-14)
 
-$$P(x) = x^{14} + x^{11} + x^2 + 1 \\quad (\\text{Hex polynomial: } \\mathtt{0x2443})$$
+$$P(x) = x^{14} + x^{11} + x^2 + 1 \\quad (\\text{Hex polynomial: } \\mathtt{0x2443}, \\text{ initial seed } \\mathtt{0x2757})$$
 
-- **Protected Codeword Size**: $K_{\\text{total}} = 58 + 14 = 72 \\text{ bits}$ (padded to 77 bits with 5 auxiliary signaling bits).
+- **Protected Codeword Size**: $K_{\\text{total}} = 63 + 14 = 77 \\text{ bits}$ (no padding required).
 - **False Decode Probability**: $P_{\\text{false}} \\le 2^{-14} \\approx 6.1 \\times 10^{-5}$ per candidate, and $< 10^{-6}$ after Costas coherence validation.
 
 ---
@@ -344,7 +344,7 @@ $$P(x) = x^{14} + x^{11} + x^2 + 1 \\quad (\\text{Hex polynomial: } \\mathtt{0x2
 ## 🔢 Quasi-Cyclic LDPC (216, 77) Code
 
 - **Codeword Length ($N$)**: 216 channel bits ($54 \\text{ data symbols} \\times 4 \\text{ bits/symbol}$).
-- **Information Bits ($K$)**: 77 bits ($58 \\text{ message} + 14 \\text{ CRC} + 5 \\text{ flag}$).
+- **Information Bits ($K$)**: 77 bits ($63 \\text{ payload} + 14 \\text{ CRC}$).
 - **Parity Equations ($M$)**: $216 - 77 = 139$ parity-check constraints.
 - **Code Rate ($R$)**: $77 / 216 \\approx 0.356$.
 - **Decoding Algorithm**: Vectorized Normalized Min-Sum Belief Propagation running up to 50 iterations with attenuation factor $\\alpha = 0.75$.
@@ -522,7 +522,7 @@ An in-depth technical analysis for **advanced amateur radio operators, RF engine
 
 | Metric / Parameter | FT8 (Franke-Taylor 8-FSK) | z-30 (16-MFSK Weak-Signal) | Physics & Engineering Delta |
 | :--- | :--- | :--- | :--- |
-| **Decoding Threshold ($SNR_{2500}$)** | **-21.0 dB** | **-25.0 dB (50%) / -24.0 dB (90%)** | **+4.0 dB link margin advantage (.51\times$ ERP)** |
+| **Decoding Threshold ($SNR_{2500}$)** | **-21.0 dB** | **-25.0 dB (50%) / -24.0 dB (90%)** | **+4.0 dB link margin advantage ($2.51\\times$ ERP)** |
 | **Transmission Slot Duration** | 15.0 s (12.64 s active TX) | 30.0 s (24.0 s active TX) | $2\\times$ integration time ($+3.01\\text{ dB}$) |
 | **Modulation Format** | 8-MFSK (Continuous Phase) | 16-MFSK (Continuous Phase) | Higher-order orthogonal signaling efficiency |
 | **Occupied Bandwidth** | 47.0 Hz ($8 \\times 6.25\\text{ Hz}$) | 50.0 Hz ($16 \\times 3.125\\text{ Hz}$) | Ultra-narrowband density (50 channels in 2.7 kHz) |
@@ -562,7 +562,7 @@ Calculating the theoretical Shannon threshold in a 2500 Hz reference bandwidth f
 - **FT8 Theoretical Shannon Limit**: $\\text{SNR}_{2500,\\text{Shannon}} = -1.59\\text{ dB} + 10\\log_{10}\\left(\\frac{6.09}{2500}\\right) = -27.72\\text{ dB}$
 - **z-30 Theoretical Shannon Limit**: $\\text{SNR}_{2500,\\text{Shannon}} = -1.59\\text{ dB} + 10\\log_{10}\\left(\\frac{3.21}{2500}\\right) = -30.51\\text{ dB}$
 
-**Physical Insight**: FT8 decodes down to 21.0\text{ dB}$ (.72\text{ dB}$ above Shannon limit). z-30 decodes down to 25.0\text{ dB}$ (.51\text{ dB}$ above theoretical Shannon limit, achieving a +4.0 dB empirical gain over FT8)—representing an exceptionally power-efficient signaling scheme for amateur radio.
+**Physical Insight**: FT8 decodes down to $-21.0\\text{ dB}$ ($6.72\\text{ dB}$ above Shannon limit). z-30 decodes down to $-25.0\\text{ dB}$ ($5.51\\text{ dB}$ above its theoretical Shannon limit, achieving a +4.0 dB empirical gain over FT8)—representing an exceptionally power-efficient signaling scheme for amateur radio.
 
 ---
 
@@ -634,11 +634,11 @@ FT8 places Costas sync arrays in three fixed clusters (beginning, middle, end). 
 
 ## 📻 7. Real-World RF Link Budget: What +4.0 dB Means on the Air
 
-$$\\Delta P_{\\text{dB}} = 10 \\log_{10}\\left(\\frac{P_1}{P_2}\\right) \\implies \\frac{P_1}{P_2} = 10^{8.5 / 10} \\approx 7.08$$
+$$\\Delta P_{\\text{dB}} = 10 \\log_{10}\\left(\\frac{P_1}{P_2}\\right) \\implies \\frac{P_1}{P_2} = 10^{4.0 / 10} \\approx 2.51$$
 
-1. **Equivalent Transmit Power**: A **100 Watt** z-30 transmission has the same completion rate as an FT8 station transmitting **708 Watts**. A QRP operator running **5 Watts** achieves the equivalent of **35.5 Watts** on FT8.
-2. **Antenna Equivalency**: $+8.5\\text{ dB}$ is equivalent to upgrading from a wire dipole ($0\\text{ dBd}$) to a **4-element monoband Yagi ($+8.5\\text{ dBd}$)** or overcoming **1.4 S-units of noise floor**.
-3. **Extended Openings**: Extends marginal grey-line, solar minimum, and 6m/160m propagation openings by **2 to 4 hours**.
+1. **Equivalent Transmit Power**: A **100 Watt** z-30 transmission has the same completion rate as an FT8 station transmitting **~251 Watts**. A QRP operator running **5 Watts** achieves the equivalent of **~12.6 Watts** on FT8.
+2. **Antenna Equivalency**: $+4.0\\text{ dB}$ is equivalent to upgrading from a wire dipole ($0\\text{ dBd}$) to a small 2-element Yagi ($+4.0\\text{ dBd}$) or overcoming **~0.7 S-units of noise floor**.
+3. **Extended Openings**: Extends marginal grey-line, solar minimum, and 6m/160m propagation openings by **roughly 1 to 2 hours**.
 `,
   },
   {

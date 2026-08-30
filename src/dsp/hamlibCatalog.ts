@@ -272,7 +272,12 @@ export function getRigByName(name: string): HamlibRigModel | undefined {
 }
 
 /**
- * Update Hamlib definitions / check for updates
+ * Checks the real Hamlib GitHub repository for the latest published release. This is a genuine
+ * network request, not a simulated one - but it only reports the upstream version; it does NOT
+ * download or re-parse rig definitions, so the bundled catalog (HAMLIB_ALL_RIGS) is never
+ * silently replaced by this call. A prior version of this function slept for 850ms and then
+ * fabricated a hardcoded "updated" version string and a "successfully updated" message without
+ * making any network request at all.
  */
 export async function updateHamlibLibrary(): Promise<{
   success: boolean;
@@ -282,19 +287,41 @@ export async function updateHamlibLibrary(): Promise<{
   message: string;
   timestamp: string;
 }> {
-  // Simulate network query & catalog definition reload from official Hamlib GitHub repository
-  await new Promise((resolve) => setTimeout(resolve, 850));
+  const timestamp = new Date().toISOString().substring(0, 19).replace('T', ' ');
 
-  const updatedVersion = '4.6.2-git-2026.08';
-  CURRENT_HAMLIB_VERSION.version = updatedVersion;
-  CURRENT_HAMLIB_VERSION.lastUpdated = new Date().toISOString().substring(0, 19).replace('T', ' ');
+  try {
+    const response = await fetch('https://api.github.com/repos/Hamlib/Hamlib/releases/latest', {
+      headers: { Accept: 'application/vnd.github+json' },
+    });
+    if (!response.ok) {
+      throw new Error(`GitHub API returned HTTP ${response.status}`);
+    }
+    const data = await response.json();
+    const latestVersion: string = (data.tag_name || data.name || 'unknown').replace(/^v/i, '');
+    const releaseDate = data.published_at
+      ? new Date(data.published_at).toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })
+      : 'unknown';
 
-  return {
-    success: true,
-    version: updatedVersion,
-    releaseDate: 'August 2026 (Latest Stable Release)',
-    totalRigs: HAMLIB_ALL_RIGS.length,
-    message: `✓ Hamlib library successfully updated to ${updatedVersion}. Loaded ${HAMLIB_ALL_RIGS.length} verified transceiver definition models and CI-V/CAT tables.`,
-    timestamp: CURRENT_HAMLIB_VERSION.lastUpdated,
-  };
+    const isNewer = latestVersion !== 'unknown' && latestVersion !== CURRENT_HAMLIB_VERSION.version;
+
+    return {
+      success: true,
+      version: latestVersion,
+      releaseDate,
+      totalRigs: HAMLIB_ALL_RIGS.length,
+      message: isNewer
+        ? `✓ Hamlib upstream has a newer release available: ${latestVersion} (${releaseDate}). This app ships a bundled catalog of ${HAMLIB_ALL_RIGS.length} rig definitions; new upstream rig models require a manual app update to appear here.`
+        : `✓ Hamlib upstream checked: you already have the latest known release (${latestVersion}, ${releaseDate}). Bundled catalog: ${HAMLIB_ALL_RIGS.length} rig definitions.`,
+      timestamp,
+    };
+  } catch (err: any) {
+    return {
+      success: false,
+      version: CURRENT_HAMLIB_VERSION.version,
+      releaseDate: CURRENT_HAMLIB_VERSION.releaseDate,
+      totalRigs: HAMLIB_ALL_RIGS.length,
+      message: `✗ Could not reach the Hamlib GitHub repository (${err?.message || 'network error'}). Using the bundled catalog of ${HAMLIB_ALL_RIGS.length} rig definitions (last known version ${CURRENT_HAMLIB_VERSION.version}).`,
+      timestamp,
+    };
+  }
 }

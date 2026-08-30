@@ -283,7 +283,7 @@ export const SetupWizardModal: React.FC<SetupWizardModalProps> = ({
   // Update Hamlib Library Handler
   const handleUpdateHamlib = async () => {
     setIsUpdatingHamlib(true);
-    setHamlibUpdateMsg('Connecting to Hamlib upstream repository to update transceiver models & CI-V tables...');
+    setHamlibUpdateMsg('Checking Hamlib upstream repository for the latest release version...');
     try {
       const res = await updateHamlibLibrary();
       setHamlibLibVersion(res.version);

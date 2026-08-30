@@ -214,8 +214,14 @@ Generated on: ${new Date().toUTCString()}
       const freq = e.freqMhz ? e.freqMhz.toFixed(6) : '14.074000';
       const rstSent = e.rstSent || '-15';
       const rstRcvd = e.rstRcvd || '-15';
-      const mode = 'z-30';
-      const submode = '16-MFSK';
+      // ADIF 3.1.4's MODE field is a closed enumeration - "z-30" is not a member of it, and
+      // logging software (LoTW, QRZ, Club Log, N1MM, etc.) will reject or mis-file any record
+      // whose MODE isn't in that list. "MFSK" is the correct parent mode for this protocol
+      // (16-tone continuous-phase MFSK); SUBMODE is free text and is where the specific
+      // variant belongs, per the same convention WSJT-X used for FT8 before it got its own
+      // top-level ADIF MODE entry.
+      const mode = 'MFSK';
+      const submode = 'Z30';
       const myCall = (e.myCall || 'W1AW').toUpperCase();
       const myGrid = (e.myGrid || 'FN31').toUpperCase();
       const comment = e.notes || `z-30 16-MFSK LDPC / SIC Pass ${e.sicPass || 1}`;
@@ -403,8 +409,8 @@ BEGIN TRANSACTION;
         utcTime: timeStr,
         callsign: callMatch[1].toUpperCase(),
         grid: gridMatch ? gridMatch[1].toUpperCase() : '',
-        mode: 'z-30',
-        submode: '16-MFSK',
+        mode: 'MFSK',
+        submode: 'Z30',
         band: bandMatch ? bandMatch[1].toUpperCase() : '20m',
         freqMhz: freqMatch ? parseFloat(freqMatch[1]) : 14.074,
         rstSent: rstSentMatch ? rstSentMatch[1] : '-15',

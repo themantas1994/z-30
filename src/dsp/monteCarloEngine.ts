@@ -476,6 +476,17 @@ public synthesizePhysicalWaveform(
     const estSigAmp = Math.max(0.01, pilotAmps.reduce((a, b) => a + b, 0) / Math.max(1, pilotAmps.length));
     const sCorr = (estSigAmp * samplesPerSymbol / 2.0) / quadNoiseVar;
 
+    // Continuous-phase FSK carries phase across symbol boundaries: each symbol advances the
+    // synthesizer's phase accumulator by 2*pi*toneFreq*symbolDuration mod 2*pi. Because
+    // toneSpacingHz is exactly 1/symbolDurationSec by construction, that increment is
+    // IDENTICAL for every tone (the per-tone term is always a whole number of cycles, plus
+    // a fixed extra pi from the -7.5 center offset here) - it only depends on
+    // audioCenterFreqHz. The phase gap between a pilot and a nearby data symbol is therefore
+    // fully predictable and must be added back in before projecting onto the pilot's raw
+    // phase, or the "coherent" LLR term is measured against the wrong reference for any
+    // audioCenterFreqHz that isn't an exact multiple of toneSpacingHz.
+    const basePhaseStep = ((2.0 * Math.PI * audioCenterFreqHz * symbolDurationSec) + Math.PI) % (2.0 * Math.PI);
+
     let dataSymbolIdx = 0;
 
     for (let frameSymIdx = 0; frameSymIdx < 75; frameSymIdx++) {
@@ -484,7 +495,8 @@ public synthesizePhysicalWaveform(
         continue;
       }
 
-      // Interpolate pilot phase for current data symbol
+      // Interpolate pilot phase for current data symbol, propagated via the known
+      // per-symbol continuous-phase increment.
       let closestPilotIdx = 0;
       let minPilotDist = 999;
       for (let p = 0; p < pilotFrames.length; p++) {
@@ -494,7 +506,8 @@ public synthesizePhysicalWaveform(
           closestPilotIdx = p;
         }
       }
-      const interpPhase = pilotPhases[closestPilotIdx] || 0.0;
+      const rawPhase = (pilotPhases[closestPilotIdx] || 0.0) - basePhaseStep * (frameSymIdx - pilotFrames[closestPilotIdx]);
+      const interpPhase = Math.atan2(Math.sin(rawPhase), Math.cos(rawPhase));
       const pilotCoherence = Math.max(0.35, Math.min(0.85, 1.0 / (1.0 + 0.15 * minPilotDist)));
 
       const startSamp = frameSymIdx * samplesPerSymbol;

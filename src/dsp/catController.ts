@@ -17,6 +17,18 @@ import { HAM_BANDS } from './z30Constants';
 import { audioEngine } from './audioEngine';
 import { StationConfig, PttMethodType } from '../types/z30';
 import { getRigByName, CURRENT_HAMLIB_VERSION } from './hamlibCatalog';
+import {
+  CatProtocolFamily,
+  getProtocolFamilyForMfg,
+  parseCivAddr,
+  buildCivFrame,
+  civSetFrequency,
+  civSetMode,
+  civSetPtt,
+  kenwoodSetFrequency,
+  kenwoodSetMode,
+  kenwoodSetPtt,
+} from './ratProtocols';
 
 /**
  * Diagnostic log item recording rigctl or serial hardware interactions.
@@ -132,7 +144,7 @@ export class CatController {
   // Hardware Web Serial Port handle
   private serialPort: any = null;
   private serialReader: any = null;
-  private serialWriter: any = null;
+  private serialWriter: WritableStreamDefaultWriter<Uint8Array> | null = null;
   private isSerialConnected: boolean = false;
   private pairedSerialPorts: DiscoveredSerialPort[] = [];
   private portListeners: Array<(ports: DiscoveredSerialPort[]) => void> = [];
@@ -140,10 +152,36 @@ export class CatController {
   // Active PTT safety timer
   private pttSafetyTimer: any = null;
 
+  // Real CAT protocol family + Icom CI-V address for the currently configured rig, set via
+  // configureRig(). Determines what actual bytes setFreqHz/setMode/setPtt write to the wire.
+  private activeProtocolFamily: CatProtocolFamily = 'NONE';
+  private activeCivAddr: number = 0x00;
+  private textEncoder = new TextEncoder();
+
+  // WebHID handle for CM108/CM119 USB Audio GPIO PTT (separate from the Web Serial CAT link -
+  // a station commonly uses a CM108-based audio interface for PTT with no serial CAT at all).
+  private hidDevice: any = null;
+
+  // TCI (Transceiver Control Interface) WebSocket handle for Expert Electronics SDRs.
+  private tciSocket: WebSocket | null = null;
+  private tciConnecting: Promise<WebSocket> | null = null;
+
   constructor() {
     this.currentFreqHz = HAM_BANDS[5].dialFreqHz;
     this.txFreqHz = HAM_BANDS[5].dialFreqHz;
     this.initWebSerialListeners();
+  }
+
+  /**
+   * Configures which real CAT protocol family (Icom CI-V / Kenwood-style ASCII / none)
+   * subsequent setFreqHz/setMode/setPtt calls speak, based on the selected rig's
+   * manufacturer, plus that rig's CI-V address if applicable. Must be called whenever the
+   * station's configured rig model changes (App.tsx does this on config.rigModel changes).
+   */
+  public configureRig(rigModelName: string): void {
+    const rig = getRigByName(rigModelName);
+    this.activeProtocolFamily = rig ? getProtocolFamilyForMfg(rig.mfg) : 'NONE';
+    this.activeCivAddr = parseCivAddr(rig?.defaultCiv, 0x00);
   }
 
   /**
@@ -198,8 +236,8 @@ export class CatController {
     if (bandIdx !== -1) {
       this.currentBandIdx = bandIdx;
     }
-    this.sendHardwareCommand(`F ${this.currentFreqHz}`);
-    this.logCommand(`F ${hz}`, 'RPRT 0', 'OK');
+    this.sendRigFrequency(this.currentFreqHz);
+    this.logCommand(`set_freq ${hz}`, this.hardwareCommandStatusNote(), 'OK');
     return true;
   }
 
@@ -208,8 +246,8 @@ export class CatController {
     if (band) {
       this.currentFreqHz = band.dialFreqHz;
       this.currentBandIdx = HAM_BANDS.indexOf(band);
-      this.sendHardwareCommand(`F ${band.dialFreqHz}`);
-      this.logCommand(`F ${band.dialFreqHz}`, `RPRT 0 (${band.name})`, 'OK');
+      this.sendRigFrequency(band.dialFreqHz);
+      this.logCommand(`set_freq ${band.dialFreqHz}`, `${this.hardwareCommandStatusNote()} (${band.name})`, 'OK');
       return true;
     }
     return false;
@@ -225,9 +263,45 @@ export class CatController {
 
   public setMode(mode: string): boolean {
     this.currentMode = mode.toUpperCase();
-    this.sendHardwareCommand(`M ${this.currentMode} ${this.currentPassbandHz}`);
-    this.logCommand(`M ${mode}`, 'RPRT 0', 'OK');
+    this.sendRigMode(this.currentMode);
+    this.logCommand(`set_mode ${mode}`, this.hardwareCommandStatusNote(), 'OK');
     return true;
+  }
+
+  /**
+   * Writes a real frequency-set command to the wire, in whichever native protocol the
+   * currently configured rig actually speaks (see configureRig()). 'NONE' (no CAT hardware
+   * connected, or an unrecognized rig family) intentionally sends nothing - there is no
+   * meaningful protocol to speak to a device that isn't there or isn't identified.
+   */
+  private sendRigFrequency(hz: number): void {
+    if (this.activeProtocolFamily === 'CIV') {
+      this.sendHardwareBytes(civSetFrequency(this.activeCivAddr, hz));
+    } else if (this.activeProtocolFamily === 'KENWOOD') {
+      this.sendHardwareText(kenwoodSetFrequency(hz));
+    }
+  }
+
+  private sendRigMode(mode: string): void {
+    if (this.activeProtocolFamily === 'CIV') {
+      this.sendHardwareBytes(civSetMode(this.activeCivAddr, mode));
+    } else if (this.activeProtocolFamily === 'KENWOOD') {
+      this.sendHardwareText(kenwoodSetMode(mode));
+    }
+  }
+
+  private sendRigPtt(tx: boolean): void {
+    if (this.activeProtocolFamily === 'CIV') {
+      this.sendHardwareBytes(civSetPtt(this.activeCivAddr, tx));
+    } else if (this.activeProtocolFamily === 'KENWOOD') {
+      this.sendHardwareText(kenwoodSetPtt(tx));
+    }
+  }
+
+  private hardwareCommandStatusNote(): string {
+    if (this.activeProtocolFamily === 'CIV') return `CI-V 0x${this.activeCivAddr.toString(16).padStart(2, '0')}`;
+    if (this.activeProtocolFamily === 'KENWOOD') return 'Kenwood-style ASCII';
+    return 'no rig protocol configured (state tracked locally only)';
   }
 
   public getPtt(): boolean {
@@ -254,8 +328,8 @@ export class CatController {
     this.pttState = tx;
 
     if (method === 'CAT') {
-      await this.sendHardwareCommand(`T ${tx ? '1' : '0'}`);
-      this.logCommand(`T ${tx ? '1' : '0'}`, 'RPRT 0', 'OK');
+      this.sendRigPtt(tx);
+      this.logCommand(`set_ptt ${tx ? '1' : '0'}`, this.hardwareCommandStatusNote(), 'OK');
     } else if (method === 'RTS') {
       const activeState = polarity === 'ACTIVE_HIGH' ? tx : !tx;
       if (this.serialPort && this.serialPort.setSignals) {
@@ -285,27 +359,44 @@ export class CatController {
       );
     } else if (method === 'CM108_GPIO') {
       const pin = options?.cm108GpioPin || 3;
+      const ok = await this.setCm108Gpio(pin, tx);
       this.logCommand(
         `CM108_GPIO_${pin}_${tx ? 'HIGH' : 'LOW'}`,
-        tx ? `USB Audio Chip GPIO${pin} Driven High (PTT Active)` : `USB Audio Chip GPIO${pin} Released (RX Standby)`,
-        'OK'
+        ok
+          ? tx
+            ? `USB Audio Chip GPIO${pin} Driven High (PTT Active)`
+            : `USB Audio Chip GPIO${pin} Released (RX Standby)`
+          : 'CM108/CM119 HID device not paired - use "Pair CM108/CM119 Device" first',
+        ok ? 'OK' : 'ERROR'
       );
     } else if (method === 'RASPBERRY_PI_GPIO') {
       const bcmPin = options?.rpiGpioPin || 17;
-      const activeVal = polarity === 'ACTIVE_HIGH' ? (tx ? '1' : '0') : (tx ? '0' : '1');
+      const ok = await this.setRpiGpio(bcmPin, tx, polarity);
       this.logCommand(
-        `RPI_GPIO_${bcmPin}_${activeVal}`,
-        tx ? `SBC BCM Pin ${bcmPin} Asserted [${polarity}]` : `SBC BCM Pin ${bcmPin} Released to Standby`,
-        'OK'
+        `RPI_GPIO_${bcmPin}_${tx ? '1' : '0'}`,
+        ok
+          ? tx
+            ? `SBC BCM Pin ${bcmPin} Asserted [${polarity}] via local z30_dsp /api/gpio bridge`
+            : `SBC BCM Pin ${bcmPin} Released to Standby`
+          : 'GPIO bridge unreachable - only works when running via the native z30_dsp web server on the Pi itself (not a plain browser tab)',
+        ok ? 'OK' : 'ERROR'
       );
     } else if (method === 'TCI_NETWORK') {
       const host = options?.tciHost || '127.0.0.1';
       const port = options?.tciPort || 40001;
-      const tciCmd = `trx:0:tx:${tx ? 'true' : 'false'}\n`;
-      this.logCommand(`TCI_TX_${tx ? 'ON' : 'OFF'}`, `${host}:${port} => ${tciCmd.trim()}`, 'OK');
+      const ok = await this.sendTciPtt(host, port, tx);
+      this.logCommand(
+        `TCI_TX_${tx ? 'ON' : 'OFF'}`,
+        ok ? `${host}:${port} => trx:0:tx:${tx ? 'true' : 'false'};` : `Could not reach TCI server at ${host}:${port}`,
+        ok ? 'OK' : 'ERROR'
+      );
     } else if (method === 'WINKEYER') {
-      const pttByte = tx ? '0x02 0x01' : '0x02 0x00';
-      this.logCommand(`WINKEYER_PTT`, `Keyer Command: ${pttByte} (${tx ? 'PTT Assert' : 'PTT Release'})`, 'OK');
+      const ok = await this.setWinkeyerPtt(tx);
+      this.logCommand(
+        `WINKEYER_PTT`,
+        ok ? `PTT-follows-key ${tx ? 'engaged (holding key line down)' : 'released'}` : 'WinKeyer serial link not open',
+        ok ? 'OK' : 'ERROR'
+      );
     } else if (method === 'VOX') {
       // In VOX mode, the physical radio transmitter keys via audio output modulation from the sound card
       this.logCommand(`VOX_${tx ? 'ACTIVE' : 'STANDBY'}`, tx ? 'Audio Carrier Active (Radio VOX Triggered)' : 'Audio Carrier Inactive', 'OK');
@@ -318,11 +409,16 @@ export class CatController {
     return this.splitState;
   }
 
+  /**
+   * NOTE: not currently wired to any UI control (z-30 keeps TX/RX on the same audio passband
+   * rather than using true split-VFO operation), so this only tracks state locally. Real
+   * split-VFO CAT commands differ meaningfully between CI-V (0x07/0x0F) and Kenwood-style
+   * (SP0;/SP1;/FB;) and are not implemented until an actual split-operation UI needs them.
+   */
   public setSplit(split: boolean, txFreqHz?: number) {
     this.splitState = split;
     if (txFreqHz) this.txFreqHz = txFreqHz;
-    this.sendHardwareCommand(`S ${split ? '1' : '0'} VFOA`);
-    this.logCommand(`S ${split ? '1' : '0'} VFOA`, 'RPRT 0', 'OK');
+    this.logCommand(`set_split ${split ? '1' : '0'}`, 'state tracked locally (no split CAT command sent)', 'OK');
   }
 
   public getSmeterDb(rxFreqHz: number = 1500): number {
@@ -356,11 +452,23 @@ export class CatController {
     return this.isConnected || this.isSerialConnected;
   }
 
+  /**
+   * Manually marks the Hamlib rigctld network daemon link as connected or disconnected.
+   *
+   * Browsers cannot open a raw TCP socket to a local rigctld daemon (only WebSocket, HTTP/fetch,
+   * and the Web Serial/USB/Bluetooth APIs are available), so this network mode has no way to be
+   * verified from here the way Direct Serial mode can be (see testCatConnection's real
+   * sendHardwareBytes() handshake for that path). This toggle is a user assertion that they
+   * have started rigctld externally, not a live probe result - callers must not present it as
+   * a verified connection.
+   */
   public toggleConnection(): boolean {
     this.isConnected = !this.isConnected;
     this.logCommand(
       this.isConnected ? 'CONNECT' : 'DISCONNECT',
-      this.isConnected ? 'Hamlib rigctld link active (127.0.0.1:4532)' : 'CAT link closed',
+      this.isConnected
+        ? 'Hamlib rigctld marked connected (127.0.0.1:4532) - manual assertion, not independently verified (browsers cannot open raw TCP sockets). Use "Test CAT Connection" for a real hardware handshake.'
+        : 'Hamlib rigctld marked disconnected',
       'OK'
     );
     return this.isConnected;
@@ -521,6 +629,7 @@ export class CatController {
       }
       this.isSerialConnected = false;
       this.isConnected = false;
+      this.winkeyerConfigured = false;
       this.logCommand('SERIAL_CLOSE', 'Physical serial port closed', 'OK');
     } catch (e) {
       console.warn('Error closing serial port:', e);
@@ -534,6 +643,7 @@ export class CatController {
     const catMethod = config.catMethod || 'Hamlib';
     const rigInfo = getRigByName(config.rigModel);
     const rigName = rigInfo ? rigInfo.name : config.rigModel;
+    this.configureRig(config.rigModel);
 
     // 1. If CAT Method is "None" (Audio VOX only)
     if (catMethod === 'None') {
@@ -559,15 +669,27 @@ export class CatController {
         };
       }
 
-      // If Web Serial port IS open, execute real query handshake
+      // Write a real, protocol-appropriate frequency query (CI-V command 0x03 with no data,
+      // or Kenwood-style "FA;") - this app does not implement a serial read/parse loop, so
+      // this only verifies the write itself succeeds, not that the rig actually answered.
       try {
-        const queryStart = Date.now();
-        await this.sendHardwareCommand('f\n');
-        
-        // Return verified connection
+        if (this.activeProtocolFamily === 'CIV') {
+          await this.sendHardwareBytes(buildCivFrame(this.activeCivAddr, [0x03]));
+        } else if (this.activeProtocolFamily === 'KENWOOD') {
+          await this.sendHardwareText('FA;');
+        } else {
+          return {
+            success: false,
+            message: `✗ Unrecognized rig protocol family for "${rigName}" - no CI-V/Kenwood-ASCII command set is known for this manufacturer, so no real CAT command can be sent.`,
+            rigName,
+            portUsed: config.serialPort,
+            details: 'Direct Serial CAT requires an Icom/Xiegu (CI-V) or Kenwood/Elecraft/Yaesu (Kenwood-ASCII) rig selection.',
+          };
+        }
+
         return {
           success: true,
-          message: `✓ CAT Hardware Responded: ${rigName} verified on ${config.serialPort} @ ${config.baudRate} baud (VFO: ${(this.currentFreqHz / 1e6).toFixed(3)} MHz ${this.currentMode})`,
+          message: `✓ CAT Query Sent: ${rigName} frequency query written to ${config.serialPort} @ ${config.baudRate} baud via ${this.hardwareCommandStatusNote()} (response not parsed - this confirms the write succeeded, not that the rig replied).`,
           vfoHz: this.currentFreqHz,
           mode: this.currentMode,
           rigName,
@@ -696,16 +818,16 @@ export class CatController {
     // 3. CAT Command PTT Mode
     if (method === 'CAT') {
       this.pttState = true;
-      await this.sendHardwareCommand('T 1\n');
-      this.logCommand('T 1', 'RPRT 0', 'OK');
-      if (onStateChange) onStateChange(true, `● PTT Key Active via CAT Command (\\set_ptt 1)...`);
+      this.sendRigPtt(true);
+      this.logCommand('set_ptt 1', this.hardwareCommandStatusNote(), 'OK');
+      if (onStateChange) onStateChange(true, `● PTT Key Active via CAT Command (${this.hardwareCommandStatusNote()})...`);
 
       return new Promise((resolve) => {
         this.pttSafetyTimer = setTimeout(async () => {
           this.pttState = false;
-          await this.sendHardwareCommand('T 0\n');
-          this.logCommand('T 0', 'RPRT 0', 'OK');
-          if (onStateChange) onStateChange(false, `✓ CAT PTT Released (\\set_ptt 0 sent, rig in RX standby)`);
+          this.sendRigPtt(false);
+          this.logCommand('set_ptt 0', this.hardwareCommandStatusNote(), 'OK');
+          if (onStateChange) onStateChange(false, `✓ CAT PTT Released (rig in RX standby)`);
           resolve({
             success: true,
             method: 'CAT',
@@ -890,32 +1012,215 @@ export class CatController {
     };
   }
 
+  /**
+   * Releases PTT across every hardware path this controller might have engaged, regardless of
+   * which PTT method is currently configured - a safety net for component-unmount / page-close
+   * handlers where the exact active method may not be known to the caller.
+   */
   public releasePttEmergency(): void {
     if (this.pttSafetyTimer) {
       clearTimeout(this.pttSafetyTimer);
       this.pttSafetyTimer = null;
     }
     this.pttState = false;
-    this.sendHardwareCommand('T 0\n');
+    this.sendRigPtt(false);
     audioEngine.stopTransmission();
     if (this.serialPort && this.serialPort.setSignals) {
       this.serialPort.setSignals({ requestToSend: false, dataTerminalReady: false }).catch(() => {});
     }
-    this.logCommand('EMERGENCY_DISARM', 'PTT released immediately', 'OK');
+    if (this.hidDevice && this.hidDevice.opened) {
+      this.setCm108Gpio(3, false).catch(() => {});
+      this.setCm108Gpio(4, false).catch(() => {});
+    }
+    if (this.tciSocket && this.tciSocket.readyState === WebSocket.OPEN) {
+      try {
+        this.tciSocket.send('trx:0:tx:false;');
+      } catch {
+        // ignore
+      }
+    }
+    this.logCommand('EMERGENCY_DISARM', 'PTT released immediately across all hardware paths', 'OK');
   }
 
-  private async sendHardwareCommand(cmd: string) {
-    if (this.serialPort && this.serialPort.writable) {
-      try {
-        const textEncoder = new TextEncoderStream();
-        const writableStreamClosed = textEncoder.readable.pipeTo(this.serialPort.writable);
-        const writer = textEncoder.writable.getWriter();
-        await writer.write(cmd + '\n');
-        await writer.close();
-        await writableStreamClosed;
-      } catch (e) {
-        console.warn('Web Serial write error:', e);
+  /**
+   * Writes raw bytes to the open Web Serial port using a PERSISTENT writer, acquired once and
+   * reused. A prior version created a fresh TextEncoderStream and piped it to serialPort.writable
+   * on every single call WITHOUT `{ preventClose: true }` - which closes the underlying
+   * writable stream when that pipe completes. In practice this meant only the very FIRST CAT
+   * command sent in a session actually reached the radio; every command after that silently
+   * no-op'd because serialPort.writable had already been closed, with no visible error.
+   */
+  private async sendHardwareBytes(bytes: Uint8Array): Promise<void> {
+    if (!this.serialPort || !this.serialPort.writable) return;
+    try {
+      if (!this.serialWriter) {
+        this.serialWriter = this.serialPort.writable.getWriter();
       }
+      await this.serialWriter!.write(bytes);
+    } catch (e) {
+      console.warn('Web Serial write error:', e);
+      // The writer may have become invalid (e.g. port closed externally) - drop it so the
+      // next call attempts to re-acquire a fresh one instead of failing forever.
+      try {
+        this.serialWriter?.releaseLock();
+      } catch {
+        // ignore
+      }
+      this.serialWriter = null;
+    }
+  }
+
+  private async sendHardwareText(text: string): Promise<void> {
+    await this.sendHardwareBytes(this.textEncoder.encode(text));
+  }
+
+  /**
+   * Real WebHID CM108/CM119 GPIO write. Report format verified against Hamlib's actual
+   * cm108.c source: a 5-byte HID output report [reportId=0x00, 0x00, gpioData, gpioDirMask,
+   * 0x00], where gpioData/gpioDirMask each have bit (1 << (pin-1)) set for the chosen GPIO
+   * pin (1-4). WebHID's sendReport(reportId, data) takes the report ID as a separate argument
+   * from the 4 remaining bytes.
+   */
+  private async setCm108Gpio(pin: number, active: boolean): Promise<boolean> {
+    if (!this.hidDevice || !this.hidDevice.opened) return false;
+    const bit = 1 << (Math.max(1, Math.min(4, pin)) - 1);
+    const reportData = new Uint8Array([0x00, active ? bit : 0x00, bit, 0x00]);
+    try {
+      await this.hidDevice.sendReport(0x00, reportData);
+      return true;
+    } catch (e) {
+      console.warn('CM108 HID sendReport failed:', e);
+      return false;
+    }
+  }
+
+  /**
+   * Pairs a real CM108/CM119-class USB Audio HID device via the WebHID API. Filters on
+   * C-Media Electronics' USB vendor ID (0x0D8C), which covers the CM108/CM108AH/CM119/CM119A
+   * chips used in common cheap PTT interfaces (DRA-30/50/70, URI, RB-USB RIM, etc.).
+   */
+  public async requestAndPairCm108Device(): Promise<{ success: boolean; message: string }> {
+    if (typeof navigator === 'undefined' || !(navigator as any).hid) {
+      return {
+        success: false,
+        message: 'WebHID API is not supported in this browser. Use a desktop Chromium-based browser (Chrome/Edge).',
+      };
+    }
+    try {
+      const devices: any[] = await (navigator as any).hid.requestDevice({ filters: [{ vendorId: 0x0d8c }] });
+      if (!devices || devices.length === 0) {
+        return { success: false, message: 'No CM108/CM119 HID device selected.' };
+      }
+      this.hidDevice = devices[0];
+      if (!this.hidDevice.opened) {
+        await this.hidDevice.open();
+      }
+      const name = this.hidDevice.productName || 'CM108/CM119 USB Audio GPIO device';
+      this.logCommand('CM108_HID_PAIR', `Paired ${name}`, 'OK');
+      return { success: true, message: `✓ CM108/CM119 HID device paired: ${name}` };
+    } catch (e: any) {
+      return { success: false, message: String(e?.message || 'Failed to pair CM108/CM119 HID device') };
+    }
+  }
+
+  public isCm108Paired(): boolean {
+    return !!(this.hidDevice && this.hidDevice.opened);
+  }
+
+  /**
+   * Real GPIO write for a Raspberry Pi / Linux SBC, via the local z30_dsp web server's
+   * /api/gpio endpoint (see web_server.py). Browser JS has no Web API that can touch Linux
+   * GPIO directly - this only works when the app is being served by the native z30_dsp Python
+   * backend running ON the Pi itself, not e.g. a plain static web deployment.
+   */
+  private async setRpiGpio(bcmPin: number, tx: boolean, polarity: 'ACTIVE_HIGH' | 'ACTIVE_LOW'): Promise<boolean> {
+    try {
+      const activeLevel = polarity === 'ACTIVE_HIGH' ? tx : !tx;
+      const response = await fetch('/api/gpio', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ pin: bcmPin, value: activeLevel }),
+      });
+      return response.ok;
+    } catch (e) {
+      console.warn('RPi GPIO bridge request failed:', e);
+      return false;
+    }
+  }
+
+  /**
+   * Real WinKeyer serial PTT. WinKeyer's PTT is NOT a simple manual on/off toggle (a prior
+   * version of this code sent a fabricated "0x02 0x01"/"0x02 0x00" that isn't a real WinKeyer
+   * command) - it is driven by the PINCFG register (Admin command 0x09 <nn>, bit0 = PTT
+   * enabled) synced to the CW key line, with lead-in/tail timing set via command 0x04
+   * <lead><tail>. This sends the verified PINCFG + lead/tail setup once, then holds/releases
+   * the key line via the Key Immediate command. WinKeyer is fundamentally a CW keyer - for a
+   * non-CW digital mode like z-30, RTS/DTR/CM108/VOX are a more natural PTT fit; this exists
+   * for operators who already have a WinKeyer in their signal chain.
+   */
+  private winkeyerConfigured = false;
+  private async setWinkeyerPtt(tx: boolean): Promise<boolean> {
+    if (!this.serialPort || !this.serialPort.writable) return false;
+    if (!this.winkeyerConfigured) {
+      // Admin: Host Open (0x00 0x02), then PINCFG bit0=1 (PTT enabled, follows key line),
+      // then lead-in=1 (10ms units), tail=160 (10ms units, matching the app's PTT hang time).
+      await this.sendHardwareBytes(new Uint8Array([0x00, 0x02, 0x09, 0x01, 0x04, 0x01, 0xa0]));
+      this.winkeyerConfigured = true;
+    }
+    // Key Immediate (0x02 <state>): 1 = key down (PTT follows, per PINCFG), 0 = key up.
+    await this.sendHardwareBytes(new Uint8Array([0x02, tx ? 0x01 : 0x00]));
+    return true;
+  }
+
+  /**
+   * Real TCI (Transceiver Control Interface) WebSocket connection for Expert Electronics
+   * SunSDR2/ExpertSDR/Thetis. Opens the connection once and reuses it.
+   */
+  private async ensureTciSocket(host: string, port: number): Promise<WebSocket | null> {
+    if (this.tciSocket && this.tciSocket.readyState === WebSocket.OPEN) {
+      return this.tciSocket;
+    }
+    if (!this.tciConnecting) {
+      this.tciConnecting = new Promise<WebSocket>((resolve, reject) => {
+        try {
+          const ws = new WebSocket(`ws://${host}:${port}`);
+          const timeout = setTimeout(() => reject(new Error('TCI WebSocket connect timed out')), 4000);
+          ws.onopen = () => {
+            clearTimeout(timeout);
+            this.tciSocket = ws;
+            resolve(ws);
+          };
+          ws.onerror = () => {
+            clearTimeout(timeout);
+            reject(new Error('TCI WebSocket connection failed'));
+          };
+          ws.onclose = () => {
+            if (this.tciSocket === ws) this.tciSocket = null;
+          };
+        } catch (e) {
+          reject(e);
+        }
+      });
+    }
+    try {
+      return await this.tciConnecting;
+    } catch (e) {
+      console.warn('TCI WebSocket connection error:', e);
+      return null;
+    } finally {
+      this.tciConnecting = null;
+    }
+  }
+
+  private async sendTciPtt(host: string, port: number, tx: boolean): Promise<boolean> {
+    const ws = await this.ensureTciSocket(host, port);
+    if (!ws) return false;
+    try {
+      ws.send(`trx:0:tx:${tx ? 'true' : 'false'};`);
+      return true;
+    } catch (e) {
+      console.warn('TCI WebSocket send failed:', e);
+      return false;
     }
   }
 
@@ -951,8 +1256,7 @@ export class CatController {
     } else if (cmd === 'm' || cmd === '\\get_mode') {
       resp = `${this.currentMode}\n${this.currentPassbandHz}`;
     } else if (cmd === 'M' || cmd === '\\set_mode') {
-      this.currentMode = (arg || 'PKTUSB').toUpperCase();
-      this.sendHardwareCommand(`M ${this.currentMode}`);
+      this.setMode(arg || 'PKTUSB');
       resp = 'RPRT 0';
     } else if (cmd === 't' || cmd === '\\get_ptt') {
       resp = this.pttState ? '1' : '0';
@@ -977,7 +1281,10 @@ export class CatController {
       status = 'OK';
     }
 
-    this.sendHardwareCommand(raw);
+    // NOTE: no raw hardware forward here - the individual handlers above (setFreqHz/setMode/
+    // setPtt) already dispatch real protocol-appropriate bytes via sendRigFrequency/
+    // sendRigMode/sendRigPtt. Forwarding the raw rigctl-syntax text itself (as a prior version
+    // of this method did) would send meaningless bytes to the actual radio a second time.
     this.logCommand(raw, resp, status);
     return resp;
   }

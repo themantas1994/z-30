@@ -70,9 +70,12 @@ export const RigControlPanel: React.FC<RigControlPanelProps> = ({
           </span>
         </div>
 
-        {/* Connection status badge */}
+        {/* Manual rigctld link marker - browsers cannot open a raw TCP socket to verify this
+            daemon directly, so this is a user assertion, not a live probe result. Use "Test
+            CAT Connection" in Station Settings for a real hardware handshake. */}
         <button
           onClick={handleToggleConnect}
+          title='Manual marker only - browsers cannot verify a raw TCP rigctld socket. Use "Test CAT Connection" for a real hardware handshake.'
           className={`flex items-center space-x-1.5 px-2 py-0.5 text-[10px] font-mono border transition-colors ${
             isConnected
               ? 'bg-[#00FF41]/10 border-[#00FF41]/40 text-[#00FF41]'
@@ -80,7 +83,7 @@ export const RigControlPanel: React.FC<RigControlPanelProps> = ({
           }`}
         >
           <span className={`w-1.5 h-1.5 rounded-full ${isConnected ? 'bg-[#00FF41] animate-pulse' : 'bg-red-400'}`} />
-          <span>{isConnected ? 'rigctld:4532 OK' : 'OFFLINE'}</span>
+          <span>{isConnected ? 'rigctld:4532 (manual)' : 'OFFLINE'}</span>
         </button>
       </div>
 

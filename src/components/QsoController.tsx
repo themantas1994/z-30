@@ -194,8 +194,8 @@ export const QsoController: React.FC<QsoControllerProps> = ({
                 {isTransmitting || isTuning ? `${fwdWatts.toFixed(0)}W` : '0W'}
               </strong>
             </div>
-            <div>
-              <span>SWR: </span>
+            <div title="Nominal placeholder - this interface (soundcard audio + serial CAT) has no real SWR/reflected-power sensor to read from">
+              <span>SWR (est.): </span>
               <strong className={swr > 1.8 ? 'text-yellow-400 font-bold' : 'text-[#00FF41] font-bold'}>
                 {isTransmitting || isTuning ? `1:${swr.toFixed(2)}` : '1:1.00'}
               </strong>

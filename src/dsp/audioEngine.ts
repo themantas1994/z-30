@@ -23,6 +23,7 @@
  */
 
 import { Z30_SPECS } from './z30Constants';
+import { resampleAudio } from './realReceiver';
 
 /**
  * Real-time audio signal level metering diagnostics.
@@ -99,6 +100,18 @@ class Z30AudioEngine {
   private currentOutputDeviceId: string = '';
   private stateListeners: Set<() => void> = new Set();
   private isExperimentalModeAllowed: boolean = false;
+
+  // Continuous receiver audio capture (real microphone samples, sample-accurate ring buffer).
+  // Unlike captureAudioBuffer() below (which polls the analyser's short snapshot buffer
+  // starting at call time), this records every incoming sample as it arrives so a completed
+  // 24s RX window can be sliced out of the past after the fact.
+  private scriptProcessor: ScriptProcessorNode | null = null;
+  private silentSink: GainNode | null = null;
+  private captureRingBuffer: Float32Array | null = null;
+  private captureRingLength: number = 0;
+  private captureTotalSamplesWritten: number = 0;
+  private captureAnchorUtcMs: number = 0;
+  private captureSampleRateHz: number = 48000;
 
   public isExperimentalModeEnabled(): boolean {
     return this.isExperimentalModeAllowed;
@@ -435,6 +448,7 @@ class Z30AudioEngine {
 
       this.micSource = this.ctx.createMediaStreamSource(this.micStream);
       this.micSource.connect(this.analyser);
+      this.startContinuousCapture();
       this.notifyListeners();
       return true;
     } catch (e) {
@@ -445,6 +459,7 @@ class Z30AudioEngine {
   }
 
   public disableMicrophone() {
+    this.stopContinuousCapture();
     if (this.micSource) {
       try {
         this.micSource.disconnect();
@@ -459,6 +474,100 @@ class Z30AudioEngine {
     }
     this.currentInputLabel = '';
     this.notifyListeners();
+  }
+
+  /**
+   * Starts continuously recording real microphone samples into a ring buffer with
+   * sample-accurate timing, so a just-completed 24s RX window can be sliced out after the
+   * fact for real decoding. Uses the deprecated-but-universally-supported ScriptProcessorNode
+   * (an AudioWorklet would need a separately loaded module file); its onaudioprocess callback
+   * fires once per fixed-size audio chunk with zero gaps, unlike polling the AnalyserNode's
+   * short internal snapshot buffer.
+   */
+  private startContinuousCapture(): void {
+    if (!this.ctx || !this.micSource || this.scriptProcessor) return;
+
+    this.captureSampleRateHz = this.ctx.sampleRate;
+    const ringSeconds = 40;
+    this.captureRingLength = Math.ceil(this.captureSampleRateHz * ringSeconds);
+    this.captureRingBuffer = new Float32Array(this.captureRingLength);
+    this.captureTotalSamplesWritten = 0;
+    this.captureAnchorUtcMs = Date.now();
+
+    const bufferSize = 4096;
+    this.scriptProcessor = this.ctx.createScriptProcessor(bufferSize, 1, 1);
+    this.scriptProcessor.onaudioprocess = (event: AudioProcessingEvent) => {
+      const input = event.inputBuffer.getChannelData(0);
+      const ring = this.captureRingBuffer;
+      if (!ring) return;
+      const len = this.captureRingLength;
+      let writePos = this.captureTotalSamplesWritten % len;
+      for (let i = 0; i < input.length; i++) {
+        ring[writePos] = input[i];
+        writePos = (writePos + 1) % len;
+      }
+      this.captureTotalSamplesWritten += input.length;
+    };
+
+    // Some browsers only fire onaudioprocess while the node is connected into a live graph
+    // reaching the destination; route through a zero-gain sink to stay silent.
+    this.silentSink = this.ctx.createGain();
+    this.silentSink.gain.value = 0;
+    this.micSource.connect(this.scriptProcessor);
+    this.scriptProcessor.connect(this.silentSink);
+    this.silentSink.connect(this.ctx.destination);
+  }
+
+  private stopContinuousCapture(): void {
+    if (this.scriptProcessor) {
+      try {
+        this.scriptProcessor.disconnect();
+      } catch {
+        // ignore
+      }
+      this.scriptProcessor.onaudioprocess = null;
+      this.scriptProcessor = null;
+    }
+    if (this.silentSink) {
+      try {
+        this.silentSink.disconnect();
+      } catch {
+        // ignore
+      }
+      this.silentSink = null;
+    }
+    this.captureRingBuffer = null;
+    this.captureRingLength = 0;
+    this.captureTotalSamplesWritten = 0;
+  }
+
+  public isContinuousCaptureActive(): boolean {
+    return this.scriptProcessor !== null;
+  }
+
+  /**
+   * Extracts a historical window of real captured microphone audio, resampled to
+   * `targetSampleRateHz`. Returns null if the window hasn't been fully captured yet (too
+   * recent) or has already aged out of the ring buffer (too old).
+   */
+  public getCaptureWindow(startUtcMs: number, durationSec: number, targetSampleRateHz: number): Float32Array | null {
+    if (!this.captureRingBuffer || this.captureRingLength === 0) return null;
+
+    const startSampleIdx = Math.round(((startUtcMs - this.captureAnchorUtcMs) / 1000) * this.captureSampleRateHz);
+    const numSamplesNative = Math.round(durationSec * this.captureSampleRateHz);
+    const endSampleIdx = startSampleIdx + numSamplesNative;
+
+    if (startSampleIdx < 0) return null;
+    if (endSampleIdx > this.captureTotalSamplesWritten) return null;
+    const oldestAvailable = this.captureTotalSamplesWritten - this.captureRingLength;
+    if (startSampleIdx < oldestAvailable) return null;
+
+    const nativeSlice = new Float32Array(numSamplesNative);
+    const len = this.captureRingLength;
+    for (let i = 0; i < numSamplesNative; i++) {
+      nativeSlice[i] = this.captureRingBuffer[(startSampleIdx + i) % len];
+    }
+    return resampleAudio(nativeSlice, this.captureSampleRateHz, targetSampleRateHz);
   }
 
   public getIsMicrophoneActive(): boolean {
