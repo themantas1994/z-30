@@ -8,7 +8,12 @@
  * Run with:  npx tsx tests/frontend.test.mjs
  */
 
-import { findPermittedSegment, isValidCallsign, BAND_PLANS } from '../src/dsp/bandPlan.ts';
+import {
+  findPermittedSegment,
+  nearestPermittedSegment,
+  isValidCallsign,
+  BAND_PLANS,
+} from '../src/dsp/bandPlan.ts';
 import { createSeededRandom, DEFAULT_MONTE_CARLO_SEED } from '../src/dsp/seededRandom.ts';
 import { synthesizeFrameSamples, instantaneousFrequency, Z30_GFSK_BT } from '../src/dsp/z30Waveform.ts';
 import { validateStationConfig } from '../src/dsp/stationConfigStore.ts';
@@ -53,6 +58,41 @@ check(
 check(
   'US Technician does have 10 m data privileges',
   findPermittedSegment('US', 'US_TECHNICIAN', 28076000) !== null
+);
+
+group('Band edges are checked against the emission, not its centre');
+// A z-30 signal is 50 Hz wide. A station whose CENTRE sits just inside a band edge is still
+// radiating more than half its power outside the band - the exact mistake made by an operator
+// tuning right up to the edge of a segment.
+const BW = Z30_SPECS.TOTAL_BANDWIDTH_HZ;
+check(
+  'a 50 Hz emission centred 10 Hz inside the 14.150 MHz upper edge is refused',
+  findPermittedSegment('US', 'US_GENERAL', 14149990, BW) === null
+);
+check(
+  'the same centre frequency passes when width is ignored (the old, wrong behaviour)',
+  findPermittedSegment('US', 'US_GENERAL', 14149990, 0) !== null
+);
+check(
+  'a 50 Hz emission 30 Hz below the upper edge fits',
+  findPermittedSegment('US', 'US_GENERAL', 14149970, BW) !== null
+);
+check(
+  'a 50 Hz emission centred 10 Hz above the 14.025 MHz lower edge is refused',
+  findPermittedSegment('US', 'US_GENERAL', 14025010, BW) === null
+);
+check(
+  'a 50 Hz emission 30 Hz above the lower edge fits',
+  findPermittedSegment('US', 'US_GENERAL', 14025030, BW) !== null
+);
+check(
+  'nearest-segment lookup reports the distance to an out-of-band frequency',
+  nearestPermittedSegment('US', 'US_GENERAL', 14010000)?.distanceHz === 15000,
+  `got ${nearestPermittedSegment('US', 'US_GENERAL', 14010000)?.distanceHz}`
+);
+check(
+  'nearest-segment lookup reports zero distance for a straddling centre',
+  nearestPermittedSegment('US', 'US_GENERAL', 14149990)?.distanceHz === 0
 );
 check(
   'a frequency between bands is refused',
