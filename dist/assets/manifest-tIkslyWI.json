@@ -1,0 +1,32 @@
+{
+  "name": "z-30 Digital Mode Transceiver",
+  "short_name": "z-30",
+  "description": "Experimental amateur radio 16-MFSK weak-signal digital mode transceiver, DSP waterfall analyzer, LDPC-SIC decoder, and CAT controller.",
+  "start_url": "/",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#0A0A0A",
+  "theme_color": "#00FF41",
+  "categories": ["utilities", "productivity", "communication"],
+  "icons": [
+    {
+      "src": "/icon-192.svg",
+      "sizes": "192x192",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/icon-512.svg",
+      "sizes": "512x512",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "Start Transceiver",
+      "url": "/",
+      "description": "Launch z-30 16-MFSK Transceiver"
+    }
+  ]
+}
