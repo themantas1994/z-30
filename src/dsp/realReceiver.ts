@@ -648,7 +648,8 @@ export function runSicMultiPass(
 
       // Cheap pre-filter: skip the expensive multi-schedule LDPC decode (up to 150 iterations)
       // for candidates whose pilot-correlation SNR is implausibly far below the empirical
-      // decode floor (~-25 dB per the Monte Carlo benchmark) - they essentially never decode,
+      // decode floor (~-24.6 dB, the idealised AWGN bound from the Monte Carlo benchmark; the
+      // real on-air floor is higher) - they essentially never decode,
       // and without this a noisy buffer's dozen-odd surviving candidates can make one decode
       // cycle take far longer than the 6.0s guard window allows.
       const preSnrDb = estimateSnrDb(pilotAmplitude(frameView, sampleRateHz, fineFreqHz), sigma);

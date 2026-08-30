@@ -14,7 +14,6 @@ import {
   monteCarloEngine,
   MonteCarloConfig,
   DEFAULT_MONTE_CARLO_CONFIG,
-  SnrPointResult,
   MonteCarloProgress,
   ChannelModelType,
   SimulationModeType,
@@ -30,13 +29,11 @@ import {
   Copy,
   Check,
   RotateCcw,
-  Sliders,
   ShieldCheck,
   Radio,
   FileSpreadsheet,
   Settings2,
-  Sparkles,
-} from 'lucide-react';
+  } from 'lucide-react';
 import {
   ResponsiveContainer,
   LineChart,
@@ -702,12 +699,12 @@ export const MonteCarloBenchmarkModal: React.FC<MonteCarloBenchmarkModalProps> =
                       />
                       <Tooltip
                         contentStyle={{ backgroundColor: '#141414', borderColor: '#333', fontSize: 11, color: '#D4D4D4' }}
-                        formatter={(val: any, name: string) => {
+                        formatter={(val: any, name?: string | number) => {
                           if (name === 'z30DecodePct') return [`${val}%`, 'z-30 Empirical Measured Decodes'];
                           if (name === 'ft8DecodePct') return [`${val}%`, 'FT8 Reference Model'];
                           if (name === 'ft4DecodePct') return [`${val}%`, 'FT4 Reference Model'];
                           if (name === 'shannonLimit') return [`${val}%`, 'Shannon Bound'];
-                          return [val, name];
+                          return [val, String(name ?? '')];
                         }}
                         labelFormatter={(label) => `SNR: ${label} dB / 2500 Hz`}
                       />

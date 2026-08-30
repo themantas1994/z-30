@@ -26,7 +26,10 @@ npm run build
 # 3. Create Python distribution packages (Wheel and Source Tarball)
 echo -e "${YELLOW}[3/4] Packaging Python wheel and source distribution...${NC}"
 python3 -m pip install --upgrade build setuptools wheel --quiet || true
-python3 setup.py sdist bdist_wheel || true
+# pyproject.toml is the only build configuration. setup.py used to sit alongside it, disagreeing
+# about dependencies, console scripts and the development-status classifier - and, because
+# pyproject.toml declares a [project] table, it took precedence and setup.py was dead anyway.
+python3 -m build || true
 
 # 4. Verification summary
 echo -e "${YELLOW}[4/4] Verifying generated package contents...${NC}"
@@ -41,5 +44,5 @@ echo -e "${GREEN}  - Android:  Installable PWA & Termux (install_android_termux.
 echo -e "${GREEN}  - Ubuntu:   APT installer (install_ubuntu.sh)${NC}"
 echo -e "${GREEN}  - Arch:     PKGBUILD & Pacman (install_arch.sh)${NC}"
 echo -e "${GREEN}  - Windows:  run_windows.bat & build_windows.bat (PyInstaller)${NC}"
-echo -e "${GREEN}  - Linux:    setup.py & pyproject.toml standard packages${NC}"
+echo -e "${GREEN}  - Linux:    pyproject.toml standard wheel & sdist${NC}"
 echo -e "${GREEN}==============================================================${NC}"

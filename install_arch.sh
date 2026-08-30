@@ -62,8 +62,11 @@ mkdir -p "$HOME/.z30"
 python -m venv "$HOME/.z30-env" --system-site-packages
 source "$HOME/.z30-env/bin/activate"
 
-# Install sounddevice inside the venv (uses pacman-provided portaudio & cffi)
-pip install --upgrade sounddevice
+# Install the Python dependencies inside the venv at pinned versions (portaudio and cffi come
+# from pacman; --system-site-packages above lets the venv see them). Unpinned installs meant two
+# runs a month apart produced different software, with no record of what changed - see
+# requirements.txt.
+pip install -r requirements.txt
 
 if command -v npm &> /dev/null; then
   echo -e "${YELLOW}[3/4] Compiling React Web DSP interface bundle...${NC}"
@@ -92,13 +95,21 @@ python -c "import sys; from z30_dsp.main import main; main()" "$@"
 EOF
 chmod +x "$HOME/.local/bin/z30"
 
+# Install the application icon so the menu entry has one. public/icon-512.svg is the source of
+# truth for it (it used to sit loose at the repository root and be referenced from three
+# different places, none of which installed it).
+mkdir -p "$HOME/.local/share/icons/hicolor/scalable/apps"
+if [ -f public/icon-512.svg ]; then
+  cp public/icon-512.svg "$HOME/.local/share/icons/hicolor/scalable/apps/z30.svg"
+fi
+
 mkdir -p "$HOME/.local/share/applications"
 cat << EOF > "$HOME/.local/share/applications/z30.desktop"
 [Desktop Entry]
 Name=z-30 Digital Transceiver
 Comment=16-MFSK Amateur Radio Digital Mode Transceiver & DSP Suite
 Exec=$HOME/.local/bin/z30
-Icon=radio
+Icon=z30
 Terminal=false
 Type=Application
 Categories=HamRadio;AudioVideo;Network;

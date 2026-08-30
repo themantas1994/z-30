@@ -8,7 +8,10 @@
  *    - Code length (n) = 216 channel coded bits
  *    - Information block length (k) = 77 bits (63 payload bits + 14-bit CRC)
  *    - Parity check equations (m = n - k) = 139 checks
- *    - Code Rate R = 77 / 216 ≈ 0.3564 (optimal for ultra-weak AWGN/Fading channels down to -25.0 dB SNR 50% / -24.0 dB SNR 90% threshold)
+ *    - Code Rate R = 77 / 216 ≈ 0.3564. Against an idealised AWGN channel with perfect
+ *      synchronisation, the seeded benchmark crosses 50% decode near -24.6 dB SNR and 90% near
+ *      -23.6 dB (2500 Hz reference bandwidth). That is a bound on the code under ideal
+ *      detection, not an over-the-air threshold - see z30_dsp/benchmark.py.
  *    - Modulation Symbol Mapping: 216 coded bits / (4 bits/symbol) = 54 data symbols in 16-MFSK.
  *      With 21 Costas synchronization symbols, total frame length = 75 symbols (24.0s duration at Ts=320ms).
  * 
@@ -27,8 +30,13 @@
  *    This allows zero-latency encoding without computing or storing a dense generator matrix G.
  * 
  * 4. Error Detection (CRC-14):
- *    Generator polynomial: g(x) = x^14 + x^11 + x^2 + 1 (Hex 0x2443, Init 0x2757).
- *    Guarantees undetected frame error probability P_ue < 6.1e-5 under severe noise.
+ *    Generator polynomial, as implemented: g(x) = x^14 + x^13 + x^10 + x^6 + x + 1.
+ *    Register constant 0x2443 (the low 14 coefficients; x^14 is implicit), Init 0x2757,
+ *    MSB-first. This comment, its counterpart in z30_dsp/ldpc.py, and the README previously
+ *    stated "x^14 + x^11 + x^2 + 1" - a different polynomial (register constant 0x0805). Both
+ *    shipped implementations agreed with each other so nothing broke, but a third
+ *    implementation written from that specification would have failed against both.
+ *    Undetected frame error probability P_ue ~= 2^-14 = 6.1e-5 for random errors.
  * 
  * 5. Vectorized Normalized Min-Sum Belief Propagation Decoder:
  *    - Check node update: L_{c->v} = alpha * prod(sign(L_{v'->c})) * min_{v' != v}(|L_{v'->c}|)
@@ -85,7 +93,9 @@ export class Z30LdpcEngine {
   private readonly n = Z30_LDPC_PARAMS.n;
   private readonly k = Z30_LDPC_PARAMS.k;
   private readonly m = Z30_LDPC_PARAMS.m;
-  private readonly alpha = Z30_LDPC_PARAMS.alphaMinSum;
+  // The min-sum normalisation factor is not a single constant: decodeMinSum() runs four
+  // schedules, each with its own alpha (0.74 to 0.95). Z30_LDPC_PARAMS.alphaMinSum documents
+  // the nominal 0.75 for the spec; the schedules below are what actually runs.
 
   // Parity check matrix sparse graph representation
   // checkToVarEdges[c] = array of variable node indices connected to check c
@@ -151,7 +161,7 @@ export class Z30LdpcEngine {
 
   /**
    * 14-bit CRC computation for 63-bit amateur payload.
-   * Polynomial: x^14 + x^11 + x^2 + 1 (Hex 0x2443, Init 0x2757)
+   * Polynomial: g(x) = x^14 + x^13 + x^10 + x^6 + x + 1 (register constant 0x2443, x^14 implicit; Init 0x2757)
    * 
    * @param bits - Array or TypedArray of binary payload bits
    * @returns 14-bit integer CRC checksum (0x0000 to 0x3FFF)
@@ -354,7 +364,7 @@ export class Z30LdpcEngine {
    * Algorithmic Architecture:
    * 1. Check direct hard decisions for instant zero-iteration decode.
    * 2. Schedule 1: Layered Damped Normalized Min-Sum (fast convergence, alpha=0.82, beta=0.08).
-   * 3. Schedule 2: Full Log-SPA with Jacobian correction for deep sub-noise decode (-25 dB SNR).
+   * 3. Schedule 2: Full Log-SPA with Jacobian correction for deep sub-noise decode.
    * 4. Schedule 3: Reverse-order Layering to escape asymmetric cycle traps.
    * 5. Schedule 4: Dithered Stochastic Resonance injection to resolve symmetric pseudocodewords.
    * 6. Post-Processing: CRC-14-Constrained Ordered Statistics Decoding (OSD-2 / Chase reliability search).

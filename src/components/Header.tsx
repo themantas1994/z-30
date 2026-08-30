@@ -7,7 +7,7 @@ import { StationConfig, TxSlot } from '../types/z30';
 import { Z30_SPECS, evaluateSlotTiming } from '../dsp/z30Constants';
 import { audioEngine } from '../dsp/audioEngine';
 import { formatUtcTime, formatTimeInTimezone } from '../dsp/timeUtils';
-import { Radio, Mic, MicOff, Volume2, VolumeX, BookOpen, Settings, HelpCircle, Sparkles, Activity, Play, Cpu, Square, Zap, Clock, Wand2, Maximize2, Minimize2, Globe, DownloadCloud, BarChart2 } from 'lucide-react';
+import { Radio, Mic, MicOff, Volume2, VolumeX, BookOpen, Settings, HelpCircle, Square, Zap, Clock, Wand2, Maximize2, Minimize2, Globe, DownloadCloud, BarChart2 } from 'lucide-react';
 import { updateEngine, UpdateCheckResult } from '../dsp/updateEngine';
 
 interface HeaderProps {

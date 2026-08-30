@@ -39,13 +39,26 @@ sudo apt-get install -y \
 # Ubuntu/Debian's default 'apt install nodejs' package is far too old for this project's
 # toolchain (Vite 6 requires Node.js 20.19+/22.12+): Ubuntu 20.04 ships Node 10.x, 22.04 ships
 # 12.22.9, and even 24.04 only ships 18.x. Installing it that way breaks `npm run build` below.
-# Install a current Node.js LTS from NodeSource instead, regardless of Ubuntu release.
+#
+# A current Node.js LTS therefore comes from NodeSource - but added as a normal, signed apt
+# source, NOT by piping a remote script into a root shell. The previous
+# `curl ... | sudo -E bash -` handed NodeSource (and anyone able to intercept or compromise
+# that endpoint) root on the operator's machine, with no signature check anywhere in the path.
+# Adding the repository key to a keyring and the source to sources.list.d means apt verifies
+# every package signature the normal way, and an operator can read what was added afterwards.
+NODE_MAJOR=20
 if ! command -v node &> /dev/null || [ "$(node -e 'console.log(process.versions.node.split(".")[0])' 2>/dev/null || echo 0)" -lt 20 ]; then
-  echo -e "${YELLOW}Installing a current Node.js LTS from NodeSource (apt's default 'nodejs' package is too old for this project)...${NC}"
-  curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
+  echo -e "${YELLOW}Installing Node.js ${NODE_MAJOR} LTS from NodeSource via a verified apt keyring...${NC}"
+  sudo install -m 0755 -d /etc/apt/keyrings
+  curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key \
+    | sudo gpg --dearmor --yes -o /etc/apt/keyrings/nodesource.gpg
+  sudo chmod a+r /etc/apt/keyrings/nodesource.gpg
+  echo "deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_${NODE_MAJOR}.x nodistro main" \
+    | sudo tee /etc/apt/sources.list.d/nodesource.list > /dev/null
+  sudo apt-get update
   sudo apt-get install -y nodejs
 else
-  echo -e "${GREEN}Found Node.js $(node --version), already recent enough - skipping NodeSource install.${NC}"
+  echo -e "${GREEN}Found Node.js $(node --version), already recent enough - skipping the NodeSource repository.${NC}"
 fi
 
 mkdir -p "$HOME/.z30"
@@ -53,7 +66,9 @@ python3 -m venv "$HOME/.z30-env"
 source "$HOME/.z30-env/bin/activate"
 
 pip install --upgrade pip setuptools wheel build
-pip install numpy scipy sounddevice pyaudio pyserial cffi requests
+# Pinned in requirements.txt. Unpinned installs meant two runs a month apart produced
+# different software, with no record of what changed.
+pip install -r requirements.txt
 
 web_build_ok=0
 if command -v npm &> /dev/null; then
@@ -86,13 +101,21 @@ python3 -c "import sys; from z30_dsp.main import main; main()" "$@"
 EOF
 chmod +x "$HOME/.local/bin/z30"
 
+# Install the application icon so the menu entry has one. public/icon-512.svg is the source of
+# truth for it (it used to sit loose at the repository root and be referenced from three
+# different places, none of which installed it).
+mkdir -p "$HOME/.local/share/icons/hicolor/scalable/apps"
+if [ -f public/icon-512.svg ]; then
+  cp public/icon-512.svg "$HOME/.local/share/icons/hicolor/scalable/apps/z30.svg"
+fi
+
 mkdir -p "$HOME/.local/share/applications"
 cat << EOF > "$HOME/.local/share/applications/z30.desktop"
 [Desktop Entry]
 Name=z-30 Digital Transceiver
 Comment=16-MFSK Amateur Radio Digital Mode Transceiver & DSP Suite
 Exec=$HOME/.local/bin/z30
-Icon=radio
+Icon=z30
 Terminal=false
 Type=Application
 Categories=HamRadio;AudioVideo;Network;

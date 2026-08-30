@@ -18,13 +18,13 @@ Welcome to the official technical documentation and developer wiki for **z-30**:
 
 ## ⚡ What is z-30?
 
-**z-30** is engineered for extreme HF, VHF, and microwave weak-signal amateur radio communications. Operating in synchronous **30.0-second UTC slots**, z-30 achieves a 50% decoding sensitivity threshold of **-25.0 dB SNR** and 90% threshold of **-24.0 dB SNR** (in a standard 2500 Hz reference bandwidth), offering a **+4.0 dB link margin advantage over FT8** ($2.51\times$ ERP multiplier).
+**z-30** is engineered for extreme HF, VHF, and microwave weak-signal amateur radio communications. Operating in synchronous **30.0-second UTC slots**, z-30's seeded AWGN benchmark crosses 50% decode near **-24.6 dB SNR** and 90% near **-23.6 dB SNR** in a 2500 Hz reference bandwidth. That is an idealised bound measured with the noise level, carrier frequency and symbol timing handed to the demodulator; it is **not** an on-air threshold and is not comparable with FT8's published -21 dB, which includes the acquisition losses this bound excludes. z-30's on-air sensitivity is currently unquantified.
 
 ### Key Technical Innovations
 1. **Ultra-Narrowband 16-MFSK**: Continuous-Phase 16-Tone Frequency Shift Keying occupying only **50.0 Hz** of RF bandwidth.
 2. **Rate-0.356 QC-LDPC + CRC-14**: Systematic (216, 77) Low-Density Parity-Check forward error correction with a 14-bit polynomial CRC yielding a false decode probability $< 10^{-6}$.
 3. **Multi-Pass Successive Interference Cancellation (SIC)**: 3-pass DSP cancellation engine that synthesizes and subtracts strong decoded carrier waveforms to recover hidden co-channel DX signals.
-4. **Sub-Millisecond RF Time Calibration (`rf_time_sync.py`)**: Embedded FIR matched-filter receiver that calibrates clock drift ($\Delta t$) against global standard stations (**WWV, WWVH, CHU, DCF77, MSF, WWVB, JJY**) without needing internet or administrator privileges.
+4. **Sub-Millisecond RF Time Calibration (`z30_dsp/rf_time_sync.py`)**: Embedded FIR matched-filter receiver that calibrates clock drift ($\Delta t$) against global standard stations (**WWV, WWVH, CHU, DCF77, MSF, WWVB, JJY**) without needing internet or administrator privileges.
 5. **Universal Cross-Platform Architecture**: Dual-stack engine featuring an interactive Web Audio 60 FPS HTML5/PWA GUI and a native Python 3 DSP package (`z30_dsp`) with Hamlib CAT and 9 PTT keying methods.
 
 ---

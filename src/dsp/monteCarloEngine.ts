@@ -4,7 +4,8 @@
  * 
  * End-to-end DSP simulation pipeline:
  * 1. Generates authentic z-30 (216, 77) LDPC frames + 21 Costas sync symbols.
- * 2. Synthesizes physical 16-MFSK continuous-phase (CPFSK) waveforms with raised-cosine edge shaping.
+ * 2. Synthesizes physical 16-MFSK continuous-phase waveforms with GFSK frequency shaping and a
+ *    constant amplitude envelope (see src/dsp/z30Waveform.ts).
  * 3. Injects calibrated Gaussian Noise (AWGN) calibrated strictly to the amateur standard 2500 Hz reference bandwidth:
  *      SNR_2500Hz = 10 * log10( P_signal / ( N0 * 2500 Hz ) )
  *      sigma^2 = P_signal / ( 10^(SNR_dB / 10) * (5000 / Fs) )
@@ -15,8 +16,10 @@
  *    and LDPC iteration convergence across user-configured SNR sweeps.
  */
 
+import { createSeededRandom, DEFAULT_MONTE_CARLO_SEED, RandomSource } from './seededRandom';
+import { synthesizeFrameSamples } from './z30Waveform';
 import { Z30_SPECS } from './z30Constants';
-import { Z30LdpcEngine, ldpcCodec } from './ldpcCodec';
+import { Z30LdpcEngine } from './ldpcCodec';
 import { encodeLdpc216_77, computeCrc14 } from './z30Codec';
 
 export type ChannelModelType = 'AWGN' | 'RAYLEIGH_FADING' | 'CO_CHANNEL_QRM';
@@ -78,6 +81,14 @@ export interface MonteCarloConfig {
   qrmSirDb?: number; // Signal to Interference Ratio in dB
   maxLdpcIterations: number;
   alphaMinSum: number;
+  /**
+   * PRNG seed for the payloads, the noise and the fading process.
+   *
+   * Both benchmark engines used to draw from unseeded `Math.random()`, so two runs of the same
+   * configuration gave different curves and no published number could be reproduced, bisected
+   * or independently checked. Record this seed alongside any result you publish.
+   */
+  seed?: number;
 }
 
 export const DEFAULT_MONTE_CARLO_CONFIG: MonteCarloConfig = {
@@ -94,9 +105,15 @@ export const DEFAULT_MONTE_CARLO_CONFIG: MonteCarloConfig = {
   qrmSirDb: -6.0,
   maxLdpcIterations: 45,
   alphaMinSum: 0.75,
+  seed: DEFAULT_MONTE_CARLO_SEED,
 };
 
 export class MonteCarloSimulationEngine {
+  /**
+   * Random source for the current run. Re-seeded at the start of every `runSimulation` call,
+   * so a given seed always produces the same curve.
+   */
+  private rng: RandomSource = createSeededRandom();
   private isCancelled: boolean = false;
   private isPaused: boolean = false;
   private currentProgress: MonteCarloProgress = {
@@ -163,14 +180,14 @@ export class MonteCarloSimulationEngine {
   }
 
 /**
- * Generates random 63-bit amateur payload.
- * 
+ * Generates a random 63-bit amateur payload from the run's seeded PRNG.
+ *
  * @returns 63-element binary array (0 or 1)
  */
 public generateRandomPayload(): number[] {
   const payload = new Array(63);
   for (let i = 0; i < 63; i++) {
-    payload[i] = Math.random() < 0.5 ? 0 : 1;
+    payload[i] = this.rng.next() < 0.5 ? 0 : 1;
   }
   return payload;
 }
@@ -241,17 +258,20 @@ public assembleFrameSymbols(payload63: number[]): {
 }
 
 /**
- * Synthesizes physical continuous-phase 16-MFSK (CPFSK) baseband audio waveform with raised cosine shaping.
- * 
- * Waveform Properties:
- * - Tone Spacing Delta_f = 3.125 Hz
- * - Symbol Period T_s = 320 ms
- * - Continuous phase trajectory across symbol boundaries prevents high-frequency spectral splatter
- * - 8ms raised-cosine pulse transition ramps on symbol envelopes ensure sharp 50 Hz occupied bandwidth containment
- * 
+ * Synthesizes the physical continuous-phase 16-MFSK baseband waveform for a frame.
+ *
+ * Delegates to the shared generator in src/dsp/z30Waveform.ts, which is the same code the
+ * transmitter uses and the twin of z30_dsp/modem.py. This function used to contain a third
+ * copy of the modulator carrying the same defect the other two did: an 8 ms raised-cosine ramp
+ * applied to *every symbol*, taking the envelope to zero at each of the 75 symbol boundaries.
+ * That is amplitude keying at 3.125 baud on top of the tone sequence, and it widens the
+ * spectrum far beyond 50 Hz - so the benchmark was measuring a waveform the protocol does not
+ * describe and the transmitter no longer emits. Frequency transitions are GFSK-shaped instead;
+ * the only amplitude shaping is one ramp at the start and end of the frame.
+ *
  * @param symbols75 - 75-element array of 16-MFSK symbol indexes (0 to 15)
  * @param sampleRateHz - Audio sample rate (e.g. 6000 Hz for DSP simulation, 48000 Hz for soundcard)
- * @param audioCenterFreqHz - Center frequency of the 16-tone grid in Hertz (e.g. 1250 Hz)
+ * @param audioCenterFreqHz - Centre frequency of the 16-tone grid in Hertz (e.g. 1250 Hz)
  * @returns Floating-point PCM waveform buffer
  */
 public synthesizePhysicalWaveform(
@@ -259,38 +279,10 @@ public synthesizePhysicalWaveform(
   sampleRateHz: number = 6000,
   audioCenterFreqHz: number = 1250
 ): Float32Array {
-    const symbolDurationSec = Z30_SPECS.SYMBOL_DURATION_SEC; // 0.320s
-    const toneSpacingHz = Z30_SPECS.TONE_SPACING_HZ; // 3.125 Hz
-    const samplesPerSymbol = Math.round(sampleRateHz * symbolDurationSec);
-    const totalSamples = symbols75.length * samplesPerSymbol;
-
-    const waveform = new Float32Array(totalSamples);
-    const rampLen = Math.round(0.008 * sampleRateHz); // 8ms raised-cosine pulse edge ramp
-
-    const envelope = new Float32Array(samplesPerSymbol);
-    envelope.fill(1.0);
-    for (let i = 0; i < rampLen; i++) {
-      const taper = 0.5 * (1.0 - Math.cos((Math.PI * i) / rampLen));
-      envelope[i] = taper;
-      envelope[samplesPerSymbol - 1 - i] = taper;
-    }
-
-    let phase = 0.0;
-    const dt = 1.0 / sampleRateHz;
-
-    for (let sIdx = 0; sIdx < symbols75.length; sIdx++) {
-      const toneIdx = symbols75[sIdx];
-      const toneFreq = audioCenterFreqHz + (toneIdx - 7.5) * toneSpacingHz;
-      const startSamp = sIdx * samplesPerSymbol;
-
-      for (let n = 0; n < samplesPerSymbol; n++) {
-        phase += 2.0 * Math.PI * toneFreq * dt;
-        if (phase > 2.0 * Math.PI) phase -= 2.0 * Math.PI;
-        waveform[startSamp + n] = Math.sin(phase) * envelope[n];
-      }
-    }
-
-    return waveform;
+    // The benchmark centres the tone grid on audioCenterFreqHz, so tone 0 sits 7.5 spacings
+    // below it; the generator takes the frequency of tone 0 directly.
+    const baseFreqHz = audioCenterFreqHz - 7.5 * Z30_SPECS.TONE_SPACING_HZ;
+    return synthesizeFrameSamples(symbols75, baseFreqHz, sampleRateHz, 1.0);
   }
 
   /**
@@ -323,8 +315,8 @@ public synthesizePhysicalWaveform(
 
     // Box-Muller Gaussian Noise Generator
     for (let i = 0; i < len; i += 2) {
-      const u1 = Math.max(1e-12, Math.random());
-      const u2 = Math.random();
+      const u1 = Math.max(1e-12, this.rng.next());
+      const u2 = this.rng.next();
       const mag = sigma * Math.sqrt(-2.0 * Math.log(u1));
       const z0 = mag * Math.cos(2.0 * Math.PI * u2);
       const z1 = mag * Math.sin(2.0 * Math.PI * u2);
@@ -355,8 +347,8 @@ public synthesizePhysicalWaveform(
     const faded = new Float32Array(len);
 
     // Two-path Watterson model: Direct path + Delayed path with slow random Rayleigh amplitude & phase
-    let phase1 = Math.random() * 2 * Math.PI;
-    let phase2 = Math.random() * 2 * Math.PI;
+    let phase1 = this.rng.next() * 2 * Math.PI;
+    let phase2 = this.rng.next() * 2 * Math.PI;
     let gain1 = 1.0;
     let gain2 = 0.7;
 
@@ -364,8 +356,8 @@ public synthesizePhysicalWaveform(
     const dPhi = 2 * Math.PI * dopplerHz * dt;
 
     for (let i = 0; i < len; i++) {
-      phase1 += dPhi * (0.8 + 0.4 * Math.random());
-      phase2 += dPhi * 1.3 * (0.8 + 0.4 * Math.random());
+      phase1 += dPhi * (0.8 + 0.4 * this.rng.next());
+      phase2 += dPhi * 1.3 * (0.8 + 0.4 * this.rng.next());
       gain1 = 0.8 + 0.4 * Math.sin(phase1);
       gain2 = 0.5 + 0.3 * Math.cos(phase2);
 
@@ -620,8 +612,8 @@ public synthesizePhysicalWaveform(
       // Fading channel amplitude multiplier: Rayleigh distribution
       let fadeAmp = 1.0;
       if (channelModel === 'RAYLEIGH_FADING') {
-        const g1 = Math.max(1e-12, Math.random());
-        const g2 = Math.random();
+        const g1 = Math.max(1e-12, this.rng.next());
+        const g2 = this.rng.next();
         const rI = Math.sqrt(-Math.log(g1)) * Math.cos(2.0 * Math.PI * g2);
         const rQ = Math.sqrt(-Math.log(g1)) * Math.sin(2.0 * Math.PI * g2);
         fadeAmp = Math.sqrt(rI * rI + rQ * rQ);
@@ -629,19 +621,19 @@ public synthesizePhysicalWaveform(
 
       const effAmp = signalAmp * fadeAmp;
       // Carrier phase on current symbol
-      const carrierPhase = Math.random() * 2.0 * Math.PI;
+      const carrierPhase = this.rng.next() * 2.0 * Math.PI;
 
       // Pilot phase estimation tracking variance from 21 Costas sync symbols
       const pilotPhaseErrorStd = 1.0 / Math.sqrt(Math.max(0.1, 2.0 * esN0Linear * 1.5));
-      const estCarrierPhase = carrierPhase + (Math.random() - 0.5) * 2.0 * pilotPhaseErrorStd;
+      const estCarrierPhase = carrierPhase + (this.rng.next() - 0.5) * 2.0 * pilotPhaseErrorStd;
       const pilotWeight = Math.max(0.2, Math.min(0.95, esN0Linear / (esN0Linear + 1.5)));
 
       for (let t = 0; t < 16; t++) {
         // Complex circular Gaussian noise: N_I, N_Q ~ N(0, 1)
-        const u1 = Math.max(1e-12, Math.random());
-        const u2 = Math.random();
-        const u3 = Math.max(1e-12, Math.random());
-        const u4 = Math.random();
+        const u1 = Math.max(1e-12, this.rng.next());
+        const u2 = this.rng.next();
+        const u3 = Math.max(1e-12, this.rng.next());
+        const u4 = this.rng.next();
 
         const nI = Math.sqrt(-2.0 * Math.log(u1)) * Math.cos(2.0 * Math.PI * u2);
         const nQ = Math.sqrt(-2.0 * Math.log(u3)) * Math.sin(2.0 * Math.PI * u4);
@@ -717,6 +709,9 @@ public synthesizePhysicalWaveform(
    * Executes complete Monte Carlo simulation across user-defined SNR points
    */
   public async runSimulation(config: MonteCarloConfig = DEFAULT_MONTE_CARLO_CONFIG): Promise<SnrPointResult[]> {
+    // Re-seed at the top of every run so the same configuration always produces the same
+    // curve, whatever ran before it in this session.
+    this.rng = createSeededRandom(config.seed ?? DEFAULT_MONTE_CARLO_SEED);
     this.isCancelled = false;
     this.isPaused = false;
 

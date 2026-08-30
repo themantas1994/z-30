@@ -4,7 +4,7 @@
  */
 
 import React, { useState } from 'react';
-import { AutoReplyPriority, StationConfig, TxSlot } from '../types/z30';
+import { StationConfig } from '../types/z30';
 import { QsoState } from '../dsp/qsoEngine';
 import { buildQsoMacros } from '../dsp/z30Codec';
 import { AUTO_REPLY_OPTIONS, evaluateSlotTiming } from '../dsp/z30Constants';
@@ -12,12 +12,10 @@ import {
   Radio,
   Power,
   Zap,
-  Send,
   Sparkles,
   Square,
   MessageSquareText,
-  SlidersHorizontal,
-} from 'lucide-react';
+  } from 'lucide-react';
 
 interface QsoMacrosTransmitPanelProps {
   qsoState: QsoState;

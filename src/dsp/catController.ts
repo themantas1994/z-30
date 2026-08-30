@@ -13,8 +13,21 @@
  * - Hamlib rigctl TCP daemon protocol (127.0.0.1:4532)
  */
 
-import { HAM_BANDS } from './z30Constants';
+import { HAM_BANDS, DEFAULT_STATION_CONFIG } from './z30Constants';
+import {
+  BAND_PLANS,
+  findPermittedSegment,
+  isValidCallsign,
+  LicenseClass,
+  RegulatoryRegion,
+} from './bandPlan';
 import { audioEngine } from './audioEngine';
+import {
+  isLocalServerAvailable,
+  keepAliveGpioPin,
+  sendRigctlCommand,
+  setGpioPin,
+} from './localServerApi';
 import { StationConfig, PttMethodType } from '../types/z30';
 import { getRigByName, CURRENT_HAMLIB_VERSION } from './hamlibCatalog';
 import {
@@ -29,6 +42,35 @@ import {
   kenwoodSetMode,
   kenwoodSetPtt,
 } from './ratProtocols';
+
+/**
+ * Hard ceiling on a single keyed period on the production PTT path, in seconds.
+ *
+ * One frame is 24 s of carrier within a 30 s slot, plus lead-in and hang time. 40 s therefore
+ * leaves generous margin for a complete transmission while still bounding a stuck one. Before
+ * this existed, `setPtt` had no timeout of any kind: a crashed tab, a thrown exception, or a
+ * machine that slept mid-transmission left PTT asserted indefinitely - an unattended
+ * transmission, a burnt PA, and a licence problem. The server-side GPIO dead-man switch (see
+ * z30_dsp/web_server.py) is the second layer; this is the first.
+ */
+export const MAX_TX_SECONDS = 40;
+
+/** How often the browser re-asserts the server-side GPIO dead-man switch while keyed. */
+const GPIO_KEEPALIVE_INTERVAL_MS = 500;
+
+/**
+ * Result of the pre-transmit compliance gate. See `canTransmit`.
+ */
+export interface TransmitPermission {
+  /** True only if every condition passed. Callers must treat any false as a hard stop. */
+  allowed: boolean;
+  /** Every condition that failed, in the order they were checked. */
+  violations: string[];
+  /** The evaluated transmit frequency (dial + audio offset) in Hz, when it could be computed. */
+  txFrequencyHz?: number;
+  /** Name of the band segment the transmit frequency fell inside, if any. */
+  bandSegment?: string;
+}
 
 /**
  * Diagnostic log item recording rigctl or serial hardware interactions.
@@ -87,6 +129,44 @@ export interface PttTestResult {
 }
 
 /**
+ * Minimal structural types for the Web Serial and WebHID surfaces this controller uses.
+ *
+ * Neither API is in TypeScript's DOM lib, so the calls used to be made through `any` - on the
+ * exact code paths where a type error becomes a hardware command. These describe only the
+ * members z-30 actually touches, which is enough to catch a typo or a wrong argument shape
+ * without pretending to model the full specifications.
+ */
+export interface WebSerialSignals {
+  requestToSend?: boolean;
+  dataTerminalReady?: boolean;
+}
+
+export interface WebSerialPortLike {
+  open(options: {
+    baudRate: number;
+    dataBits?: number;
+    stopBits?: number;
+    parity?: string;
+    flowControl?: string;
+  }): Promise<void>;
+  close(): Promise<void>;
+  setSignals?(signals: WebSerialSignals): Promise<void>;
+  getInfo?(): { usbVendorId?: number; usbProductId?: number };
+  readable: ReadableStream<Uint8Array> | null;
+  writable: WritableStream<Uint8Array> | null;
+}
+
+export interface WebHidDeviceLike {
+  opened: boolean;
+  productName?: string;
+  vendorId?: number;
+  productId?: number;
+  open(): Promise<void>;
+  close(): Promise<void>;
+  sendReport(reportId: number, data: BufferSource): Promise<void>;
+}
+
+/**
  * Enumerated hardware serial communication port.
  */
 export interface DiscoveredSerialPort {
@@ -138,19 +218,35 @@ export class CatController {
   private splitState: boolean = false;
   private txFreqHz: number = 14076000;
   private isConnected: boolean = false; // Initially false until real link established
+  private hamlibHost: string = '127.0.0.1';
+  private hamlibPort: number = 4532;
+  private hamlibRelayEnabled: boolean = false;
   private commandHistory: RigctlLogItem[] = [];
   private currentBandIdx: number = 5; // 20m
 
   // Hardware Web Serial Port handle
-  private serialPort: any = null;
-  private serialReader: any = null;
+  private serialPort: WebSerialPortLike | null = null;
+  private serialReader: ReadableStreamDefaultReader<Uint8Array> | null = null;
   private serialWriter: WritableStreamDefaultWriter<Uint8Array> | null = null;
   private isSerialConnected: boolean = false;
   private pairedSerialPorts: DiscoveredSerialPort[] = [];
   private portListeners: Array<(ports: DiscoveredSerialPort[]) => void> = [];
 
   // Active PTT safety timer
-  private pttSafetyTimer: any = null;
+  private pttSafetyTimer: ReturnType<typeof setTimeout> | null = null;
+  /**
+   * Hard maximum-transmission timer on the production PTT path. A z-30 frame is 24 s of
+   * carrier plus lead-in and hang time; anything past MAX_TX_SECONDS means something failed
+   * and the transmitter must come down by itself.
+   */
+  private txWatchdogTimer: ReturnType<typeof setTimeout> | null = null;
+  /** Repeating keepalive that holds the server-side GPIO dead-man switch open while keyed. */
+  private gpioKeepaliveTimer: ReturnType<typeof setInterval> | null = null;
+  private lastPttContext: {
+    method: PttMethodType;
+    polarity: 'ACTIVE_HIGH' | 'ACTIVE_LOW';
+    options?: Record<string, any>;
+  } | null = null;
 
   // Real CAT protocol family + Icom CI-V address for the currently configured rig, set via
   // configureRig(). Determines what actual bytes setFreqHz/setMode/setPtt write to the wire.
@@ -160,7 +256,7 @@ export class CatController {
 
   // WebHID handle for CM108/CM119 USB Audio GPIO PTT (separate from the Web Serial CAT link -
   // a station commonly uses a CM108-based audio interface for PTT with no serial CAT at all).
-  private hidDevice: any = null;
+  private hidDevice: WebHidDeviceLike | null = null;
 
   // TCI (Transceiver Control Interface) WebSocket handle for Expert Electronics SDRs.
   private tciSocket: WebSocket | null = null;
@@ -182,6 +278,40 @@ export class CatController {
     const rig = getRigByName(rigModelName);
     this.activeProtocolFamily = rig ? getProtocolFamilyForMfg(rig.mfg) : 'NONE';
     this.activeCivAddr = parseCivAddr(rig?.defaultCiv, 0x00);
+  }
+
+  /**
+   * Points the controller at a Hamlib rigctld daemon, so frequency, mode and PTT commands go
+   * to the radio through the native server's TCP relay.
+   *
+   * Before the relay existed, selecting "Hamlib" as the CAT method sent nothing at all: the
+   * browser had no way to reach the daemon, so the mode tracked state locally and looked like
+   * it was working. It is still the default choice in the setup wizard, which is why making it
+   * actually function matters more than hiding it.
+   */
+  public configureHamlibEndpoint(host: string, port: number, enabled: boolean): void {
+    this.hamlibHost = host || '127.0.0.1';
+    this.hamlibPort = port || 4532;
+    this.hamlibRelayEnabled = enabled;
+  }
+
+  /** True when rigctl commands should be relayed to a daemon rather than written to serial. */
+  private useHamlibRelay(): boolean {
+    return this.hamlibRelayEnabled && !this.isSerialConnected && isLocalServerAvailable();
+  }
+
+  /**
+   * Sends one rigctl command to the daemon and records the reply in the diagnostic log.
+   * Fire-and-forget: the transmit path cannot block on a network round trip.
+   */
+  private relayRigctl(command: string): void {
+    void sendRigctlCommand(command, this.hamlibHost, this.hamlibPort).then((result) => {
+      if (result.success) {
+        this.logCommand(command, (result.data?.response || '').trim() || 'OK', 'OK');
+      } else {
+        this.logCommand(command, result.error || 'rigctld relay failed', 'ERROR');
+      }
+    });
   }
 
   /**
@@ -275,6 +405,10 @@ export class CatController {
    * meaningful protocol to speak to a device that isn't there or isn't identified.
    */
   private sendRigFrequency(hz: number): void {
+    if (this.useHamlibRelay()) {
+      this.relayRigctl(`F ${Math.round(hz)}`);
+      return;
+    }
     if (this.activeProtocolFamily === 'CIV') {
       this.sendHardwareBytes(civSetFrequency(this.activeCivAddr, hz));
     } else if (this.activeProtocolFamily === 'KENWOOD') {
@@ -283,6 +417,11 @@ export class CatController {
   }
 
   private sendRigMode(mode: string): void {
+    if (this.useHamlibRelay()) {
+      // rigctld takes a mode name plus a passband in Hz; 0 asks it to use the rig's default.
+      this.relayRigctl(`M ${mode} 0`);
+      return;
+    }
     if (this.activeProtocolFamily === 'CIV') {
       this.sendHardwareBytes(civSetMode(this.activeCivAddr, mode));
     } else if (this.activeProtocolFamily === 'KENWOOD') {
@@ -291,6 +430,10 @@ export class CatController {
   }
 
   private sendRigPtt(tx: boolean): void {
+    if (this.useHamlibRelay()) {
+      this.relayRigctl(`T ${tx ? 1 : 0}`);
+      return;
+    }
     if (this.activeProtocolFamily === 'CIV') {
       this.sendHardwareBytes(civSetPtt(this.activeCivAddr, tx));
     } else if (this.activeProtocolFamily === 'KENWOOD') {
@@ -299,9 +442,85 @@ export class CatController {
   }
 
   private hardwareCommandStatusNote(): string {
+    if (this.useHamlibRelay()) return `Hamlib rigctld relay ${this.hamlibHost}:${this.hamlibPort}`;
     if (this.activeProtocolFamily === 'CIV') return `CI-V 0x${this.activeCivAddr.toString(16).padStart(2, '0')}`;
     if (this.activeProtocolFamily === 'KENWOOD') return 'Kenwood-style ASCII';
     return 'no rig protocol configured (state tracked locally only)';
+  }
+
+  /**
+   * The single compliance gate every transmit entry point must pass before a carrier exists.
+   *
+   * Nothing used to check any of this. There was no band-edge check, no privilege model, and
+   * no requirement that the operator had even entered a callsign - `band_manager.py` held band
+   * data that the transmit path never consulted. The consequences of getting it wrong are the
+   * operator's licence, so the gate fails closed: an unconfigured station cannot transmit, and
+   * every refusal names the condition that failed rather than just saying no.
+   *
+   * @param config - The current station configuration.
+   * @param audioOffsetHz - Audio-passband offset of the transmitted signal, added to the dial
+   *   frequency to obtain the frequency actually radiated.
+   * @param dialFreqHz - Dial frequency in Hz; defaults to the controller's tracked VFO.
+   */
+  public canTransmit(
+    config: StationConfig,
+    audioOffsetHz: number = 0,
+    dialFreqHz?: number
+  ): TransmitPermission {
+    const violations: string[] = [];
+
+    // 1. Callsign. An empty or malformed callsign means an unidentified transmission.
+    const call = (config.myCall || '').trim().toUpperCase();
+    if (!call) {
+      violations.push('No callsign is configured. Enter your callsign in Station Settings before transmitting.');
+    } else if (!isValidCallsign(call)) {
+      violations.push(`"${call}" is not a syntactically valid amateur callsign.`);
+    } else if (call === DEFAULT_STATION_CONFIG.myCall.toUpperCase()) {
+      violations.push(
+        `The callsign is still the shipped placeholder "${call}". Set your own callsign in Station Settings - ` +
+        'transmitting under another station\'s call is not yours to do.'
+      );
+    }
+
+    // 2. Regulatory region and licence class must both be chosen. Guessing either one on the
+    //    operator's behalf is exactly the kind of silent assumption this gate exists to stop.
+    const region = config.regulatoryRegion as RegulatoryRegion | undefined;
+    const licenseClass = config.licenseClass as LicenseClass | undefined;
+    const plan = region ? BAND_PLANS[region] : undefined;
+    if (!region || !plan) {
+      violations.push('No regulatory region is configured. Choose your region in Station Settings.');
+    }
+    if (!licenseClass) {
+      violations.push('No licence class is configured. Choose your licence class in Station Settings.');
+    } else if (plan && !plan.licenseClasses.includes(licenseClass)) {
+      violations.push(`Licence class "${licenseClass}" does not apply in ${plan.displayName}.`);
+    }
+
+    // 3. The frequency actually radiated: dial plus audio offset.
+    const dial = dialFreqHz ?? this.currentFreqHz;
+    const txFrequencyHz = Number.isFinite(dial) && Number.isFinite(audioOffsetHz) ? dial + audioOffsetHz : NaN;
+    let bandSegment: string | undefined;
+
+    if (!Number.isFinite(txFrequencyHz) || txFrequencyHz <= 0) {
+      violations.push('The transmit frequency could not be determined from the dial frequency and audio offset.');
+    } else if (plan && licenseClass) {
+      const segment = findPermittedSegment(plan.region, licenseClass, txFrequencyHz);
+      if (!segment) {
+        violations.push(
+          `${(txFrequencyHz / 1e6).toFixed(6)} MHz (dial ${(dial / 1e6).toFixed(6)} MHz + ${audioOffsetHz.toFixed(0)} Hz audio) ` +
+          `is not inside any data-mode segment available to a ${licenseClass} licensee in ${plan.displayName}.`
+        );
+      } else {
+        bandSegment = `${segment.band} ${(segment.startHz / 1e6).toFixed(3)}-${(segment.endHz / 1e6).toFixed(3)} MHz`;
+      }
+    }
+
+    return {
+      allowed: violations.length === 0,
+      violations,
+      txFrequencyHz: Number.isFinite(txFrequencyHz) ? txFrequencyHz : undefined,
+      bandSegment,
+    };
   }
 
   public getPtt(): boolean {
@@ -326,6 +545,14 @@ export class CatController {
     }
   ): Promise<boolean> {
     this.pttState = tx;
+
+    // Arm (or disarm) the maximum-transmission watchdog before doing anything else, so an
+    // exception thrown by the keying code below still leaves a timer that will unkey.
+    if (tx) {
+      this.armTxWatchdog(method, polarity, options);
+    } else {
+      this.disarmTxWatchdog();
+    }
 
     if (method === 'CAT') {
       this.sendRigPtt(tx);
@@ -405,6 +632,80 @@ export class CatController {
     return true;
   }
 
+  /**
+   * Arms the hard maximum-transmission timer, and - for the GPIO PTT path - the repeating
+   * keepalive that holds the server's dead-man switch open.
+   *
+   * Two layers, deliberately. The browser-side timer catches an exception or a stuck state
+   * machine inside this app. The server-side dead-man switch catches the cases this timer
+   * cannot: a crashed tab, a killed renderer, a machine that sleeps mid-transmission. Neither
+   * layer can be relied on alone, because the failure mode being defended against is precisely
+   * "this JavaScript stopped running".
+   */
+  private armTxWatchdog(
+    method: PttMethodType,
+    polarity: 'ACTIVE_HIGH' | 'ACTIVE_LOW',
+    options?: Record<string, any>
+  ): void {
+    this.disarmTxWatchdog();
+    this.lastPttContext = { method, polarity, options };
+
+    this.txWatchdogTimer = setTimeout(() => {
+      this.txWatchdogTimer = null;
+      if (!this.pttState) return;
+      this.logCommand(
+        'PTT_WATCHDOG_RELEASE',
+        `Transmitter was still keyed after ${MAX_TX_SECONDS}s - forcing PTT off. A z-30 frame is ` +
+          '24s, so this means the transmit sequence did not finish normally.',
+        'ERROR'
+      );
+      void this.forceUnkey();
+    }, MAX_TX_SECONDS * 1000);
+
+    if (method === 'RASPBERRY_PI_GPIO' && isLocalServerAvailable()) {
+      const pin = options?.rpiGpioPin || 17;
+      this.gpioKeepaliveTimer = setInterval(() => {
+        void keepAliveGpioPin(pin).then((result) => {
+          if (!result.success && this.pttState) {
+            // The server already dropped the line; stop pretending we are keyed.
+            this.logCommand('PTT_DEADMAN_EXPIRED', result.error || 'GPIO dead-man switch released the PTT line.', 'ERROR');
+            void this.forceUnkey();
+          }
+        });
+      }, GPIO_KEEPALIVE_INTERVAL_MS);
+    }
+  }
+
+  private disarmTxWatchdog(): void {
+    if (this.txWatchdogTimer) {
+      clearTimeout(this.txWatchdogTimer);
+      this.txWatchdogTimer = null;
+    }
+    if (this.gpioKeepaliveTimer) {
+      clearInterval(this.gpioKeepaliveTimer);
+      this.gpioKeepaliveTimer = null;
+    }
+    this.lastPttContext = null;
+  }
+
+  /**
+   * Unkeys the transmitter through every path that might be holding it, and silences the audio
+   * carrier. Called by the watchdog, by the dead-man expiry, and on page unload.
+   */
+  public async forceUnkey(): Promise<void> {
+    const context = this.lastPttContext;
+    if (context) {
+      try {
+        await this.setPtt(false, context.method, context.polarity, context.options);
+      } catch (e) {
+        console.error('Failed to release PTT during forced unkey:', e);
+      }
+    }
+    // Belt and braces: drop every other keying path too, in case the configured method was
+    // not the one actually holding the line.
+    this.releasePttEmergency();
+  }
+
   public getSplit(): boolean {
     return this.splitState;
   }
@@ -438,15 +739,12 @@ export class CatController {
     return audioEngine.getChannelSmeterDb(rxFreqHz);
   }
 
-  public getForwardPowerWatts(nominalWatts: number): number {
-    if (!this.pttState) return 0;
-    return nominalWatts;
-  }
-
-  public getSwr(): number {
-    if (!this.pttState) return 1.0;
-    return 1.1;
-  }
+  // getSwr() and getForwardPowerWatts() used to live here. Neither measured anything:
+  // getSwr() returned a hardcoded 1.1 whenever PTT was asserted, and getForwardPowerWatts()
+  // echoed back whatever nominal wattage it was handed. A plausible-looking 1.1 tells an
+  // operator their antenna is fine when nothing looked at the antenna. If real readings are
+  // wanted, query the rig for them over CAT (Icom CI-V 0x15 0x12 / Kenwood "RM";) and report
+  // only what the radio answers.
 
   public getIsConnected(): boolean {
     return this.isConnected || this.isSerialConnected;
@@ -467,7 +765,7 @@ export class CatController {
     this.logCommand(
       this.isConnected ? 'CONNECT' : 'DISCONNECT',
       this.isConnected
-        ? 'Hamlib rigctld marked connected (127.0.0.1:4532) - manual assertion, not independently verified (browsers cannot open raw TCP sockets). Use "Test CAT Connection" for a real hardware handshake.'
+        ? 'Hamlib rigctld marked connected (127.0.0.1:4532) - a manual assertion, not a probe result. Use "Test CAT Connection" to actually query the daemon through the native server\'s TCP relay.'
         : 'Hamlib rigctld marked disconnected',
       'OK'
     );
@@ -564,11 +862,12 @@ export class CatController {
         await this.disconnectWebSerial();
       }
 
-      this.serialPort = selectedPort;
+      const port: WebSerialPortLike = selectedPort;
+      this.serialPort = port;
 
       // Try opening port with chosen baud rate
       try {
-        await this.serialPort.open({ baudRate });
+        await port.open({ baudRate });
         this.isSerialConnected = true;
         this.isConnected = true;
       } catch (openErr: any) {
@@ -709,39 +1008,66 @@ export class CatController {
     const host = config.hamlibHost || '127.0.0.1';
     const port = config.hamlibPort || 4532;
 
-    try {
-      // Attempt real probe to local rigctld daemon via fetch/TCP bridge or simulated probe
-      // In browser sandboxed environment, check if local rigctld endpoint is reachable
-      const isLocalhost = host === '127.0.0.1' || host === 'localhost';
-
-      if (!this.isConnected && !this.isSerialConnected) {
-        // If neither rigctld daemon bridge nor serial port is connected, provide an honest real message
-        return {
-          success: false,
-          message: `✗ Hamlib rigctld Connection Failed: Unable to reach daemon at ${host}:${port}. Please verify that 'rigctld -m ${rigInfo?.id || 3073} -r ${config.serialPort} -s ${config.baudRate}' is running in terminal.`,
-          rigName,
-          portUsed: `${host}:${port}`,
-          details: 'Daemon socket connection refused.',
-        };
-      }
-
-      // If link is active
-      return {
-        success: true,
-        message: `✓ Hamlib rigctld Link Active: Connected to ${rigName} via ${host}:${port} (VFO: ${(this.currentFreqHz / 1e6).toFixed(3)} MHz ${this.currentMode})`,
-        vfoHz: this.currentFreqHz,
-        mode: this.currentMode,
-        rigName,
-        portUsed: `${host}:${port}`,
-      };
-    } catch (err: any) {
+    // A real probe: ask the daemon for the VFO frequency through the native server's TCP
+    // relay and report what the radio actually answered.
+    //
+    // This used to return "✓ Hamlib rigctld Link Active" based solely on `this.isConnected` -
+    // a boolean the operator flips with a manual toggle - and printed back the app's own
+    // internal frequency as though the rig had reported it. No socket was ever opened; the
+    // browser cannot open one. toggleConnection()'s own docstring said as much, and this
+    // function contradicted it.
+    if (!isLocalServerAvailable()) {
       return {
         success: false,
-        message: `✗ Network CAT Query Error: ${err?.message || 'Failed to communicate with Hamlib daemon'}`,
+        message:
+          `✗ Hamlib rigctld Unavailable In This Browser: a web page cannot open a raw TCP socket to ` +
+          `${host}:${port}. Launch z-30 through its native server ("z30-web") so CAT commands can be ` +
+          `relayed, or switch CAT Method to "Direct Serial" and pair the radio over Web Serial.`,
         rigName,
         portUsed: `${host}:${port}`,
+        details: 'No local relay is backing this page.',
       };
     }
+
+    const probe = await sendRigctlCommand('f', host, port);
+    if (!probe.success) {
+      return {
+        success: false,
+        message:
+          `✗ Hamlib rigctld Connection Failed: ${probe.error || 'no response'}. Verify that ` +
+          `'rigctld -m ${rigInfo?.id || 3073} -r ${config.serialPort} -s ${config.baudRate}' is running.`,
+        rigName,
+        portUsed: `${host}:${port}`,
+        details: probe.error,
+      };
+    }
+
+    const raw = (probe.data?.response || '').trim();
+    this.logCommand('f', raw || '(empty response)', raw ? 'OK' : 'ERROR');
+
+    // rigctld answers a bare frequency, or "RPRT <n>" on error.
+    const reported = Number.parseInt(raw.split(/\s+/)[0] || '', 10);
+    if (!Number.isFinite(reported) || raw.startsWith('RPRT')) {
+      return {
+        success: false,
+        message: `✗ rigctld Responded With An Error: "${raw}". The daemon is running but could not read the VFO - check the rig model and serial settings it was started with.`,
+        rigName,
+        portUsed: `${host}:${port}`,
+        details: raw,
+      };
+    }
+
+    this.currentFreqHz = reported;
+    this.isConnected = true;
+    return {
+      success: true,
+      message: `✓ Hamlib rigctld Link Verified: ${rigName} at ${host}:${port} reported VFO ${(reported / 1e6).toFixed(6)} MHz.`,
+      vfoHz: reported,
+      mode: this.currentMode,
+      rigName,
+      portUsed: `${host}:${port}`,
+      details: `Daemon reply: ${raw}`,
+    };
   }
 
   /**
@@ -1022,9 +1348,19 @@ export class CatController {
       clearTimeout(this.pttSafetyTimer);
       this.pttSafetyTimer = null;
     }
+    const context = this.lastPttContext;
+    this.disarmTxWatchdog();
     this.pttState = false;
     this.sendRigPtt(false);
     audioEngine.stopTransmission();
+    // Drop the SBC GPIO line explicitly. The server's dead-man switch would release it within
+    // a couple of seconds anyway, but a couple of seconds of unintended carrier is exactly
+    // what an emergency release exists to avoid.
+    if (context?.method === 'RASPBERRY_PI_GPIO') {
+      const pin = context.options?.rpiGpioPin || 17;
+      const polarity = context.polarity === 'ACTIVE_LOW';
+      void setGpioPin(pin, polarity);
+    }
     if (this.serialPort && this.serialPort.setSignals) {
       this.serialPort.setSignals({ requestToSend: false, dataTerminalReady: false }).catch(() => {});
     }
@@ -1111,11 +1447,12 @@ export class CatController {
       if (!devices || devices.length === 0) {
         return { success: false, message: 'No CM108/CM119 HID device selected.' };
       }
-      this.hidDevice = devices[0];
-      if (!this.hidDevice.opened) {
-        await this.hidDevice.open();
+      const device: WebHidDeviceLike = devices[0];
+      this.hidDevice = device;
+      if (!device.opened) {
+        await device.open();
       }
-      const name = this.hidDevice.productName || 'CM108/CM119 USB Audio GPIO device';
+      const name = device.productName || 'CM108/CM119 USB Audio GPIO device';
       this.logCommand('CM108_HID_PAIR', `Paired ${name}`, 'OK');
       return { success: true, message: `✓ CM108/CM119 HID device paired: ${name}` };
     } catch (e: any) {
@@ -1134,18 +1471,12 @@ export class CatController {
    * backend running ON the Pi itself, not e.g. a plain static web deployment.
    */
   private async setRpiGpio(bcmPin: number, tx: boolean, polarity: 'ACTIVE_HIGH' | 'ACTIVE_LOW'): Promise<boolean> {
-    try {
-      const activeLevel = polarity === 'ACTIVE_HIGH' ? tx : !tx;
-      const response = await fetch('/api/gpio', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ pin: bcmPin, value: activeLevel }),
-      });
-      return response.ok;
-    } catch (e) {
-      console.warn('RPi GPIO bridge request failed:', e);
-      return false;
+    const activeLevel = polarity === 'ACTIVE_HIGH' ? tx : !tx;
+    const result = await setGpioPin(bcmPin, activeLevel);
+    if (!result.success) {
+      console.warn('RPi GPIO bridge request failed:', result.error);
     }
+    return result.success;
   }
 
   /**

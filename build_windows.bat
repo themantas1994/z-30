@@ -200,11 +200,10 @@ if exist "dist\index.html" (
     set "WEB_DATA_ARG=--add-data z30_dsp\web_dist;z30_dsp\web_dist"
 )
 
+REM config.json is per-user runtime state (clock calibration) written to the user data
+REM directory at runtime - see z30_dsp\paths.py. It is not bundled into the executable.
 "%PYTHON_EXE%" -m PyInstaller --noconfirm --onedir --windowed ^
     --name "z30-transceiver" ^
-    --add-data "config.json;." ^
-    --add-data "band_manager.py;." ^
-    --add-data "rf_time_sync.py;." ^
     !WEB_DATA_ARG! ^
     --collect-all "sounddevice" ^
     --hidden-import "numpy" ^

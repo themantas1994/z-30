@@ -31,14 +31,20 @@ Where $p, p'$ are Radix-37 prefix characters (`[A-Z0-9 ]`), $d$ is the decimal d
 
 To eliminate false decodes under severe noise conditions, the 63-bit information vector is appended with a **14-bit CRC**:
 
-$$P(x) = x^{14} + x^{11} + x^2 + 1 \quad (\text{Hex polynomial: } \mathtt{0x2443}, \text{ initial seed } \mathtt{0x2757})$$
+$$P(x) = x^{14} + x^{13} + x^{10} + x^{6} + x + 1 \quad (\text{register constant } \mathtt{0x2443}\text{, } x^{14} \text{ implicit; initial seed } \mathtt{0x2757}\text{, MSB-first})$$
+
+> Earlier revisions of this page, and of both source implementations, wrote this as
+> $x^{14} + x^{11} + x^2 + 1$ - a different polynomial (register constant `0x0805`). The two
+> shipped implementations agreed with each other so nothing broke, but a third implementation
+> written from that specification would have produced a CRC failing against both.
+> `tests/vectors/crc14_vectors.json` now pins the answer for every implementation.
 
 - **Protected Codeword Size**: $K_{\text{total}} = 63 + 14 = 77 \text{ bits}$ (no padding required).
-- **False Decode Probability**: $P_{\text{false}} \le 2^{-14} \approx 6.1 \times 10^{-5}$ per candidate, and $< 10^{-6}$ after Costas coherence validation.
+- **False Decode Probability**: $P_{\text{false}} \approx 2^{-14} \approx 6.1 \times 10^{-5}$ per candidate for random errors. Costas coherence validation rejects further candidates on top of this, but the combined figure has not been measured and no number is claimed for it here.
 
 ---
 
-## 🔢 Quasi-Cyclic LDPC (216, 77) Code
+## 🔢 Irregular Repeat-Accumulate LDPC (216, 77) Code
 
 The forward error correction engine uses a systematic **Rate-0.356 Irregular Repeat-Accumulate (IRA) Low-Density Parity-Check code**:
 - **Codeword Length ($N$)**: 216 channel bits ($54 \text{ data symbols} \times 4 \text{ bits/symbol}$).

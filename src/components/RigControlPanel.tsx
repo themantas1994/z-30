@@ -6,7 +6,7 @@ import React, { useState } from 'react';
 import { HAM_BANDS } from '../dsp/z30Constants';
 import { rigctl } from '../dsp/catController';
 import { StationConfig } from '../types/z30';
-import { Radio, Terminal, Cpu, Activity, Zap, Check, AlertCircle } from 'lucide-react';
+import { Terminal, Cpu } from 'lucide-react';
 
 interface RigControlPanelProps {
   currentBand: typeof HAM_BANDS[0];
@@ -112,7 +112,11 @@ export const RigControlPanel: React.FC<RigControlPanelProps> = ({
         <div className="bg-[#050505] p-1.5 border border-[#222] flex items-center justify-between text-[9px] text-[#888]">
           <div>
             <span>Port: </span>
-            <strong className="text-[#D4D4D4]">{config.catPort || '127.0.0.1:4532'}</strong>
+            <strong className="text-[#D4D4D4]">
+              {config.catMethod === 'Direct Serial'
+                ? config.serialPort || '(no serial port selected)'
+                : `${config.hamlibHost || '127.0.0.1'}:${config.hamlibPort || 4532}`}
+            </strong>
           </div>
           <div>
             <span>Baud: </span>

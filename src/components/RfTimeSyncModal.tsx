@@ -16,23 +16,17 @@ import { StationConfig } from '../types/z30';
 import {
   Clock,
   Radio,
-  Zap,
   Play,
   Square,
   RefreshCw,
-  ShieldCheck,
   CheckCircle2,
-  AlertTriangle,
   Compass,
   X,
   Sparkles,
-  Cpu,
-  Sliders,
   Terminal,
   Activity,
   Mic,
   MicOff,
-  Volume2,
   Globe,
   SlidersHorizontal,
   Lock,
@@ -80,7 +74,7 @@ export const RfTimeSyncModal: React.FC<RfTimeSyncModalProps> = ({
   const [beaconStation, setBeaconStation] = useState<string>('WWV');
   const [beaconSnrDb, setBeaconSnrDb] = useState<number>(14);
   const [beaconDriftMs, setBeaconDriftMs] = useState<number>(-12.4);
-  const [playAudioToSpeaker, setPlayAudioToSpeaker] = useState<boolean>(true);
+  const [playAudioToSpeaker] = useState<boolean>(true);
 
   // Scan & DSP Demodulation State
   const [isScanning, setIsScanning] = useState<boolean>(false);
@@ -98,7 +92,7 @@ export const RfTimeSyncModal: React.FC<RfTimeSyncModalProps> = ({
   const [isQueryingNtp, setIsQueryingNtp] = useState<boolean>(false);
   const [ntpOffsetMs, setNtpOffsetMs] = useState<number | null>(null);
   const [ntpRttMs, setNtpRttMs] = useState<number | null>(null);
-  const [ntpServerTime, setNtpServerTime] = useState<string>('');
+  const [, setNtpServerTime] = useState<string>('');
 
   // Event Logs
   const [scanLogs, setScanLogs] = useState<

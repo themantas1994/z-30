@@ -45,8 +45,9 @@ def verify_scripts():
         "run_windows.bat",
         "build_windows.bat",
         "PKGBUILD",
-        "setup.py",
-        "pyproject.toml"
+        "pyproject.toml",
+        "requirements.txt",
+        "LICENSE"
     ]
     for s in scripts:
         if os.path.exists(s):

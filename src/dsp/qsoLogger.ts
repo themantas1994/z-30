@@ -11,6 +11,7 @@
  */
 
 import { LogEntry, AutoLogConfig } from '../types/z30';
+import { isLocalServerAvailable, readServerLogbook, writeServerLogbook } from './localServerApi';
 
 const STORAGE_KEY = 'z30_qso_logbook_v1';
 const CONFIG_STORAGE_KEY = 'z30_autolog_config_v1';
@@ -25,15 +26,119 @@ export const DEFAULT_AUTOLOG_CONFIG: AutoLogConfig = {
 
 type LogListener = (entry: LogEntry, allEntries: LogEntry[]) => void;
 
+/** How a storage write ended, for the UI to surface rather than the console to swallow. */
+export interface StorageStatus {
+  /** True if the most recent persist attempt reached at least one durable store. */
+  ok: boolean;
+  /** True if the QSO log is mirrored to a file through the native server. */
+  serverBacked: boolean;
+  /** Human-readable description of the most recent failure, if any. */
+  error?: string;
+  /** Where the server-side copy lives, when there is one. */
+  serverPath?: string;
+}
+
+type StorageStatusListener = (status: StorageStatus) => void;
+
 export class Z30QsoLogger {
   private entries: LogEntry[] = [];
   private listeners: Set<LogListener> = new Set();
   private config: AutoLogConfig = { ...DEFAULT_AUTOLOG_CONFIG };
   private queue: LogEntry[] = [];
   private isProcessingQueue: boolean = false;
+  private storageStatus: StorageStatus = { ok: true, serverBacked: false };
+  private storageListeners: Set<StorageStatusListener> = new Set();
+  private serverSyncInFlight: Promise<void> | null = null;
 
   constructor() {
     this.loadFromStorage();
+    // The server-side copy is authoritative when it exists: it survives cleared browsing data,
+    // a private window, a different browser, and a different port number - all of which lose
+    // localStorage. See the comment on loadFromServer().
+    void this.loadFromServer();
+  }
+
+  /** Subscribe to persistence outcomes so the UI can show a failed save instead of hiding it. */
+  public subscribeToStorageStatus(listener: StorageStatusListener): () => void {
+    this.storageListeners.add(listener);
+    listener(this.storageStatus);
+    return () => {
+      this.storageListeners.delete(listener);
+    };
+  }
+
+  public getStorageStatus(): StorageStatus {
+    return { ...this.storageStatus };
+  }
+
+  private setStorageStatus(status: StorageStatus): void {
+    this.storageStatus = status;
+    this.storageListeners.forEach((fn) => {
+      try {
+        fn({ ...status });
+      } catch (err) {
+        console.error('Error in storage status listener:', err);
+      }
+    });
+  }
+
+  /**
+   * Loads the logbook from the native server, replacing the browser-side copy when the server
+   * holds more contacts.
+   *
+   * The logbook used to live in localStorage and nowhere else. That is the most volatile store
+   * on the machine, and it is partitioned by origin - and the port number is part of the
+   * origin. So the one time something else already held port 3000 and the app came up
+   * somewhere else, the operator was shown an empty logbook and an unconfigured station while
+   * the real data sat unreachable under the old origin. A file under the z-30 user data
+   * directory has none of those failure modes.
+   */
+  private async loadFromServer(): Promise<void> {
+    if (!isLocalServerAvailable()) return;
+    const result = await readServerLogbook();
+    if (!result.success || !Array.isArray(result.data?.entries)) return;
+
+    const serverEntries = (result.data!.entries as LogEntry[]).filter(
+      (e) => e && typeof e === 'object' && typeof (e as LogEntry).callsign === 'string'
+    );
+    this.setStorageStatus({ ok: true, serverBacked: true, serverPath: result.data?.path });
+
+    if (serverEntries.length > this.entries.length) {
+      this.entries = serverEntries;
+      this.saveToStorage();
+      const latest = this.entries[0];
+      if (latest) this.notifyListeners(latest);
+    } else if (this.entries.length > serverEntries.length) {
+      // The browser copy is ahead (first run after this feature landed, say) - push it up.
+      void this.syncToServer();
+    }
+  }
+
+  /**
+   * Mirrors the logbook to the native server: JSON as the source of truth, plus an ADIF export
+   * written beside it after every logged QSO so the operator always has a file ready to submit.
+   */
+  private async syncToServer(): Promise<void> {
+    if (!isLocalServerAvailable()) return;
+    if (this.serverSyncInFlight) return;
+    const snapshot = [...this.entries];
+    const adif = this.exportToAdif(snapshot);
+    this.serverSyncInFlight = writeServerLogbook(snapshot, adif)
+      .then((result) => {
+        if (result.success) {
+          this.setStorageStatus({ ok: true, serverBacked: true, serverPath: result.data?.path });
+        } else {
+          this.setStorageStatus({
+            ok: false,
+            serverBacked: false,
+            error: `Could not write the logbook to disk: ${result.error}`,
+          });
+        }
+      })
+      .finally(() => {
+        this.serverSyncInFlight = null;
+      });
+    await this.serverSyncInFlight;
   }
 
   public getConfig(): AutoLogConfig {
@@ -157,32 +262,117 @@ export class Z30QsoLogger {
     return 0;
   }
 
+  /**
+   * Persists the logbook.
+   *
+   * A quota-exceeded localStorage write used to be caught, logged to the console, and
+   * otherwise indistinguishable from a successful save - so an operator could log contacts
+   * all evening into a store that was silently discarding them. Failures now reach
+   * `subscribeToStorageStatus` and the UI.
+   */
   private saveToStorage() {
-    if (!this.config.saveToLocalStorage) return;
-    if (typeof window !== 'undefined' && window.localStorage) {
+    let browserOk = false;
+    let browserError: string | undefined;
+
+    if (this.config.saveToLocalStorage && typeof window !== 'undefined' && window.localStorage) {
       try {
         localStorage.setItem(STORAGE_KEY, JSON.stringify(this.entries));
+        browserOk = true;
       } catch (e) {
+        browserError =
+          e instanceof Error && e.name === 'QuotaExceededError'
+            ? 'Browser storage is full; the logbook could not be cached in this browser.'
+            : `Browser storage write failed: ${e instanceof Error ? e.message : String(e)}`;
         console.warn('Failed to save QSO logbook to localStorage:', e);
       }
     }
+
+    if (isLocalServerAvailable()) {
+      void this.syncToServer();
+    } else if (!browserOk) {
+      this.setStorageStatus({
+        ok: false,
+        serverBacked: false,
+        error: browserError || 'The logbook is not being persisted anywhere.',
+      });
+    } else {
+      this.setStorageStatus({
+        ok: true,
+        serverBacked: false,
+        error:
+          'The logbook is only cached in this browser. Clearing browsing data, a private window, ' +
+          'or a different browser loses it - launch z-30 through its native server to keep a file copy.',
+      });
+    }
   }
 
+  /**
+   * Loads the browser-side copy, validating its shape rather than trusting it.
+   *
+   * `JSON.parse` output used to be assigned straight to `this.entries`. A truncated write, a
+   * schema change between versions, or hand-edited storage then produced entries whose fields
+   * were the wrong type - and those fields feed ADIF export and the QSO sequencer.
+   */
   private loadFromStorage() {
-    if (typeof window !== 'undefined' && window.localStorage) {
-      try {
-        const savedLog = localStorage.getItem(STORAGE_KEY);
-        if (savedLog) {
-          this.entries = JSON.parse(savedLog);
+    if (typeof window === 'undefined' || !window.localStorage) return;
+    try {
+      const savedLog = localStorage.getItem(STORAGE_KEY);
+      if (savedLog) {
+        const parsed: unknown = JSON.parse(savedLog);
+        if (Array.isArray(parsed)) {
+          const valid = parsed.filter((e) => Z30QsoLogger.isPlausibleLogEntry(e)) as LogEntry[];
+          if (valid.length !== parsed.length) {
+            console.warn(
+              `[QsoLogger] Discarded ${parsed.length - valid.length} malformed logbook entries from browser storage.`
+            );
+          }
+          this.entries = valid;
+        } else {
+          console.warn('[QsoLogger] Stored logbook was not an array; ignoring it.');
         }
-        const savedCfg = localStorage.getItem(CONFIG_STORAGE_KEY);
-        if (savedCfg) {
-          this.config = { ...this.config, ...JSON.parse(savedCfg) };
-        }
-      } catch (e) {
-        console.warn('Failed to load QSO logbook from localStorage:', e);
       }
+      const savedCfg = localStorage.getItem(CONFIG_STORAGE_KEY);
+      if (savedCfg) {
+        const parsedCfg: unknown = JSON.parse(savedCfg);
+        if (parsedCfg && typeof parsedCfg === 'object' && !Array.isArray(parsedCfg)) {
+          this.config = { ...this.config, ...(parsedCfg as Partial<AutoLogConfig>) };
+        }
+      }
+    } catch (e) {
+      console.warn('Failed to load QSO logbook from localStorage:', e);
     }
+  }
+
+  /** Minimal structural check: the fields the rest of the app dereferences must be strings. */
+  private static isPlausibleLogEntry(value: unknown): boolean {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+    const entry = value as Record<string, unknown>;
+    return (
+      typeof entry.callsign === 'string' &&
+      entry.callsign.length > 0 &&
+      typeof entry.utcDate === 'string' &&
+      typeof entry.utcTime === 'string'
+    );
+  }
+
+  /**
+   * ADIF length prefixes are BYTE counts of the UTF-8 encoded value.
+   *
+   * JavaScript's `String.prototype.length` returns UTF-16 code units, so any non-ASCII
+   * character in a name, QTH or comment - an accented letter, a Japanese callsign note, an
+   * em dash - used to emit a length shorter than the bytes that followed, and a conforming
+   * ADIF parser then mis-read the remainder of the record.
+   */
+  private static adifByteLength(value: string): number {
+    return new TextEncoder().encode(value).length;
+  }
+
+  /** Builds one `<FIELD:len>value ` ADIF tag with a correct byte-count prefix. */
+  private static adifField(name: string, value: string | number | undefined | null): string {
+    if (value === undefined || value === null) return '';
+    const text = String(value);
+    if (text.length === 0) return '';
+    return `<${name}:${Z30QsoLogger.adifByteLength(text)}>${text} `;
   }
 
   /**
@@ -200,7 +390,7 @@ Generated on: ${new Date().toUTCString()}
 <ADIF_VER:5>3.1.4
 <PROGRAMID:4>z-30
 <PROGRAMVERSION:5>1.0.0
-<CREATED_TIMESTAMP:14>${now}
+<CREATED_TIMESTAMP:${Z30QsoLogger.adifByteLength(now)}>${now}
 <EOH>
 
 `;
@@ -226,23 +416,27 @@ Generated on: ${new Date().toUTCString()}
       const myGrid = (e.myGrid || 'FN31').toUpperCase();
       const comment = e.notes || `z-30 16-MFSK LDPC / SIC Pass ${e.sicPass || 1}`;
 
-      adif += `<CALL:${call.length}>${call} `;
-      adif += `<QSO_DATE:${cleanDate.length}>${cleanDate} `;
-      adif += `<TIME_ON:${cleanTime.length}>${cleanTime} `;
-      adif += `<TIME_OFF:${cleanTime.length}>${cleanTime} `;
-      adif += `<BAND:${band.length}>${band} `;
-      adif += `<FREQ:${freq.length}>${freq} `;
-      adif += `<MODE:${mode.length}>${mode} `;
-      adif += `<SUBMODE:${submode.length}>${submode} `;
-      adif += `<RST_SENT:${rstSent.length}>${rstSent} `;
-      adif += `<RST_RCVD:${rstRcvd.length}>${rstRcvd} `;
-      if (grid) adif += `<GRIDSQUARE:${grid.length}>${grid} `;
-      if (myCall) adif += `<OPERATOR:${myCall.length}>${myCall} <STATION_CALLSIGN:${myCall.length}>${myCall} `;
-      if (myGrid) adif += `<MY_GRIDSQUARE:${myGrid.length}>${myGrid} `;
-      if (e.distanceKm) adif += `<DISTANCE:${e.distanceKm.toString().length}>${e.distanceKm} `;
-      if (e.azimuthDeg !== undefined) adif += `<ANT_AZ:${e.azimuthDeg.toString().length}>${e.azimuthDeg} `;
-      if (e.txPowerWatts) adif += `<TX_PWR:${e.txPowerWatts.toString().length}>${e.txPowerWatts} `;
-      adif += `<COMMENT:${comment.length}>${comment} `;
+      const field = Z30QsoLogger.adifField;
+      adif += field('CALL', call);
+      adif += field('QSO_DATE', cleanDate);
+      adif += field('TIME_ON', cleanTime);
+      adif += field('TIME_OFF', cleanTime);
+      adif += field('BAND', band);
+      adif += field('FREQ', freq);
+      adif += field('MODE', mode);
+      adif += field('SUBMODE', submode);
+      adif += field('RST_SENT', rstSent);
+      adif += field('RST_RCVD', rstRcvd);
+      adif += field('GRIDSQUARE', grid);
+      if (myCall) {
+        adif += field('OPERATOR', myCall);
+        adif += field('STATION_CALLSIGN', myCall);
+      }
+      adif += field('MY_GRIDSQUARE', myGrid);
+      if (e.distanceKm) adif += field('DISTANCE', e.distanceKm);
+      if (e.azimuthDeg !== undefined) adif += field('ANT_AZ', e.azimuthDeg);
+      if (e.txPowerWatts) adif += field('TX_PWR', e.txPowerWatts);
+      adif += field('COMMENT', comment);
       adif += `<EOR>\n`;
     }
 

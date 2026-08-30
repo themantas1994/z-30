@@ -14,6 +14,7 @@
 - [02. Developer Setup & Contributing](02-Developer-Setup-&-Contributing)
 - [08. Web & PWA Architecture](08-Web-&-PWA-Architecture)
 - [09. Cross-Platform Packaging](09-Cross-Platform-Build-&-Packaging)
+- [12. Software Updates & GitHub Sync](12-Software-Updates-&-GitHub-Sync)
 
 ---
 

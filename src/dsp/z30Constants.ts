@@ -12,7 +12,10 @@
  *   Successive Interference Cancellation (SIC) iterations, and normalized Min-Sum LDPC belief propagation.
  * - Channel Coding: Systematic Irregular Repeat Accumulate (IRA) Low-Density Parity-Check code: (N=216, K=77), rate R = 77/216 ~ 0.356.
  * - Payload: 63 user information bits + 14-bit CRC polynomial (0x2757 / generator 1 + x^1 + x^3 + x^4 + x^6 + x^7 + x^8 + x^10 + x^11 + x^13 + x^14).
- * - Sensitivity / Link Margin: -25.0 dB SNR (in standard 2500 Hz reference noise bandwidth), providing +4.0 dB gain over FT8 (-21.0 dB).
+ * - Sensitivity: the seeded AWGN benchmark with perfect synchronisation crosses 50% decode
+ *   near -24.6 dB SNR in a 2500 Hz reference bandwidth. That is an idealised bound, not an
+ *   over-the-air threshold, and is not comparable with FT8's published -21.0 dB, which
+ *   includes the acquisition and AFC losses the bound excludes.
  */
 
 import { BandDef, TxSlot } from '../types/z30';

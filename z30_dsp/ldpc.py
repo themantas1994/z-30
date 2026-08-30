@@ -8,7 +8,10 @@ Mathematical Specification & Design Rationale:
    - Codeword length (n): 216 channel coded bits.
    - Information block length (k): 77 bits (63-bit amateur payload + 14-bit CRC-14).
    - Parity check equations (m = n - k): 139 checks.
-   - Code rate (R): R = 77 / 216 ≈ 0.3564 (optimal for extreme weak-signal AWGN/Fading channels down to -25.0 dB SNR 50% / -24.0 dB SNR 90% threshold).
+   - Code rate (R): R = 77 / 216 ≈ 0.3564. Against an idealised AWGN channel with perfect
+     synchronisation, the seeded benchmark crosses 50% decode near -24.6 dB SNR and 90% near
+     -23.6 dB (2500 Hz reference bandwidth). That is a bound on the code under ideal detection,
+     not an over-the-air threshold - see the docstring of z30_dsp/benchmark.py.
    - Modulation Symbol Mapping: 216 coded bits / (4 bits/symbol) = 54 data symbols in 16-MFSK.
      Coupled with 21 Costas synchronization symbols, total frame = 75 symbols (24.0s duration at Ts=320ms).
 
@@ -26,8 +29,13 @@ Mathematical Specification & Design Rationale:
      p_i = p_{i-1} ^ (sum_{j in N(i)} u_j)  (mod 2)  for i = 1, ..., 138
 
 4. Error Detection:
-   14-bit CRC polynomial: g(x) = x^14 + x^11 + x^2 + 1 (0x2443, Init 0x2757).
-   Yields undetected frame error probability P_ue < 6.1e-5.
+   14-bit CRC generator polynomial, as implemented: g(x) = x^14 + x^13 + x^10 + x^6 + x + 1.
+   Register constant 0x2443 (the low 14 coefficients; x^14 is implicit), Init 0x2757, MSB-first.
+   Documentation here, in src/dsp/ldpcCodec.ts and in the README previously stated
+   "x^14 + x^11 + x^2 + 1", which is a DIFFERENT polynomial (register constant 0x0805). The two
+   shipped implementations agreed with each other so nothing broke, but a third implementation
+   written from that specification would have produced a CRC that failed against both.
+   Undetected frame error probability P_ue ~= 2^-14 = 6.1e-5 for random errors.
 
 5. Vectorized Normalized Min-Sum Belief Propagation Decoder:
    - Check Node Update: L_{c->v} = alpha * prod(sign(L_{v'->c})) * min_{v' != v}(|L_{v'->c}|)
@@ -126,7 +134,7 @@ class Z30LdpcCodec:
     def compute_crc14(bits: np.ndarray | List[int]) -> int:
         """
         Computes 14-bit CRC for payload integrity verification.
-        Polynomial: x^14 + x^11 + x^2 + 1 (0x2443, Init 0x2757).
+        Polynomial: g(x) = x^14 + x^13 + x^10 + x^6 + x + 1 (register constant 0x2443, x^14 implicit; Init 0x2757).
 
         Args:
             bits: List or array of binary integers (0 or 1).

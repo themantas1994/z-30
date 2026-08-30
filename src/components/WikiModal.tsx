@@ -14,13 +14,6 @@ import {
   Download, 
   X, 
   FileText, 
-  Terminal, 
-  Radio, 
-  Cpu, 
-  Layers, 
-  ShieldCheck, 
-  Zap, 
-  ExternalLink,
   ChevronRight,
   FolderOpen
 } from 'lucide-react';
@@ -504,7 +497,6 @@ function formatInlineMarkdown(text: string): React.ReactNode {
     const linkMatch = remaining.match(/^\[([^\]]+)\]\(([^)]+)\)/);
     if (linkMatch) {
       const label = linkMatch[1];
-      const target = linkMatch[2];
       parts.push(
         <span key={keyIdx++} className="text-cyan-400 underline decoration-cyan-700 mx-0.5">
           {label}

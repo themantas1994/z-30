@@ -117,20 +117,24 @@ python3 build_all_platforms.py
 ├── wiki/                         # Master GitHub Wiki markdown documentation
 ├── PKGBUILD                      # Arch Linux / Manjaro package build specification
 ├── pyproject.toml                # Standard PEP 517/621 Python packaging metadata
-├── setup.py                      # Setuptools multi-platform setup script
+├── requirements.txt              # Pinned Python runtime dependencies
 ├── z30.spec                      # PyInstaller standalone Windows/Linux spec
 │
 ├── z30_dsp/                      # Native Python DSP Package
 │   ├── __init__.py               # Package metadata and version info
 │   ├── main.py                   # Master entrypoint router (CLI & GUI)
 │   ├── modem.py                  # 16-MFSK continuous-phase modulator & demodulator
-│   ├── ldpc.py                   # QC-LDPC (216, 77) parity matrices & Min-Sum decoder
+│   ├── ldpc.py                   # IRA LDPC (216, 77) parity matrices & Min-Sum decoder
 │   ├── sic_decoder.py            # 3-Pass Successive Interference Cancellation
 │   ├── rf_time_sync.py           # FIR matched filter time station demodulator
+│   ├── paths.py                  # Per-user config / logbook directory resolution
 │   ├── auto_logger.py            # ADIF 3.1.4 logbook engine
 │   ├── benchmark.py              # Monte Carlo AWGN/Rayleigh simulation suite
 │   ├── gui_tkinter.py            # Zero-dependency desktop GUI
-│   └── web_server.py             # Embedded HTTP/App mode web server
+│   └── web_server.py             # Local HTTP server: token-authed hardware API, rigctld relay
+│
+├── tests/                        # pytest suite (codec, spectrum, local API, time-sync guards)
+├── public/                       # Static PWA assets copied verbatim into the build
 │
 └── src/                          # Web DSP & GUI Source Code (TypeScript + React)
     ├── App.tsx                   # Master transceiver workspace orchestrator
@@ -179,4 +183,4 @@ Please use Conventional Commits:
 1. All TypeScript code must pass `npm run lint` without errors or warnings.
 2. Production bundle must build cleanly via `npm run build`.
 3. Python modifications must maintain compatibility with Python 3.9 through 3.13.
-4. If modifying DSP code, run `python3 -m z30_dsp.benchmark` to verify decoding threshold does not regress below **-25.0 dB SNR (50%) / -24.0 dB SNR (90%)**.
+4. If modifying DSP code, run `python -m pytest tests` (which includes the codec round trip and the occupied-bandwidth budget) and `python -m z30_dsp.benchmark --seed 20260830` to check the seeded AWGN bound has not regressed below **-24.6 dB SNR (50%) / -23.6 dB SNR (90%)**. That bound is measured with the noise level, carrier frequency and symbol timing handed to the demodulator; it is not an on-air decode threshold.

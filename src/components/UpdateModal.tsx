@@ -17,13 +17,10 @@ import {
   Copy,
   Check,
   Sparkles,
-  ArrowRight,
   ShieldCheck,
   Clock,
-  Layers,
   Code2,
   Package,
-  HardDrive,
   RotateCcw,
 } from 'lucide-react';
 import {

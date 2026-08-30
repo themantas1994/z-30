@@ -24,9 +24,6 @@ import {
   X,
   FileSpreadsheet,
   Database,
-  Globe,
-  MapPin,
-  Compass,
   CheckCircle,
   Filter,
 } from 'lucide-react';
@@ -56,10 +53,10 @@ export const LogbookModal: React.FC<LogbookModalProps> = ({
   const [manualCall, setManualCall] = useState<string>('');
   const [manualGrid, setManualGrid] = useState<string>('');
   const [manualBand, setManualBand] = useState<string>('20m');
-  const [manualFreq, setManualFreq] = useState<number>(14.074);
+  const [manualFreq] = useState<number>(14.074);
   const [manualRstSent, setManualRstSent] = useState<string>('-14');
   const [manualRstRcvd, setManualRstRcvd] = useState<string>('-16');
-  const [manualNotes, setManualNotes] = useState<string>('Manual z-30 QSO');
+  const [manualNotes] = useState<string>('Manual z-30 QSO');
 
   if (!isOpen) return null;
 

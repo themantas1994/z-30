@@ -2,7 +2,7 @@
 
 Synchronous digital modes like z-30 rely on strict **30-second UTC slot alignment**. When operating in remote field locations (such as SOTA, POTA, maritime mobile, or emergency disaster response) without internet NTP or GPS time receivers, system clocks drift quickly.
 
-**z-30** includes an embedded DSP tool (`rf_time_sync.py` and the in-app **`SYNC TIME`** workbench) that synchronizes the clock directly against international HF and LF time standard stations over the air.
+**z-30** includes an embedded DSP tool (`z30_dsp/rf_time_sync.py` and the in-app **`SYNC TIME`** workbench) that synchronizes the clock directly against international HF and LF time standard stations over the air.
 
 ---
 
@@ -48,16 +48,25 @@ Synchronous digital modes like z-30 rely on strict **30-second UTC slot alignmen
 2. Choose your preferred standard station (e.g., **WWV 10.000 MHz** or **CHU 7.850 MHz**).
 3. Tune your receiver dial to the frequency in **USB** mode.
 4. Click **"Calibrate Time Offset"**.
-5. Watch the live correlation peak curve. Once locked, click **"Apply Offset to Station"**. The clock will immediately adjust without needing root or administrative permissions!
+5. Watch the live correlation peak curve. Once locked, click **"Apply Offset to Station"**. z-30's own slot timing adjusts immediately, without root or administrative permissions - the machine's system clock is left alone unless you have explicitly opted in (see the note below).
 
 ### 2. From the Python CLI:
 ```bash
 # Run the automated RF time calibration scanner
-python3 rf_time_sync.py
+z30-sync
 
 # or via the unified z30 CLI:
 z30 --sync
 ```
+
+> **The system clock is not touched by default.** A time station is an unauthenticated
+> broadcast: anyone can transmit a WWV-shaped signal, and a marginal decode can produce a wrong
+> timestamp with no adversary at all. z-30 therefore applies the correction internally as
+> `app_time_offset_ms`, which is all the decoder needs, and never steps the machine's clock
+> unless you explicitly opt in - by setting `"allow_set_system_clock": true` in
+> `~/.z30/config.json` or exporting `Z30_ALLOW_SET_SYSTEM_CLOCK=1`. Even then, a proposed step
+> of more than 5 minutes is refused as a misdecode or a spoof, and z-30 declines to fight an
+> NTP daemon that already owns the clock.
 
 Output example:
 ```

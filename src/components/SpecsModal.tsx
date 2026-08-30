@@ -3,8 +3,7 @@
  */
 
 import React from 'react';
-import { Z30_SPECS } from '../dsp/z30Constants';
-import { HelpCircle, X, ShieldCheck, Zap, Radio, Layers, Activity } from 'lucide-react';
+import { X, ShieldCheck, Zap, Radio, Layers, Activity } from 'lucide-react';
 
 interface SpecsModalProps {
   isOpen: boolean;
@@ -44,7 +43,12 @@ export const SpecsModal: React.FC<SpecsModalProps> = ({ isOpen, onClose, onOpenB
             </div>
             <div className="bg-[#050505] p-2.5 border border-[#333]">
               <span className="text-[9px] text-[#888] block uppercase">OCCUPIED BANDWIDTH</span>
-              <span className="font-bold text-[#00FF41] text-xs">50.0 Hz</span>
+              <span
+                className="font-bold text-[#00FF41] text-xs"
+                title="99% occupied bandwidth measured on random frames from the generated waveform: 49.8 Hz (66 Hz at -40 dB). Verify your transmitter's actual output on a spectrum analyser - sound-card clipping and rig ALC will re-broaden a clean signal."
+              >
+                49.8 Hz (99%)
+              </span>
             </div>
             <div className="bg-[#050505] p-2.5 border border-[#333]">
               <span className="text-[9px] text-[#888] block uppercase">UTC TIME SLOT</span>
@@ -52,7 +56,7 @@ export const SpecsModal: React.FC<SpecsModalProps> = ({ isOpen, onClose, onOpenB
             </div>
             <div className="bg-[#050505] p-2.5 border border-[#333]">
               <span className="text-[9px] text-[#888] block uppercase">AWGN 50% THRESHOLD</span>
-              <span className="font-bold text-purple-400 text-xs">-25.0 dB SNR</span>
+              <span className="font-bold text-purple-400 text-xs" title="Idealised AWGN bound with perfect synchronisation - not an on-air decode threshold">-24.6 dB SNR (bound)</span>
             </div>
           </div>
 
@@ -64,12 +68,13 @@ export const SpecsModal: React.FC<SpecsModalProps> = ({ isOpen, onClose, onOpenB
             </h3>
             <ul className="list-disc list-inside space-y-1 text-[#D4D4D4] text-[11px]">
               <li><strong>Tone Count:</strong> 16 orthogonal tones (M = 16).</li>
+              <li><strong>Waveform Shaping:</strong> one phase accumulator across the whole frame, Gaussian-shaped frequency transitions (GFSK, BT = 2.0), and a constant amplitude envelope with a single 20 ms raised-cosine ramp at the start and end of the transmission. Measured 99% occupied bandwidth 49.8 Hz, -40 dB bandwidth 66 Hz.</li>
               <li><strong>Tone Spacing:</strong> Tone delta f = 50 Hz / 16 = 3.125 Hz.</li>
               <li><strong>Symbol Duration:</strong> Ts = 1 / 3.125 Hz = 0.320 seconds (320 ms).</li>
               <li><strong>Active Transmission:</strong> 75 symbols * 0.320s = 24.0 seconds.</li>
               <li><strong>Guard & Decode Window:</strong> 6.0 seconds for FFT framing, multi-stage SIC, and LDPC decoding.</li>
               <li><strong>Synchronization:</strong> 21 Costas array sync symbols interleaved throughout the frame for sub-Hz frequency tracking and symbol time offset (DT) estimation.</li>
-              <li><strong>Empirical Sensitivity (Monte Carlo):</strong> 50% decode at -25.0 dB SNR; 90% decode at -24.0 dB SNR (+4.0 dB link margin gain over FT8).</li>
+              <li><strong>Sensitivity (idealised AWGN bound, seeded Monte Carlo):</strong> 50% decode near -24.6 dB SNR; 90% near -23.6 dB. Measured with the exact noise level, carrier frequency and symbol timing handed to the demodulator, so this bounds what the code and demodulator can do under ideal detection. It is <em>not</em> an over-the-air threshold and is not comparable with FT8's published -21.0 dB, which includes the acquisition losses this excludes.</li>
             </ul>
           </div>
 
@@ -123,7 +128,7 @@ export const SpecsModal: React.FC<SpecsModalProps> = ({ isOpen, onClose, onOpenB
                   <td className="p-1.5">16-MFSK</td>
                   <td className="p-1.5">50 Hz</td>
                   <td className="p-1.5">30 sec</td>
-                  <td className="p-1.5 text-purple-300">-25.0 dB (50%) / -24.0 dB (90%)</td>
+                  <td className="p-1.5 text-purple-300">-24.6 dB (50%) / -23.6 dB (90%) &mdash; idealised bound</td>
                   <td className="p-1.5 text-[#00FF41]">Yes (3-Pass SIC)</td>
                 </tr>
                 <tr className="text-[#888]">

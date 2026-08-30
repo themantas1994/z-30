@@ -89,11 +89,24 @@ class UpdateEngine {
   private isChecking = false;
 
   constructor() {
-    // Load last check from localStorage
+    // Load the last check result from localStorage, validating its shape rather than trusting
+    // it. The parsed object is handed to subscribers and rendered directly; a truncated write
+    // or a schema change between versions would otherwise produce an object whose fields are
+    // the wrong type, and the update modal would throw on first paint.
     try {
       const saved = localStorage.getItem('z30_update_cache');
       if (saved) {
-        this.cachedResult = JSON.parse(saved);
+        const parsed: unknown = JSON.parse(saved);
+        if (
+          parsed &&
+          typeof parsed === 'object' &&
+          !Array.isArray(parsed) &&
+          typeof (parsed as UpdateCheckResult).currentVersion === 'string'
+        ) {
+          this.cachedResult = parsed as UpdateCheckResult;
+        } else {
+          localStorage.removeItem('z30_update_cache');
+        }
       }
     } catch {
       // ignore

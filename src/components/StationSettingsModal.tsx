@@ -20,23 +20,17 @@ import {
   RefreshCw,
   Sliders,
   CheckCircle2,
-  RotateCcw,
   Globe,
   Clock,
-  FlaskConical,
   Activity,
   Sparkles,
-  Zap,
   PlayCircle,
   Trash2,
-  HelpCircle,
-  Check,
   Lock,
   Unlock,
   ShieldAlert,
 } from 'lucide-react';
-import { RIG_CATALOG } from './SetupWizardModal';
-import { AUTO_REPLY_OPTIONS, PTT_METHODS_CATALOG, Z30_SPECS } from '../dsp/z30Constants';
+import { AUTO_REPLY_OPTIONS, PTT_METHODS_CATALOG } from '../dsp/z30Constants';
 import { audioEngine, SystemAudioDevice, AudioSystemDiagnostics } from '../dsp/audioEngine';
 import { sicDecoderEngine } from '../dsp/sicDecoder';
 import {
@@ -44,8 +38,7 @@ import {
   formatUtcTime,
   formatTimeInTimezone,
   getTimezoneOffsetString,
-  resolveEffectiveTimezone,
-} from '../dsp/timeUtils';
+  } from '../dsp/timeUtils';
 import {
   HAMLIB_ALL_RIGS,
   CURRENT_HAMLIB_VERSION,
@@ -55,6 +48,13 @@ import {
   getRigByName,
 } from '../dsp/hamlibCatalog';
 import { catController, DiscoveredSerialPort } from '../dsp/catController';
+import {
+  BAND_PLANS,
+  LICENSE_CLASS_LABELS,
+  LicenseClass,
+  REGULATORY_REGION_OPTIONS,
+  RegulatoryRegion,
+} from '../dsp/bandPlan';
 import { DownloadCloud, CheckCircle, AlertTriangle, Terminal, Cable, Radio as RadioIcon } from 'lucide-react';
 
 interface StationSettingsModalProps {
@@ -116,7 +116,6 @@ export const StationSettingsModal: React.FC<StationSettingsModalProps> = ({
     decodedCount: number;
     signals: Array<{ freq: number; snr: number; message: string; sicPass: number; isCq?: boolean; callFrom?: string }>;
   } | null>(null);
-  const [isInjectingSignal, setIsInjectingSignal] = useState<boolean>(false);
   const [isVerifyingDecode, setIsVerifyingDecode] = useState<boolean>(false);
 
   // Real System Audio Devices & Diagnostics
@@ -588,6 +587,74 @@ export const StationSettingsModal: React.FC<StationSettingsModalProps> = ({
                       className="w-full bg-[#141414] border border-[#333] px-2.5 py-1.5 text-xs text-red-400 font-bold focus:outline-none focus:border-[#00FF41]"
                     />
                   </div>
+                </div>
+
+                {/*
+                  Licensing. z-30 refuses to transmit until both of these are set: band edges
+                  and sub-band privileges differ by region and by class, and the app has no
+                  safe way to guess either one. See src/dsp/bandPlan.ts and
+                  catController.canTransmit().
+                */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <label className="text-[9px] uppercase text-[#888] block mb-1">
+                      Regulatory Region <span className="text-[#00FF41]">*</span>
+                    </label>
+                    <select
+                      value={form.regulatoryRegion || ''}
+                      onChange={(e) => {
+                        const region = (e.target.value || undefined) as RegulatoryRegion | undefined;
+                        const classes = region ? BAND_PLANS[region].licenseClasses : [];
+                        setForm({
+                          ...form,
+                          regulatoryRegion: region,
+                          // Keep the class only if it still applies in the new region.
+                          licenseClass:
+                            form.licenseClass && classes.includes(form.licenseClass)
+                              ? form.licenseClass
+                              : classes.length === 1
+                              ? classes[0]
+                              : undefined,
+                        });
+                      }}
+                      className="w-full bg-[#141414] border border-[#333] px-2.5 py-1.5 text-xs text-cyan-400 focus:outline-none focus:border-[#00FF41]"
+                    >
+                      <option value="">— Select your region —</option>
+                      {REGULATORY_REGION_OPTIONS.map((opt) => (
+                        <option key={opt.id} value={opt.id}>
+                          {opt.label}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="text-[9px] uppercase text-[#888] block mb-1">
+                      Licence Class <span className="text-[#00FF41]">*</span>
+                    </label>
+                    <select
+                      value={form.licenseClass || ''}
+                      disabled={!form.regulatoryRegion}
+                      onChange={(e) =>
+                        setForm({ ...form, licenseClass: (e.target.value || undefined) as LicenseClass | undefined })
+                      }
+                      className="w-full bg-[#141414] border border-[#333] px-2.5 py-1.5 text-xs text-cyan-400 focus:outline-none focus:border-[#00FF41] disabled:opacity-40"
+                    >
+                      <option value="">— Select your licence class —</option>
+                      {(form.regulatoryRegion ? BAND_PLANS[form.regulatoryRegion].licenseClasses : []).map((cls) => (
+                        <option key={cls} value={cls}>
+                          {LICENSE_CLASS_LABELS[cls]}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+
+                <div className="bg-[#1a1405] border border-[#3a2f0a] p-2 text-[10px] text-yellow-200">
+                  z-30 checks the dial frequency plus the audio offset against this band plan before
+                  it will key the transmitter, and refuses if the result falls outside a data-mode
+                  segment your licence class holds. The band plan covers the common cases; national
+                  rules vary and change, so it does not replace knowing your own licence conditions.
                 </div>
 
                 {latLon && (

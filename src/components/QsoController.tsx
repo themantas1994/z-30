@@ -4,10 +4,9 @@
  */
 
 import React from 'react';
-import { StationConfig, TxSlot } from '../types/z30';
+import { StationConfig } from '../types/z30';
 import { QsoState } from '../dsp/qsoEngine';
-import { evaluateSlotTiming } from '../dsp/z30Constants';
-import { Radio, Send, Compass, MapPin, Gauge, Lock, Unlock, Hash, Activity } from 'lucide-react';
+import { Send, Compass, MapPin } from 'lucide-react';
 
 interface QsoControllerProps {
   qsoState: QsoState;
@@ -24,7 +23,6 @@ interface QsoControllerProps {
   onStopTune?: () => void;
   isTuning?: boolean;
   fwdWatts?: number;
-  swr?: number;
 }
 
 export const QsoController: React.FC<QsoControllerProps> = ({
@@ -34,10 +32,8 @@ export const QsoController: React.FC<QsoControllerProps> = ({
   isTransmitting,
   onUpdateState,
   fwdWatts = 50.0,
-  swr = 1.12,
   isTuning = false,
 }) => {
-  const slotInfo = evaluateSlotTiming(qsoState.txSlot);
 
   // Approximate distance calculation between grids if both exist
   const calculateDistanceKm = (grid1: string, grid2: string): number | null => {
@@ -188,17 +184,15 @@ export const QsoController: React.FC<QsoControllerProps> = ({
           </div>
 
           <div className="flex items-center space-x-3">
-            <div>
-              <span>PWR: </span>
+            <div title="The transmit power configured in Station Settings. z-30 does not read power from the radio, so this is what you told it, not what the PA is producing.">
+              <span>PWR (set): </span>
               <strong className="text-red-400 font-bold">
                 {isTransmitting || isTuning ? `${fwdWatts.toFixed(0)}W` : '0W'}
               </strong>
             </div>
-            <div title="Nominal placeholder - this interface (soundcard audio + serial CAT) has no real SWR/reflected-power sensor to read from">
-              <span>SWR (est.): </span>
-              <strong className={swr > 1.8 ? 'text-yellow-400 font-bold' : 'text-[#00FF41] font-bold'}>
-                {isTransmitting || isTuning ? `1:${swr.toFixed(2)}` : '1:1.00'}
-              </strong>
+            <div title="Nothing in this signal path measures SWR. A soundcard and a serial CAT link have no reflected-power sensor, and inventing a plausible figure would tell you your antenna is fine when nothing looked at it. Read SWR from the radio's own meter.">
+              <span>SWR: </span>
+              <strong className="text-[#666] font-bold">not measured</strong>
             </div>
           </div>
         </div>

@@ -8,7 +8,7 @@ An in-depth technical analysis for **advanced amateur radio operators, RF engine
 
 | Metric / Parameter | FT8 (Franke-Taylor 8-FSK) | z-30 (16-MFSK Weak-Signal) | Physics & Engineering Delta |
 | :--- | :--- | :--- | :--- |
-| **Decoding Threshold ($SNR_{2500}$)** | **-21.0 dB** | **-25.0 dB (50%) / -24.0 dB (90%)** | **+4.0 dB link margin advantage** |
+| **Decoding Threshold ($SNR_{2500}$)** | **-21.0 dB** (measured on the air) | **-24.6 dB (50%) / -23.6 dB (90%)** (idealised AWGN bound, perfect sync) | **Not comparable** - see the note below |
 | **Transmission Slot Duration** | 15.0 s (12.64 s active TX) | 30.0 s (24.0 s active TX) | $2\times$ integration time ($+3.01\text{ dB}$) |
 | **Modulation Format** | 8-MFSK (Continuous Phase) | 16-MFSK (Continuous Phase) | Higher-order orthogonal signaling efficiency |
 | **Occupied Bandwidth** | 47.0 Hz ($8 \times 6.25\text{ Hz}$) | 50.0 Hz ($16 \times 3.125\text{ Hz}$) | Ultra-narrowband density (50 channels in 2.7 kHz) |
@@ -17,7 +17,7 @@ An in-depth technical analysis for **advanced amateur radio operators, RF engine
 | **Total Frame Symbols** | 79 symbols (58 data + 21 Costas) | 75 symbols (54 data + 21 Costas) | Optimized symbol packing & channel utilization |
 | **Raw Channel Bits** | 174 bits ($58 \times 3\text{ bits}$) | 216 bits ($54 \times 4\text{ bits}$) | Higher total channel codeword dimensionality |
 | **Information Bits ($K$)** | 77 bits ($75\text{ msg} + 2\text{ flag}$) | 77 bits ($58\text{ msg} + 14\text{ CRC} + 5\text{ flag}$) | Identical payload capacity with stronger CRC protection |
-| **FEC Code** | Systematic LDPC (174, 91) | Quasi-Cyclic LDPC (216, 77) | **Rate $R \approx 0.356$ vs $0.523$** ($+2.4\text{ dB}$ coding gain) |
+| **FEC Code** | Systematic LDPC (174, 91) | IRA LDPC (216, 77) | **Rate $R \approx 0.356$ vs $0.523$** ($+2.4\text{ dB}$ coding gain) |
 | **Parity Check Fraction** | 47.7% parity overhead | **64.4% parity overhead** | Significantly steeper waterfall BER curve |
 | **CRC Polynomial** | 14-bit ($P_{\text{false}} \approx 6 \times 10^{-5}$) | 14-bit CRC-14 ($P_{\text{false}} < 10^{-6}$) | Zero false decodes at the $-25.0\text{ dB}$ limit |
 | **Co-Channel Collision Recovery** | None (collisions fail to decode) | **3-Pass Successive Interference Cancellation (SIC)** | Co-channel collision resolution down to $-31.5\text{ dB}$ |
@@ -192,28 +192,51 @@ Data Blocks:       D1       D2        D3         D4         D5         D6
 
 ---
 
-## 📻 7. Real-World RF Link Budget: What +4.0 dB Means on the Air
+## 📻 7. Link Budget: What a dB of Sensitivity Buys, and What z-30 Can Currently Claim
 
-In RF engineering and amateur radio practice, a **$+4.0\text{ dB}$ sensitivity improvement** represents a meaningful operational advantage.
+**z-30's on-air sensitivity has not been measured, so no advantage over FT8 is claimed here.**
 
-$$\Delta P_{\text{dB}} = 10 \log_{10}\left(\frac{P_1}{P_2}\right) \implies \frac{P_1}{P_2} = 10^{4.0 / 10} \approx 2.51$$
+Earlier revisions of this page put z-30's idealised AWGN bound (a benchmark that hands the
+demodulator the exact noise level, the exact carrier frequency and perfect symbol timing) next
+to FT8's published over-the-air threshold, which *includes* the acquisition, AFC and timing
+losses that bound excludes. The two are different quantities. Everything downstream of that
+comparison - a "+4.0 dB advantage", a $2.51\times$ ERP multiplier, a QRP station matching 12.6 W
+of FT8, an opening window extended by one to two hours - followed from it and has been
+withdrawn.
 
-### 7.1 Equivalent Transmit Power (ERP) Comparison
-To achieve the same communication probability as a **100 Watt** z-30 station, an FT8 station would need to transmit:
+What is defensible today:
 
-$$P_{\text{FT8, equivalent}} = 100\text{ W} \times 2.51 \approx \mathbf{251\text{ Watts}}$$
+- z-30 spends more energy per symbol (3.125 baud against FT8's 6.25) and more redundancy per
+  information bit (rate 0.356 against 0.52), and both buy coding gain.
+- Its seeded AWGN benchmark under ideal detection crosses 50% decode near $-24.6\text{ dB}$ and
+  90% near $-23.6\text{ dB}$ in a 2500 Hz reference bandwidth.
+- How much of that survives real acquisition on a real channel is an open question.
 
-Conversely, a QRP operator running **5 Watts** on z-30 achieves the same link margin as an FT8 station running **~12.6 Watts**.
+### 7.1 What the honest measurement requires
 
-### 7.2 Antenna Gain Equivalency
-$+4.0\text{ dB}$ of link margin is equivalent to:
-- Upgrading from a unity-gain dipole ($0\text{ dBd}$) to a small 2-element Yagi or quad ($+4.0\text{ dBd}$).
-- Overcoming **~0.7 S-units of atmospheric / galactic background noise** on 160m, 80m, or 6m.
+To produce a figure comparable with FT8's $-21\text{ dB}$, the benchmark has to stop being
+genie-aided:
 
-### 7.3 Antipodal & Grey-Line Opening Extensions
-During marginal solar cycle minimums, low Maximum Usable Frequency (MUF) conditions, or transatlantic/transpacific grey-line propagation transitions:
-- FT8 propagation windows typically open for 15 to 30 minutes when path loss is minimal.
-- **z-30 extends the usable opening window by roughly 1 to 2 hours**, allowing contacts when signals are buried deeper in the noise floor than FT8 can reach.
+1. Inject a random carrier frequency offset (a real receiver searches for the signal).
+2. Inject a random symbol timing offset (slot alignment is never exact).
+3. Add a Watterson two-path fading channel with realistic Doppler spread for the path class.
+4. Drive the decode through the **real acquisition path** - the Costas sync search and the
+   frequency/timing estimator - rather than handing it the answer.
+5. Publish the resulting curve with its seed.
+
+Whatever that shows will be defensible, and it is the number this page should carry.
+
+### 7.2 For reference: what a dB is worth
+
+Independent of any z-30 claim, a $\Delta$ dB improvement in sensitivity corresponds to a power
+ratio of
+
+$$\frac{P_1}{P_2} = 10^{\Delta / 10}$$
+
+so $+3\text{ dB}$ halves the power a station needs, and $+4\text{ dB}$ is roughly the gain of a
+small 2-element Yagi over a dipole, or about 0.7 S-units of background noise on the low bands.
+This is why weak-signal work chases single decibels - and why quoting one you have not measured
+is worth avoiding.
 
 ---
 
@@ -231,9 +254,16 @@ During marginal solar cycle minimums, low Maximum Usable Frequency (MUF) conditi
    JS8Call (Slow):                   -24.0 dB   │ Modes
    WSPR (2-Minute Beacon Only):      -28.0 dB ──┘
    ─────────────────────────────────────────────────────────────────────────────
-   z-30 (Two-Way Interactive QSO):   -25.0 dB ◄── [ 4.0 dB Ahead of FT8 ]
+   z-30 (idealised AWGN bound):      -24.6 dB ◄── NOT measured the same way as the rows above
    ─────────────────────────────────────────────────────────────────────────────
    Theoretical Shannon Capacity:     -30.5 dB
 ```
 
-z-30 combines the deep sensitivity of beacon-only modes like WSPR with full two-way interactive QSO sequencing, ultra-narrow 50 Hz spectral occupancy, real-time successive interference cancellation, and cross-platform hardware CAT integration.
+Every figure above z-30's line is an over-the-air threshold. z-30's is an idealised bound with
+perfect synchronisation, so it sits on this scale only as an upper limit on what the code and
+demodulator could achieve, not as a like-for-like comparison. Its real on-air position is
+somewhere to the right of that mark by an amount nobody has measured yet.
+
+What z-30 does offer, independently of any sensitivity claim, is full two-way interactive QSO
+sequencing at 50 Hz occupied bandwidth, real-time successive interference cancellation, and
+cross-platform hardware CAT integration.

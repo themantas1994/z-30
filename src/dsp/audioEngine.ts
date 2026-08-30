@@ -22,6 +22,7 @@
  *       +──> [ AnalyserNode ] (Loopback for visual TX spectrum monitoring)
  */
 
+import { synthesizeFrameSamples, applyEdgeRamp } from './z30Waveform';
 import { Z30_SPECS } from './z30Constants';
 import { resampleAudio } from './realReceiver';
 
@@ -89,15 +90,17 @@ class Z30AudioEngine {
   private txGain: GainNode | null = null;
   private micStream: MediaStream | null = null;
   private micSource: MediaStreamAudioSourceNode | null = null;
-  private activeTxNodes: { osc: OscillatorNode; gain: GainNode }[] = [];
+  private activeTxNodes: { osc: AudioScheduledSourceNode; gain: GainNode }[] = [];
   private isTxActive: boolean = false;
   private activeTxToneFreqHz: number | null = null;
   private isMuted: boolean = false;
   private fftBuffer: Uint8Array<ArrayBuffer> | null = null;
   private floatFftBuffer: Float32Array<ArrayBuffer> | null = null;
-  private currentInputDeviceId: string = '';
+  /** Retained so the settings UI can show which input the engine actually opened. */
+  public currentInputDeviceId: string = '';
   private currentInputLabel: string = '';
-  private currentOutputDeviceId: string = '';
+  /** Retained so the settings UI can show which output the engine actually selected. */
+  public currentOutputDeviceId: string = '';
   private stateListeners: Set<() => void> = new Set();
   private isExperimentalModeAllowed: boolean = false;
 
@@ -105,8 +108,11 @@ class Z30AudioEngine {
   // Unlike captureAudioBuffer() below (which polls the analyser's short snapshot buffer
   // starting at call time), this records every incoming sample as it arrives so a completed
   // 24s RX window can be sliced out of the past after the fact.
+  private captureWorkletNode: AudioWorkletNode | null = null;
+  private captureWorkletModuleUrl: string | null = null;
   private scriptProcessor: ScriptProcessorNode | null = null;
   private silentSink: GainNode | null = null;
+  private captureActive: boolean = false;
   private captureRingBuffer: Float32Array | null = null;
   private captureRingLength: number = 0;
   private captureTotalSamplesWritten: number = 0;
@@ -448,7 +454,11 @@ class Z30AudioEngine {
 
       this.micSource = this.ctx.createMediaStreamSource(this.micStream);
       this.micSource.connect(this.analyser);
-      this.startContinuousCapture();
+      // Loading the AudioWorklet module is asynchronous; capture becomes active a moment
+      // later. Nothing here needs to wait for it, and a failure falls back internally.
+      void this.startContinuousCapture().catch((err) =>
+        console.warn('[AudioEngine] Continuous capture failed to start:', err)
+      );
       this.notifyListeners();
       return true;
     } catch (e) {
@@ -477,15 +487,58 @@ class Z30AudioEngine {
   }
 
   /**
-   * Starts continuously recording real microphone samples into a ring buffer with
-   * sample-accurate timing, so a just-completed 24s RX window can be sliced out after the
-   * fact for real decoding. Uses the deprecated-but-universally-supported ScriptProcessorNode
-   * (an AudioWorklet would need a separately loaded module file); its onaudioprocess callback
-   * fires once per fixed-size audio chunk with zero gaps, unlike polling the AnalyserNode's
-   * short internal snapshot buffer.
+   * Source of the capture AudioWorkletProcessor, loaded from a Blob URL.
+   *
+   * A worklet module has to be a separate script the AudioContext fetches, and building it as
+   * a Blob keeps it next to the code that uses it instead of relying on a bundler-specific
+   * asset path that breaks differently in dev, in a production bundle, and inside the
+   * PyInstaller-packaged app.
    */
-  private startContinuousCapture(): void {
-    if (!this.ctx || !this.micSource || this.scriptProcessor) return;
+  private static readonly CAPTURE_WORKLET_SOURCE = `
+    class Z30CaptureProcessor extends AudioWorkletProcessor {
+      constructor() {
+        super();
+        this._block = new Float32Array(4096);
+        this._filled = 0;
+      }
+      process(inputs) {
+        const input = inputs[0];
+        if (!input || input.length === 0) return true;
+        const channel = input[0];
+        if (!channel) return true;
+        for (let i = 0; i < channel.length; i++) {
+          this._block[this._filled++] = channel[i];
+          if (this._filled === this._block.length) {
+            this.port.postMessage(this._block, [this._block.buffer]);
+            this._block = new Float32Array(4096);
+            this._filled = 0;
+          }
+        }
+        return true;
+      }
+    }
+    registerProcessor('z30-capture', Z30CaptureProcessor);
+  `;
+
+  /**
+   * Starts continuously recording real microphone samples into a ring buffer with
+   * sample-accurate timing, so a just-completed 24s RX window can be sliced out after the fact
+   * for real decoding.
+   *
+   * Capture runs in an `AudioWorkletProcessor`, on the audio rendering thread. The previous
+   * implementation used `ScriptProcessorNode`, whose `onaudioprocess` callback runs on the
+   * main thread: for a weak-signal decoder that needs an unbroken, timing-accurate sample
+   * stream, sharing a thread with React rendering and a 60 fps canvas waterfall means dropped
+   * buffers under load - precisely when a marginal decode matters most. `createScriptProcessor`
+   * has also been deprecated for years and browsers have signalled removal.
+   *
+   * The worklet accumulates fixed 4096-sample blocks and transfers them to the main thread,
+   * which appends them to the ring buffer. A busy main thread now delays that append instead of
+   * losing the audio: the messages queue in order, whereas a missed ScriptProcessor callback
+   * dropped its samples outright.
+   */
+  private async startContinuousCapture(): Promise<void> {
+    if (!this.ctx || !this.micSource || this.captureActive) return;
 
     this.captureSampleRateHz = this.ctx.sampleRate;
     const ringSeconds = 40;
@@ -493,32 +546,77 @@ class Z30AudioEngine {
     this.captureRingBuffer = new Float32Array(this.captureRingLength);
     this.captureTotalSamplesWritten = 0;
     this.captureAnchorUtcMs = Date.now();
+    this.captureActive = true;
 
+    // Some browsers only run a capture node while it is connected into a live graph reaching
+    // the destination; route through a zero-gain sink so it stays silent.
+    this.silentSink = this.ctx.createGain();
+    this.silentSink.gain.value = 0;
+    this.silentSink.connect(this.ctx.destination);
+
+    if (this.ctx.audioWorklet) {
+      try {
+        const blob = new Blob([Z30AudioEngine.CAPTURE_WORKLET_SOURCE], { type: 'application/javascript' });
+        this.captureWorkletModuleUrl = URL.createObjectURL(blob);
+        await this.ctx.audioWorklet.addModule(this.captureWorkletModuleUrl);
+
+        const node = new AudioWorkletNode(this.ctx, 'z30-capture', {
+          numberOfInputs: 1,
+          numberOfOutputs: 1,
+          outputChannelCount: [1],
+        });
+        node.port.onmessage = (event: MessageEvent) => this.appendCapturedSamples(event.data as Float32Array);
+        this.micSource.connect(node);
+        node.connect(this.silentSink);
+        this.captureWorkletNode = node;
+        return;
+      } catch (err) {
+        console.warn('[AudioEngine] AudioWorklet capture unavailable, falling back to ScriptProcessor:', err);
+        this.releaseWorkletModuleUrl();
+      }
+    }
+
+    // Fallback for browsers without AudioWorklet. Same ring buffer, worse scheduling.
     const bufferSize = 4096;
     this.scriptProcessor = this.ctx.createScriptProcessor(bufferSize, 1, 1);
     this.scriptProcessor.onaudioprocess = (event: AudioProcessingEvent) => {
-      const input = event.inputBuffer.getChannelData(0);
-      const ring = this.captureRingBuffer;
-      if (!ring) return;
-      const len = this.captureRingLength;
-      let writePos = this.captureTotalSamplesWritten % len;
-      for (let i = 0; i < input.length; i++) {
-        ring[writePos] = input[i];
-        writePos = (writePos + 1) % len;
-      }
-      this.captureTotalSamplesWritten += input.length;
+      this.appendCapturedSamples(event.inputBuffer.getChannelData(0));
     };
-
-    // Some browsers only fire onaudioprocess while the node is connected into a live graph
-    // reaching the destination; route through a zero-gain sink to stay silent.
-    this.silentSink = this.ctx.createGain();
-    this.silentSink.gain.value = 0;
     this.micSource.connect(this.scriptProcessor);
     this.scriptProcessor.connect(this.silentSink);
-    this.silentSink.connect(this.ctx.destination);
+  }
+
+  /** Appends one block of captured samples to the ring buffer. */
+  private appendCapturedSamples(samples: Float32Array): void {
+    const ring = this.captureRingBuffer;
+    if (!ring || samples.length === 0) return;
+    const len = this.captureRingLength;
+    let writePos = this.captureTotalSamplesWritten % len;
+    for (let i = 0; i < samples.length; i++) {
+      ring[writePos] = samples[i];
+      writePos = writePos + 1 === len ? 0 : writePos + 1;
+    }
+    this.captureTotalSamplesWritten += samples.length;
+  }
+
+  private releaseWorkletModuleUrl(): void {
+    if (this.captureWorkletModuleUrl) {
+      URL.revokeObjectURL(this.captureWorkletModuleUrl);
+      this.captureWorkletModuleUrl = null;
+    }
   }
 
   private stopContinuousCapture(): void {
+    if (this.captureWorkletNode) {
+      try {
+        this.captureWorkletNode.port.onmessage = null;
+        this.captureWorkletNode.disconnect();
+      } catch {
+        // ignore
+      }
+      this.captureWorkletNode = null;
+    }
+    this.releaseWorkletModuleUrl();
     if (this.scriptProcessor) {
       try {
         this.scriptProcessor.disconnect();
@@ -536,13 +634,14 @@ class Z30AudioEngine {
       }
       this.silentSink = null;
     }
+    this.captureActive = false;
     this.captureRingBuffer = null;
     this.captureRingLength = 0;
     this.captureTotalSamplesWritten = 0;
   }
 
   public isContinuousCaptureActive(): boolean {
-    return this.scriptProcessor !== null;
+    return this.captureActive;
   }
 
   /**
@@ -626,8 +725,22 @@ class Z30AudioEngine {
   }
 
   /**
-   * Synthesize Continuous-Phase 16-MFSK (CPFSK) symbols with raised-cosine envelope
-   * and optional Right-Channel Audio PTT Tone (Pseudo-FSK / Hardware Tone Keying)
+   * Transmits a 16-MFSK frame as ONE continuous, constant-envelope waveform.
+   *
+   * The frame is rendered into an `AudioBuffer` by `synthesizeFrameSamples` (see
+   * src/dsp/z30Waveform.ts for the shaping rules and why they matter) and played through a
+   * single `AudioBufferSourceNode`. Amplitude is constant for the whole transmission; the only
+   * envelope is one raised-cosine ramp at the start and one at the end.
+   *
+   * This replaces a per-symbol scheme that created a fresh `OscillatorNode` for each of the 75
+   * symbols - Web Audio oscillators start at phase zero, so consecutive symbols had no phase
+   * relationship - and ramped each symbol's gain down to 0.0001 at every symbol boundary. That
+   * is amplitude keying at 3.125 baud on top of the tone sequence, and it radiates far outside
+   * the 50 Hz the protocol is built around.
+   *
+   * Before using this on the air, capture the transmitter's output and confirm the occupied
+   * bandwidth on a spectrum analyser. Rendering the right waveform in software is necessary,
+   * not sufficient: sound-card clipping and rig ALC will re-broaden a clean signal.
    */
   public play16MfskSequence(
     baseFreqHz: number,
@@ -645,93 +758,69 @@ class Z30AudioEngine {
     if (!this.ctx || !this.txGain) return;
 
     this.stopTransmission();
-    this.isTxActive = true;
 
+    if (symbolIndices.length === 0) {
+      console.warn('[AudioEngine] play16MfskSequence called with an empty symbol sequence; nothing transmitted.');
+      return;
+    }
+
+    const sampleRate = this.ctx.sampleRate;
     const leadInSec = (options?.leadInMs || 20) / 1000;
     const hangTimeSec = (options?.hangTimeMs || 30) / 1000;
-    const toneSpacing = Z30_SPECS.TONE_SPACING_HZ; // 3.125 Hz
-    const symDuration = Z30_SPECS.SYMBOL_DURATION_SEC; // 0.320 s
-    const rampTime = 0.008; // 8ms raised-cosine transition ramp to prevent key clicks
+    const symDuration = Z30_SPECS.SYMBOL_DURATION_SEC;
 
-    const pttStartTime = this.ctx.currentTime + 0.02;
-    const dataStartTime = pttStartTime + leadInSec;
-    const totalDataDuration = symbolIndices.length * symDuration;
-    const dataEndTime = dataStartTime + totalDataDuration;
-    const pttEndTime = dataEndTime + hangTimeSec;
+    let frameSamples: Float32Array;
+    try {
+      frameSamples = synthesizeFrameSamples(symbolIndices, baseFreqHz, sampleRate, 0.5);
+    } catch (err) {
+      // A malformed symbol sequence must not reach an antenna as a malformed emission.
+      console.error('[AudioEngine] Refusing to transmit an invalid symbol sequence:', err);
+      return;
+    }
 
-    // If Right-Channel Audio Tone PTT is enabled, create stereo panner/merger
+    this.isTxActive = true;
+
     const enableRightTone = Boolean(options?.enableRightTone);
     const rightToneFreq = options?.toneFreqHz || 1000;
 
-    let dataPanner: StereoPannerNode | null = null;
-    let rightTonePanner: StereoPannerNode | null = null;
+    const leadInSamples = Math.round(leadInSec * sampleRate);
+    const hangSamples = Math.round(hangTimeSec * sampleRate);
+    const totalSamples = leadInSamples + frameSamples.length + hangSamples;
+    const channels = enableRightTone ? 2 : 1;
 
-    if (enableRightTone && typeof StereoPannerNode !== 'undefined') {
-      try {
-        dataPanner = this.ctx.createStereoPanner();
-        dataPanner.pan.setValueAtTime(-1.0, this.ctx.currentTime); // Left Channel = Data Audio
-        dataPanner.connect(this.txGain);
+    const buffer = this.ctx.createBuffer(channels, totalSamples, sampleRate);
+    const dataChannel = buffer.getChannelData(0);
+    dataChannel.set(frameSamples, leadInSamples);
 
-        rightTonePanner = this.ctx.createStereoPanner();
-        rightTonePanner.pan.setValueAtTime(1.0, this.ctx.currentTime); // Right Channel = PTT Tone
-        rightTonePanner.connect(this.txGain);
-
-        // Create continuous pure sine tone on right channel for hardware PTT trigger
-        const rightOsc = this.ctx.createOscillator();
-        const rightGain = this.ctx.createGain();
-        rightOsc.type = 'sine';
-        rightOsc.frequency.setValueAtTime(rightToneFreq, pttStartTime);
-
-        rightGain.gain.setValueAtTime(0.0001, pttStartTime);
-        rightGain.gain.exponentialRampToValueAtTime(0.9, pttStartTime + 0.005);
-        rightGain.gain.setValueAtTime(0.9, pttEndTime - 0.005);
-        rightGain.gain.exponentialRampToValueAtTime(0.0001, pttEndTime);
-
-        rightOsc.connect(rightGain);
-        rightGain.connect(rightTonePanner);
-
-        rightOsc.start(pttStartTime);
-        rightOsc.stop(pttEndTime);
-
-        this.activeTxNodes.push({ osc: rightOsc, gain: rightGain });
-      } catch (e) {
-        console.warn('Stereo Panner not available for Right Channel Tone PTT:', e);
+    if (enableRightTone) {
+      // Right-channel hardware PTT keying tone: a continuous carrier spanning the whole keyed
+      // period, including the lead-in and hang time, so the rig is keyed before data starts and
+      // stays keyed until after it ends.
+      const rightChannel = buffer.getChannelData(1);
+      const twoPiF = (2 * Math.PI * rightToneFreq) / sampleRate;
+      for (let i = 0; i < totalSamples; i++) {
+        rightChannel[i] = 0.9 * Math.sin(twoPiF * i);
       }
+      applyEdgeRamp(rightChannel, sampleRate, 0.005);
     }
 
-    // Schedule oscillators for 16-MFSK data symbols
+    const source = this.ctx.createBufferSource();
+    source.buffer = buffer;
+    const gain = this.ctx.createGain();
+    gain.gain.setValueAtTime(1.0, this.ctx.currentTime);
+    source.connect(gain);
+    gain.connect(this.txGain);
+
+    const startTime = this.ctx.currentTime + 0.02;
+    source.start(startTime);
+    this.activeTxNodes.push({ osc: source, gain });
+
+    // Progress and tone-frequency reporting for the waterfall overlay. These are display-only;
+    // the transmitted samples are already fully rendered and no callback can perturb them.
+    const dataStartTime = startTime + leadInSec;
     for (let i = 0; i < symbolIndices.length; i++) {
-      const toneNum = symbolIndices[i];
-      const toneFreq = baseFreqHz + toneNum * toneSpacing;
+      const toneFreq = baseFreqHz + symbolIndices[i] * Z30_SPECS.TONE_SPACING_HZ;
       const symStartTime = dataStartTime + i * symDuration;
-      const symEndTime = symStartTime + symDuration;
-
-      const osc = this.ctx.createOscillator();
-      const gain = this.ctx.createGain();
-      
-      osc.type = 'sine';
-      osc.frequency.setValueAtTime(toneFreq, symStartTime);
-
-      // Raised-cosine envelope
-      gain.gain.setValueAtTime(0.0001, symStartTime);
-      gain.gain.exponentialRampToValueAtTime(0.5, symStartTime + rampTime);
-      gain.gain.setValueAtTime(0.5, symEndTime - rampTime);
-      gain.gain.exponentialRampToValueAtTime(0.0001, symEndTime);
-
-      osc.connect(gain);
-
-      if (dataPanner) {
-        gain.connect(dataPanner);
-      } else {
-        gain.connect(this.txGain);
-      }
-
-      osc.start(symStartTime);
-      osc.stop(symEndTime);
-
-      this.activeTxNodes.push({ osc, gain });
-
-      // Progress & tone frequency callbacks
       setTimeout(() => {
         if (this.isTxActive) {
           this.activeTxToneFreqHz = toneFreq;
@@ -740,14 +829,13 @@ class Z30AudioEngine {
       }, Math.max(0, (symStartTime - this.ctx!.currentTime) * 1000));
     }
 
-    const totalDurationMs = Math.max(0, (pttEndTime - this.ctx.currentTime) * 1000);
-    setTimeout(() => {
+    source.onended = () => {
       if (this.isTxActive) {
         this.isTxActive = false;
         this.activeTxToneFreqHz = null;
         if (onComplete) onComplete();
       }
-    }, totalDurationMs);
+    };
   }
 
   /**

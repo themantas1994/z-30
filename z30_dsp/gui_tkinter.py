@@ -16,12 +16,17 @@ import threading
 import time
 import numpy as np
 from typing import Dict, List, Tuple, Optional
+# There is exactly one implementation of each of these modules, inside the z30_dsp package.
+# The relative form covers running as part of the package; the absolute form covers running
+# this file directly from a source checkout. Neither falls back to a top-level module: the
+# repository used to carry a second, drifted copy of config_wizard at its root, and an
+# ImportError fallback to it is how the two ended up both installed and both reachable.
 try:
+    from .auto_logger import AsyncQsoLogger, QsoLogRecord
+    from .config_wizard import SettingsManager, StationConfig, launch_config_wizard_if_needed, ConfigWizardDialog
+except ImportError:
     from z30_dsp.auto_logger import AsyncQsoLogger, QsoLogRecord
     from z30_dsp.config_wizard import SettingsManager, StationConfig, launch_config_wizard_if_needed, ConfigWizardDialog
-except ImportError:
-    from auto_logger import AsyncQsoLogger, QsoLogRecord
-    from config_wizard import SettingsManager, StationConfig, launch_config_wizard_if_needed, ConfigWizardDialog
 
 
 # 10 Vectorized Color Lookups for Waterfall

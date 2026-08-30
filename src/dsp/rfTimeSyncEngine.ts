@@ -608,7 +608,7 @@ export class RfTimeSyncEngine {
     for (let i = 0; i < tmplLen; i++) tmpl[i] = 1.0;
 
     // 3. Cross-correlation with the 800ms minute tone
-    const { maxCorr, peakIndex, peakRatio } = RfDspUtils.crossCorrelate(env1k, tmpl);
+    const { maxCorr, peakIndex } = RfDspUtils.crossCorrelate(env1k, tmpl);
 
     const peakEnvVal = env1k[peakIndex] || 0;
     const envPeakRatio = peakEnvVal / Math.max(1e-6, avgEnv);
