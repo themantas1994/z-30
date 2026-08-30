@@ -7,7 +7,7 @@ import { StationConfig, TxSlot } from '../types/z30';
 import { Z30_SPECS, evaluateSlotTiming } from '../dsp/z30Constants';
 import { audioEngine } from '../dsp/audioEngine';
 import { formatUtcTime, formatTimeInTimezone } from '../dsp/timeUtils';
-import { Radio, Mic, MicOff, Volume2, VolumeX, BookOpen, Settings, HelpCircle, Square, Zap, Clock, Wand2, Maximize2, Minimize2, Globe, DownloadCloud, BarChart2 } from 'lucide-react';
+import { Radio, Mic, MicOff, Volume2, VolumeX, BookOpen, Settings, HelpCircle, Square, Zap, Clock, Wand2, Maximize2, Minimize2, Globe, DownloadCloud } from 'lucide-react';
 import { updateEngine, UpdateCheckResult } from '../dsp/updateEngine';
 
 interface HeaderProps {
@@ -22,7 +22,6 @@ interface HeaderProps {
   onOpenSettings: () => void;
   onOpenWizard?: () => void;
   onOpenSpecs: () => void;
-  onOpenBenchmark?: () => void;
   onOpenWiki?: (slug?: string) => void;
   onOpenTimeSync?: () => void;
   onOpenUpdate?: () => void;
@@ -47,7 +46,6 @@ export const Header: React.FC<HeaderProps> = ({
   onOpenSettings,
   onOpenWizard,
   onOpenSpecs,
-  onOpenBenchmark,
   onOpenWiki,
   onOpenTimeSync,
   onOpenUpdate,
@@ -379,19 +377,6 @@ export const Header: React.FC<HeaderProps> = ({
             >
               <Wand2 className="w-3.5 h-3.5" />
               <span className="hidden lg:inline text-[11px] font-bold">Wizard</span>
-            </button>
-          )}
-
-          {/* Monte Carlo Physical Waveform & SNR Decoder Benchmark */}
-          {onOpenBenchmark && (
-            <button
-              id="open-benchmark-btn"
-              onClick={onOpenBenchmark}
-              title="Monte Carlo Physical Waveform Generator, AWGN Calibrator & LDPC Decoder Benchmark"
-              className="p-1.5 bg-[#141414] hover:bg-[#1A1A1A] text-[#00FF41] hover:text-white border border-[#00FF41]/40 text-xs flex items-center space-x-1 shadow-[0_0_8px_rgba(0,255,65,0.15)]"
-            >
-              <BarChart2 className="w-3.5 h-3.5 text-[#00FF41]" />
-              <span className="hidden md:inline text-[11px] font-bold text-[#00FF41]">Benchmark</span>
             </button>
           )}
 

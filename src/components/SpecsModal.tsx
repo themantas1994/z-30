@@ -3,15 +3,14 @@
  */
 
 import React from 'react';
-import { X, ShieldCheck, Zap, Radio, Layers, Activity } from 'lucide-react';
+import { X, ShieldCheck, Zap, Radio, Layers } from 'lucide-react';
 
 interface SpecsModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onOpenBenchmark?: () => void;
 }
 
-export const SpecsModal: React.FC<SpecsModalProps> = ({ isOpen, onClose, onOpenBenchmark }) => {
+export const SpecsModal: React.FC<SpecsModalProps> = ({ isOpen, onClose }) => {
   if (!isOpen) return null;
 
   return (
@@ -159,20 +158,12 @@ export const SpecsModal: React.FC<SpecsModalProps> = ({ isOpen, onClose, onOpenB
             </table>
           </div>
 
-          {onOpenBenchmark && (
-            <div className="pt-2 flex justify-end">
-              <button
-                onClick={() => {
-                  onClose();
-                  onOpenBenchmark();
-                }}
-                className="px-3 py-1.5 bg-[#00FF41]/10 hover:bg-[#00FF41]/20 text-[#00FF41] border border-[#00FF41]/50 text-xs font-bold uppercase tracking-wider flex items-center space-x-1.5 transition-colors"
-              >
-                <Activity className="w-3.5 h-3.5" />
-                <span>Launch Monte Carlo Waveform & SNR Decoder Benchmark</span>
-              </button>
-            </div>
-          )}
+          {/* The Monte Carlo benchmark now has a single home: Station Settings ->
+              5. Experimental Testing. It used to be reachable from here and from the header
+              bar as well, which meant three routes to one modal and no obvious owner. */}
+          <div className="pt-2 text-[10px] text-[#888] text-right">
+            Empirical decoder curves: <span className="text-[#00FF41]">Station Settings &rarr; 5. Experimental Testing &rarr; Launch Benchmark Suite</span>
+          </div>
         </div>
       </div>
     </div>

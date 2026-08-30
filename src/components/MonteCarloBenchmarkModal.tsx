@@ -220,7 +220,10 @@ export const MonteCarloBenchmarkModal: React.FC<MonteCarloBenchmarkModalProps> =
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/85 p-2 sm:p-4 font-mono select-none">
+    // z-[60] rather than z-50: this modal is now launched from inside Station Settings, which
+    // stays mounted underneath so the operator does not lose unsaved form state. Equal z-index
+    // would leave the stacking order dependent on JSX order alone.
+    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/85 p-2 sm:p-4 font-mono select-none">
       <div className="bg-[#101010] border border-[#333] w-full max-w-6xl h-[92vh] flex flex-col overflow-hidden shadow-2xl">
         {/* Header */}
         <div className="flex items-center justify-between px-3 sm:px-4 py-2 bg-[#0A0A0A] border-b border-[#333]">
