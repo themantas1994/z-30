@@ -54,11 +54,11 @@ Welcome to the official technical documentation and developer wiki for **z-30**:
 
 ## ⚡ What is z-30?
 
-**z-30** is engineered for extreme HF, VHF, and microwave weak-signal amateur radio communications. Operating in synchronous **30.0-second UTC slots**, z-30's seeded AWGN benchmark crosses 50% decode near **-24.6 dB SNR** and 90% near **-23.6 dB SNR** in a 2500 Hz reference bandwidth. That is an idealised bound measured with the noise level, carrier frequency and symbol timing handed to the demodulator; it is **not** an on-air threshold and is not comparable with FT8's published -21 dB, which includes the acquisition losses this bound excludes. z-30's on-air sensitivity is currently unquantified.
+**z-30** is engineered for extreme HF, VHF, and microwave weak-signal amateur radio communications. Operating in synchronous **30.0-second UTC slots**, z-30's seeded benchmark - run through its real acquisition path, with random carrier and timing offsets and no knowledge of the noise level - crosses 50% decode at **-21.1 dB SNR** on AWGN and **-18.8 dB** on a CCIR-moderate fading path, in a 2500 Hz reference bandwidth. That is level with FT8's published -21 dB, measured the same way. The genie-aided bound, with exact carrier, timing and noise level handed to the demodulator, is 3.5 dB better at -24.6 dB; it is reported separately because no other mode's published figure is measured that way.
 
 ### Key Technical Innovations
 1. **Ultra-Narrowband 16-MFSK**: Continuous-Phase 16-Tone Frequency Shift Keying occupying only **50.0 Hz** of RF bandwidth.
-2. **Rate-0.356 QC-LDPC + CRC-14**: Systematic (216, 77) Low-Density Parity-Check forward error correction with a 14-bit polynomial CRC yielding a false decode probability $< 10^{-6}$.
+2. **Rate-0.356 IRA-LDPC + CRC-14**: Systematic (216, 77) irregular repeat-accumulate Low-Density Parity-Check forward error correction with a dual-diagonal parity structure, plus a 14-bit CRC whose undetected-error probability is $2^{-14} \\approx 6.1 \\times 10^{-5}$. (Earlier revisions called the code quasi-cyclic, which it is not, and quoted $< 10^{-6}$ for the CRC, which is about sixty times better than a 14-bit CRC can be.)
 3. **Multi-Pass Successive Interference Cancellation (SIC)**: 3-pass DSP cancellation engine that synthesizes and subtracts strong decoded carrier waveforms to recover hidden co-channel DX signals.
 4. **Sub-Millisecond RF Time Calibration (\`z30_dsp/rf_time_sync.py\`)**: Embedded FIR matched-filter receiver that calibrates clock drift ($\\Delta t$) against global standard stations (**WWV, WWVH, CHU, DCF77, MSF, WWVB, JJY**) without needing internet or administrator privileges.
 5. **Universal Cross-Platform Architecture**: Dual-stack engine featuring an interactive Web Audio 60 FPS HTML5/PWA GUI and a native Python 3 DSP package (\`z30_dsp\`) with Hamlib CAT and 9 PTT keying methods.
@@ -232,7 +232,7 @@ z-30 is engineered as a **dual-stack architecture**:
    │        (TypeScript + React 19 + Vite)        │  │         (Python 3.9+ / NumPy / SciPy)        │
    ├──────────────────────────────────────────────┤  ├──────────────────────────────────────────────┤
    │ • Web Audio API 12/48 kHz Audio Pipeline     │  │ • z30_dsp/modem.py (16-MFSK CPFSK Mod/Demod) │
-   │ • 60 FPS HTML5 Canvas Spectral Waterfall     │  │ • z30_dsp/ldpc.py (QC-LDPC (216, 77) Engine) │
+   │ • 60 FPS HTML5 Canvas Spectral Waterfall     │  │ • z30_dsp/ldpc.py (IRA-LDPC (216,77) Engine) │
    │ • dsp/ldpcCodec.ts (TS Min-Sum LDPC Engine)  │  │ • z30_dsp/sic_decoder.py (3-Pass SIC)        │
    │ • dsp/sicDecoder.ts (3-Pass SIC Subtraction) │  │ • z30_dsp/rf_time_sync.py (FIR Time Sync)    │
    │ • dsp/catController.ts (Rigctl TCP client)   │  │ • z30_dsp/auto_logger.py (ADIF 3.1.4 Engine) │
@@ -398,7 +398,7 @@ Please use Conventional Commits:
 1. All TypeScript code must pass \`npm run lint\` without errors or warnings.
 2. Production bundle must build cleanly via \`npm run build\`.
 3. Python modifications must maintain compatibility with Python 3.9 through 3.13.
-4. If modifying DSP code, run \`python -m pytest tests\` (which includes the codec round trip and the occupied-bandwidth budget) and \`python -m z30_dsp.benchmark --seed 20260830\` to check the seeded AWGN bound has not regressed below **-24.6 dB SNR (50%) / -23.6 dB SNR (90%)**. That bound is measured with the noise level, carrier frequency and symbol timing handed to the demodulator; it is not an on-air decode threshold.
+4. If modifying DSP code, run \`python -m pytest tests\` (which includes the codec round trip, the occupied-bandwidth budget, and the acquisition tests) and \`python -m z30_dsp.benchmark --mode realistic --fading none --min-snr -28 --max-snr -17 --frames 40 --seed 20260830\` to check the decode threshold has not regressed below **-21.1 dB SNR (50%) / -18.0 dB SNR (90%)**. That is measured through the real acquisition path with random carrier and timing offsets. \`--mode ideal\` gives the genie-aided bound (-24.6 dB / -23.4 dB) for comparison; it is not an on-air threshold.
 `,
   },
   {
@@ -428,8 +428,9 @@ This document provides the complete mathematical and signal processing specifica
 | **Cycle Duration** | $T_{\\text{cycle}}$ | **30.0 s** | Synchronized to UTC :00 / :30 |
 | **Guard / Processing Time** | $T_{\\text{guard}}$ | **6.0 s** | FFT Framing + 3-Pass SIC + LDPC decode |
 | **Bits per Symbol** | $\\log_2(M)$ | **4 bits/symbol** | $54 \\times 4 = 216$ coded channel bits |
-| **FEC Code** | — | **QC-LDPC (216, 77)** | Rate $R \\approx 0.356$ |
-| **AWGN Sensitivity Bound** | — | **-24.6 dB SNR (50%) / -23.6 dB SNR (90%)** | In a $2500\\text{ Hz}$ noise bandwidth, with exact noise sigma, exact carrier frequency and perfect symbol timing given to the demodulator. An idealised bound, **not** an on-air threshold, and not comparable with the published figures for FT8 or FT4. |
+| **FEC Code** | — | **IRA-LDPC (216, 77)** | Rate $R \\approx 0.356$, dual-diagonal parity |
+| **AWGN Decode Threshold** | — | **-21.1 dB SNR (50%) / -18.0 dB SNR (90%)** | In a $2500\\text{ Hz}$ noise bandwidth, through blind acquisition with random carrier ($\\pm5$ Hz) and timing ($\\pm0.5$ s) offsets. Comparable with the published on-air figures for FT8 and FT4. |
+| **Idealised AWGN Bound** | — | -24.6 dB SNR (50%) / -23.4 dB SNR (90%) | Exact noise sigma, exact carrier and perfect symbol timing given to the demodulator. A bound on the code, **not** an on-air threshold. The 3.5 dB gap is the acquisition loss. |
 
 ---
 
@@ -1024,7 +1025,7 @@ This document addresses common questions, operating issues, hardware setup chall
 ### Q1: Why does z-30 use a 30-second cycle instead of 15 seconds like FT8?
 **A**: Doubling the cycle to 30.0 seconds and halving the symbol rate from 6.25 to 3.125 baud doubles the energy per symbol, and a rate-0.356 code over 75 symbols spends considerably more redundancy per information bit than FT8's rate-0.52 (174, 91). Both buy coding gain.
 
-How much of it survives on the air is **not currently known**. z-30's own benchmark measures an idealised AWGN bound - 50% decode near **-24.6 dB SNR**, 90% near **-23.6 dB** - with the noise level, carrier frequency and symbol timing handed to the demodulator. FT8's published -21 dB is an over-the-air figure that *includes* the acquisition, AFC and timing losses that bound excludes, so the two numbers are not comparable and no advantage figure is claimed here. Earlier revisions of this page claimed "+4.0 dB over FT8" on exactly that invalid comparison; it has been withdrawn.
+z-30's benchmark now measures the on-air case directly: with random carrier and timing offsets and blind acquisition, 50% decode is at **-21.1 dB SNR** on AWGN and **-18.8 dB** on a CCIR-moderate path. FT8's published -21 dB is measured the same way, so **z-30 is level with FT8 on AWGN, not ahead of it** - it spends twice the airtime for the same payload, and the 3 dB that buys the codec is spent again on acquiring a 3.125 Hz-spaced signal. The genie-aided bound is -24.6 dB, but comparing that with anyone's on-air figure is invalid. Earlier revisions of this page claimed "+4.0 dB over FT8" on exactly that invalid comparison; it has been withdrawn.
 
 ### Q2: Why is the occupied bandwidth only 50 Hz?
 **A**: 16 orthogonal tones spaced at $3.125\\text{ Hz}$ occupy exactly $16 \\times 3.125 = 50.0\\text{ Hz}$. This allows up to **50 simultaneous contacts** inside a standard 2.7 kHz SSB transceiver passband without mutual interference.
@@ -1088,7 +1089,7 @@ An in-depth technical analysis for **advanced amateur radio operators, RF engine
 
 | Metric / Parameter | FT8 (Franke-Taylor 8-FSK) | z-30 (16-MFSK Weak-Signal) | Physics & Engineering Delta |
 | :--- | :--- | :--- | :--- |
-| **Decoding Threshold ($SNR_{2500}$)** | **-21.0 dB** (measured on the air) | **-24.6 dB (50%) / -23.6 dB (90%)** (idealised AWGN bound, perfect sync) | **Not comparable** - see the note below |
+| **Decoding Threshold ($SNR_{2500}$)** | **-21.0 dB** (measured on the air) | **-21.1 dB (50%) / -18.0 dB (90%)** (blind acquisition, AWGN) | Level - see the note below |
 | **Transmission Slot Duration** | 15.0 s (12.64 s active TX) | 30.0 s (24.0 s active TX) | $2\\times$ integration time ($+3.01\\text{ dB}$) |
 | **Modulation Format** | 8-MFSK (Continuous Phase) | 16-MFSK (Continuous Phase) | Higher-order orthogonal signaling efficiency |
 | **Occupied Bandwidth** | 47.0 Hz ($8 \\times 6.25\\text{ Hz}$) | 50.0 Hz ($16 \\times 3.125\\text{ Hz}$) | Ultra-narrowband density (50 channels in 2.7 kHz) |
@@ -1099,7 +1100,7 @@ An in-depth technical analysis for **advanced amateur radio operators, RF engine
 | **Information Bits ($K$)** | 77 bits ($75\\text{ msg} + 2\\text{ flag}$) | 77 bits ($58\\text{ msg} + 14\\text{ CRC} + 5\\text{ flag}$) | Identical payload capacity with stronger CRC protection |
 | **FEC Code** | Systematic LDPC (174, 91) | IRA LDPC (216, 77) | **Rate $R \\approx 0.356$ vs $0.523$** ($+2.4\\text{ dB}$ coding gain) |
 | **Parity Check Fraction** | 47.7% parity overhead | **64.4% parity overhead** | Significantly steeper waterfall BER curve |
-| **CRC Polynomial** | 14-bit ($P_{\\text{false}} \\approx 6 \\times 10^{-5}$) | 14-bit CRC-14 ($P_{\\text{false}} < 10^{-6}$) | Zero false decodes at the $-25.0\\text{ dB}$ limit |
+| **CRC Polynomial** | 14-bit ($P_{\\text{false}} \\approx 6 \\times 10^{-5}$) | 14-bit CRC-14 ($P_{\\text{false}} \\approx 2^{-14} \\approx 6.1 \\times 10^{-5}$) | Same order of magnitude; neither mode is meaningfully ahead here |
 | **Co-Channel Collision Recovery** | None (collisions fail to decode) | **3-Pass Successive Interference Cancellation (SIC)** | Co-channel collision resolution down to $-31.5\\text{ dB}$ |
 | **Clock Drift Tolerance** | $\\pm 1.0\\text{ s}$ (requires NTP/GPS) | $\\pm 1.5\\text{ s}$ + Built-in RF Time Sync | Zero-admin offline HF/LF time calibration |
 
@@ -1184,7 +1185,7 @@ Both FT8 and z-30 utilize Low-Density Parity-Check (LDPC) codes decoded via beli
   │      Information: 91 bits     │       Parity: 83 bits         │  Rate R = 0.523 (47.7% Parity)
   └───────────────────────────────┴───────────────────────────────┘
 
-  z-30: QC-LDPC (216, 77)
+  z-30: IRA-LDPC (216, 77)
   ┌─────────────────────┬─────────────────────────────────────────┐
   │ Information: 77 bits│            Parity: 139 bits             │  Rate R = 0.356 (64.4% Parity)
   └─────────────────────┴─────────────────────────────────────────┘
@@ -1203,7 +1204,7 @@ $$L_{m \\to n} = 0.75 \\cdot \\left(\\prod_{n' \\in N(m) \\setminus \\{n\\}} \\t
 
 Because of the higher parity redundancy ($64.4\\%$ vs $47.7\\%$), the Tanner graph possesses a larger girth ($g \\ge 6$) and fewer short trapping sets, yielding:
 - **Steeper Waterfall Region**: The Frame Error Rate (FER) transition from $10^{-1}$ to $10^{-5}$ occurs across a narrower $\\Delta \\text{SNR}$ span ($0.8\\text{ dB}$ vs $1.6\\text{ dB}$ in FT8).
-- **Lower Error Floor**: No observed error floor down to $\\text{FER} < 10^{-6}$.
+- **Error Floor**: No error floor has been observed in benchmarking, but the benchmark runs tens of frames per SNR point, so it can only bound the floor at roughly $\\text{FER} < 10^{-2}$. A $10^{-6}$ claim would need on the order of $10^{8}$ frames and has not been measured.
 - **Net FEC Coding Gain**: Provides $+2.4\\text{ dB}$ of additional coding gain over FT8's higher-rate LDPC code.
 
 ---
@@ -1236,7 +1237,7 @@ $$\\text{SINR}_{\\text{DX}} = \\frac{P_{\\text{DX}}}{P_{\\text{local}} + \\sigma
 Because $-35.0\\text{ dB} \\ll -21.0\\text{ dB}$, FT8 completely fails to decode either transmission.
 
 ### 5.2 The 3-Pass Subtraction Mechanism in z-30
-1. **Pass 1**: The high-SNR signal is decoded cleanly. The 14-bit CRC confirms with probability $1 - 10^{-6}$ that all 75 transmitted tones are known exactly.
+1. **Pass 1**: The high-SNR signal is decoded cleanly. The 14-bit CRC confirms with probability $1 - 2^{-14} \\approx 0.99994$ that all 75 transmitted tones are known exactly.
 2. **Exact Parameter Estimation**:
    - Carrier frequency $\\hat{f}_0$ is estimated via chirped quadratic interpolation with precision $\\sigma_f < 0.05\\text{ Hz}$.
    - Time arrival $\\hat{\\Delta t}$ is locked with sub-millisecond precision.
@@ -1272,9 +1273,10 @@ Data Blocks:       D1       D2        D3         D4         D5         D6
 
 ---
 
-## 📻 7. Link Budget: What a dB of Sensitivity Buys, and What z-30 Can Currently Claim
+## 📻 7. Link Budget: What a dB of Sensitivity Buys, and What z-30 Can Claim
 
-**z-30's on-air sensitivity has not been measured, so no advantage over FT8 is claimed here.**
+**z-30's on-air sensitivity has now been measured, and it is level with FT8 on AWGN - no
+advantage is claimed.**
 
 Earlier revisions of this page put z-30's idealised AWGN bound (a benchmark that hands the
 demodulator the exact noise level, the exact carrier frequency and perfect symbol timing) next
@@ -1288,23 +1290,38 @@ What is defensible today:
 
 - z-30 spends more energy per symbol (3.125 baud against FT8's 6.25) and more redundancy per
   information bit (rate 0.356 against 0.52), and both buy coding gain.
-- Its seeded AWGN benchmark under ideal detection crosses 50% decode near $-24.6\\text{ dB}$ and
-  90% near $-23.6\\text{ dB}$ in a 2500 Hz reference bandwidth.
-- How much of that survives real acquisition on a real channel is an open question.
+- Its seeded benchmark, driven through the real acquisition path with random carrier and
+  timing offsets, crosses 50% decode at $-21.1\\text{ dB}$ and 90% at $-18.0\\text{ dB}$ on AWGN
+  in a 2500 Hz reference bandwidth - level with FT8, measured the same way.
+- Under ideal detection (exact carrier, timing and noise level) the same code reaches
+  $-24.6\\text{ dB}$. The $3.5\\text{ dB}$ difference is what it costs to *find* the signal.
+- The coding gain is real, but z-30 spends it twice: once on the code, and again on acquiring
+  a signal whose tones are only 3.125 Hz apart. Net, it lands where FT8 does.
 
-### 7.1 What the honest measurement requires
+### 7.1 How the honest measurement is made
 
-To produce a figure comparable with FT8's $-21\\text{ dB}$, the benchmark has to stop being
-genie-aided:
+\`z30_dsp/benchmark.py --mode realistic\` is no longer genie-aided:
 
-1. Inject a random carrier frequency offset (a real receiver searches for the signal).
-2. Inject a random symbol timing offset (slot alignment is never exact).
-3. Add a Watterson two-path fading channel with realistic Doppler spread for the path class.
-4. Drive the decode through the **real acquisition path** - the Costas sync search and the
-   frequency/timing estimator - rather than handing it the answer.
-5. Publish the resulting curve with its seed.
+1. A random carrier frequency offset ($\\pm5$ Hz) is injected (\`z30_dsp/channel.py\`).
+2. A random symbol timing offset ($\\pm0.5$ s) is injected - slot alignment is never exact.
+3. A Watterson two-path fading channel is applied, with CCIR 520-2 Doppler and delay spreads
+   for the *good*, *moderate* and *poor* path classes.
+4. The decode is driven through the **real acquisition path** (\`z30_dsp/acquisition.py\`): a
+   Costas sync search over time and frequency, plus a blind noise-floor estimate. Nothing is
+   handed to the demodulator.
+5. Every run is seeded, and the seed is published with the curve.
 
-Whatever that shows will be defensible, and it is the number this page should carry.
+Measured result, seed \`20260830\`, 40 frames per SNR point:
+
+| Channel | 50% decode | 90% decode |
+| --- | --- | --- |
+| Idealised bound (genie-aided sync) | $-24.6\\text{ dB}$ | $-23.4\\text{ dB}$ |
+| AWGN, blind acquisition | $-21.1\\text{ dB}$ | $-18.0\\text{ dB}$ |
+| CCIR moderate (1.0 ms / 0.5 Hz) | $-18.8\\text{ dB}$ | $-14.0\\text{ dB}$ |
+| CCIR poor (2.0 ms / 1.0 Hz) | $-15.4\\text{ dB}$ | above $-11\\text{ dB}$ |
+
+\`tests/test_channel_acquisition.py\` guards the property that makes this measurement meaningful:
+that acquisition reads only the audio, and is never quietly handed the answer again.
 
 ### 7.2 For reference: what a dB is worth
 
@@ -1315,8 +1332,8 @@ $$\\frac{P_1}{P_2} = 10^{\\Delta / 10}$$
 
 so $+3\\text{ dB}$ halves the power a station needs, and $+4\\text{ dB}$ is roughly the gain of a
 small 2-element Yagi over a dipole, or about 0.7 S-units of background noise on the low bands.
-This is why weak-signal work chases single decibels - and why quoting one you have not measured
-is worth avoiding.
+This is why weak-signal work chases single decibels - and why the $4\\text{ dB}$ this page once
+claimed, on a comparison that did not hold, was worth retracting rather than defending.
 
 ---
 
@@ -1334,15 +1351,17 @@ is worth avoiding.
    JS8Call (Slow):                   -24.0 dB   │ Modes
    WSPR (2-Minute Beacon Only):      -28.0 dB ──┘
    ─────────────────────────────────────────────────────────────────────────────
-   z-30 (idealised AWGN bound):      -24.6 dB ◄── NOT measured the same way as the rows above
+   z-30 (blind acquisition, AWGN):   -21.1 dB ◄── measured the same way as the rows above
+   z-30 (idealised bound, genie sync):-24.6 dB ◄── NOT measured the same way; do not compare
    ─────────────────────────────────────────────────────────────────────────────
    Theoretical Shannon Capacity:     -30.5 dB
 \`\`\`
 
-Every figure above z-30's line is an over-the-air threshold. z-30's is an idealised bound with
-perfect synchronisation, so it sits on this scale only as an upper limit on what the code and
-demodulator could achieve, not as a like-for-like comparison. Its real on-air position is
-somewhere to the right of that mark by an amount nobody has measured yet.
+Every figure above the divider is an over-the-air threshold, and z-30's blind-acquisition
+figure belongs on that same scale: it is measured the same way, and it lands level with FT8.
+The idealised bound below it does **not** belong on this scale - it is an upper limit on what
+the code and demodulator could achieve if acquisition were free, and every mode listed above
+would move a few dB left if measured that way too.
 
 What z-30 does offer, independently of any sensitivity claim, is full two-way interactive QSO
 sequencing at 50 Hz occupied bandwidth, real-time successive interference cancellation, and

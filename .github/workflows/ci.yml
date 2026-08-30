@@ -43,7 +43,25 @@ jobs:
           python -m pip install --upgrade build
           python -m build --wheel --outdir dist-wheel
           python -m pip install dist-wheel/*.whl
-          python -c "import z30_dsp.ldpc, z30_dsp.modem, z30_dsp.web_server, z30_dsp.paths; print('package imports OK')"
+          python -c "import z30_dsp.ldpc, z30_dsp.modem, z30_dsp.web_server, z30_dsp.paths, z30_dsp.channel, z30_dsp.acquisition, z30_dsp.benchmark; print('package imports OK')"
+
+      - name: Benchmark runs end to end and stays reproducible
+        # A short seeded sweep in both modes. This is a smoke test, not a sensitivity
+        # measurement - it catches an exception or a non-deterministic result in the
+        # channel/acquisition path, which would otherwise only surface when someone tried to
+        # reproduce a published curve.
+        run: |
+          python - <<'PY'
+          from z30_dsp.benchmark import run_monte_carlo_snr_sweep
+          for mode in ("ideal", "realistic"):
+              a = run_monte_carlo_snr_sweep(min_snr_db=-18, max_snr_db=-16, step_snr_db=2,
+                                            frames_per_snr=3, mode=mode, fading="none", seed=1)
+              b = run_monte_carlo_snr_sweep(min_snr_db=-18, max_snr_db=-16, step_snr_db=2,
+                                            frames_per_snr=3, mode=mode, fading="none", seed=1)
+              assert [r["successes"] for r in a] == [r["successes"] for r in b], \
+                  f"{mode} mode is not reproducible with a fixed seed"
+              print(f"{mode} mode reproducible")
+          PY
 
   frontend:
     name: TypeScript frontend

@@ -18,8 +18,9 @@ This document provides the complete mathematical and signal processing specifica
 | **Cycle Duration** | $T_{\text{cycle}}$ | **30.0 s** | Synchronized to UTC :00 / :30 |
 | **Guard / Processing Time** | $T_{\text{guard}}$ | **6.0 s** | FFT Framing + 3-Pass SIC + LDPC decode |
 | **Bits per Symbol** | $\log_2(M)$ | **4 bits/symbol** | $54 \times 4 = 216$ coded channel bits |
-| **FEC Code** | — | **QC-LDPC (216, 77)** | Rate $R \approx 0.356$ |
-| **AWGN Sensitivity Bound** | — | **-24.6 dB SNR (50%) / -23.6 dB SNR (90%)** | In a $2500\text{ Hz}$ noise bandwidth, with exact noise sigma, exact carrier frequency and perfect symbol timing given to the demodulator. An idealised bound, **not** an on-air threshold, and not comparable with the published figures for FT8 or FT4. |
+| **FEC Code** | — | **IRA-LDPC (216, 77)** | Rate $R \approx 0.356$, dual-diagonal parity |
+| **AWGN Decode Threshold** | — | **-21.1 dB SNR (50%) / -18.0 dB SNR (90%)** | In a $2500\text{ Hz}$ noise bandwidth, through blind acquisition with random carrier ($\pm5$ Hz) and timing ($\pm0.5$ s) offsets. Comparable with the published on-air figures for FT8 and FT4. |
+| **Idealised AWGN Bound** | — | -24.6 dB SNR (50%) / -23.4 dB SNR (90%) | Exact noise sigma, exact carrier and perfect symbol timing given to the demodulator. A bound on the code, **not** an on-air threshold. The 3.5 dB gap is the acquisition loss. |
 
 ---
 

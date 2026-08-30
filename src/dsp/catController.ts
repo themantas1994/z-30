@@ -13,10 +13,11 @@
  * - Hamlib rigctl TCP daemon protocol (127.0.0.1:4532)
  */
 
-import { HAM_BANDS, DEFAULT_STATION_CONFIG } from './z30Constants';
+import { HAM_BANDS, DEFAULT_STATION_CONFIG, Z30_SPECS } from './z30Constants';
 import {
   BAND_PLANS,
   findPermittedSegment,
+  nearestPermittedSegment,
   isValidCallsign,
   LicenseClass,
   RegulatoryRegion,
@@ -504,11 +505,28 @@ export class CatController {
     if (!Number.isFinite(txFrequencyHz) || txFrequencyHz <= 0) {
       violations.push('The transmit frequency could not be determined from the dial frequency and audio offset.');
     } else if (plan && licenseClass) {
-      const segment = findPermittedSegment(plan.region, licenseClass, txFrequencyHz);
+      // Checked against the emission's edges, not its centre: a z-30 signal is 50 Hz wide, so
+      // a centre sitting 10 Hz inside a band edge still puts most of the power outside it.
+      const occupiedHz = Z30_SPECS.TOTAL_BANDWIDTH_HZ;
+      const segment = findPermittedSegment(plan.region, licenseClass, txFrequencyHz, occupiedHz);
       if (!segment) {
+        const halfHz = occupiedHz / 2;
+        const nearest = nearestPermittedSegment(plan.region, licenseClass, txFrequencyHz);
+        const nearestNote = nearest
+          ? nearest.distanceHz === 0
+            ? ` The signal straddles the edge of ${nearest.segment.band} ` +
+              `${(nearest.segment.startHz / 1e6).toFixed(3)}-${(nearest.segment.endHz / 1e6).toFixed(3)} MHz: ` +
+              `its centre is inside, but a ${occupiedHz.toFixed(0)} Hz emission is not. ` +
+              `Move at least ${halfHz.toFixed(0)} Hz further in.`
+            : ` The nearest permitted segment is ${nearest.segment.band} ` +
+              `${(nearest.segment.startHz / 1e6).toFixed(3)}-${(nearest.segment.endHz / 1e6).toFixed(3)} MHz, ` +
+              `${(nearest.distanceHz / 1000).toFixed(1)} kHz away.`
+          : '';
         violations.push(
-          `${(txFrequencyHz / 1e6).toFixed(6)} MHz (dial ${(dial / 1e6).toFixed(6)} MHz + ${audioOffsetHz.toFixed(0)} Hz audio) ` +
-          `is not inside any data-mode segment available to a ${licenseClass} licensee in ${plan.displayName}.`
+          `${((txFrequencyHz - halfHz) / 1e6).toFixed(6)}-${((txFrequencyHz + halfHz) / 1e6).toFixed(6)} MHz ` +
+          `(dial ${(dial / 1e6).toFixed(6)} MHz + ${audioOffsetHz.toFixed(0)} Hz audio, ${occupiedHz.toFixed(0)} Hz wide) ` +
+          `is not inside any data-mode segment available to a ${licenseClass} licensee in ${plan.displayName}.` +
+          nearestNote
         );
       } else {
         bandSegment = `${segment.band} ${(segment.startHz / 1e6).toFixed(3)}-${(segment.endHz / 1e6).toFixed(3)} MHz`;

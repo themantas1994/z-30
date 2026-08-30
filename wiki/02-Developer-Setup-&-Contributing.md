@@ -17,7 +17,7 @@ z-30 is engineered as a **dual-stack architecture**:
    │        (TypeScript + React 19 + Vite)        │  │         (Python 3.9+ / NumPy / SciPy)        │
    ├──────────────────────────────────────────────┤  ├──────────────────────────────────────────────┤
    │ • Web Audio API 12/48 kHz Audio Pipeline     │  │ • z30_dsp/modem.py (16-MFSK CPFSK Mod/Demod) │
-   │ • 60 FPS HTML5 Canvas Spectral Waterfall     │  │ • z30_dsp/ldpc.py (QC-LDPC (216, 77) Engine) │
+   │ • 60 FPS HTML5 Canvas Spectral Waterfall     │  │ • z30_dsp/ldpc.py (IRA-LDPC (216,77) Engine) │
    │ • dsp/ldpcCodec.ts (TS Min-Sum LDPC Engine)  │  │ • z30_dsp/sic_decoder.py (3-Pass SIC)        │
    │ • dsp/sicDecoder.ts (3-Pass SIC Subtraction) │  │ • z30_dsp/rf_time_sync.py (FIR Time Sync)    │
    │ • dsp/catController.ts (Rigctl TCP client)   │  │ • z30_dsp/auto_logger.py (ADIF 3.1.4 Engine) │
@@ -183,4 +183,4 @@ Please use Conventional Commits:
 1. All TypeScript code must pass `npm run lint` without errors or warnings.
 2. Production bundle must build cleanly via `npm run build`.
 3. Python modifications must maintain compatibility with Python 3.9 through 3.13.
-4. If modifying DSP code, run `python -m pytest tests` (which includes the codec round trip and the occupied-bandwidth budget) and `python -m z30_dsp.benchmark --seed 20260830` to check the seeded AWGN bound has not regressed below **-24.6 dB SNR (50%) / -23.6 dB SNR (90%)**. That bound is measured with the noise level, carrier frequency and symbol timing handed to the demodulator; it is not an on-air decode threshold.
+4. If modifying DSP code, run `python -m pytest tests` (which includes the codec round trip, the occupied-bandwidth budget, and the acquisition tests) and `python -m z30_dsp.benchmark --mode realistic --fading none --min-snr -28 --max-snr -17 --frames 40 --seed 20260830` to check the decode threshold has not regressed below **-21.1 dB SNR (50%) / -18.0 dB SNR (90%)**. That is measured through the real acquisition path with random carrier and timing offsets. `--mode ideal` gives the genie-aided bound (-24.6 dB / -23.4 dB) for comparison; it is not an on-air threshold.

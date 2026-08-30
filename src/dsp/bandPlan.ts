@@ -185,26 +185,62 @@ export const LICENSE_CLASS_LABELS: Record<LicenseClass, string> = {
 };
 
 /**
- * Finds the segment containing `frequencyHz` for the given region and class.
- * Returns null when the frequency is outside every permitted segment.
+ * Finds the segment that fully contains an emission of `bandwidthHz` centred on
+ * `frequencyHz`, for the given region and class. Returns null when any part of the emission
+ * falls outside every permitted segment.
+ *
+ * The check is against the emission's EDGES, not its centre. A z-30 signal is 50 Hz wide, so a
+ * station whose centre sits 10 Hz inside a band edge is radiating more than half its power
+ * outside the band - legally out of band, and exactly the mistake an operator tuning up to the
+ * edge of a segment makes. Passing bandwidthHz = 0 recovers the old centre-only behaviour and
+ * is only appropriate for a carrier of negligible width.
  */
 export function findPermittedSegment(
   region: RegulatoryRegion,
   licenseClass: LicenseClass,
-  frequencyHz: number
+  frequencyHz: number,
+  bandwidthHz: number = 0
 ): BandSegment | null {
   const plan = BAND_PLANS[region];
   if (!plan) return null;
+  const half = Math.max(0, bandwidthHz) / 2;
+  const lowEdgeHz = frequencyHz - half;
+  const highEdgeHz = frequencyHz + half;
   for (const segment of plan.segments) {
     if (
-      frequencyHz >= segment.startHz &&
-      frequencyHz <= segment.endHz &&
+      lowEdgeHz >= segment.startHz &&
+      highEdgeHz <= segment.endHz &&
       segment.classes.includes(licenseClass)
     ) {
       return segment;
     }
   }
   return null;
+}
+
+/**
+ * The permitted segment nearest to `frequencyHz`, with the distance to it, so a refusal can
+ * tell the operator how far out of band they are instead of only that they are.
+ */
+export function nearestPermittedSegment(
+  region: RegulatoryRegion,
+  licenseClass: LicenseClass,
+  frequencyHz: number
+): { segment: BandSegment; distanceHz: number } | null {
+  const plan = BAND_PLANS[region];
+  if (!plan) return null;
+  let best: { segment: BandSegment; distanceHz: number } | null = null;
+  for (const segment of plan.segments) {
+    if (!segment.classes.includes(licenseClass)) continue;
+    const distanceHz =
+      frequencyHz < segment.startHz
+        ? segment.startHz - frequencyHz
+        : frequencyHz > segment.endHz
+          ? frequencyHz - segment.endHz
+          : 0;
+    if (!best || distanceHz < best.distanceHz) best = { segment, distanceHz };
+  }
+  return best;
 }
 
 /**

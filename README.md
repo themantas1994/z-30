@@ -48,7 +48,7 @@ The project provides both a high-performance **interactive Web/PWA GUI** (featur
 
 ## Key Features & Capabilities
 
-- **Weak-Signal Performance (measured as an idealised bound, not an on-air threshold)**: The seeded AWGN benchmark with perfect synchronisation crosses 50% decode near **-24.6 dB SNR** and 90% near **-23.6 dB SNR** in a 2500 Hz reference bandwidth. That measures the code and the demodulator under ideal detection; it is **not** comparable with the published over-the-air figures for FT8 or FT4, which include the sync and AFC losses this benchmark excludes. See [the benchmark section](#monte-carlo-waveform--ldpc-benchmark-an-idealised-awgn-bound) for exactly what is and is not being measured, and how to reproduce the table.
+- **Weak-Signal Performance (measured through the real acquisition path)**: The seeded benchmark, with random carrier and timing offsets and blind acquisition, crosses 50% decode at **-21.1 dB SNR** on AWGN and **-18.8 dB** on a CCIR-moderate fading path, in a 2500 Hz reference bandwidth. That is level with FT8, not ahead of it. The genie-aided bound - exact carrier, exact timing, exact noise level - is 3.5 dB better at -24.6 dB, and is deliberately *not* the headline figure, because no other mode's published number is measured that way. See [the benchmark section](#monte-carlo-waveform--ldpc-benchmark) for the full curves and how to reproduce them.
 - **Spectrum Efficiency**: **49.8 Hz** of 99% occupied bandwidth measured on random frames (66 Hz at -40 dB), from a continuous-phase, constant-envelope GFSK-shaped waveform. `tests/test_modem_spectrum.py` asserts both against fixed budgets on every commit.
 - **Multi-Pass SIC Engine**: Automatically reconstructs, synthesizes, and subtracts strong decoded carrier waveforms from the time-domain audio buffer to uncover and decode overlapping weak signals buried up to 25 dB underneath stronger stations.
 - **Sub-Millisecond RF Time Synchronization**: Embedded DSP time calibration tool (`z30_dsp/rf_time_sync.py`) scans international standard stations (WWV/WWVH, CHU, DCF77, MSF, WWVB, JJY) using 61-tap Windowed-Sinc FIR filtering and normalized cross-correlation to eliminate clock drift ($\Delta t$) down to $<1.5\text{ ms}$ without needing administrative or root privileges.
@@ -75,8 +75,8 @@ The following table benchmarks **z-30** against standard amateur radio digital m
 | **Tone Spacing ($\Delta f$)** | **3.125 Hz** | 6.25 Hz | 20.83 Hz | 1.4648 Hz | 6.25 Hz |
 | **Active TX Duration** | **24.0 s (75 symbols)** | 12.64 s | 4.48 s | 110.6 s | 12.64 s |
 | **Decode / Guard Window** | **6.0 s** | 2.36 s | 3.02 s | 9.4 s | 2.36 s |
-| **Sensitivity (50%)** | **-24.6 dB SNR †** | -21.0 dB SNR ‡ | -17.5 dB SNR ‡ | -28.0 dB SNR ‡ | -24.0 dB SNR ‡ |
-| **Sensitivity (90%)** | **-23.6 dB SNR †** | -20.0 dB SNR ‡ | -16.5 dB SNR ‡ | -27.0 dB SNR ‡ | -22.5 dB SNR ‡ |
+| **Sensitivity (50%), AWGN** | **-21.1 dB SNR †** | -21.0 dB SNR ‡ | -17.5 dB SNR ‡ | -28.0 dB SNR ‡ | -24.0 dB SNR ‡ |
+| **Sensitivity (90%), AWGN** | **-18.0 dB SNR †** | -20.0 dB SNR ‡ | -16.5 dB SNR ‡ | -27.0 dB SNR ‡ | -22.5 dB SNR ‡ |
 | **FEC Code** | **LDPC (216, 77) Rate ~0.356** | LDPC (174, 91) Rate 0.52 | LDPC (174, 91) Rate 0.52 | Convol. $K=32, r=1/2$ | LDPC (174, 91) |
 | **Payload Capacity** | **77 bits (63-bit info + CRC-14)** | 77 bits (CRC-14) | 77 bits (CRC-14) | 28 bits (Call+Loc+Pwr) | Free text (var) |
 | **Collision Recovery** | **Multi-Pass SIC (3 passes)** | Single pass (limited) | None | Non-coherent | Single pass |
@@ -84,15 +84,38 @@ The following table benchmarks **z-30** against standard amateur radio digital m
 | **Clock Drift Tolerance** | **$\pm 1.5\text{ s}$ (with RF Auto-Sync)** | $\pm 1.0\text{ s}$ | $\pm 0.5\text{ s}$ | $\pm 2.0\text{ s}$ | $\pm 1.0\text{ s}$ |
 | **Spectral Density** | **50 QSOs per 2.7 kHz band** | ~40 QSOs per band | ~25 QSOs per band | N/A (One-way) | ~30 QSOs per band |
 
-> **† and ‡ are different measurements, and the difference matters.**
-> **†** is z-30's own AWGN benchmark with the noise level, carrier frequency and symbol timing
-> given to the demodulator - an idealised bound on the code's performance under ideal
-> detection. **‡** are the published over-the-air thresholds for those modes, which *include*
-> acquisition, AFC and timing losses. Reading down this pair of rows as though the numbers were
-> comparable overstates z-30 by an unknown margin. Earlier revisions of this table did that and
-> concluded a "+4.0 dB advantage over FT8"; that claim has been withdrawn, and the honest
-> comparison needs z-30's own decode driven through its real acquisition path with impairments
-> injected. Until that measurement exists, treat z-30's on-air sensitivity as unquantified.
+> **† is now a like-for-like measurement with ‡.** **†** is z-30's own benchmark run in
+> `--mode realistic`: each frame gets a random carrier offset (±5 Hz) and timing offset
+> (±0.5 s), and the receiver is handed nothing but audio - it locates the frame and estimates
+> the noise floor itself, exactly as it must on the air. **‡** are the published over-the-air
+> thresholds for those modes, which include the same acquisition, AFC and timing losses.
+>
+> **z-30 is level with FT8 on AWGN, not ahead of it.** Earlier revisions of this table quoted
+> a genie-aided bound against FT8's on-air figure and concluded a "+4.0 dB advantage"; that
+> claim was withdrawn, and this is the measurement that replaces it. z-30 spends twice the
+> airtime of FT8 for the same 77-bit payload, and the extra 3 dB that buys the codec is spent
+> again on acquiring a 3.125 Hz-spaced signal. Where z-30 does differ is in occupied
+> bandwidth, multi-pass SIC, and behaviour on a disturbed path — not in raw AWGN sensitivity.
+>
+> Full measured set (seed `20260830`, 40 frames per SNR point, 2500 Hz reference bandwidth):
+>
+> | Channel | 50% decode | 90% decode |
+> | --- | --- | --- |
+> | Idealised AWGN bound (genie-aided sync — **not** an on-air figure) | -24.6 dB | -23.4 dB |
+> | AWGN, blind acquisition | **-21.1 dB** | **-18.0 dB** |
+> | CCIR *moderate* fading (1.0 ms / 0.5 Hz), blind acquisition | -18.8 dB | -14.0 dB |
+> | CCIR *poor* fading (2.0 ms / 1.0 Hz), blind acquisition | -15.4 dB | above -11 dB |
+>
+> The 3.5 dB gap between the first two rows is the acquisition loss — what it costs to *find*
+> the signal rather than be told where it is. Any mode's genie-aided bound is optimistic by a
+> similar margin, which is why the two must never be compared across that line.
+>
+> Reproduce with:
+> ```bash
+> python3 -m z30_dsp.benchmark --mode realistic --fading none     --min-snr -28 --max-snr -17 --frames 40
+> python3 -m z30_dsp.benchmark --mode realistic --fading moderate --min-snr -25 --max-snr -13 --frames 40
+> python3 -m z30_dsp.benchmark --mode ideal                        --min-snr -30 --max-snr -20 --frames 40
+> ```
 
 ### Why 16-MFSK and a 30-Second Cycle?
 1. **A longer, more heavily coded frame**: halving the symbol rate from 6.25 to 3.125 baud
@@ -181,52 +204,77 @@ no amount of correct DSP upstream prevents that.
 
 ---
 
-### Monte Carlo Waveform & LDPC Benchmark: an idealised AWGN bound
+### Monte Carlo Waveform & LDPC Benchmark
 
-**Read this before quoting the numbers below.** They are a *genie-aided idealised AWGN bound*,
-not an over-the-air decode threshold. The benchmark's demodulator is handed things a real
-receiver has to work out for itself:
+The benchmark has two modes, and the difference between them is the whole point.
 
-- the exact noise sigma used to generate the frame;
-- the exact carrier frequency - no frequency error, no AFC, no Doppler;
-- perfect symbol timing (`start_samp = f * samples_per_symbol`, zero offset), because the same
-  code generated the waveform;
-- a clean channel: no fading, no interference, no band noise, no ALC.
+**`--mode realistic` (default) measures a decode threshold.** Every frame gets a random carrier
+offset and a random timing offset, and optionally Watterson HF fading. The receiver is then
+handed nothing but audio: it locates the frame using only the 21 Costas sync symbols
+(`z30_dsp/acquisition.py`), estimates the noise floor from the spectrum itself, and decodes
+from whatever it found. This is the number that is comparable with other modes' published
+on-air figures.
 
-Every one of those is a real loss in a real contact. Putting this figure beside a mode's
-published on-air threshold - FT8's -21 dB, which is WSJT-X's measured number and *includes*
-all of those losses - compares two different quantities and flatters this one. Earlier
-revisions of this document did exactly that and concluded a "+4.0 dB link margin advantage over
-FT8"; that comparison did not hold and has been withdrawn. Measuring the honest number means
-driving the decode through the real acquisition path with timing offset, carrier offset and
-Watterson fading injected, which has not been done yet.
+**`--mode ideal` measures a genie-aided bound, which is not a threshold.** The demodulator is
+handed the exact noise sigma, the exact carrier frequency and perfect symbol timing, on a clean
+channel. It bounds what the code can do under ideal detection, and nothing more.
 
-Run it yourself - it is seeded, so you will get this table back:
+Earlier revisions of this document quoted the `ideal` number against FT8's on-air -21 dB and
+concluded a "+4.0 dB link margin advantage"; that comparison did not hold and has been
+withdrawn. Both curves are now measured, and the gap between them is the answer to why:
+
+| Channel | 50% decode | 90% decode |
+| --- | --- | --- |
+| Idealised AWGN bound (genie-aided sync) | -24.6 dB | -23.4 dB |
+| AWGN, blind acquisition | **-21.1 dB** | **-18.0 dB** |
+| CCIR moderate (1.0 ms / 0.5 Hz) | -18.8 dB | -14.0 dB |
+| CCIR poor (2.0 ms / 1.0 Hz) | -15.4 dB | above -11 dB |
+
+Seed `20260830`, 40 frames per SNR point, 2500 Hz reference bandwidth, carrier offset ±5 Hz,
+timing offset ±0.5 s. **3.5 dB of the bound is spent simply finding the signal.**
+
+Every run is seeded, so these are reproducible rather than anecdotal — record the seed with any
+figure you publish:
 
 ```bash
-python -m z30_dsp.benchmark --min-snr -28 --max-snr -18 --frames 60 --seed 20260830
+# The honest curve (the default).
+python -m z30_dsp.benchmark --mode realistic --fading none --min-snr -28 --max-snr -17 --frames 40
+
+# On a disturbed ionospheric path.
+python -m z30_dsp.benchmark --mode realistic --fading moderate --min-snr -25 --max-snr -13 --frames 40
+
+# The genie-aided bound, for comparison only.
+python -m z30_dsp.benchmark --mode ideal --min-snr -30 --max-snr -20 --frames 40
 ```
 
 ```
-z-30 Monte Carlo Waveform & LDPC Decoder Benchmark - IDEALISED AWGN BOUND
-=========================================================================
-Channel: AWGN, perfect sync | Frames/Pt: 60 | Fs: 6000 Hz | Seed: 20260830
-Code: (216, 77) IRA LDPC R=0.356 | Waveform: GFSK-shaped CPFSK, BT=2.0
--------------------------------------------------------------------------
-SNR (dB) | Frames | Success | Failed | FER     | Decode % | Avg Iters
--------------------------------------------------------------------------
--28.0    | 60     | 0       | 60     | 1.0000  | 0.0%     | 150.0
--27.0    | 60     | 0       | 60     | 1.0000  | 0.0%     | 150.0
--26.0    | 60     | 3       | 57     | 0.9500  | 5.0%     | 143.2
--25.0    | 60     | 23      | 37     | 0.6167  | 38.3%    | 99.5
--24.0    | 60     | 48      | 12     | 0.2000  | 80.0%    | 37.9   <-- 50% crossing is near -24.6 dB
--23.0    | 60     | 60      | 0      | 0.0000  | 100.0%   | 2.4    <-- 90% crossing is near -23.6 dB
--22.0    | 60     | 60      | 0      | 0.0000  | 100.0%   | 1.2
--21.0    | 60     | 60      | 0      | 0.0000  | 100.0%   | 1.0
--20.0    | 60     | 60      | 0      | 0.0000  | 100.0%   | 1.0
--19.0    | 60     | 60      | 0      | 0.0000  | 100.0%   | 1.0
--18.0    | 60     | 60      | 0      | 0.0000  | 100.0%   | 1.0
+================================================================================================
+  z-30 DECODE THRESHOLD (blind acquisition through the real receive chain)
+  Carrier offset +/-5.0 Hz | timing offset +/-0.50 s | fading: No fading (AWGN only) (0.0 ms / 0.0 Hz)
+  The receiver is given only audio: it finds the frame and estimates the noise itself.
+  40 frames/point | Sample Rate: 6000 Hz | Max Iterations: 45 | Seed: 20260830
+================================================================================================
+SNR (2500Hz)   | Frames  | Success  | FER       | Decode %  | Avg Iters  | Acq fail | Timing RMS  | Freq RMS 
+------------------------------------------------------------------------------------------------
+ -28.0 dB      | 40      | 0        | 1.0000    |     0.0%  |  150.0     | 25       |   1330.7 ms |   6.19 Hz
+ -27.0 dB      | 40      | 0        | 1.0000    |     0.0%  |  150.0     | 17       |   1251.3 ms |   5.06 Hz
+ -26.0 dB      | 40      | 0        | 1.0000    |     0.0%  |  150.0     | 3        |    281.3 ms |   3.46 Hz
+ -25.0 dB      | 40      | 3        | 0.9250    |     7.5%  |  138.9     | 1        |    104.7 ms |   0.99 Hz
+ -24.0 dB      | 40      | 4        | 0.9000    |    10.0%  |  138.6     | 0        |     17.8 ms |   0.32 Hz
+ -23.0 dB      | 40      | 7        | 0.8250    |    17.5%  |  124.2     | 0        |     13.7 ms |   0.18 Hz
+ -22.0 dB      | 40      | 13       | 0.6750    |    32.5%  |  106.3     | 0        |     13.5 ms |   0.18 Hz
+ -21.0 dB      | 40      | 21       | 0.4750    |    52.5%  |   74.3     | 0        |      9.6 ms |   0.14 Hz  <-- 50% crossing interpolates to -21.1 dB
+ -20.0 dB      | 40      | 27       | 0.3250    |    67.5%  |   51.1     | 0        |      7.2 ms |   0.12 Hz
+ -19.0 dB      | 40      | 32       | 0.2000    |    80.0%  |   36.0     | 0        |      7.5 ms |   0.10 Hz
+ -18.0 dB      | 40      | 36       | 0.1000    |    90.0%  |   19.0     | 0        |      4.4 ms |   0.09 Hz  <-- 90% crossing
+ -17.0 dB      | 40      | 40       | 0.0000    |   100.0%  |    2.5     | 0        |      3.9 ms |   0.07 Hz
+================================================================================================
 ```
+
+The `Acq fail`, `Timing RMS` and `Freq RMS` columns report the acquisition stage's own error —
+how often it landed more than half a symbol away, and how far off it was in time and frequency.
+Below about -24 dB the sync pattern stops being findable at all, and that shows up in those
+columns rather than being hidden inside the frame error rate.
 
 ---
 
@@ -242,7 +290,7 @@ SNR (dB) | Frames | Success | Failed | FER     | Decode % | Avg Iters
                  │                                                          │
        [ 14-bit CRC Parity Insertion ]                             [ Downsample & Matched Filter ]
                  │                                                          │
-       [ Rate-1/3 QC-LDPC Encoder (216, 77) ]                     [ FFT Energy Binning (16 Tones) ]
+       [ R=0.356 IRA-LDPC Encoder (216, 77) ]                     [ FFT Energy Binning (16 Tones) ]
                  │                                                          │
        [ 21-Symbol Costas Synchronization ]                        [ Costas Array Sync Detection ]
                  │                                                          │
