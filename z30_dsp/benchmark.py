@@ -88,7 +88,7 @@ def demodulate_mfsk_llrs(noisy_wave: np.ndarray, cfg: Z30Config, sigma: float, a
     
     for p_idx, f in enumerate(sync_positions):
         tone_idx = sync_tones[p_idx % len(sync_tones)]
-        tone_freq = audio_center_hz + (tone_idx - 7.5) * cfg.tone_spacing_hz
+        tone_freq = audio_center_hz + tone_idx * cfg.tone_spacing_hz
         start_samp = f * samples_per_symbol
         segment = noisy_wave[start_samp:start_samp + samples_per_symbol]
         
@@ -105,15 +105,27 @@ def demodulate_mfsk_llrs(noisy_wave: np.ndarray, cfg: Z30Config, sigma: float, a
     quad_noise_var = max(1e-12, ((sigma ** 2) * samples_per_symbol) / 2.0)
     est_sig_amp = max(0.01, float(np.mean(pilot_amps)))
     s_corr = (est_sig_amp * samples_per_symbol / 2.0) / quad_noise_var
-    
+
+    # Continuous-phase FSK carries phase across symbol boundaries: each symbol advances the
+    # modulator's phase accumulator by 2*pi*tone_freq*symbol_duration mod 2*pi. Because
+    # tone_spacing_hz is exactly 1/symbol_duration_sec by construction, that increment is
+    # IDENTICAL for every tone (the per-tone term is always a whole number of cycles) - it
+    # only depends on audio_center_hz. So the phase gap between a pilot and a nearby data
+    # symbol is fully predictable and must be added back in before projecting onto the
+    # pilot's raw phase, or the "coherent" LLR term is measured against the wrong reference
+    # for any audio_center_hz that isn't an exact multiple of tone_spacing_hz.
+    base_phase_step = (2.0 * np.pi * audio_center_hz * cfg.symbol_duration_sec) % (2.0 * np.pi)
+
     data_sym_idx = 0
     for frame_sym_idx in range(cfg.total_symbols):
         if frame_sym_idx in sync_pos_set:
             continue
-            
-        # Interpolate pilot phase
+
+        # Interpolate pilot phase, propagated to this symbol's position via the known
+        # per-symbol continuous-phase increment.
         closest_p = np.argmin(np.abs(np.array(pilot_frames) - frame_sym_idx))
-        interp_phase = pilot_phases[closest_p]
+        raw_phase = pilot_phases[closest_p] - base_phase_step * (frame_sym_idx - pilot_frames[closest_p])
+        interp_phase = np.arctan2(np.sin(raw_phase), np.cos(raw_phase))
         min_pilot_dist = abs(pilot_frames[closest_p] - frame_sym_idx)
         pilot_coherence = max(0.35, min(0.85, 1.0 / (1.0 + 0.15 * min_pilot_dist)))
         
@@ -122,7 +134,7 @@ def demodulate_mfsk_llrs(noisy_wave: np.ndarray, cfg: Z30Config, sigma: float, a
         
         tone_log_likes = np.zeros(16, dtype=np.float64)
         for tone in range(16):
-            tone_freq = audio_center_hz + (tone - 7.5) * cfg.tone_spacing_hz
+            tone_freq = audio_center_hz + tone * cfg.tone_spacing_hz
             corr_cos = float(np.sum(segment * np.cos(2.0 * np.pi * tone_freq * time_vec)))
             corr_sin = float(np.sum(segment * np.sin(2.0 * np.pi * tone_freq * time_vec)))
             raw_energy = corr_cos ** 2 + corr_sin ** 2

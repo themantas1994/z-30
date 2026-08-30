@@ -139,7 +139,7 @@ python3 build_all_platforms.py
     ├── dsp/                      # Pure Web Audio & DSP algorithms
     │   ├── audioEngine.ts        # Web Audio API 12/48 kHz pipeline & synthesis
     │   ├── z30Constants.ts       # Mathematical constants, Costas arrays, band plans
-    │   ├── z30Codec.ts           # 58-bit Base-40 message packing & CRC-14 engine
+    │   ├── z30Codec.ts           # 63-bit Radix-37/27 message packing & CRC-14 engine
     │   ├── ldpcCodec.ts          # Systematic (216, 77) Belief Propagation decoder
     │   ├── sicDecoder.ts         # Multi-pass Successive Interference Cancellation
     │   ├── rfTimeSyncEngine.ts   # Audio DSP time station cross-correlation engine
@@ -179,4 +179,4 @@ Please use Conventional Commits:
 1. All TypeScript code must pass `npm run lint` without errors or warnings.
 2. Production bundle must build cleanly via `npm run build`.
 3. Python modifications must maintain compatibility with Python 3.9 through 3.13.
-4. If modifying DSP code, run `python3 -m z30_dsp.benchmark` to verify decoding threshold does not regress below **-29.5 dB SNR**.
+4. If modifying DSP code, run `python3 -m z30_dsp.benchmark` to verify decoding threshold does not regress below **-25.0 dB SNR (50%) / -24.0 dB SNR (90%)**.

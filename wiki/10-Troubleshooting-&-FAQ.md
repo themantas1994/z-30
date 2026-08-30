@@ -7,7 +7,7 @@ This document addresses common questions, operating issues, hardware setup chall
 ## ❓ Frequently Asked Questions (FAQ)
 
 ### Q1: Why does z-30 use a 30-second cycle instead of 15 seconds like FT8?
-**A**: By doubling the cycle duration to 30.0 seconds and halving the symbol rate from 6.25 baud to 3.125 baud, z-30 achieves an **8.5 dB sensitivity advantage over FT8** (decoding down to **-29.5 dB SNR**). This allows contacts to complete through deep solar minima, polar flutter, and marginal antenna configurations where FT8 fails.
+**A**: By doubling the cycle duration to 30.0 seconds and halving the symbol rate from 6.25 baud to 3.125 baud, z-30 achieves a **4.0 dB sensitivity advantage over FT8** (decoding down to **-25.0 dB SNR** at 50% / **-24.0 dB SNR** at 90%, per the empirical Monte Carlo LDPC benchmark). This allows contacts to complete through deep solar minima, polar flutter, and marginal antenna configurations where FT8 fails.
 
 ### Q2: Why is the occupied bandwidth only 50 Hz?
 **A**: 16 orthogonal tones spaced at $3.125\text{ Hz}$ occupy exactly $16 \times 3.125 = 50.0\text{ Hz}$. This allows up to **50 simultaneous contacts** inside a standard 2.7 kHz SSB transceiver passband without mutual interference.

@@ -8,7 +8,7 @@ An in-depth technical analysis for **advanced amateur radio operators, RF engine
 
 | Metric / Parameter | FT8 (Franke-Taylor 8-FSK) | z-30 (16-MFSK Weak-Signal) | Physics & Engineering Delta |
 | :--- | :--- | :--- | :--- |
-| **Decoding Threshold ($SNR_{2500}$)** | **-21.0 dB** | **-29.5 dB** | **+8.5 dB link margin advantage** |
+| **Decoding Threshold ($SNR_{2500}$)** | **-21.0 dB** | **-25.0 dB (50%) / -24.0 dB (90%)** | **+4.0 dB link margin advantage** |
 | **Transmission Slot Duration** | 15.0 s (12.64 s active TX) | 30.0 s (24.0 s active TX) | $2\times$ integration time ($+3.01\text{ dB}$) |
 | **Modulation Format** | 8-MFSK (Continuous Phase) | 16-MFSK (Continuous Phase) | Higher-order orthogonal signaling efficiency |
 | **Occupied Bandwidth** | 47.0 Hz ($8 \times 6.25\text{ Hz}$) | 50.0 Hz ($16 \times 3.125\text{ Hz}$) | Ultra-narrowband density (50 channels in 2.7 kHz) |
@@ -19,7 +19,7 @@ An in-depth technical analysis for **advanced amateur radio operators, RF engine
 | **Information Bits ($K$)** | 77 bits ($75\text{ msg} + 2\text{ flag}$) | 77 bits ($58\text{ msg} + 14\text{ CRC} + 5\text{ flag}$) | Identical payload capacity with stronger CRC protection |
 | **FEC Code** | Systematic LDPC (174, 91) | Quasi-Cyclic LDPC (216, 77) | **Rate $R \approx 0.356$ vs $0.523$** ($+2.4\text{ dB}$ coding gain) |
 | **Parity Check Fraction** | 47.7% parity overhead | **64.4% parity overhead** | Significantly steeper waterfall BER curve |
-| **CRC Polynomial** | 14-bit ($P_{\text{false}} \approx 6 \times 10^{-5}$) | 14-bit CRC-14 ($P_{\text{false}} < 10^{-6}$) | Zero false decodes at the $-29.5\text{ dB}$ limit |
+| **CRC Polynomial** | 14-bit ($P_{\text{false}} \approx 6 \times 10^{-5}$) | 14-bit CRC-14 ($P_{\text{false}} < 10^{-6}$) | Zero false decodes at the $-25.0\text{ dB}$ limit |
 | **Co-Channel Collision Recovery** | None (collisions fail to decode) | **3-Pass Successive Interference Cancellation (SIC)** | Co-channel collision resolution down to $-31.5\text{ dB}$ |
 | **Clock Drift Tolerance** | $\pm 1.0\text{ s}$ (requires NTP/GPS) | $\pm 1.5\text{ s}$ + Built-in RF Time Sync | Zero-admin offline HF/LF time calibration |
 
@@ -53,7 +53,7 @@ Calculating the theoretical Shannon threshold in a 2500 Hz reference bandwidth f
 - **FT8 Theoretical Shannon Limit**: $\text{SNR}_{2500,\text{Shannon}} = -1.59\text{ dB} + 10\log_{10}\left(\frac{6.09}{2500}\right) = -27.72\text{ dB}$
 - **z-30 Theoretical Shannon Limit**: $\text{SNR}_{2500,\text{Shannon}} = -1.59\text{ dB} + 10\log_{10}\left(\frac{3.21}{2500}\right) = -30.51\text{ dB}$
 
-**Physical Insight**: FT8 decodes down to $-21.0\text{ dB}$, operating **$6.72\text{ dB}$ above the theoretical Shannon limit**. z-30 decodes down to $-29.5\text{ dB}$, operating within **$1.01\text{ dB}$ of the absolute Shannon channel capacity limit**—representing one of the most power-efficient signaling schemes ever deployed in open-source amateur radio.
+**Physical Insight**: FT8 decodes down to $-21.0\text{ dB}$, operating **$6.72\text{ dB}$ above the theoretical Shannon limit**. z-30 decodes down to $-25.0\text{ dB}$ (50% threshold), operating **$5.51\text{ dB}$ above its theoretical Shannon limit**—a comparable, empirically-verified gap to Shannon capacity, achieved via the lower-rate (216, 77) LDPC code and doubled symbol integration time rather than by approaching the unconstrained capacity bound.
 
 ---
 
@@ -165,7 +165,7 @@ Because $-35.0\text{ dB} \ll -21.0\text{ dB}$, FT8 completely fails to decode ei
 
 $$x_{\text{residual}}(t) = x_{\text{rx}}(t) - \hat{A}(t) \cos\left(2\pi \hat{f}_0 (t - \hat{\Delta t}) + \theta_{\text{mod}}(t) + \hat{\phi}(t)\right)$$
 
-4. **Pass 2 & Pass 3**: The residual buffer $x_{\text{residual}}(t)$ is transformed through the STDFT filterbank. The unmasked DX signal at $-25\text{ dB SNR}$ is now isolated in an interference-free noise environment ($\text{SINR} \approx -25\text{ dB} > -29.5\text{ dB}$) and decodes cleanly.
+4. **Pass 2 & Pass 3**: The residual buffer $x_{\text{residual}}(t)$ is transformed through the STDFT filterbank. The unmasked DX signal at $-25\text{ dB SNR}$ is now isolated in an interference-free noise environment, at the same $-25.0\text{ dB}$ (50%) / $-24.0\text{ dB}$ (90%) AWGN decode floor the receiver already achieves on an uncontested channel, and decodes with the corresponding empirical success probability once the dominant interferer is cancelled.
 
 ---
 
@@ -192,28 +192,28 @@ Data Blocks:       D1       D2        D3         D4         D5         D6
 
 ---
 
-## 📻 7. Real-World RF Link Budget: What +8.5 dB Means on the Air
+## 📻 7. Real-World RF Link Budget: What +4.0 dB Means on the Air
 
-In RF engineering and amateur radio practice, an **$+8.5\text{ dB}$ sensitivity improvement** represents a transformative operational advantage.
+In RF engineering and amateur radio practice, a **$+4.0\text{ dB}$ sensitivity improvement** represents a meaningful operational advantage.
 
-$$\Delta P_{\text{dB}} = 10 \log_{10}\left(\frac{P_1}{P_2}\right) \implies \frac{P_1}{P_2} = 10^{8.5 / 10} \approx 7.08$$
+$$\Delta P_{\text{dB}} = 10 \log_{10}\left(\frac{P_1}{P_2}\right) \implies \frac{P_1}{P_2} = 10^{4.0 / 10} \approx 2.51$$
 
 ### 7.1 Equivalent Transmit Power (ERP) Comparison
 To achieve the same communication probability as a **100 Watt** z-30 station, an FT8 station would need to transmit:
 
-$$P_{\text{FT8, equivalent}} = 100\text{ W} \times 7.08 = \mathbf{708\text{ Watts}}$$
+$$P_{\text{FT8, equivalent}} = 100\text{ W} \times 2.51 \approx \mathbf{251\text{ Watts}}$$
 
-Conversely, a QRP operator running **5 Watts** on z-30 achieves the same link margin as an FT8 station running **35.5 Watts**.
+Conversely, a QRP operator running **5 Watts** on z-30 achieves the same link margin as an FT8 station running **~12.6 Watts**.
 
 ### 7.2 Antenna Gain Equivalency
-$+8.5\text{ dB}$ of link margin is equivalent to:
-- Upgrading from a unity-gain dipole ($0\text{ dBd}$) to a **4-element monoband Yagi antenna at 60 feet ($+8.5\text{ dBd}$)**.
-- Overcoming **1.4 S-units of atmospheric / galactic background noise** on 160m, 80m, or 6m.
+$+4.0\text{ dB}$ of link margin is equivalent to:
+- Upgrading from a unity-gain dipole ($0\text{ dBd}$) to a small 2-element Yagi or quad ($+4.0\text{ dBd}$).
+- Overcoming **~0.7 S-units of atmospheric / galactic background noise** on 160m, 80m, or 6m.
 
 ### 7.3 Antipodal & Grey-Line Opening Extensions
 During marginal solar cycle minimums, low Maximum Usable Frequency (MUF) conditions, or transatlantic/transpacific grey-line propagation transitions:
 - FT8 propagation windows typically open for 15 to 30 minutes when path loss is minimal.
-- **z-30 extends the usable opening window by 2 to 4 hours**, allowing contacts when signals are buried deep in the cosmic noise floor.
+- **z-30 extends the usable opening window by roughly 1 to 2 hours**, allowing contacts when signals are buried deeper in the noise floor than FT8 can reach.
 
 ---
 
@@ -231,7 +231,7 @@ During marginal solar cycle minimums, low Maximum Usable Frequency (MUF) conditi
    JS8Call (Slow):                   -24.0 dB   │ Modes
    WSPR (2-Minute Beacon Only):      -28.0 dB ──┘
    ─────────────────────────────────────────────────────────────────────────────
-   z-30 (Two-Way Interactive QSO):   -29.5 dB ◄── [ 8.5 dB Ahead of FT8 ]
+   z-30 (Two-Way Interactive QSO):   -25.0 dB ◄── [ 4.0 dB Ahead of FT8 ]
    ─────────────────────────────────────────────────────────────────────────────
    Theoretical Shannon Capacity:     -30.5 dB
 ```

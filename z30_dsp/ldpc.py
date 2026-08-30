@@ -14,7 +14,8 @@ Mathematical Specification & Design Rationale:
 
 2. Parity-Check Matrix H:
    H = [ H_info (139 x 77) | H_parity (139 x 139) ]
-   - H_info: Degree-5 sparse binary matrix. Check node p connects to information indices (p*17 + k*23 + 7) mod 77.
+   - H_info: Degree-5 sparse binary matrix defined by Z30_CHECK_TO_INFO, a precomputed Girth-6 connection
+     table mapping each of the 139 check nodes to 5 information bit indices (no length-4 cycles).
    - H_parity: Dual-diagonal bidiagonal accumulator structure:
        H_parity[p, p] = 1 for all 0 <= p < 139
        H_parity[p, p-1] = 1 for all 1 <= p < 139

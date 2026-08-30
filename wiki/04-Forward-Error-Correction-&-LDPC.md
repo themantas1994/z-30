@@ -4,32 +4,36 @@ This document details the source coding, message compression, Low-Density Parity
 
 ---
 
-## 📦 Message Structure & 58-Bit Source Packing
+## 📦 Message Structure & 63-Bit Source Packing
 
-Amateur radio transmissions in z-30 encode structured contact messages into a compact **58-bit information vector**, structured as follows:
+Amateur radio transmissions in z-30 encode structured contact messages into a compact **63-bit information vector** (`z30Codec.ts:encodeCallsign28`, `z30_dsp/ldpc.py`), structured as follows:
 
 | Field | Bit Length | Representation / Compression |
 | :--- | :--- | :--- |
-| **Callsign 1 (Sender / CQ)** | 28 bits | Base-40 alphanumeric character mapping |
-| **Callsign 2 (Recipient)** | 28 bits | Base-40 alphanumeric character mapping |
-| **Grid / Report / Modifiers** | 2 bits (or dynamic) | 4-char Maidenhead grid / SNR ($-50$ to $+49\text{ dB}$) / `RR73` / `73` |
-| **Total Information Bits ($K$)** | **58 bits** | Encodes standard QSO exchanges with zero ambiguity |
+| **Callsign 1 (Destination)** | 28 bits | Radix-37 prefix + digit + Radix-27 suffix packing |
+| **Callsign 2 (Source)** | 28 bits | Radix-37 prefix + digit + Radix-27 suffix packing |
+| **Grid / Report / Extra** | 7 bits | 4-char Maidenhead grid (indexed table + hashed fallback) or SNR report, 0-127 states |
+| **Total Information Bits ($K$)** | **63 bits** | Encodes standard QSO exchanges with zero ambiguity |
 
-### Base-40 Callsign Encoding
-Standard amateur callsigns (e.g., `W1AW`, `3X4ABC`, `DL1XYZ/P`) use an alphabet of 40 symbols: `[0-9]`, `[A-Z]`, space, `/`, `.`, `-`.
-A standard 6-character callsign $c_0 c_1 c_2 c_3 c_4 c_5$ is packed into an integer:
+### Radix-37 / Radix-27 Callsign Encoding
+Standard amateur callsigns (e.g., `W1AW`, `K1ABC`, `EA8/G4XYZ`) are decomposed into a 1-2 character prefix, a single digit, and a 1-3 character alphabetic suffix:
 
-$$N = \sum_{i=0}^{5} c_i \cdot 40^{5-i} < 2^{28}$$
+$$N = \big( (p \cdot 37 + p') \cdot 10 + d \big) \cdot 27^3 + (s_0 \cdot 27^2 + s_1 \cdot 27 + s_2) + 4$$
+
+Where $p, p'$ are Radix-37 prefix characters (`[A-Z0-9 ]`), $d$ is the decimal digit, and $s_0, s_1, s_2$ are Radix-27 suffix characters (`[A-Z ]`). Total addressable states: $37^2 \times 10 \times 27^3 = 269{,}460{,}270$, fitting within 28 bits ($2^{28} = 268{,}435{,}456$ ceiling is exceeded only by reserved low tokens `CQ`/`CQ DX`/`CQ TEST`/`QRZ`, which are assigned dedicated values 0-3).
+
+### 7-Bit Grid / Report Field
+4-character Maidenhead grids are looked up in a 64-entry table of common global locators (values 64-127); grids outside the table hash to the same 64-127 range. Signal reports and modifiers (`RR73`, `73`, etc.) use the same 7-bit field via a separate encoding path.
 
 ---
 
 ## 🛡️ 14-Bit Cyclic Redundancy Check (CRC-14)
 
-To eliminate false decodes under severe noise conditions, the 58-bit information vector is appended with a **14-bit CRC**:
+To eliminate false decodes under severe noise conditions, the 63-bit information vector is appended with a **14-bit CRC**:
 
-$$P(x) = x^{14} + x^{11} + x^2 + 1 \quad (\text{Hex polynomial: } \mathtt{0x2443})$$
+$$P(x) = x^{14} + x^{11} + x^2 + 1 \quad (\text{Hex polynomial: } \mathtt{0x2443}, \text{ initial seed } \mathtt{0x2757})$$
 
-- **Protected Codeword Size**: $K_{\text{total}} = 58 + 14 = 72 \text{ bits}$ (padded to 77 bits with 5 auxiliary signaling bits).
+- **Protected Codeword Size**: $K_{\text{total}} = 63 + 14 = 77 \text{ bits}$ (no padding required).
 - **False Decode Probability**: $P_{\text{false}} \le 2^{-14} \approx 6.1 \times 10^{-5}$ per candidate, and $< 10^{-6}$ after Costas coherence validation.
 
 ---
@@ -38,7 +42,7 @@ $$P(x) = x^{14} + x^{11} + x^2 + 1 \quad (\text{Hex polynomial: } \mathtt{0x2443
 
 The forward error correction engine uses a systematic **Rate-0.356 Irregular Repeat-Accumulate (IRA) Low-Density Parity-Check code**:
 - **Codeword Length ($N$)**: 216 channel bits ($54 \text{ data symbols} \times 4 \text{ bits/symbol}$).
-- **Information Bits ($K$)**: 77 bits ($58 \text{ message} + 14 \text{ CRC} + 5 \text{ flag}$).
+- **Information Bits ($K$)**: 77 bits ($63 \text{ payload} + 14 \text{ CRC}$).
 - **Parity Equations ($M$)**: $216 - 77 = 139$ parity-check constraints.
 - **Code Rate ($R$)**: $77 / 216 \approx 0.356$.
 

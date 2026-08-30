@@ -635,18 +635,51 @@ class Step2AudioPage(WizardBasePage):
         self.test_audio_btn.config(text="▶ Test Audio Input")
         self._draw_vu_level(0.0)
 
-    def _audio_meter_loop(self) -> None:
-        """Simulates/reads real-time audio input level and updates Tkinter meter safely."""
-        sim_phase = 0.0
-        while self.is_testing_audio:
-            sim_phase += 0.15
-            # Synthesize realistic background noise level around -42 dB to -18 dB
-            val = math.sin(sim_phase) * 0.4 + math.cos(sim_phase * 2.3) * 0.2 + 0.35
-            val = max(0.05, min(1.0, val))
+    def _get_selected_input_device_index(self) -> Optional[int]:
+        """Resolves the currently selected input combobox entry back to its sounddevice index."""
+        selected_label = self.in_combo.get()
+        for idx, label, _ch in getattr(self, "raw_inputs", []):
+            if label == selected_label:
+                return idx
+        return None
 
-            # Schedule UI update on main thread
-            self.after(0, self._draw_vu_level, val)
-            time.sleep(0.05)
+    def _audio_meter_loop(self) -> None:
+        """
+        Reads the REAL peak level from the selected audio input device via sounddevice and
+        updates the Tkinter VU meter. A prior version of this method never touched the audio
+        hardware at all - it animated a fabricated sine-wave level, which would show a
+        healthy-looking meter even with the microphone muted, disconnected, or misconfigured.
+        """
+        device_idx = self._get_selected_input_device_index()
+
+        try:
+            import sounddevice as sd
+            import numpy as np
+
+            level_holder = {"peak": 0.0}
+
+            def _callback(indata, frames, time_info, status):
+                level_holder["peak"] = float(np.max(np.abs(indata))) if len(indata) else 0.0
+
+            with sd.InputStream(device=device_idx, channels=1, samplerate=48000, callback=_callback):
+                while self.is_testing_audio:
+                    self.after(0, self._draw_vu_level, min(1.0, level_holder["peak"]))
+                    time.sleep(0.05)
+        except Exception as ex:
+            self.after(0, self._on_audio_test_error, str(ex))
+
+    def _on_audio_test_error(self, message: str) -> None:
+        """Reports a real audio input stream failure honestly instead of faking a level."""
+        self.is_testing_audio = False
+        self.test_audio_btn.config(text="▶ Test Audio Input")
+        self._draw_vu_level(0.0)
+        self.vu_label.config(text="N/A")
+        messagebox.showwarning(
+            "Audio Input Test Unavailable",
+            f"Could not open a real audio input stream to measure levels: {message}\n\n"
+            "Install the 'sounddevice' package (pip install sounddevice) and verify the "
+            "selected input device is available.",
+        )
 
     def _draw_vu_level(self, level: float) -> None:
         """Renders color-coded level meter on Canvas (Green -> Yellow -> Red)."""

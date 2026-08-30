@@ -19,7 +19,7 @@ This document provides the complete mathematical and signal processing specifica
 | **Guard / Processing Time** | $T_{\text{guard}}$ | **6.0 s** | FFT Framing + 3-Pass SIC + LDPC decode |
 | **Bits per Symbol** | $\log_2(M)$ | **4 bits/symbol** | $54 \times 4 = 216$ coded channel bits |
 | **FEC Code** | — | **QC-LDPC (216, 77)** | Rate $R \approx 0.356$ |
-| **AWGN Sensitivity Limit** | — | **-29.5 dB SNR** | In standard $2500\text{ Hz}$ noise bandwidth |
+| **AWGN Sensitivity Limit** | — | **-25.0 dB SNR (50%) / -24.0 dB SNR (90%)** | In standard $2500\text{ Hz}$ noise bandwidth |
 
 ---
 
@@ -49,7 +49,7 @@ Indices: [0, 1, 2,  7, 8, 9,  17, 18, 19,  27, 28, 29,  37, 38, 39,  47, 48, 49,
 
 ### Costas Tone Pattern:
 ```
-Sync Tones: [3, 14, 1,  9, 6, 12,  2, 11, 5,  13, 0, 8,  4, 15, 7,  10, 3, 14,  1, 9, 6]
+Sync Tones: [3, 11, 7,  14, 2, 9,  5, 12, 1,  15, 6, 10,  4, 8, 13,  0, 9, 3,  14, 6, 11]
 ```
 
 ### Purpose of Interleaved Sync:
