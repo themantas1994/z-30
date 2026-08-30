@@ -7,7 +7,8 @@
  *   - Bits 0..27 (28 bits): Destination callsign integer (Base-37 standard amateur callsign representation)
  *   - Bits 28..55 (28 bits): Source callsign integer (Base-37 representation)
  *   - Bits 56..62 (7 bits): Extra field / Grid / SNR report (-30 to +30 dB or 64 compressed common grids)
- *   - Bits 63..76 (14 bits): Cyclic Redundancy Check (CRC-14) polynomial: 0x2443 with seed 0x2757
+ *   - Bits 63..76 (14 bits): CRC-14, g(x) = x^14 + x^13 + x^10 + x^6 + x + 1 (register
+ *     constant 0x2443, x^14 implicit; init 0x2757, MSB-first)
  * 
  * Channel Coding:
  * - Systematic (N=216, K=77) Irregular Repeat Accumulate (IRA) LDPC Code
@@ -192,7 +193,10 @@ export function decodeGrid(val: number): string {
  * Computes a 14-bit Cyclic Redundancy Check (CRC-14) over an arbitrary bit sequence.
  * 
  * Polynomial Definition:
- * - Generator: P(x) = x^14 + x^11 + x^2 + 1 (Hex: 0x2443)
+ * - Generator, as implemented: g(x) = x^14 + x^13 + x^10 + x^6 + x + 1 (register constant
+ *   0x2443 - the low 14 coefficients, with x^14 implicit). Earlier revisions of this comment
+ *   said "x^14 + x^11 + x^2 + 1", which is a different polynomial (register constant 0x0805)
+ *   and not what this code computes. See z30_dsp/ldpc.py, which implements the same CRC.
  * - Initial Seed: 0x2757
  * - Residual Error Probability: P_undetected < 6.1 x 10^-5
  * 
@@ -201,7 +205,7 @@ export function decodeGrid(val: number): string {
  */
 export function computeCrc14(bits: number[]): number {
   let crc = 0x2757; // Initialization vector
-  const poly = 0x2443; // x^14 + x^11 + x^2 + 1
+  const poly = 0x2443; // x^14 + x^13 + x^10 + x^6 + x + 1, with x^14 implicit
   for (const b of bits) {
     const msb = (crc >> 13) & 1;
     crc = ((crc << 1) & 0x3fff) ^ (msb ^ (b & 1) ? poly : 0);

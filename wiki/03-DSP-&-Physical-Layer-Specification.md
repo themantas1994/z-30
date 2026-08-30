@@ -24,6 +24,42 @@ This document provides the complete mathematical and signal processing specifica
 
 ---
 
+## 🔄 End-to-End Signal Chain
+
+```
+                                      z-30 DSP Transmit / Receive Flow
+                                      ================================
+
+       [ Structured QSO Message ]                           [ Raw Audio In (12 / 48 kHz / 16-bit) ]
+                 |                                                          |
+       [ 63-bit Radix-37/27 Packing ]                             [ Audio Buffer (24.0s Window) ]
+                 |                                                          |
+       [ 14-bit CRC Parity Insertion ]                             [ Downsample & Matched Filter ]
+                 |                                                          |
+       [ R=0.356 IRA-LDPC Encoder (216, 77) ]                     [ FFT Energy Binning (16 Tones) ]
+                 |                                                          |
+       [ 21-Symbol Costas Synchronization ]                        [ Costas Array Sync Detection ]
+                 |                                                          |
+       [ 16-MFSK Continuous Phase FSK ]                            [ Non-Coherent Metric Slicer ]
+                 |                                                          |
+       [ Gaussian Frequency-Pulse Shaping ]                        [ Log-Likelihood Ratio (LLR) ]
+                 |                                                          |
+       [ Transceiver Soundcard / CAT ]                            [ Belief Propagation LDPC Decoder ]
+                                                                            |
+                                                                   +--------+--------+
+                                                                 Valid CRC?       Corrupt / Clash?
+                                                                   |                 |
+                                                            [ Output Decode ]   [ SIC Engine ]
+                                                                                     |
+                                                                           (Subtract & Re-decode)
+```
+
+The transmit path is implemented twice, once per stack, and the two must stay bit-exact:
+`z30_dsp/modem.py` and `src/dsp/z30Waveform.ts`. `tests/test_cross_language_parity.py` and
+`tests/crc14.test.mjs` hold them together against shared known-answer vectors.
+
+---
+
 ## 🌊 Waveform Synthesis & Keying
 
 The transmitted continuous-phase baseband signal $s(t)$ over the frame duration $0 \le t \le 24.0\text{ s}$ is defined as:
@@ -34,8 +70,49 @@ Where:
 - $S_k \in \{0, 1, \dots, 15\}$ is the integer tone index for symbol $k$.
 - $\Delta f = 3.125\text{ Hz}$ is the tone spacing.
 - $T_s = 0.320\text{ s}$ is the symbol period.
-- $g(t)$ is a raised-cosine shaping filter with roll-off factor $\beta = 0.20$ to suppress sideband splatter.
-- $A(t)$ is the envelope amplitude with a 20 ms raised-cosine ramp at the start ($t=0$) and end ($t=24.0\text{ s}$) to prevent key clicks.
+- $g(t)$ is a **Gaussian frequency pulse** with bandwidth-time product $BT = 2.0$ — the value
+  WSJT-X uses for FT8. The piecewise-constant tone sequence is convolved with $g(t)$ *before*
+  it is integrated into phase.
+- $A(t)$ is the envelope: **unity throughout the frame**, with a single 20 ms raised-cosine
+  ramp at the start ($t=0$) and at the end ($t=24.0\text{ s}$).
+
+Two properties define this waveform, and both are load-bearing:
+
+1. **Continuous phase.** One phase accumulator runs across the entire frame. A phase
+   discontinuity at a symbol boundary is an impulse in frequency and radiates across the whole
+   passband.
+2. **Constant amplitude.** Smoothing the *frequency* narrows the spectrum; smoothing the
+   *amplitude* per symbol is amplitude keying at 3.125 baud laid over the tone sequence, and
+   widens it. An earlier modulator did exactly that — an 8 ms ramp on every one of the 75
+   symbols — and discarded the benefit of the phase accumulator sitting next to it.
+
+Lowering $BT$ to 1.0 buys back roughly 6 Hz of -40 dB occupied bandwidth but costs about 2 dB
+of decode threshold, because the extra smoothing is inter-symbol interference the per-symbol
+matched-filter demodulator does not model. That is a bad trade for a weak-signal mode.
+`tests/test_modem_spectrum.py` asserts the 99% occupied bandwidth (**49.8 Hz** measured) and
+the -40 dB bandwidth (**66 Hz**) against fixed budgets, and asserts that the old per-symbol
+gated waveform *fails* them — so the test can demonstrably tell the difference.
+
+---
+
+## ⏱️ Synchronous 30-Second Cycle Timing
+
+The UTC clock is divided into even and odd 30-second transmission slots:
+
+- **`EVEN` slot**: begins exactly at `:00` of each UTC minute (span `:00`–`:30`).
+- **`ODD` slot**: begins exactly at `:30` of each UTC minute (span `:30`–`:00`).
+
+Within a slot:
+
+| Window | Span | Purpose |
+| :--- | :--- | :--- |
+| **Active transmission** | $0.00\text{ s}$ – $24.00\text{ s}$ | The 75-symbol frame |
+| **Decode & SIC processing** | $24.00\text{ s}$ – $28.50\text{ s}$ | $4.50\text{ s}$ compute budget for FFT framing, LDPC and 3-pass SIC |
+| **Sequencing & CAT guard** | $28.50\text{ s}$ – $30.00\text{ s}$ | $1.50\text{ s}$ of rig turnaround |
+
+Slot alignment is what makes the mode work at all; see
+[07. RF Time Synchronization Engine](07-RF-Time-Synchronization-Engine.md) for how z-30
+calibrates its clock without internet access.
 
 ---
 

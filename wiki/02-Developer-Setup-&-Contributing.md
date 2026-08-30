@@ -164,6 +164,43 @@ python3 build_all_platforms.py
 
 ---
 
+## 📚 Documentation: where things belong
+
+**This wiki is the source of truth for z-30's documentation.** The repository `README.md` is a
+front page: it introduces the project, gets a new operator to a working install, and links
+here. It deliberately does not carry reference material.
+
+| If you are writing... | It belongs in... |
+| :--- | :--- |
+| A protocol, DSP or FEC detail | `wiki/03`, `wiki/04`, `wiki/05` |
+| Install or packaging steps for a platform | `wiki/09` |
+| A UI control, macro or operating procedure | `wiki/14`, or `wiki/01` if it is onboarding |
+| Hardware, CAT or PTT wiring | `wiki/06` |
+| A safety, compliance or local-security behaviour | `wiki/13` |
+| A CLI flag, config key or environment variable | `wiki/15` |
+| A benchmark figure, test or CI check | `wiki/16` |
+| A sentence that makes someone want to try z-30 | `README.md` |
+
+Two rules follow from that:
+
+1. **Do not duplicate reference material into the README.** If the README and a wiki page
+   disagree, the wiki page is correct and the README is the bug. Link instead of copying.
+2. **`src/data/wikiArticles.ts` is generated.** The in-app wiki viewer needs the documentation
+   as JavaScript strings because the browser cannot read the repository. After editing anything
+   under `wiki/`, run `npm run generate:wiki` (or `npm run build`, which does it first) and
+   commit the regenerated file. CI runs `npm run check:generated` and fails if you forget. The
+   same applies to `src/data/pythonSource.ts` and `npm run generate:python-source`.
+
+Adding a **new** wiki page also means registering it in the `ARTICLES` list in
+`scripts/generate_wiki_articles.mjs` (id, file, slug, title, category, description, tags), and
+adding it to `wiki/Home.md` and `wiki/_Sidebar.md`. Existing `slug` values are routing keys for
+in-app links — do not change one without changing every reference to it.
+
+`AGENTS.md` in the repository root is the condensed version of all of this, written for coding
+assistants and for anyone who wants the invariants on one page.
+
+---
+
 ## 🤝 Contribution Guidelines
 
 We welcome contributions of all kinds! Please follow these standards:
@@ -184,3 +221,5 @@ Please use Conventional Commits:
 2. Production bundle must build cleanly via `npm run build`.
 3. Python modifications must maintain compatibility with Python 3.9 through 3.13.
 4. If modifying DSP code, run `python -m pytest tests` (which includes the codec round trip, the occupied-bandwidth budget, and the acquisition tests) and `python -m z30_dsp.benchmark --mode realistic --fading none --min-snr -28 --max-snr -17 --frames 40 --seed 20260830` to check the decode threshold has not regressed below **-21.1 dB SNR (50%) / -18.0 dB SNR (90%)**. That is measured through the real acquisition path with random carrier and timing offsets. `--mode ideal` gives the genie-aided bound (-24.6 dB / -23.4 dB) for comparison; it is not an on-air threshold.
+5. Documentation changes go in `wiki/`, not the README, and the generated in-app copy is regenerated (`npm run generate:wiki`) and committed. See [Documentation: where things belong](#-documentation-where-things-belong).
+6. Any change to the transmit gate, the local API, the GPIO bridge or the time-sync guards keeps its tests passing unchanged, or explains in the pull request why the guarantee in [13. Operating Safety, Compliance & Local Security](13-Operating-Safety-Compliance-&-Security.md) is still met.

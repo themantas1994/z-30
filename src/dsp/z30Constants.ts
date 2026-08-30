@@ -11,7 +11,8 @@
  * - Active Transmission Duration: 75 * 0.320 s = 24.0 seconds, leaving a 6.0-second processing window for propagation delay,
  *   Successive Interference Cancellation (SIC) iterations, and normalized Min-Sum LDPC belief propagation.
  * - Channel Coding: Systematic Irregular Repeat Accumulate (IRA) Low-Density Parity-Check code: (N=216, K=77), rate R = 77/216 ~ 0.356.
- * - Payload: 63 user information bits + 14-bit CRC polynomial (0x2757 / generator 1 + x^1 + x^3 + x^4 + x^6 + x^7 + x^8 + x^10 + x^11 + x^13 + x^14).
+ * - Payload: 63 user information bits + a 14-bit CRC, g(x) = x^14 + x^13 + x^10 + x^6 + x + 1
+ *   (register constant 0x2443 with x^14 implicit, init 0x2757, MSB-first).
  * - Sensitivity: the seeded AWGN benchmark with perfect synchronisation crosses 50% decode
  *   near -24.6 dB SNR in a 2500 Hz reference bandwidth. That is an idealised bound, not an
  *   over-the-air threshold, and is not comparable with FT8's published -21.0 dB, which
