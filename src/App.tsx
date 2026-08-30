@@ -541,7 +541,6 @@ export default function App() {
         onOpenSettings={() => setIsSettingsOpen(true)}
         onOpenWizard={() => setIsWizardOpen(true)}
         onOpenSpecs={() => setIsSpecsOpen(true)}
-        onOpenBenchmark={() => setIsBenchmarkOpen(true)}
         onOpenWiki={(slug) => {
           if (slug) setWikiSlug(slug);
           setIsWikiOpen(true);
@@ -687,6 +686,7 @@ export default function App() {
         onSaveConfig={handleSaveStationConfig}
         onExecuteDecodeNow={executeDecodeCycle}
         onOpenUpdate={() => setIsUpdateOpen(true)}
+        onOpenBenchmark={() => setIsBenchmarkOpen(true)}
         onOpenWizard={() => {
           setIsSettingsOpen(false);
           setIsWizardOpen(true);
@@ -703,7 +703,6 @@ export default function App() {
       <SpecsModal
         isOpen={isSpecsOpen}
         onClose={() => setIsSpecsOpen(false)}
-        onOpenBenchmark={() => setIsBenchmarkOpen(true)}
       />
 
       <MonteCarloBenchmarkModal

@@ -29,6 +29,7 @@ import {
   Lock,
   Unlock,
   ShieldAlert,
+  BarChart2,
 } from 'lucide-react';
 import { AUTO_REPLY_OPTIONS, PTT_METHODS_CATALOG } from '../dsp/z30Constants';
 import { audioEngine, SystemAudioDevice, AudioSystemDiagnostics } from '../dsp/audioEngine';
@@ -65,6 +66,7 @@ interface StationSettingsModalProps {
   onOpenWizard?: () => void;
   onExecuteDecodeNow?: () => void;
   onOpenUpdate?: () => void;
+  onOpenBenchmark?: () => void;
 }
 
 // Helpers for validation
@@ -98,6 +100,7 @@ export const StationSettingsModal: React.FC<StationSettingsModalProps> = ({
   onOpenWizard,
   onExecuteDecodeNow,
   onOpenUpdate,
+  onOpenBenchmark,
 }) => {
   const [form, setForm] = useState<StationConfig>({ ...config });
   const [activeTab, setActiveTab] = useState<'STATION' | 'AUDIO' | 'RADIO' | 'AUTOMATION' | 'TESTING'>('STATION');
@@ -1820,6 +1823,56 @@ export const StationSettingsModal: React.FC<StationSettingsModalProps> = ({
                     <Lock className="w-3.5 h-3.5" />
                     <span>Lock & Secure Mode</span>
                   </button>
+                </div>
+              )}
+
+              {/* Monte Carlo decoder benchmark.
+
+                  Lives here rather than in the top navigation bar because it is a bench
+                  instrument, not an operating control: it synthesises frames in memory and
+                  never touches the soundcard, the CAT link or PTT. It is deliberately NOT
+                  behind the unlock above - that agreement covers injecting synthetic signals
+                  into the live receive path, which this does not do. */}
+              {onOpenBenchmark && (
+                <div className="bg-[#050505] p-3 border border-[#00FF41]/30 space-y-2">
+                  <div className="flex items-center justify-between gap-2 flex-wrap">
+                    <span className="font-bold text-[#00FF41] flex items-center space-x-1.5 uppercase text-[11px]">
+                      <BarChart2 className="w-3.5 h-3.5 text-[#00FF41]" />
+                      <span>Monte Carlo Waveform &amp; LDPC Decoder Benchmark</span>
+                    </span>
+                    <span className="text-[9px] text-[#888] bg-[#141414] px-1.5 py-0.5 border border-[#333]">
+                      Offline Simulation - No RF, No PTT
+                    </span>
+                  </div>
+
+                  <p className="text-[#888] text-[11px] leading-relaxed">
+                    Sweeps synthesised 16-MFSK frames through calibrated AWGN and the real
+                    Normalized Min-Sum LDPC (216, 77) decoder to plot frame-error-rate and
+                    decode-probability curves against SNR. The run is seeded, so the same
+                    configuration always reproduces the same curve - quote the seed, the frame
+                    count and the mode alongside any figure you publish from it.
+                  </p>
+
+                  <div className="bg-[#0D0B05] p-2 border border-yellow-800/50 text-[10px] text-yellow-200/90 leading-relaxed">
+                    This engine hands the demodulator the exact noise sigma and the exact
+                    carrier, so what it measures is a <strong>genie-aided bound</strong>, not an
+                    on-air decode threshold. It is not comparable with another mode's published
+                    figure - see
+                    <span className="text-yellow-300"> wiki/16 Benchmarking, Testing &amp; CI</span>.
+                  </div>
+
+                  <div className="flex justify-end">
+                    <button
+                      type="button"
+                      id="open-benchmark-btn"
+                      onClick={onOpenBenchmark}
+                      title="Monte Carlo Physical Waveform Generator, AWGN Calibrator & LDPC Decoder Benchmark"
+                      className="px-3 py-1.5 bg-[#00FF41]/10 hover:bg-[#00FF41]/20 text-[#00FF41] border border-[#00FF41]/50 text-xs font-bold uppercase tracking-wider flex items-center space-x-1.5 transition-colors active:scale-95"
+                    >
+                      <BarChart2 className="w-3.5 h-3.5" />
+                      <span>Launch Benchmark Suite</span>
+                    </button>
+                  </div>
                 </div>
               )}
 
