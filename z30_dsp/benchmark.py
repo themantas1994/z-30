@@ -28,10 +28,11 @@ decode threshold. The demodulator is handed things a real receiver has to work o
 Every one of those is a real loss in a real contact, and none of them is present in `ideal`.
 Quoting that figure beside a mode's published over-the-air threshold - FT8's -21 dB, say,
 which is WSJT-X's measured number and *includes* all of those losses - compares two different
-quantities and flatters this one. Measured on this code, the gap between the two modes is
-about 3.7 dB on AWGN, and about 7 dB once moderate fading is present: the bound is -24.7 dB
-while the blind-acquisition threshold is -21.0 dB on AWGN and -17.6 dB on a CCIR-moderate
-path. The README states the comparison in exactly these terms.
+quantities and flatters this one. Measured on this code at seed DEFAULT_BENCHMARK_SEED, 40
+frames per point: the bound is -24.6 dB, while the blind-acquisition threshold is -23.1 dB on
+AWGN. The gap between them - 1.5 dB - is the acquisition loss, what it costs to *find* a
+3.125 Hz-spaced signal rather than be told where it is. wiki/16 carries the full set,
+including the two fading presets, and the README states the comparison in the same terms.
 
 Reproducibility: every run is seeded (`--seed`, default DEFAULT_BENCHMARK_SEED). Record the
 seed alongside any published curve; an unseeded number cannot be reproduced, bisected, or
@@ -46,10 +47,42 @@ import numpy as np
 from z30_dsp.modem import Z30Modulator, Z30Config
 from z30_dsp.ldpc import Z30LdpcCodec
 from z30_dsp.channel import ChannelImpairments, impair_frame, WATTERSON_PRESETS
-from z30_dsp.acquisition import acquire_frame
+from z30_dsp.acquisition import acquire_frame, slot_timing_search_sec
 
 #: Default PRNG seed. Fixed so the default run is reproducible; override with --seed.
 DEFAULT_BENCHMARK_SEED: int = 20260830
+
+#: Weight of the coherent term in the per-tone likelihood, in `realistic` mode.
+#:
+#: Zero: z-30's receiver is specified to demodulate non-coherently, and under the timing error
+#: a blind acquisition actually leaves, the pilot-aided "coherent" contribution subtracts
+#: performance rather than adding it. A few milliseconds of timing error rotates each tone by
+#: 2*pi*f*dt, so the term is measured against the wrong phase reference and starts cancelling
+#: signal instead of reinforcing it.
+#:
+#: This is not a preference. It was measured paired - the same frame, fading realisation,
+#: carrier offset, timing offset, noise and acquisition result decoded twice, once with the
+#: pilot-distance-adaptive weight (0.35 to 0.85) this benchmark used to apply and once with
+#: zero - at SNR -24/-23/-22/-21 dB, 40 frames per point, seed DEFAULT_BENCHMARK_SEED:
+#:
+#:      SNR     semi-coherent   non-coherent   semi-only wins   non-coherent-only wins
+#:     -24 dB       10.0%           2.5%             3                    0
+#:     -23 dB        7.5%          37.5%             1                   13
+#:     -22 dB       27.5%          90.0%             0                   25
+#:     -21 dB       57.5%         100.0%             0                   17
+#:
+#: Pooled: 59 discordant pairs, 55 won by the non-coherent receiver and 4 by the semi-coherent
+#: one. An exact two-sided McNemar test gives p = 1.7e-12 - better than 99.9999999% confidence
+#: that the non-coherent receiver decodes more frames at these operating points, clearing the
+#: >=99% bar AGENTS.md section 5 sets for a result that changes a published figure. The -24 dB
+#: row is recorded rather than dropped: both receivers are near zero there, below the point
+#: where the Costas pattern is reliably findable at all, and the semi-coherent one took that
+#: point 3-0.
+#:
+#: `ideal` mode keeps the adaptive weight. It hands the demodulator perfect symbol timing, so
+#: the phase reference is exact and the coherent term is worth having - which is why the bound
+#: is a bound.
+REALISTIC_PILOT_COHERENCE: float = 0.0
 
 
 def generate_random_frame(
@@ -126,9 +159,16 @@ def demodulate_mfsk_llrs(
     sigma: float,
     audio_center_hz: float = 1250.0,
     start_sample: int = 0,
+    pilot_coherence: Optional[float] = None,
 ) -> np.ndarray:
     """
     Pilot-Aided Semi-Coherent 16-tone matched filter bank with exact Log-MAP LLR calculation.
+
+    Args:
+        pilot_coherence: weight of the coherent term in the per-tone likelihood, 0 to 1. `None`
+            keeps the pilot-distance-adaptive weight (0.35 to 0.85). Pass 0.0 for a purely
+            non-coherent receiver, which is what z-30 is specified to be (AGENTS.md section 1)
+            and what `realistic` mode measures - see NON_COHERENT_PILOT_WEIGHT.
     """
     samples_per_symbol = int(cfg.sample_rate_hz * cfg.symbol_duration_sec)
     sync_positions = cfg.sync_positions
@@ -187,7 +227,10 @@ def demodulate_mfsk_llrs(
         raw_phase = pilot_phases[closest_p] - base_phase_step * (frame_sym_idx - pilot_frames[closest_p])
         interp_phase = np.arctan2(np.sin(raw_phase), np.cos(raw_phase))
         min_pilot_dist = abs(pilot_frames[closest_p] - frame_sym_idx)
-        pilot_coherence = max(0.35, min(0.85, 1.0 / (1.0 + 0.15 * min_pilot_dist)))
+        sym_coherence = (
+            pilot_coherence if pilot_coherence is not None
+            else max(0.35, min(0.85, 1.0 / (1.0 + 0.15 * min_pilot_dist)))
+        )
         
         start_samp = start_sample + frame_sym_idx * samples_per_symbol
         segment = noisy_wave[start_samp:start_samp + samples_per_symbol]
@@ -209,7 +252,7 @@ def demodulate_mfsk_llrs(
             proj = corr_cos * np.cos(interp_phase) + corr_sin * np.sin(interp_phase)
             coherent = proj * s_corr
             
-            tone_log_likes[tone] = pilot_coherence * coherent + (1.0 - pilot_coherence) * non_coherent
+            tone_log_likes[tone] = sym_coherence * coherent + (1.0 - sym_coherence) * non_coherent
             
         # Exact Log-MAP demapping
         for bit in range(4):
@@ -260,7 +303,7 @@ def run_monte_carlo_snr_sweep(
     )
     cfg = Z30Config(sample_rate_hz=sample_rate_hz)
     modulator = Z30Modulator(cfg)
-    codec = Z30LdpcCodec(max_iterations=45, alpha=0.75)
+    codec = Z30LdpcCodec(max_iterations=45)
     
     snr_points = np.arange(min_snr_db, max_snr_db + 1e-4, step_snr_db)
     results = []
@@ -322,8 +365,17 @@ def run_monte_carlo_snr_sweep(
                     buf, snr, cfg.sample_rate_hz, rng, frame_power
                 )
 
-                # 4b. Blind acquisition: the receiver gets audio and nothing else.
-                acq = acquire_frame(noisy_wave, cfg, nominal_base_freq_hz=1250.0)
+                # 4b. Blind acquisition: the receiver gets audio and nothing else, and
+                #     searches the window a slot-synchronised receiver actually has rather
+                #     than the whole stream. Measured paired over 200 frames at -26 to -22 dB,
+                #     the two search widths produced zero discordant decodes (p = 1), so this
+                #     is a faithfulness fix and not a change to the curve - see wiki/16.
+                acq = acquire_frame(
+                    noisy_wave,
+                    cfg,
+                    nominal_base_freq_hz=1250.0,
+                    time_search_sec=slot_timing_search_sec(max_time_offset_sec),
+                )
                 start_sample = acq.start_sample
                 base_freq = acq.base_freq_hz
                 sigma = acq.noise_sigma
@@ -334,9 +386,13 @@ def run_monte_carlo_snr_sweep(
                 if abs(start_sample - true_start) > cfg.symbol_duration_sec * cfg.sample_rate_hz / 2:
                     acq_failures += 1
 
-            # 5. Demodulate via 16-tone matched filters -> Soft LLRs
+            # 5. Demodulate via 16-tone matched filters -> Soft LLRs.
+            #    Purely non-coherent in realistic mode; see REALISTIC_PILOT_COHERENCE.
             channel_llrs = demodulate_mfsk_llrs(
-                noisy_wave, cfg, sigma, audio_center_hz=base_freq, start_sample=start_sample
+                noisy_wave, cfg, sigma,
+                audio_center_hz=base_freq,
+                start_sample=start_sample,
+                pilot_coherence=None if mode == "ideal" else REALISTIC_PILOT_COHERENCE,
             )
 
             # 6. Run actual Systematic (216, 77) Normalized Min-Sum LDPC Decoder

@@ -23,8 +23,16 @@ import re
 import numpy as np
 import pytest
 
-from z30_dsp.ldpc import Z30LdpcCodec, Z30_CHECK_TO_INFO
+from z30_dsp.ldpc import (
+    DECODE_SCHEDULES,
+    DITHER_AMPLITUDE,
+    Z30LdpcCodec,
+    Z30_CHECK_TO_INFO,
+    dither_seed_from_llrs,
+    dither_vector,
+)
 from z30_dsp.modem import Z30Config
+from z30_dsp import acquisition, benchmark
 
 REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 TS_CONSTANTS = os.path.join(REPO_ROOT, "src", "dsp", "z30Constants.ts")
@@ -123,3 +131,149 @@ def test_frame_geometry_constants_match():
         assert float(match.group(1)) == pytest.approx(float(expected)), (
             f"{name}: TypeScript says {match.group(1)}, Python says {expected}"
         )
+
+
+DITHER_VECTORS = os.path.join(os.path.dirname(__file__), "vectors", "dither_vectors.json")
+
+
+def test_shared_dither_vectors_match_the_python_implementation():
+    """
+    The schedule-4 perturbation must be identical in both languages, and reproducible.
+
+    It used to be drawn from unseeded global RNG in both (`np.random.rand`, `Math.random`),
+    which made the decoder not a function of its input: two seeded benchmark runs of the same
+    configuration could decode a different set of frames, and only near threshold - exactly
+    where the curve is measured. `tests/crc14.test.mjs` runs this same file through the
+    TypeScript implementation.
+    """
+    with open(DITHER_VECTORS, "r", encoding="utf-8") as handle:
+        document = json.load(handle)
+
+    llrs = np.array(document["llrs"], dtype=np.float32)
+    assert dither_seed_from_llrs(llrs) == document["seed"]
+    assert DITHER_AMPLITUDE == document["amplitude"]
+
+    produced = dither_vector(llrs, len(document["dither"]))
+    np.testing.assert_array_equal(produced, np.array(document["dither"], dtype=np.float64))
+
+
+def test_dither_amplitude_matches_the_typescript_constant():
+    source = read(TS_CODEC)
+    match = re.search(r"export const DITHER_AMPLITUDE\s*=\s*([0-9.]+);", source)
+    assert match, "DITHER_AMPLITUDE not found in src/dsp/ldpcCodec.ts"
+    assert float(match.group(1)) == DITHER_AMPLITUDE
+
+
+def test_decoder_reaches_the_dither_schedule_and_stays_reproducible():
+    """
+    Decodes an undecodable frame twice, so the run is forced through all four schedules.
+
+    The pre-existing determinism test used a -18 dB frame, which converges in schedule 1 and so
+    never reached the dithered pass at all - the unseeded draw sat behind it, untested, for as
+    long as it existed. Anything that cannot decode exercises the whole cascade.
+    """
+    codec = Z30LdpcCodec()
+    rng = np.random.default_rng(4242)
+    llrs = rng.normal(0.0, 0.35, 216).astype(np.float32)
+
+    first = codec.decode_min_sum(llrs)
+    second = codec.decode_min_sum(llrs)
+
+    # 45 + 40 + 35 + 30: every schedule ran, so the dithered one did too.
+    assert first[2] == 150, f"expected the full cascade, got {first[2]} iterations"
+    assert first[0] == second[0]
+    assert first[2] == second[2]
+    np.testing.assert_array_equal(first[1], second[1])
+
+
+def test_decode_schedule_tables_are_identical():
+    """
+    The four-schedule cascade is the decoder's specification, and it exists twice.
+
+    A schedule that drifts in one language and not the other changes which frames decode, near
+    threshold only, with both halves still passing their own tests - the exact silent-drift
+    failure this file exists to catch. wiki/04 tabulates these same values.
+    """
+    source = read(TS_CODEC)
+    block = re.search(
+        r"export const Z30_DECODE_SCHEDULES:[^=]*=\s*\[(.*?)\];", source, re.DOTALL
+    )
+    assert block, "Z30_DECODE_SCHEDULES not found in src/dsp/ldpcCodec.ts"
+
+    ts_schedules = []
+    for row in re.finditer(r"\{([^}]*)\}", block.group(1)):
+        fields = dict(
+            re.findall(r"(\w+)\s*:\s*'?([A-Za-z0-9.]+)'?", row.group(1))
+        )
+        ts_schedules.append({
+            "mode": fields["mode"],
+            "alpha": float(fields["alpha"]),
+            "beta": float(fields["beta"]),
+            "damping": float(fields["damping"]),
+            "reverse": fields["reverse"] == "true",
+            "iters": int(fields["iters"]),
+        })
+
+    py_schedules = [
+        {
+            "mode": s["mode"],
+            "alpha": float(s["alpha"]),
+            "beta": float(s["beta"]),
+            "damping": float(s["damping"]),
+            "reverse": bool(s["reverse"]),
+            "iters": int(s["iters"]),
+        }
+        for s in DECODE_SCHEDULES
+    ]
+
+    assert ts_schedules == py_schedules
+    # 45 + 40 + 35 + 30 = 150, the figure wiki/04 quotes as the cascade's total.
+    assert sum(s["iters"] for s in py_schedules) == 150
+
+
+def test_no_alpha_constructor_argument_survives():
+    """
+    `Z30LdpcCodec(alpha=...)` was accepted and never read, so tuning it did nothing.
+
+    A dead knob is worse than no knob: wiki/04 documented the value, the Specs modal rendered
+    it, and the browser benchmark offered an input box for it, all describing a number the
+    decoder had never applied.
+    """
+    with pytest.raises(TypeError):
+        Z30LdpcCodec(alpha=0.5)  # type: ignore[call-arg]
+
+    assert not hasattr(Z30LdpcCodec(), "alpha")
+
+    # And the TypeScript twin no longer exports it as a live parameter either (the prose
+    # explaining why it went is allowed to name it; the value is not).
+    params = re.search(
+        r"export const Z30_LDPC_PARAMS[^=]*=\s*\{(.*?)\};", read(TS_CODEC), re.DOTALL
+    )
+    assert params, "Z30_LDPC_PARAMS not found in src/dsp/ldpcCodec.ts"
+    assert "alphaMinSum" not in params.group(1)
+    engine = read(os.path.join(REPO_ROOT, "src", "dsp", "monteCarloEngine.ts"))
+    assert "alphaMinSum:" not in engine, "the browser benchmark still carries a dead alpha knob"
+
+
+def test_benchmark_receiver_model_constants_match():
+    """
+    The two benchmark engines must model the same receiver, or they measure different things.
+
+    wiki/16 used to publish a table showing the Python and browser thresholds disagreeing by
+    1.8 dB, and named the acquisition search width as the cause. Measured paired, the search
+    width accounted for none of it (0 discordant decodes in 200 frames) and the demodulator's
+    coherent weight accounted for all of it. Both constants are now shared, and pinned here so
+    the engines cannot drift apart into two incomparable numbers again.
+    """
+    engine = read(os.path.join(REPO_ROOT, "src", "dsp", "monteCarloEngine.ts"))
+
+    margin = re.search(r"export const SLOT_SEARCH_MARGIN_SEC\s*=\s*([0-9.]+);", engine)
+    assert margin, "SLOT_SEARCH_MARGIN_SEC not found in monteCarloEngine.ts"
+    assert float(margin.group(1)) == acquisition.SLOT_SEARCH_MARGIN_SEC
+
+    coherence = re.search(r"export const REALISTIC_PILOT_COHERENCE\s*=\s*([0-9.]+);", engine)
+    assert coherence, "REALISTIC_PILOT_COHERENCE not found in monteCarloEngine.ts"
+    assert float(coherence.group(1)) == benchmark.REALISTIC_PILOT_COHERENCE
+
+    # The window itself, not just the margin, so an off-by-one in either expression shows up.
+    assert acquisition.slot_timing_search_sec(0.5) == pytest.approx(0.55)

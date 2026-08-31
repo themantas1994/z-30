@@ -27,22 +27,36 @@ been withdrawn. Both curves are now measured, and the gap between them is the an
 
 ## 📉 The measured set
 
-Seed `20260830`, 40 frames per SNR point, 2500 Hz reference bandwidth, carrier offset ±5 Hz,
-timing offset ±0.5 s:
+Seed `20260830`, 2500 Hz reference bandwidth, carrier offset ±5 Hz, timing offset ±0.5 s:
 
-| Channel | 50% decode | 90% decode |
-| :--- | :--- | :--- |
-| Idealised AWGN bound (genie-aided sync — **not** an on-air figure) | -24.6 dB | -23.4 dB |
-| AWGN, blind acquisition | **-21.1 dB** | **-18.0 dB** |
-| CCIR *moderate* fading (1.0 ms / 0.5 Hz), blind acquisition | -18.8 dB | -14.0 dB |
-| CCIR *poor* fading (2.0 ms / 1.0 Hz), blind acquisition | -15.4 dB | above -11 dB |
+| Channel | Frames/point | 50% decode | 90% decode |
+| :--- | ---: | :--- | :--- |
+| Idealised AWGN bound (genie-aided sync — **not** an on-air figure) | 40 | -24.6 dB | -23.4 dB |
+| AWGN, blind acquisition | 40 | **-23.1 dB** | **-21.7 dB** |
+| CCIR *moderate* fading (1.0 ms / 0.5 Hz), blind acquisition | 100 | -21.3 dB | -19.5 dB |
+| CCIR *poor* fading (2.0 ms / 1.0 Hz), blind acquisition | 100 | -21.3 dB | -19.0 dB |
 
-**3.5 dB of the bound is spent simply finding the signal.** That gap is the acquisition loss —
+**1.5 dB of the bound is spent simply finding the signal.** That gap is the acquisition loss —
 what it costs to *find* the signal rather than be told where it is. Any mode's genie-aided
 bound is optimistic by a similar margin, which is why the two must never be compared across
 that line. See
 [11. Physics & Comparative Analysis](11-Physics-&-Comparative-Analysis-z30-vs-FT8.md) for what
 this does and does not mean against FT8.
+
+**The two fading presets are not separable at the 50% point, and the table says so rather than
+printing two numbers that look different.** They were re-measured at 100 frames per point
+precisely because 40 frames could not tell them apart: at -21 dB the moderate preset decoded
+57/100 (Wilson 95% CI 47.2–66.3%) and the poor preset 65/100 (55.2–73.6%), intervals that
+overlap across most of their range. Both interpolate to -21.3 dB. The 90% points do separate,
+in the expected direction, by 0.5 dB.
+
+Why the two presets are so close has **not** been measured and no mechanism is claimed here.
+What can be said without measuring anything is arithmetic from the preset parameters: a 1.0 ms
+and a 2.0 ms delay spread give coherence bandwidths of roughly 160 Hz and 80 Hz, both far wider
+than z-30's 50 Hz occupied bandwidth, so neither preset is frequency-selective across this
+signal. That leaves Doppler spread (0.5 vs 1.0 Hz) as the parameter that differs in a way the
+waveform can see. Whether that accounts for the result is a question for a benchmark, not for
+this paragraph.
 
 ---
 
@@ -55,8 +69,9 @@ figure you publish:
 # The honest curve (the default).
 python -m z30_dsp.benchmark --mode realistic --fading none --min-snr -28 --max-snr -17 --frames 40
 
-# On a disturbed ionospheric path.
-python -m z30_dsp.benchmark --mode realistic --fading moderate --min-snr -25 --max-snr -13 --frames 40
+# On a disturbed ionospheric path. 100 frames, because 40 could not separate the two presets.
+python -m z30_dsp.benchmark --mode realistic --fading moderate --min-snr -23 --max-snr -17 --frames 100
+python -m z30_dsp.benchmark --mode realistic --fading poor     --min-snr -23 --max-snr -17 --frames 100
 
 # The genie-aided bound, for comparison only.
 python -m z30_dsp.benchmark --mode ideal --min-snr -30 --max-snr -20 --frames 40
@@ -73,18 +88,18 @@ Sample output from the default mode:
 ================================================================================================
 SNR (2500Hz)   | Frames  | Success  | FER       | Decode %  | Avg Iters  | Acq fail | Timing RMS  | Freq RMS
 ------------------------------------------------------------------------------------------------
- -28.0 dB      | 40      | 0        | 1.0000    |     0.0%  |  150.0     | 25       |   1330.7 ms |   6.19 Hz
- -27.0 dB      | 40      | 0        | 1.0000    |     0.0%  |  150.0     | 17       |   1251.3 ms |   5.06 Hz
- -26.0 dB      | 40      | 0        | 1.0000    |     0.0%  |  150.0     | 3        |    281.3 ms |   3.46 Hz
- -25.0 dB      | 40      | 3        | 0.9250    |     7.5%  |  138.9     | 1        |    104.7 ms |   0.99 Hz
- -24.0 dB      | 40      | 4        | 0.9000    |    10.0%  |  138.6     | 0        |     17.8 ms |   0.32 Hz
- -23.0 dB      | 40      | 7        | 0.8250    |    17.5%  |  124.2     | 0        |     13.7 ms |   0.18 Hz
- -22.0 dB      | 40      | 13       | 0.6750    |    32.5%  |  106.3     | 0        |     13.5 ms |   0.18 Hz
- -21.0 dB      | 40      | 21       | 0.4750    |    52.5%  |   74.3     | 0        |      9.6 ms |   0.14 Hz  <-- 50% crossing interpolates to -21.1 dB
- -20.0 dB      | 40      | 27       | 0.3250    |    67.5%  |   51.1     | 0        |      7.2 ms |   0.12 Hz
- -19.0 dB      | 40      | 32       | 0.2000    |    80.0%  |   36.0     | 0        |      7.5 ms |   0.10 Hz
- -18.0 dB      | 40      | 36       | 0.1000    |    90.0%  |   19.0     | 0        |      4.4 ms |   0.09 Hz  <-- 90% crossing
- -17.0 dB      | 40      | 40       | 0.0000    |   100.0%  |    2.5     | 0        |      3.9 ms |   0.07 Hz
+ -28.0 dB      | 40      | 0        | 1.0000    |     0.0%  |  150.0     | 15       |    311.3 ms |   4.61 Hz
+ -27.0 dB      | 40      | 0        | 1.0000    |     0.0%  |  150.0     | 3        |    190.0 ms |   2.41 Hz
+ -26.0 dB      | 40      | 0        | 1.0000    |     0.0%  |  150.0     | 1        |    124.4 ms |   2.24 Hz
+ -25.0 dB      | 40      | 0        | 1.0000    |     0.0%  |  150.0     | 1        |    144.7 ms |   0.83 Hz
+ -24.0 dB      | 40      | 0        | 1.0000    |     0.0%  |  150.0     | 0        |     17.8 ms |   0.32 Hz
+ -23.0 dB      | 40      | 22       | 0.4500    |    55.0%  |   77.6     | 0        |     13.7 ms |   0.18 Hz  <-- 50% crossing interpolates to -23.1 dB
+ -22.0 dB      | 40      | 34       | 0.1500    |    85.0%  |   24.9     | 0        |     13.5 ms |   0.18 Hz
+ -21.0 dB      | 40      | 40       | 0.0000    |   100.0%  |    1.2     | 0        |      9.6 ms |   0.14 Hz  <-- 90% crossing interpolates to -21.7 dB
+ -20.0 dB      | 40      | 40       | 0.0000    |   100.0%  |    1.1     | 0        |      7.2 ms |   0.12 Hz
+ -19.0 dB      | 40      | 40       | 0.0000    |   100.0%  |    1.0     | 0        |      7.5 ms |   0.10 Hz
+ -18.0 dB      | 40      | 40       | 0.0000    |   100.0%  |    1.0     | 0        |      4.4 ms |   0.09 Hz
+ -17.0 dB      | 40      | 40       | 0.0000    |   100.0%  |    1.0     | 0        |      3.9 ms |   0.07 Hz
 ================================================================================================
 ```
 
@@ -95,7 +110,7 @@ columns rather than being hidden inside the frame error rate.
 
 ---
 
-## 🖥️ The in-app benchmark, and why its numbers are not the published ones
+## 🖥️ The in-app benchmark, and why it now agrees with the Python one
 
 **Station Settings → 5. Experimental Testing → Launch Benchmark Suite** runs the same two modes
 in the browser, over `src/dsp/monteCarloEngine.ts`. It has a **Measurement mode** selector, and
@@ -107,36 +122,55 @@ timing offset (±0.5 s), searches for the frame using only the 21 Costas symbols
 counts a frame it cannot find as a failure. The `Acq Fail`, `Timing RMS` and `Freq RMS` columns
 of the results table are the same diagnostics the Python table carries.
 
-**It is a bench instrument, not the reference.** Use it to watch how a change moves the curve
-without leaving the app; quote the Python benchmark when you publish a number. Measured at seed
-`20260830`, 40 frames per point:
+The two engines model the same receiver, and the two constants that say so are shared and
+pinned by `tests/test_cross_language_parity.py`:
+
+| Constant | Value | What it fixes |
+| :--- | :--- | :--- |
+| `SLOT_SEARCH_MARGIN_SEC` | 0.05 s | The timing search half-width is the station's timing uncertainty plus this margin — ±0.55 s at the default ±0.5 s offset. z-30 is slot-synchronised, so a real receiver knows where the frame should start and searches a window, not an arbitrary stream. |
+| `REALISTIC_PILOT_COHERENCE` | 0.0 | Purely non-coherent demodulation, which is what z-30's receiver is specified to be. `ideal` mode keeps the pilot-adaptive weight, because it is handed perfect timing. |
+
+Measured at seed `20260830`, 40 frames per point, AWGN:
 
 | | Python (`z30_dsp/benchmark.py`) | Browser (`monteCarloEngine.ts`) |
 | :--- | :--- | :--- |
 | Genie-aided bound, 50% | -24.6 dB | ≈ -24.2 dB |
-| AWGN blind acquisition, 50% | **-21.1 dB** | ≈ -22.9 dB |
+| AWGN blind acquisition, 50% | **-23.1 dB** | **-23.0 dB** |
 
-The two agree closely on the bound and differ by roughly 1.8 dB on the threshold. One reason is
-real and worth knowing rather than papering over:
+> **Correction (2026-08-31, second revision):** this page used to publish that same row as
+> **-21.1 dB** against **≈ -22.9 dB** and explain the 1.8 dB gap by saying the browser searched a
+> narrower timing window. That explanation was wrong, and so was the Python figure.
+>
+> Both were tested paired — the identical frame, fading realisation, carrier offset, timing
+> offset and noise decoded twice, changing one thing at a time:
+>
+> - **Timing search width** (full-stream vs slot-synchronised), 200 frames from -26 to -22 dB:
+>   **zero discordant decodes**, exact two-sided McNemar p = 1. The search width accounted for
+>   none of the gap.
+> - **Demodulator coherent weight** (pilot-adaptive 0.35–0.85 vs zero), 160 frames from -24 to
+>   -21 dB: **59 discordant pairs, 55 won by the non-coherent receiver and 4 by the
+>   semi-coherent one**, exact two-sided McNemar p = 1.7×10⁻¹² — greater than 99.9999999%
+>   confidence, clearing the ≥99% bar [`AGENTS.md` §5](../AGENTS.md#5-honest-numbers) sets for a
+>   result that changes a published figure.
+>
+> The Python benchmark had been applying a pilot-aided semi-coherent term through the whole
+> realistic path. Under the timing error that blind acquisition actually leaves, a few
+> milliseconds rotates each tone by $2\pi f \Delta t$, so that term is measured against the wrong
+> phase reference and cancels signal instead of reinforcing it. The browser engine had already
+> been dropping it. **The Python benchmark was measuring a receiver worse than the one z-30
+> specifies, and the published threshold was 2.0 dB pessimistic as a result.**
+>
+> The trade-off side is recorded rather than left out: at -24 dB, below the point where the
+> Costas pattern is reliably findable, both receivers are near zero and the semi-coherent one
+> took that point 3–0. The full per-point table is in the `REALISTIC_PILOT_COHERENCE` comment in
+> `z30_dsp/benchmark.py`.
 
-1. **The timing search is narrower.** The browser searches ±0.55 s around the slot boundary,
-   which is what a slot-synchronised receiver actually has to do; `acquire_frame` defaults to
-   searching the whole stream. A narrower search mis-locks less often.
-
-> **Correction (2026-08-31):** this page used to list a second reason - "the decoders are not the
-> same: the browser runs a three-schedule min-sum cascade; the Python decoder runs a single
-> normalised min-sum schedule." That was false in both directions. `z30_dsp/ldpc.py` and
-> `src/dsp/ldpcCodec.ts` have always run the identical **four**-schedule cascade described in
-> [04. Forward Error Correction & LDPC](04-Forward-Error-Correction-&-LDPC.md#the-four-decode-schedules).
-> A paired benchmark validated that the cascade design is genuinely better than the single-schedule
-> decoder this page mistakenly described (see "A worked example" below) - it just isn't the reason
-> the Python and browser thresholds disagree with each other, since both run the same one. What,
-> if anything beyond the timing-window difference above, accounts for the remaining gap has not
-> been measured; this page will not guess at a second reason again without a benchmark behind it.
-
-So: **the figures in this page and in the wiki come from the Python benchmark.** If you change
-the DSP, the browser engine will tell you quickly which way the curve moved; confirm the number
-with a seeded Python run before it goes anywhere near documentation.
+Both engines now run the same receiver model and land 0.1 dB apart on the threshold, which is
+inside the sampling noise of 40 frames per point. **The Python benchmark is still the
+reference**: it is the one CI runs, the one the seed defaults are pinned to, and the one whose
+output the tables above are copied from. Use the browser engine to see which way a change moved
+the curve without leaving the app; confirm with a seeded Python run before a number reaches
+documentation.
 
 One thing the browser engine is *not* free to differ on: `ideal` and `realistic` mean exactly
 what they mean here. A browser run in `ideal` mode is a bound, is labelled a bound in the UI,

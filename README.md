@@ -44,22 +44,29 @@ clock calibration against WWV, CHU, DCF77, MSF, WWVB and JJY — no internet req
 | **Occupied bandwidth** | 50.0 Hz nominal — **49.8 Hz measured** at 99% occupancy, 66 Hz at -40 dB |
 | **Cycle** | 30.0 s UTC slots · 24.0 s active TX (75 symbols) · 6.0 s decode + guard |
 | **FEC** | IRA-LDPC (216, 77), rate ≈ 0.356, with CRC-14 |
-| **Decode threshold (AWGN, blind acquisition)** | **-21.1 dB SNR at 50%**, -18.0 dB at 90% (2500 Hz reference) |
-| **Decode threshold (CCIR moderate fading)** | -18.8 dB at 50% |
+| **Decode threshold (AWGN, blind acquisition)** | **-23.1 dB SNR at 50%**, -21.7 dB at 90% (2500 Hz reference) |
+| **Decode threshold (CCIR moderate fading)** | -21.3 dB at 50% |
 | **Collision recovery** | 3-pass successive interference cancellation |
 | **Platforms** | Android (PWA & Termux), Ubuntu/Debian, Arch, Windows 10/11, Raspberry Pi, generic Linux |
 
 ### About that sensitivity figure
 
--21.1 dB is measured the way other modes publish theirs: random carrier offset, random timing
-offset, and a receiver handed nothing but audio, which finds the frame and estimates the noise
-floor itself. **On AWGN that puts z-30 level with FT8, not ahead of it.** An earlier version of
-this project claimed a "+4.0 dB advantage" by comparing its own genie-aided bound against FT8's
-on-air number; that claim was withdrawn. The genie-aided bound (-24.6 dB) is still reported, but
-separately, because 3.5 dB of it is simply the cost of *finding* the signal.
+-23.1 dB is measured the way other modes publish theirs: random carrier offset, random timing
+offset, non-coherent demodulation, and a receiver handed nothing but audio, which finds the
+frame and estimates the noise floor itself. **On AWGN that is 2.1 dB deeper than FT8's published
+-21.0 dB — and z-30 transmits for 24.0 s against FT8's 12.64 s, which is 2.8 dB more energy, to
+carry 14 fewer message bits.** So it buys depth with airtime, not with a more efficient code;
+per second on the air it is marginally behind FT8. Both halves of that belong in any quote of
+the number.
 
-Where z-30 does differ is occupied bandwidth, multi-pass SIC, and behaviour on a disturbed path.
-The full curves, the seeds, and the commands to reproduce them are in
+An earlier version of this project claimed a "+4.0 dB advantage" by comparing its own
+genie-aided bound against FT8's on-air number; that claim stays withdrawn, and the 2.1 dB above
+is not a revival of it — it is blind-acquisition on both sides. The genie-aided bound (-24.6 dB)
+is still reported, but separately, because 1.5 dB of it is simply the cost of *finding* the
+signal.
+
+Where z-30 also differs is occupied bandwidth, multi-pass SIC, and behaviour on a disturbed
+path. The full curves, the seeds, and the commands to reproduce them are in
 **[16. Benchmarking, Testing & CI](wiki/16-Benchmarking-Testing-&-CI.md)**.
 
 ---

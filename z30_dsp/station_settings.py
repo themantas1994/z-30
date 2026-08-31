@@ -19,6 +19,8 @@ import sys
 import re
 from typing import Optional, Tuple
 
+from z30_dsp.paths import default_config_path
+
 
 @dataclass
 class StationConfig:
@@ -69,9 +71,21 @@ class StationConfig:
 class SettingsManager:
     """
     Manages loading, validating, caching, and persisting configuration data
-    to a local `config.json` file with full backward compatibility and fallbacks.
+    to the operator's `config.json` with full backward compatibility and fallbacks.
+
+    The path comes from `z30_dsp.paths.default_config_path()` - the same per-user directory
+    ($Z30_HOME, else $XDG_CONFIG_HOME/z30, else ~/.z30) that the logbook and the web UI's
+    station config already resolve through. It used to default to the bare relative string
+    "config.json", which `paths.py` was written to stop: the file landed in whatever directory
+    the app happened to be launched from, so starting z-30 from a desktop shortcut and from a
+    terminal in the source tree gave two different configs and the second launch silently came
+    up with defaults. Every caller that constructs a SettingsManager without an explicit path -
+    the Tk setup wizard, `z30 --wizard`, `z30 --tkinter` - inherited that bare string and kept
+    reproducing the bug the rest of the codebase had already fixed.
+
+    Resolved lazily rather than at import time so that $Z30_HOME set after import (as the test
+    suite does) is still honoured.
     """
-    DEFAULT_CONFIG_PATH = "config.json"
 
     # ITU International Callsign Regex - the SAME pattern as isValidCallsign() in
     # src/dsp/bandPlan.ts, which is what the browser transmit gate enforces.
@@ -97,7 +111,7 @@ class SettingsManager:
     )
 
     def __init__(self, config_path: Optional[str] = None) -> None:
-        self.config_path = config_path or self.DEFAULT_CONFIG_PATH
+        self.config_path = config_path or default_config_path()
         self.current_config = StationConfig()
 
     @classmethod
@@ -185,6 +199,9 @@ class SettingsManager:
         cfg_to_save = config or self.current_config
         try:
             data = asdict(cfg_to_save)
+            parent = os.path.dirname(os.path.abspath(self.config_path))
+            if parent:
+                os.makedirs(parent, exist_ok=True)
             with open(self.config_path, "w", encoding="utf-8") as f:
                 json.dump(data, f, indent=4)
             self.current_config = cfg_to_save

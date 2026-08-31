@@ -169,3 +169,81 @@ export function writeServerStationConfig(
 ): Promise<LocalApiResult<{ path: string }>> {
   return call('/api/station-config', { method: 'POST', body: { config }, timeoutMs: 5000 });
 }
+
+// -- upstream synchronisation ------------------------------------------------
+//
+// z-30 tracks upstream by commit, not by version. The native server is the only party that can
+// answer "how many commits behind origin/main is this installation" truthfully - it is the one
+// with the git checkout - and the only one that can do anything about it. See git_sync.py.
+
+export interface UpdateStatusResponse {
+  is_git_checkout: boolean;
+  branch: string;
+  local_commit: string;
+  upstream_commit: string;
+  local_short: string;
+  upstream_short: string;
+  behind: number;
+  ahead: number;
+  dirty: boolean;
+  up_to_date: boolean;
+  can_update: boolean;
+  blocked_reason: string | null;
+  error: string | null;
+  checked_at: string;
+  remote_url: string;
+  update_running: boolean;
+  pending: Array<{
+    sha: string;
+    short_sha: string;
+    subject: string;
+    author: string;
+    date: string;
+  }>;
+}
+
+/**
+ * Asks the server how far behind upstream this installation is.
+ *
+ * `fetchRemote` false answers from the last fetch without touching the network - what a badge
+ * refresh wants. True runs `git fetch`, which is why the timeout is generous: a fetch over a
+ * slow link on a Raspberry Pi is not a hung server.
+ */
+export function getUpdateStatus(fetchRemote = true): Promise<LocalApiResult<UpdateStatusResponse>> {
+  return call<UpdateStatusResponse>(`/api/update/status?fetch=${fetchRemote ? '1' : '0'}`, {
+    timeoutMs: fetchRemote ? 60000 : 5000,
+  });
+}
+
+export interface UpdateProgressResponse {
+  running: boolean;
+  log: string[];
+  elapsed_sec: number;
+  result: {
+    success: boolean;
+    error: string | null;
+    from_commit: string;
+    to_commit: string;
+    web_assets_changed: boolean;
+    restart_required: boolean;
+    log: string[];
+  } | null;
+}
+
+/**
+ * Starts a fast-forward onto upstream. Returns as soon as the worker thread is running; the
+ * caller polls getUpdateProgress() for the log and the outcome.
+ *
+ * Refused with HTTP 409 while a PTT line is asserted - the server will not swap the code out
+ * from under a keyed transmitter.
+ */
+export function applyUpdate(options: {
+  reinstall_python?: boolean;
+  rebuild_web?: boolean;
+}): Promise<LocalApiResult<{ running: boolean }>> {
+  return call('/api/update/apply', { method: 'POST', body: options, timeoutMs: 15000 });
+}
+
+export function getUpdateProgress(): Promise<LocalApiResult<UpdateProgressResponse>> {
+  return call<UpdateProgressResponse>('/api/update/progress', { timeoutMs: 8000 });
+}

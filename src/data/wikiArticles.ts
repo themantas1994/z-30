@@ -69,14 +69,17 @@ Welcome to the technical documentation for **z-30**: an experimental open-source
 
 **z-30** is engineered for extreme HF, VHF, and microwave weak-signal amateur radio
 communications. It operates in synchronous **30.0-second UTC slots**, occupies **50.0 Hz**, and
-carries a 77-bit protected payload behind a rate-0.356 LDPC code.
+carries a 63-bit message plus a 14-bit CRC behind a rate-0.356 LDPC code.
 
 Its seeded benchmark — run through the real acquisition path, with random carrier and timing
-offsets and no knowledge of the noise level — crosses 50% decode at **-21.1 dB SNR** on AWGN
-and **-18.8 dB** on a CCIR-moderate fading path, in a 2500 Hz reference bandwidth. **That is
-level with FT8's published -21 dB, measured the same way.** The genie-aided bound, with exact
-carrier, timing and noise level handed to the demodulator, is 3.5 dB better at -24.6 dB; it is
-reported separately because no other mode's published figure is measured that way. See
+offsets, no knowledge of the noise level and non-coherent demodulation — crosses 50% decode at
+**-23.1 dB SNR** on AWGN and **-21.3 dB** on a CCIR-moderate fading path, in a 2500 Hz
+reference bandwidth. **That is 2.1 dB deeper than FT8's published -21 dB, measured the same
+way — and it costs 24.0 s of airtime against FT8's 12.64 s (2.8 dB more energy) for 14 fewer
+message bits, so z-30 buys depth with time rather than with a more efficient code.** The
+genie-aided bound, with exact carrier, timing and noise level handed to the demodulator, is
+1.5 dB better again at -24.6 dB; it is reported separately because no other mode's published
+figure is measured that way. See
 [16. Benchmarking, Testing & CI](16-Benchmarking-Testing-&-CI.md).
 
 ### Key technical innovations
@@ -496,7 +499,7 @@ Please use Conventional Commits:
 1. All TypeScript code must pass \`npm run lint\` without errors or warnings.
 2. Production bundle must build cleanly via \`npm run build\`.
 3. Python modifications must maintain compatibility with Python 3.9 through 3.13.
-4. If modifying DSP code, run \`python -m pytest tests\` (which includes the codec round trip, the occupied-bandwidth budget, and the acquisition tests) and \`python -m z30_dsp.benchmark --mode realistic --fading none --min-snr -28 --max-snr -17 --frames 40 --seed 20260830\` to check the decode threshold has not regressed below **-21.1 dB SNR (50%) / -18.0 dB SNR (90%)**. That is measured through the real acquisition path with random carrier and timing offsets. \`--mode ideal\` gives the genie-aided bound (-24.6 dB / -23.4 dB) for comparison; it is not an on-air threshold.
+4. If modifying DSP code, run \`python -m pytest tests\` (which includes the codec round trip, the occupied-bandwidth budget, and the acquisition tests) and \`python -m z30_dsp.benchmark --mode realistic --fading none --min-snr -28 --max-snr -17 --frames 40 --seed 20260830\` to check the decode threshold has not regressed below **-23.1 dB SNR (50%) / -21.7 dB SNR (90%)**. That is measured through the real acquisition path with random carrier and timing offsets. \`--mode ideal\` gives the genie-aided bound (-24.6 dB / -23.4 dB) for comparison; it is not an on-air threshold.
 5. Documentation changes go in \`wiki/\`, not the README, and the generated in-app copy is regenerated (\`npm run generate:wiki\`) and committed. See [Documentation: where things belong](#-documentation-where-things-belong).
 6. Any change to the transmit gate, the local API, the GPIO bridge or the time-sync guards keeps its tests passing unchanged, or explains in the pull request why the guarantee in [13. Operating Safety, Compliance & Local Security](13-Operating-Safety-Compliance-&-Security.md) is still met.
 `,
@@ -529,8 +532,8 @@ This document provides the complete mathematical and signal processing specifica
 | **Guard / Processing Time** | $T_{\\text{guard}}$ | **6.0 s** | FFT Framing + 3-Pass SIC + LDPC decode |
 | **Bits per Symbol** | $\\log_2(M)$ | **4 bits/symbol** | $54 \\times 4 = 216$ coded channel bits |
 | **FEC Code** | — | **IRA-LDPC (216, 77)** | Rate $R \\approx 0.356$, dual-diagonal parity |
-| **AWGN Decode Threshold** | — | **-21.1 dB SNR (50%) / -18.0 dB SNR (90%)** | In a $2500\\text{ Hz}$ noise bandwidth, through blind acquisition with random carrier ($\\pm5$ Hz) and timing ($\\pm0.5$ s) offsets. Comparable with the published on-air figures for FT8 and FT4. |
-| **Idealised AWGN Bound** | — | -24.6 dB SNR (50%) / -23.4 dB SNR (90%) | Exact noise sigma, exact carrier and perfect symbol timing given to the demodulator. A bound on the code, **not** an on-air threshold. The 3.5 dB gap is the acquisition loss. |
+| **AWGN Decode Threshold** | — | **-23.1 dB SNR (50%) / -21.7 dB SNR (90%)** | In a $2500\\text{ Hz}$ noise bandwidth, through blind acquisition with random carrier ($\\pm5$ Hz) and timing ($\\pm0.5$ s) offsets, demodulated non-coherently. Comparable with the published on-air figures for FT8 and FT4. |
+| **Idealised AWGN Bound** | — | -24.6 dB SNR (50%) / -23.4 dB SNR (90%) | Exact noise sigma, exact carrier and perfect symbol timing given to the demodulator. A bound on the code, **not** an on-air threshold. The 1.5 dB gap is the acquisition loss. |
 
 ---
 
@@ -1255,7 +1258,7 @@ This document addresses common questions, operating issues, hardware setup chall
 ### Q1: Why does z-30 use a 30-second cycle instead of 15 seconds like FT8?
 **A**: Doubling the cycle to 30.0 seconds and halving the symbol rate from 6.25 to 3.125 baud doubles the energy per symbol, and a rate-0.356 code over 75 symbols spends considerably more redundancy per information bit than FT8's rate-0.52 (174, 91). Both buy coding gain.
 
-z-30's benchmark now measures the on-air case directly: with random carrier and timing offsets and blind acquisition, 50% decode is at **-21.1 dB SNR** on AWGN and **-18.8 dB** on a CCIR-moderate path. FT8's published -21 dB is measured the same way, so **z-30 is level with FT8 on AWGN, not ahead of it** - it spends twice the airtime for the same payload, and the 3 dB that buys the codec is spent again on acquiring a 3.125 Hz-spaced signal. The genie-aided bound is -24.6 dB, but comparing that with anyone's on-air figure is invalid. Earlier revisions of this page claimed "+4.0 dB over FT8" on exactly that invalid comparison; it has been withdrawn.
+z-30's benchmark measures the on-air case directly: with random carrier and timing offsets, blind acquisition and non-coherent demodulation, 50% decode is at **-23.1 dB SNR** on AWGN and **-21.3 dB** on a CCIR-moderate path. FT8's published -21 dB is measured the same way, so **z-30 decodes about 2.1 dB deeper than FT8 on AWGN** - but it transmits for 24.0 s against FT8's 12.64 s (2.8 dB more energy) and carries 14 fewer message bits, so it buys that depth with airtime rather than with a better code. The genie-aided bound is -24.6 dB; comparing that with anyone's on-air figure is invalid. Earlier revisions of this page claimed "+4.0 dB over FT8" on exactly that invalid comparison, and it stays withdrawn - the 2.1 dB above is blind-acquisition on both sides.
 
 ### Q2: Why is the occupied bandwidth only 50 Hz?
 **A**: 16 orthogonal tones spaced at $3.125\\text{ Hz}$ occupy exactly $16 \\times 3.125 = 50.0\\text{ Hz}$. This allows up to **50 simultaneous contacts** inside a standard 2.7 kHz SSB transceiver passband without mutual interference.
@@ -1319,7 +1322,7 @@ An in-depth technical analysis for **advanced amateur radio operators, RF engine
 
 | Metric / Parameter | FT8 (Franke-Taylor 8-FSK) | z-30 (16-MFSK Weak-Signal) | Physics & Engineering Delta |
 | :--- | :--- | :--- | :--- |
-| **Decoding Threshold ($SNR_{2500}$)** | **-21.0 dB** (measured on the air) | **-21.1 dB (50%) / -18.0 dB (90%)** (blind acquisition, AWGN) | Level - see the note below |
+| **Decoding Threshold ($SNR_{2500}$)** | **-21.0 dB** (measured on the air) | **-23.1 dB (50%) / -21.7 dB (90%)** (blind acquisition, AWGN) | $-2.1\\text{ dB}$, bought with $+2.8\\text{ dB}$ of airtime - see the note below |
 | **Transmission Slot Duration** | 15.0 s (12.64 s active TX) | 30.0 s (24.0 s active TX) | $2\\times$ integration time ($+3.01\\text{ dB}$) |
 | **Modulation Format** | 8-MFSK (Continuous Phase) | 16-MFSK (Continuous Phase) | Higher-order orthogonal signaling efficiency |
 | **Occupied Bandwidth** | 47.0 Hz ($8 \\times 6.25\\text{ Hz}$) | 50.0 Hz ($16 \\times 3.125\\text{ Hz}$) | Ultra-narrowband density (50 channels in 2.7 kHz) |
@@ -1327,7 +1330,7 @@ An in-depth technical analysis for **advanced amateur radio operators, RF engine
 | **Symbol Duration ($T_s$)** | 160.0 ms (6.25 baud) | 320.0 ms (3.125 baud) | $2\\times$ symbol integration period |
 | **Total Frame Symbols** | 79 symbols (58 data + 21 Costas) | 75 symbols (54 data + 21 Costas) | Optimized symbol packing & channel utilization |
 | **Raw Channel Bits** | 174 bits ($58 \\times 3\\text{ bits}$) | 216 bits ($54 \\times 4\\text{ bits}$) | Higher total channel codeword dimensionality |
-| **Information Bits ($K$)** | 77 bits ($75\\text{ msg} + 2\\text{ flag}$) | 77 bits ($58\\text{ msg} + 14\\text{ CRC} + 5\\text{ flag}$) | Identical payload capacity with stronger CRC protection |
+| **Information Bits ($K$)** | 91 bits ($77\\text{ msg} + 14\\text{ CRC}$) | 77 bits ($63\\text{ msg} + 14\\text{ CRC}$) | **z-30 carries 14 fewer message bits.** Earlier revisions of this row read "77 bits ($58\\text{ msg} + 14\\text{ CRC} + 5\\text{ flag}$)" against FT8's 77 and called the capacity identical; that compared z-30's post-CRC block against FT8's pre-CRC message field. See [04](04-Forward-Error-Correction-&-LDPC.md): z-30 packs 63 message bits, FT8 packs 77. |
 | **FEC Code** | Systematic LDPC (174, 91) | IRA LDPC (216, 77) | **Rate $R \\approx 0.356$ vs $0.523$** ($+2.4\\text{ dB}$ coding gain) |
 | **Parity Check Fraction** | 47.7% parity overhead | **64.4% parity overhead** | Significantly steeper waterfall BER curve |
 | **CRC Polynomial** | 14-bit ($P_{\\text{false}} \\approx 6 \\times 10^{-5}$) | 14-bit CRC-14 ($P_{\\text{false}} \\approx 2^{-14} \\approx 6.1 \\times 10^{-5}$) | Same order of magnitude; neither mode is meaningfully ahead here |
@@ -1349,10 +1352,10 @@ weak-signal modes:
 | **Tone spacing ($\\Delta f$)** | **3.125 Hz** | 6.25 Hz | 20.83 Hz | 1.4648 Hz | 6.25 Hz |
 | **Active TX duration** | **24.0 s (75 symbols)** | 12.64 s | 4.48 s | 110.6 s | 12.64 s |
 | **Decode / guard window** | **6.0 s** | 2.36 s | 3.02 s | 9.4 s | 2.36 s |
-| **Sensitivity (50%), AWGN** | **-21.1 dB SNR †** | -21.0 dB SNR ‡ | -17.5 dB SNR ‡ | -28.0 dB SNR ‡ | -24.0 dB SNR ‡ |
-| **Sensitivity (90%), AWGN** | **-18.0 dB SNR †** | -20.0 dB SNR ‡ | -16.5 dB SNR ‡ | -27.0 dB SNR ‡ | -22.5 dB SNR ‡ |
+| **Sensitivity (50%), AWGN** | **-23.1 dB SNR †** | -21.0 dB SNR ‡ | -17.5 dB SNR ‡ | -28.0 dB SNR ‡ | -24.0 dB SNR ‡ |
+| **Sensitivity (90%), AWGN** | **-21.7 dB SNR †** | -20.0 dB SNR ‡ | -16.5 dB SNR ‡ | -27.0 dB SNR ‡ | -22.5 dB SNR ‡ |
 | **FEC code** | **LDPC (216, 77), $R \\approx 0.356$** | LDPC (174, 91), $R = 0.52$ | LDPC (174, 91), $R = 0.52$ | Convolutional $K=32$, $r=1/2$ | LDPC (174, 91) |
-| **Payload capacity** | **77 bits (63-bit info + CRC-14)** | 77 bits (CRC-14) | 77 bits (CRC-14) | 28 bits (call + loc + pwr) | Free text (var) |
+| **Payload capacity** | **63 message bits (+ CRC-14 = 77)** | 77 message bits (+ CRC-14 = 91) | 77 message bits (+ CRC-14 = 91) | 28 bits (call + loc + pwr) | Free text (var) |
 | **Collision recovery** | **Multi-pass SIC (3 passes)** | Single pass (limited) | None | Non-coherent | Single pass |
 | **Primary use case** | **Deep DX / EME / solar minima** | General DX / contesting | Rapid contesting | Propagation beaconing | Conversational keyboard |
 | **Clock drift tolerance** | **$\\pm 1.5\\text{ s}$ (with RF auto-sync)** | $\\pm 1.0\\text{ s}$ | $\\pm 0.5\\text{ s}$ | $\\pm 2.0\\text{ s}$ | $\\pm 1.0\\text{ s}$ |
@@ -1366,12 +1369,40 @@ for those modes, which include the same acquisition, AFC and timing losses. Repr
 the commands in
 [16. Benchmarking, Testing & CI](16-Benchmarking-Testing-&-CI.md).
 
-**z-30 is level with FT8 on AWGN, not ahead of it.** Earlier revisions of this table quoted a
-genie-aided bound against FT8's on-air figure and concluded a "+4.0 dB advantage"; that claim
-was withdrawn, and this is the measurement that replaces it. z-30 spends twice the airtime of
-FT8 for the same 77-bit payload, and the extra 3 dB that buys the codec is spent again on
-acquiring a 3.125 Hz-spaced signal. Where z-30 does differ is in occupied bandwidth, multi-pass
-SIC, and behaviour on a disturbed path — not in raw AWGN sensitivity.
+**z-30 decodes 2.1 dB deeper than FT8 on AWGN, and it pays more than 2.1 dB for it.**
+
+Take the three facts together before reading the headline number:
+
+| | z-30 | FT8 | Difference |
+| :--- | ---: | ---: | ---: |
+| Decode threshold, 50%, measured the same way | $-23.1\\text{ dB}$ | $-21.0\\text{ dB}$ | $2.1\\text{ dB}$ deeper |
+| Active transmission per message | $24.0\\text{ s}$ | $12.64\\text{ s}$ | $10\\log_{10}(24.0/12.64) = 2.8\\text{ dB}$ more energy |
+| Message bits carried | 63 | 77 | 14 fewer |
+
+z-30 spends $2.8\\text{ dB}$ of extra airtime and $14$ message bits to buy $2.1\\text{ dB}$ of
+sensitivity. **Per second on the air it is therefore about $0.7\\text{ dB}$ behind FT8, while
+being $2.1\\text{ dB}$ ahead per transmission.** Both statements are true and neither is the
+whole picture; quoting the first without the second is how this page ended up with a withdrawn
+claim once already.
+
+> **Correction (2026-08-31, second revision):** the previous revision of this paragraph read
+> "z-30 is level with FT8 on AWGN, not ahead of it", from a measured threshold of
+> $-21.1\\text{ dB}$. That measurement was wrong - not the comparison method, which was sound,
+> but the receiver being measured. \`z30_dsp/benchmark.py\` was applying a pilot-aided
+> semi-coherent demodulator term through the whole realistic path, which under the timing error
+> that blind acquisition actually leaves cancels signal rather than reinforcing it, and which
+> z-30's receiver does not specify. Correcting it moved the threshold $2.0\\text{ dB}$ deeper.
+> The paired measurement that settled it (59 discordant pairs, 55 to the non-coherent receiver,
+> exact two-sided McNemar $p = 1.7\\times10^{-12}$) is in
+> [16. Benchmarking, Testing & CI](16-Benchmarking-Testing-&-CI.md).
+>
+> The still-withdrawn claim is the older one: a "+4.0 dB advantage" obtained by subtracting
+> FT8's on-air figure from z-30's *genie-aided bound*. That comparison remains invalid and the
+> $2.1\\text{ dB}$ above is not it - it is bound-to-bound-free, measured through blind
+> acquisition on both sides of the comparison.
+
+Where z-30 differs beyond sensitivity is occupied bandwidth, multi-pass SIC, and behaviour on a
+disturbed path.
 
 ### 1.2 Why 16-MFSK and a 30-second cycle at all?
 
@@ -1409,17 +1440,38 @@ In amateur radio, SNR is conventionally expressed relative to a $B_{\\text{ref}}
 
 $$\\text{SNR}_{2500} = \\frac{S}{N_0 \\cdot B_{\\text{ref}}} = \\left(\\frac{E_b}{N_0}\\right) \\cdot \\left(\\frac{R_b}{B_{\\text{ref}}}\\right)$$
 
-Where $R_b$ is the net information bit rate:
+Where $R_b$ is the net **message** bit rate — the bits the operator actually sends, before the
+CRC each mode adds on top:
 - **FT8 Net Rate**: $R_{b,\\text{FT8}} = \\frac{77\\text{ bits}}{12.64\\text{ s}} \\approx 6.09\\text{ bps}$
-- **z-30 Net Rate**: $R_{b,\\text{z30}} = \\frac{77\\text{ bits}}{24.0\\text{ s}} \\approx 3.21\\text{ bps}$
+- **z-30 Net Rate**: $R_{b,\\text{z30}} = \\frac{63\\text{ bits}}{24.0\\text{ s}} \\approx 2.63\\text{ bps}$
+
+> **Correction (2026-08-31):** the z-30 rate here was previously computed as
+> $77/24.0 \\approx 3.21\\text{ bps}$, reusing FT8's message-bit count. z-30 packs 63 message
+> bits (see [04](04-Forward-Error-Correction-&-LDPC.md)); 77 is its post-CRC block, the
+> $K$ of the LDPC code, and the corresponding figure for FT8 is 91, not 77. The error made
+> z-30's Shannon limit look $0.87\\text{ dB}$ higher than it is.
 
 Calculating the theoretical Shannon threshold in a 2500 Hz reference bandwidth for both modes:
 - **FT8 Theoretical Shannon Limit**: $\\text{SNR}_{2500,\\text{Shannon}} = -1.59\\text{ dB} + 10\\log_{10}\\left(\\frac{6.09}{2500}\\right) = -27.72\\text{ dB}$
-- **z-30 Theoretical Shannon Limit**: $\\text{SNR}_{2500,\\text{Shannon}} = -1.59\\text{ dB} + 10\\log_{10}\\left(\\frac{3.21}{2500}\\right) = -30.51\\text{ dB}$
+- **z-30 Theoretical Shannon Limit**: $\\text{SNR}_{2500,\\text{Shannon}} = -1.59\\text{ dB} + 10\\log_{10}\\left(\\frac{2.63}{2500}\\right) = -31.38\\text{ dB}$
 
-**Physical Insight**: FT8 decodes down to $-21.0\\text{ dB}$, operating **$6.72\\text{ dB}$ above its theoretical Shannon limit**. z-30's measured 50% threshold through blind acquisition is $-21.1\\text{ dB}$, which is **$9.4\\text{ dB}$ above its own limit of $-30.51\\text{ dB}$**; its genie-aided bound of $-24.6\\text{ dB}$ sits $5.9\\text{ dB}$ above that limit.
+**Physical Insight**: each mode's distance from *its own* limit is the only comparison this
+arithmetic supports, because the two limits are different numbers:
 
-The comparison to draw from those three numbers is not "z-30 is closer to Shannon". It is that halving the bit rate moves the *limit* down by 2.8 dB, and z-30 converts most of that into coding gain only when acquisition is free. On the air, where it is not, the two modes land level. The gap between z-30's bound and its measured threshold — 3.5 dB of acquisition loss on a 3.125 Hz-spaced signal — is exactly the part that a genie-aided comparison hides, in this mode and in every other.
+| | Threshold | Own Shannon limit | Distance from limit |
+| :--- | ---: | ---: | ---: |
+| FT8, on the air | $-21.0\\text{ dB}$ | $-27.72\\text{ dB}$ | $6.72\\text{ dB}$ |
+| z-30, blind acquisition | $-23.1\\text{ dB}$ | $-31.38\\text{ dB}$ | $8.28\\text{ dB}$ |
+| z-30, genie-aided bound | $-24.6\\text{ dB}$ | $-31.38\\text{ dB}$ | $6.78\\text{ dB}$ |
+
+The comparison to draw is **not** "z-30 is closer to Shannon" — it is further from its own limit
+than FT8 is from its. Sending 63 bits in 24.0 s instead of 77 bits in 12.64 s moves the *limit*
+down by $3.7\\text{ dB}$, and z-30's on-air threshold captures $2.1\\text{ dB}$ of that. Under
+ideal detection its code sits $6.78\\text{ dB}$ from its limit, within a tenth of a dB of where
+FT8's on-air figure sits from its own — so the codes are of comparable efficiency, and the
+$1.5\\text{ dB}$ that separates z-30's bound from its measured threshold is acquisition loss on a
+3.125 Hz-spaced signal. That loss is exactly the part a genie-aided comparison hides, in this
+mode and in every other.
 
 ---
 
@@ -1560,8 +1612,8 @@ Data Blocks:       D1       D2        D3         D4         D5         D6
 
 ## 📻 7. Link Budget: What a dB of Sensitivity Buys, and What z-30 Can Claim
 
-**z-30's on-air sensitivity has now been measured, and it is level with FT8 on AWGN - no
-advantage is claimed.**
+**z-30's on-air sensitivity has been measured: 2.1 dB deeper than FT8 on AWGN, bought with
+2.8 dB more airtime and 14 fewer message bits.**
 
 Earlier revisions of this page put z-30's idealised AWGN bound (a benchmark that hands the
 demodulator the exact noise level, the exact carrier frequency and perfect symbol timing) next
@@ -1576,12 +1628,13 @@ What is defensible today:
 - z-30 spends more energy per symbol (3.125 baud against FT8's 6.25) and more redundancy per
   information bit (rate 0.356 against 0.52), and both buy coding gain.
 - Its seeded benchmark, driven through the real acquisition path with random carrier and
-  timing offsets, crosses 50% decode at $-21.1\\text{ dB}$ and 90% at $-18.0\\text{ dB}$ on AWGN
-  in a 2500 Hz reference bandwidth - level with FT8, measured the same way.
+  timing offsets, crosses 50% decode at $-23.1\\text{ dB}$ and 90% at $-21.7\\text{ dB}$ on AWGN
+  in a 2500 Hz reference bandwidth - $2.1\\text{ dB}$ deeper than FT8, measured the same way.
 - Under ideal detection (exact carrier, timing and noise level) the same code reaches
-  $-24.6\\text{ dB}$. The $3.5\\text{ dB}$ difference is what it costs to *find* the signal.
-- The coding gain is real, but z-30 spends it twice: once on the code, and again on acquiring
-  a signal whose tones are only 3.125 Hz apart. Net, it lands where FT8 does.
+  $-24.6\\text{ dB}$. The $1.5\\text{ dB}$ difference is what it costs to *find* the signal.
+- The coding gain is real and it survives acquisition, but it is not free: the $2.1\\text{ dB}$
+  costs $2.8\\text{ dB}$ of extra airtime and 14 message bits against FT8. z-30 is deeper per
+  transmission and marginally shallower per second.
 
 ### 7.1 How the honest measurement is made
 
@@ -1592,18 +1645,23 @@ What is defensible today:
 3. A Watterson two-path fading channel is applied, with CCIR 520-2 Doppler and delay spreads
    for the *good*, *moderate* and *poor* path classes.
 4. The decode is driven through the **real acquisition path** (\`z30_dsp/acquisition.py\`): a
-   Costas sync search over time and frequency, plus a blind noise-floor estimate. Nothing is
-   handed to the demodulator.
-5. Every run is seeded, and the seed is published with the curve.
+   Costas sync search over the slot-synchronised timing window and the carrier range, plus a
+   blind noise-floor estimate. Nothing is handed to the demodulator.
+5. The demodulator is purely non-coherent, which is what z-30's receiver is specified to be and
+   what a receiver that has just acquired blind can actually support.
+6. Every run is seeded, and the seed is published with the curve.
 
-Measured result, seed \`20260830\`, 40 frames per SNR point:
+Measured result, seed \`20260830\`:
 
-| Channel | 50% decode | 90% decode |
-| --- | --- | --- |
-| Idealised bound (genie-aided sync) | $-24.6\\text{ dB}$ | $-23.4\\text{ dB}$ |
-| AWGN, blind acquisition | $-21.1\\text{ dB}$ | $-18.0\\text{ dB}$ |
-| CCIR moderate (1.0 ms / 0.5 Hz) | $-18.8\\text{ dB}$ | $-14.0\\text{ dB}$ |
-| CCIR poor (2.0 ms / 1.0 Hz) | $-15.4\\text{ dB}$ | above $-11\\text{ dB}$ |
+| Channel | Frames/point | 50% decode | 90% decode |
+| --- | ---: | --- | --- |
+| Idealised bound (genie-aided sync) | 40 | $-24.6\\text{ dB}$ | $-23.4\\text{ dB}$ |
+| AWGN, blind acquisition | 40 | $-23.1\\text{ dB}$ | $-21.7\\text{ dB}$ |
+| CCIR moderate (1.0 ms / 0.5 Hz) | 100 | $-21.3\\text{ dB}$ | $-19.5\\text{ dB}$ |
+| CCIR poor (2.0 ms / 1.0 Hz) | 100 | $-21.3\\text{ dB}$ | $-19.0\\text{ dB}$ |
+
+The two fading presets are not separable at the 50% point at 100 frames each; see
+[16. Benchmarking, Testing & CI](16-Benchmarking-Testing-&-CI.md) for the intervals.
 
 \`tests/test_channel_acquisition.py\` guards the property that makes this measurement meaningful:
 that acquisition reads only the audio, and is never quietly handed the answer again.
@@ -1636,17 +1694,20 @@ claimed, on a comparison that did not hold, was worth retracting rather than def
    JS8Call (Slow):                   -24.0 dB   │ Modes
    WSPR (2-Minute Beacon Only):      -28.0 dB ──┘
    ─────────────────────────────────────────────────────────────────────────────
-   z-30 (blind acquisition, AWGN):   -21.1 dB ◄── measured the same way as the rows above
+   z-30 (blind acquisition, AWGN):   -23.1 dB ◄── measured the same way as the rows above
    z-30 (idealised bound, genie sync):-24.6 dB ◄── NOT measured the same way; do not compare
    ─────────────────────────────────────────────────────────────────────────────
-   Theoretical Shannon Capacity:     -30.5 dB
+   z-30's own Shannon limit:         -31.4 dB   (63 bits / 24.0 s)
+   FT8's own Shannon limit:          -27.7 dB   (77 bits / 12.64 s)
 \`\`\`
 
 Every figure above the divider is an over-the-air threshold, and z-30's blind-acquisition
-figure belongs on that same scale: it is measured the same way, and it lands level with FT8.
-The idealised bound below it does **not** belong on this scale - it is an upper limit on what
-the code and demodulator could achieve if acquisition were free, and every mode listed above
-would move a few dB left if measured that way too.
+figure belongs on that same scale: it is measured the same way, and it lands 2.1 dB below FT8 —
+for 1.9x the airtime and 14 fewer message bits, which is why the two Shannon limits at the
+bottom are different numbers and why neither mode's distance from the other's limit means
+anything. The idealised bound does **not** belong on this scale either: it is an upper limit on
+what the code and demodulator could achieve if acquisition were free, and every mode listed
+above would move a few dB left if measured that way too.
 
 What z-30 does offer, independently of any sensitivity claim, is full two-way interactive QSO
 sequencing at 50 Hz occupied bandwidth, real-time successive interference cancellation, and
@@ -1660,89 +1721,155 @@ cross-platform hardware CAT integration.
     category: "Advanced & Packaging",
     description: "How to check for updates, sync upstream git commits from themantas1994/z-30, and perform zero-downtime updates across Linux, Windows, Android, and Web PWA.",
     tags: ["update","github","git","sync","upgrade","releases","pwa","termux","ubuntu","arch"],
-    markdown: `# 🔄 Software Updates & GitHub Upstream Synchronization
+    markdown: `# 🔄 Software Updates & Upstream Synchronisation
 
-The **z-30 Amateur Radio Transceiver Suite** is actively developed on GitHub at:
-**[https://github.com/themantas1994/z-30](https://github.com/themantas1994/z-30)**
-
----
-
-## 🌟 Update Channels
-
-z-30 provides two upstream update channels:
-
-1. **Stable Releases**: Official GitHub releases tagged by version (e.g. \`v1.0.0\`, \`v1.0.1\`). Recommended for field stations and daily operations.
-2. **Main Branch (Nightly / Development)**: Tracks the latest bleeding-edge commits on \`main\` branch. Includes experimental DSP filters, new rig CAT definitions, and performance optimizations.
+The **z-30 Amateur Radio Transceiver Suite** is developed on GitHub at
+**[https://github.com/themantas1994/z-30](https://github.com/themantas1994/z-30)**.
 
 ---
 
-## 🖥️ 1. In-App Web GUI & PWA Updates
+## 📌 Commits, not versions
 
-When running the Web UI / PWA:
-1. Click the **Update** button (with the download cloud icon) in the top right navigation bar or open **Station Settings ➔ 1. Station & Operator ➔ Software Version**.
-2. Click **Check Now** to query the GitHub API (\`api.github.com/repos/themantas1994/z-30\`).
-3. If an update is detected, click **Reload / Refresh PWA**. This automatically:
-   - Unregisters legacy Service Workers.
-   - Clears the browser \`CacheStorage\` and Web Audio buffers.
-   - Reloads the page with the latest compiled assets from network.
+**z-30 has no release channels and no version to compare.** It is developed on \`main\`, and an
+installation is either at the tip of \`main\` or some number of commits behind it. That number is
+the whole of what the update mechanism reports, and \`git\` already tracks it exactly: a \`git
+fetch\` and a count of the commits between \`HEAD\` and \`origin/main\`.
+
+> **Correction (2026-08-31):** every earlier revision of this page described "two upstream
+> update channels", Stable Releases and a Main Branch nightly, and the app carried a selector
+> for them. Neither worked. Both the CLI updater and the web UI compared a hardcoded
+> \`1.0.0\` against the newest release tag and the upstream \`package.json\` version - all three of
+> which had been \`1.0.0\` since the repository was created - so the check answered "up to date"
+> no matter how far behind the checkout was. The "development" channel compared against a
+> hand-edited \`CURRENT_COMMIT_SHA\` that had itself gone stale. An installation two hundred
+> commits behind was told it was current. Version strings nobody bumps are not version strings,
+> and the channels they distinguished did not exist: there has only ever been \`main\`.
+
+The version number that remains in \`package.json\` and \`pyproject.toml\` is packaging metadata.
+Nothing in the update path reads it.
 
 ---
 
-## ⚡ 2. Native Terminal & CLI Update Tool (\`z30 --update\`)
+## 🖥️ 1. Updating from the app
 
-The native Python package includes an automated upstream synchronizer:
+**Click the Update button in the top navigation bar.** It shows how many commits behind
+\`origin/main\` this installation is, lists what those commits are, and updates when you press
+**Update now**.
+
+When z-30 is started with the \`z30\` command, the native server is behind the page and does the
+work itself:
+
+1. \`git fetch origin main\` in the real checkout.
+2. \`git merge --ff-only origin/main\`.
+3. The result reports what changed, and the modal offers a reload when the interface moved.
+
+**Fast-forward only.** The update either advances \`HEAD\` onto the upstream commit or refuses
+and changes nothing. It cannot produce a merge commit, cannot leave a conflicted tree, and
+cannot discard your work. It is refused, with the reason shown, when:
+
+| Condition | Why |
+| :--- | :--- |
+| The working tree has uncommitted changes | A station that has patched its own copy is not something an Update button gets to overwrite. Commit or stash first. |
+| The checkout has commits upstream does not | It cannot be fast-forwarded. Merge or rebase it by hand. |
+| **The transmitter is keyed** | Replacing the served bundle and the Python sources under a running transmission, while the operator is on the air and not looking at the screen, is not something to do. Finish the slot first. |
+| This is not a git checkout | A pip or distribution-package install updates through that package manager. |
+
+The repository commits its built web bundle (\`z30_dsp/web_dist/\`), which is why the button
+works on a station with no Node toolchain: once the fast-forward lands, the new interface is
+already on disk and the browser only has to purge its caches and reload. Nothing is rebuilt by
+default. When the Python package itself changed, the modal says so - restart z-30 so the server
+runs the new code.
+
+**Opened from static hosting or as a PWA with no native server behind it**, the modal can still
+tell you how far behind you are - it compares the bundle's build-stamped commit against the
+GitHub commits API - but it cannot update anything, says so, and gives you the one command to
+run instead. The build stamp is injected by \`vite.config.ts\` from \`git rev-parse HEAD\` at build
+time, so it cannot drift the way the hand-maintained constant did.
+
+---
+
+## ⚡ 2. Updating from the terminal (\`z30 --update\`)
+
+The same \`z30_dsp/git_sync\` module, with a terminal front end. The button and the command can
+never disagree about whether an installation is current, because they are the same code.
 
 \`\`\`bash
-# Run the built-in updater
+# Report status, then ask before fast-forwarding.
 z30 --update
 
-# Or run non-interactively with auto-pull
+# Apply without asking.
 z30 --update -y
+
+# Report only, change nothing. Exits non-zero when behind, so a startup script
+# or a cron job can act on it without parsing any output.
+z30 --update --check
+
+# Also refresh dependencies / rebuild the bundle from source, for a developer checkout.
+z30 --update -y --reinstall
+z30 --update -y --rebuild
+\`\`\`
+
+Sample output:
+
+\`\`\`
+==================================================================
+      z-30 TRANSCEIVER - UPSTREAM SYNCHRONISATION
+      https://github.com/themantas1994/z-30
+==================================================================
+Checking https://github.com/themantas1994/z-30 (main)...
+
+Repository:    /home/pi/z-30
+Branch:        main
+Local commit:  cf06ee7
+Upstream:      a91d3f2 (origin/main)
+
+[!] 3 commits behind upstream:
+      a91d3f2  fix(cat): release the pin the key actually drove
+      7c1e044  feat(dsp): seed the dithered decode schedule
+      2b90aa1  docs(wiki): correct the decoder schedule count
+
+Fast-forward to a91d3f2 now? [Y/n]:
 \`\`\`
 
 ---
 
-## 🐧 3. Platform Specific Terminal Commands
+## 🔌 3. The local API
 
-### Ubuntu / Debian / Raspberry Pi OS (DigiPi)
+\`z30_dsp/web_server.py\` exposes the same information to the app over three endpoints, behind
+the same token + \`Origin\` + \`Host\` triple check as every other \`/api/\` route (see
+[13. Operating Safety, Compliance & Security](13-Operating-Safety-Compliance-&-Security.md)):
+
+| Endpoint | Purpose |
+| :--- | :--- |
+| \`GET /api/update/status?fetch=1\` | How far behind upstream, what the pending commits are, whether a fast-forward would succeed. \`fetch=0\` answers from the last fetch without touching the network. |
+| \`POST /api/update/apply\` | Starts the fast-forward in a worker thread. Returns immediately; refused with HTTP 409 while PTT is asserted, or if an update is already running. |
+| \`GET /api/update/progress\` | The running log and the final outcome. Polled by the modal, so reloading the page mid-update reconnects to the running job instead of starting a second one. |
+
+Every git invocation is an argument list, never a shell string - commit subjects and branch
+names are attacker-influenceable on a repository anyone can open a pull request against.
+
+---
+
+## 🐧 4. Platform notes
+
+The update *is* the fast-forward; the per-platform installer scripts exist to install
+dependencies, not to update source. Re-run one only when dependencies changed - the updater
+says so, or use \`--reinstall\`.
+
 \`\`\`bash
-cd z-30
-git pull origin main
-chmod +x install_ubuntu.sh
-./install_ubuntu.sh
+# Any platform, in the z-30 checkout:
+git pull --ff-only origin main
+
+# Then, only if dependencies changed:
+./install_ubuntu.sh          # Ubuntu / Debian / Raspberry Pi OS
+./install_arch.sh            # Arch / Manjaro / EndeavourOS  (or: makepkg -si)
+./install_android_termux.sh  # Android Termux
+run_windows.bat              # Windows 10 / 11
+pip install --upgrade -e .   # Generic Python
 \`\`\`
 
-### Arch Linux / Manjaro / EndeavourOS
-\`\`\`bash
-cd z-30
-git pull origin main
-chmod +x install_arch.sh
-./install_arch.sh
-# Or rebuild AUR package:
-makepkg -si
-\`\`\`
-
-### Windows 10 & 11
-\`\`\`cmd
-cd z-30
-git pull origin main
-run_windows.bat
-\`\`\`
-
-### Android Termux (Mobile Field Radio)
-\`\`\`bash
-cd z-30
-git pull origin main
-chmod +x install_android_termux.sh
-./install_android_termux.sh
-\`\`\`
-
-### Generic Python Pip
-\`\`\`bash
-git pull origin main
-pip install --upgrade -e .
-npm install && npm run build
-\`\`\`
+See [09. Cross-Platform Build & Packaging](09-Cross-Platform-Build-&-Packaging.md) for what
+each installer does.
 `,
   },
   {
@@ -2212,22 +2339,36 @@ been withdrawn. Both curves are now measured, and the gap between them is the an
 
 ## 📉 The measured set
 
-Seed \`20260830\`, 40 frames per SNR point, 2500 Hz reference bandwidth, carrier offset ±5 Hz,
-timing offset ±0.5 s:
+Seed \`20260830\`, 2500 Hz reference bandwidth, carrier offset ±5 Hz, timing offset ±0.5 s:
 
-| Channel | 50% decode | 90% decode |
-| :--- | :--- | :--- |
-| Idealised AWGN bound (genie-aided sync — **not** an on-air figure) | -24.6 dB | -23.4 dB |
-| AWGN, blind acquisition | **-21.1 dB** | **-18.0 dB** |
-| CCIR *moderate* fading (1.0 ms / 0.5 Hz), blind acquisition | -18.8 dB | -14.0 dB |
-| CCIR *poor* fading (2.0 ms / 1.0 Hz), blind acquisition | -15.4 dB | above -11 dB |
+| Channel | Frames/point | 50% decode | 90% decode |
+| :--- | ---: | :--- | :--- |
+| Idealised AWGN bound (genie-aided sync — **not** an on-air figure) | 40 | -24.6 dB | -23.4 dB |
+| AWGN, blind acquisition | 40 | **-23.1 dB** | **-21.7 dB** |
+| CCIR *moderate* fading (1.0 ms / 0.5 Hz), blind acquisition | 100 | -21.3 dB | -19.5 dB |
+| CCIR *poor* fading (2.0 ms / 1.0 Hz), blind acquisition | 100 | -21.3 dB | -19.0 dB |
 
-**3.5 dB of the bound is spent simply finding the signal.** That gap is the acquisition loss —
+**1.5 dB of the bound is spent simply finding the signal.** That gap is the acquisition loss —
 what it costs to *find* the signal rather than be told where it is. Any mode's genie-aided
 bound is optimistic by a similar margin, which is why the two must never be compared across
 that line. See
 [11. Physics & Comparative Analysis](11-Physics-&-Comparative-Analysis-z30-vs-FT8.md) for what
 this does and does not mean against FT8.
+
+**The two fading presets are not separable at the 50% point, and the table says so rather than
+printing two numbers that look different.** They were re-measured at 100 frames per point
+precisely because 40 frames could not tell them apart: at -21 dB the moderate preset decoded
+57/100 (Wilson 95% CI 47.2–66.3%) and the poor preset 65/100 (55.2–73.6%), intervals that
+overlap across most of their range. Both interpolate to -21.3 dB. The 90% points do separate,
+in the expected direction, by 0.5 dB.
+
+Why the two presets are so close has **not** been measured and no mechanism is claimed here.
+What can be said without measuring anything is arithmetic from the preset parameters: a 1.0 ms
+and a 2.0 ms delay spread give coherence bandwidths of roughly 160 Hz and 80 Hz, both far wider
+than z-30's 50 Hz occupied bandwidth, so neither preset is frequency-selective across this
+signal. That leaves Doppler spread (0.5 vs 1.0 Hz) as the parameter that differs in a way the
+waveform can see. Whether that accounts for the result is a question for a benchmark, not for
+this paragraph.
 
 ---
 
@@ -2240,8 +2381,9 @@ figure you publish:
 # The honest curve (the default).
 python -m z30_dsp.benchmark --mode realistic --fading none --min-snr -28 --max-snr -17 --frames 40
 
-# On a disturbed ionospheric path.
-python -m z30_dsp.benchmark --mode realistic --fading moderate --min-snr -25 --max-snr -13 --frames 40
+# On a disturbed ionospheric path. 100 frames, because 40 could not separate the two presets.
+python -m z30_dsp.benchmark --mode realistic --fading moderate --min-snr -23 --max-snr -17 --frames 100
+python -m z30_dsp.benchmark --mode realistic --fading poor     --min-snr -23 --max-snr -17 --frames 100
 
 # The genie-aided bound, for comparison only.
 python -m z30_dsp.benchmark --mode ideal --min-snr -30 --max-snr -20 --frames 40
@@ -2258,18 +2400,18 @@ Sample output from the default mode:
 ================================================================================================
 SNR (2500Hz)   | Frames  | Success  | FER       | Decode %  | Avg Iters  | Acq fail | Timing RMS  | Freq RMS
 ------------------------------------------------------------------------------------------------
- -28.0 dB      | 40      | 0        | 1.0000    |     0.0%  |  150.0     | 25       |   1330.7 ms |   6.19 Hz
- -27.0 dB      | 40      | 0        | 1.0000    |     0.0%  |  150.0     | 17       |   1251.3 ms |   5.06 Hz
- -26.0 dB      | 40      | 0        | 1.0000    |     0.0%  |  150.0     | 3        |    281.3 ms |   3.46 Hz
- -25.0 dB      | 40      | 3        | 0.9250    |     7.5%  |  138.9     | 1        |    104.7 ms |   0.99 Hz
- -24.0 dB      | 40      | 4        | 0.9000    |    10.0%  |  138.6     | 0        |     17.8 ms |   0.32 Hz
- -23.0 dB      | 40      | 7        | 0.8250    |    17.5%  |  124.2     | 0        |     13.7 ms |   0.18 Hz
- -22.0 dB      | 40      | 13       | 0.6750    |    32.5%  |  106.3     | 0        |     13.5 ms |   0.18 Hz
- -21.0 dB      | 40      | 21       | 0.4750    |    52.5%  |   74.3     | 0        |      9.6 ms |   0.14 Hz  <-- 50% crossing interpolates to -21.1 dB
- -20.0 dB      | 40      | 27       | 0.3250    |    67.5%  |   51.1     | 0        |      7.2 ms |   0.12 Hz
- -19.0 dB      | 40      | 32       | 0.2000    |    80.0%  |   36.0     | 0        |      7.5 ms |   0.10 Hz
- -18.0 dB      | 40      | 36       | 0.1000    |    90.0%  |   19.0     | 0        |      4.4 ms |   0.09 Hz  <-- 90% crossing
- -17.0 dB      | 40      | 40       | 0.0000    |   100.0%  |    2.5     | 0        |      3.9 ms |   0.07 Hz
+ -28.0 dB      | 40      | 0        | 1.0000    |     0.0%  |  150.0     | 15       |    311.3 ms |   4.61 Hz
+ -27.0 dB      | 40      | 0        | 1.0000    |     0.0%  |  150.0     | 3        |    190.0 ms |   2.41 Hz
+ -26.0 dB      | 40      | 0        | 1.0000    |     0.0%  |  150.0     | 1        |    124.4 ms |   2.24 Hz
+ -25.0 dB      | 40      | 0        | 1.0000    |     0.0%  |  150.0     | 1        |    144.7 ms |   0.83 Hz
+ -24.0 dB      | 40      | 0        | 1.0000    |     0.0%  |  150.0     | 0        |     17.8 ms |   0.32 Hz
+ -23.0 dB      | 40      | 22       | 0.4500    |    55.0%  |   77.6     | 0        |     13.7 ms |   0.18 Hz  <-- 50% crossing interpolates to -23.1 dB
+ -22.0 dB      | 40      | 34       | 0.1500    |    85.0%  |   24.9     | 0        |     13.5 ms |   0.18 Hz
+ -21.0 dB      | 40      | 40       | 0.0000    |   100.0%  |    1.2     | 0        |      9.6 ms |   0.14 Hz  <-- 90% crossing interpolates to -21.7 dB
+ -20.0 dB      | 40      | 40       | 0.0000    |   100.0%  |    1.1     | 0        |      7.2 ms |   0.12 Hz
+ -19.0 dB      | 40      | 40       | 0.0000    |   100.0%  |    1.0     | 0        |      7.5 ms |   0.10 Hz
+ -18.0 dB      | 40      | 40       | 0.0000    |   100.0%  |    1.0     | 0        |      4.4 ms |   0.09 Hz
+ -17.0 dB      | 40      | 40       | 0.0000    |   100.0%  |    1.0     | 0        |      3.9 ms |   0.07 Hz
 ================================================================================================
 \`\`\`
 
@@ -2280,7 +2422,7 @@ columns rather than being hidden inside the frame error rate.
 
 ---
 
-## 🖥️ The in-app benchmark, and why its numbers are not the published ones
+## 🖥️ The in-app benchmark, and why it now agrees with the Python one
 
 **Station Settings → 5. Experimental Testing → Launch Benchmark Suite** runs the same two modes
 in the browser, over \`src/dsp/monteCarloEngine.ts\`. It has a **Measurement mode** selector, and
@@ -2292,36 +2434,55 @@ timing offset (±0.5 s), searches for the frame using only the 21 Costas symbols
 counts a frame it cannot find as a failure. The \`Acq Fail\`, \`Timing RMS\` and \`Freq RMS\` columns
 of the results table are the same diagnostics the Python table carries.
 
-**It is a bench instrument, not the reference.** Use it to watch how a change moves the curve
-without leaving the app; quote the Python benchmark when you publish a number. Measured at seed
-\`20260830\`, 40 frames per point:
+The two engines model the same receiver, and the two constants that say so are shared and
+pinned by \`tests/test_cross_language_parity.py\`:
+
+| Constant | Value | What it fixes |
+| :--- | :--- | :--- |
+| \`SLOT_SEARCH_MARGIN_SEC\` | 0.05 s | The timing search half-width is the station's timing uncertainty plus this margin — ±0.55 s at the default ±0.5 s offset. z-30 is slot-synchronised, so a real receiver knows where the frame should start and searches a window, not an arbitrary stream. |
+| \`REALISTIC_PILOT_COHERENCE\` | 0.0 | Purely non-coherent demodulation, which is what z-30's receiver is specified to be. \`ideal\` mode keeps the pilot-adaptive weight, because it is handed perfect timing. |
+
+Measured at seed \`20260830\`, 40 frames per point, AWGN:
 
 | | Python (\`z30_dsp/benchmark.py\`) | Browser (\`monteCarloEngine.ts\`) |
 | :--- | :--- | :--- |
 | Genie-aided bound, 50% | -24.6 dB | ≈ -24.2 dB |
-| AWGN blind acquisition, 50% | **-21.1 dB** | ≈ -22.9 dB |
+| AWGN blind acquisition, 50% | **-23.1 dB** | **-23.0 dB** |
 
-The two agree closely on the bound and differ by roughly 1.8 dB on the threshold. One reason is
-real and worth knowing rather than papering over:
+> **Correction (2026-08-31, second revision):** this page used to publish that same row as
+> **-21.1 dB** against **≈ -22.9 dB** and explain the 1.8 dB gap by saying the browser searched a
+> narrower timing window. That explanation was wrong, and so was the Python figure.
+>
+> Both were tested paired — the identical frame, fading realisation, carrier offset, timing
+> offset and noise decoded twice, changing one thing at a time:
+>
+> - **Timing search width** (full-stream vs slot-synchronised), 200 frames from -26 to -22 dB:
+>   **zero discordant decodes**, exact two-sided McNemar p = 1. The search width accounted for
+>   none of the gap.
+> - **Demodulator coherent weight** (pilot-adaptive 0.35–0.85 vs zero), 160 frames from -24 to
+>   -21 dB: **59 discordant pairs, 55 won by the non-coherent receiver and 4 by the
+>   semi-coherent one**, exact two-sided McNemar p = 1.7×10⁻¹² — greater than 99.9999999%
+>   confidence, clearing the ≥99% bar [\`AGENTS.md\` §5](../AGENTS.md#5-honest-numbers) sets for a
+>   result that changes a published figure.
+>
+> The Python benchmark had been applying a pilot-aided semi-coherent term through the whole
+> realistic path. Under the timing error that blind acquisition actually leaves, a few
+> milliseconds rotates each tone by $2\\pi f \\Delta t$, so that term is measured against the wrong
+> phase reference and cancels signal instead of reinforcing it. The browser engine had already
+> been dropping it. **The Python benchmark was measuring a receiver worse than the one z-30
+> specifies, and the published threshold was 2.0 dB pessimistic as a result.**
+>
+> The trade-off side is recorded rather than left out: at -24 dB, below the point where the
+> Costas pattern is reliably findable, both receivers are near zero and the semi-coherent one
+> took that point 3–0. The full per-point table is in the \`REALISTIC_PILOT_COHERENCE\` comment in
+> \`z30_dsp/benchmark.py\`.
 
-1. **The timing search is narrower.** The browser searches ±0.55 s around the slot boundary,
-   which is what a slot-synchronised receiver actually has to do; \`acquire_frame\` defaults to
-   searching the whole stream. A narrower search mis-locks less often.
-
-> **Correction (2026-08-31):** this page used to list a second reason - "the decoders are not the
-> same: the browser runs a three-schedule min-sum cascade; the Python decoder runs a single
-> normalised min-sum schedule." That was false in both directions. \`z30_dsp/ldpc.py\` and
-> \`src/dsp/ldpcCodec.ts\` have always run the identical **four**-schedule cascade described in
-> [04. Forward Error Correction & LDPC](04-Forward-Error-Correction-&-LDPC.md#the-four-decode-schedules).
-> A paired benchmark validated that the cascade design is genuinely better than the single-schedule
-> decoder this page mistakenly described (see "A worked example" below) - it just isn't the reason
-> the Python and browser thresholds disagree with each other, since both run the same one. What,
-> if anything beyond the timing-window difference above, accounts for the remaining gap has not
-> been measured; this page will not guess at a second reason again without a benchmark behind it.
-
-So: **the figures in this page and in the wiki come from the Python benchmark.** If you change
-the DSP, the browser engine will tell you quickly which way the curve moved; confirm the number
-with a seeded Python run before it goes anywhere near documentation.
+Both engines now run the same receiver model and land 0.1 dB apart on the threshold, which is
+inside the sampling noise of 40 frames per point. **The Python benchmark is still the
+reference**: it is the one CI runs, the one the seed defaults are pinned to, and the one whose
+output the tables above are copied from. Use the browser engine to see which way a change moved
+the curve without leaving the app; confirm with a seeded Python run before a number reaches
+documentation.
 
 One thing the browser engine is *not* free to differ on: \`ideal\` and \`realistic\` mean exactly
 what they mean here. A browser run in \`ideal\` mode is a bound, is labelled a bound in the UI,

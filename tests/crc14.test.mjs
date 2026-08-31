@@ -13,7 +13,13 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 
-import { ldpcCodec, Z30LdpcEngine } from '../src/dsp/ldpcCodec.ts';
+import {
+  ldpcCodec,
+  Z30LdpcEngine,
+  DITHER_AMPLITUDE,
+  ditherSeedFromLlrs,
+  ditherVector,
+} from '../src/dsp/ldpcCodec.ts';
 import { Z30_CHECK_TO_INFO } from '../src/dsp/z30Constants.ts';
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -78,6 +84,69 @@ console.log('Encoder / parity-check agreement');
     }
   }
   check('encoder satisfies its own parity-check matrix', allZero);
+}
+
+// ---------------------------------------------------------------------------------------
+// Deterministic schedule-4 (DITHER) perturbation, against the shared vectors.
+//
+// Both languages used to draw this from unseeded global RNG (`Math.random()` here,
+// `np.random.rand()` in Python), which made the decoder not a function of its input: two
+// seeded benchmark runs of the same configuration could decode a different set of frames, and
+// only near threshold - exactly where the curve is measured. The Python side asserts the same
+// file in tests/test_cross_language_parity.py.
+{
+  const doc = JSON.parse(readFileSync(join(here, 'vectors', 'dither_vectors.json'), 'utf8'));
+  const llrs = Float32Array.from(doc.llrs);
+
+  check('DITHER_AMPLITUDE matches the shared vectors', DITHER_AMPLITUDE === doc.amplitude);
+  const seed = ditherSeedFromLlrs(llrs);
+  check(
+    'ditherSeedFromLlrs matches the Python implementation',
+    seed === doc.seed,
+    `got 0x${seed.toString(16)}, expected 0x${doc.seed.toString(16)}`
+  );
+
+  const produced = ditherVector(llrs, doc.dither.length);
+  let firstMismatch = -1;
+  for (let i = 0; i < doc.dither.length; i++) {
+    if (produced[i] !== doc.dither[i]) {
+      firstMismatch = i;
+      break;
+    }
+  }
+  check(
+    'ditherVector matches the Python implementation bit for bit',
+    firstMismatch === -1,
+    firstMismatch >= 0
+      ? `index ${firstMismatch}: got ${produced[firstMismatch]}, expected ${doc.dither[firstMismatch]}`
+      : ''
+  );
+}
+
+// The decoder must be a pure function even for a frame that never converges, which is the
+// only way the dithered fourth schedule runs at all.
+{
+  const engine = new Z30LdpcEngine();
+  const llrs = new Float32Array(216);
+  let state = 987654321;
+  for (let i = 0; i < 216; i++) {
+    state = (state * 1664525 + 1013904223) % 4294967296;
+    llrs[i] = (state / 4294967296 - 0.5) * 1.4;
+  }
+  const first = engine.decodeMinSum(llrs);
+  const second = engine.decodeMinSum(llrs);
+  // 45 + 40 + 35 + 30: every schedule ran, so the dithered one did too.
+  check(
+    'an undecodable frame runs the whole four-schedule cascade',
+    first.iterations === 150,
+    `iterations = ${first.iterations}`
+  );
+  check(
+    'decodeMinSum is reproducible through the dithered schedule',
+    first.success === second.success &&
+      first.iterations === second.iterations &&
+      first.infoBits.every((b, i) => b === second.infoBits[i])
+  );
 }
 
 if (failures > 0) {

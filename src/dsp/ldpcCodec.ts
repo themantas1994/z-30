@@ -10,7 +10,7 @@
  *    - Parity check equations (m = n - k) = 139 checks
  *    - Code Rate R = 77 / 216 ≈ 0.3564. Against an idealised AWGN channel with perfect
  *      synchronisation, the seeded benchmark crosses 50% decode near -24.6 dB SNR and 90% near
- *      -23.6 dB (2500 Hz reference bandwidth). That is a bound on the code under ideal
+ *      -23.4 dB (2500 Hz reference bandwidth). That is a bound on the code under ideal
  *      detection, not an over-the-air threshold - see z30_dsp/benchmark.py.
  *    - Modulation Symbol Mapping: 216 coded bits / (4 bits/symbol) = 54 data symbols in 16-MFSK.
  *      With 21 Costas synchronization symbols, total frame length = 75 symbols (24.0s duration at Ts=320ms).
@@ -40,7 +40,8 @@
  * 
  * 5. Vectorized Normalized Min-Sum Belief Propagation Decoder:
  *    - Check node update: L_{c->v} = alpha * prod(sign(L_{v'->c})) * min_{v' != v}(|L_{v'->c}|)
- *      where alpha = 0.75 is the empirical normalization factor mitigating check over-estimation.
+ *      where alpha is the schedule's own empirical normalization factor mitigating check
+ *      over-estimation - see Z30_DECODE_SCHEDULES; there is no single alpha for the decoder.
  *    - Variable node update: L_{v->c} = L_{ch, v} + sum_{c' != c} L_{c'->v}
  *    - Total aposteriori LLR: L_total(v) = L_{ch, v} + sum_{all c} L_{c->v}
  *    - Early termination when syndrome s = H * c^T == 0 (mod 2) and CRC passes.
@@ -59,8 +60,38 @@ export const Z30_LDPC_PARAMS: LdpcCodeParameters = {
   dataSymbols: 54,
   syncSymbols: 21,
   totalSymbols: 75,
-  alphaMinSum: 0.75,
 };
+
+/**
+ * The four decode schedules `decodeMinSum` runs, in order, stopping at the first that produces
+ * a codeword whose syndrome is zero and whose CRC-14 matches.
+ *
+ * Exported because the Specs modal has to describe the decoder, and there is no single alpha
+ * to describe it with. `Z30_LDPC_PARAMS` used to carry `alphaMinSum: 0.75`, wiki/04 documented
+ * that one figure, and the modal rendered it - while the decoder applied the four alphas below
+ * and had never applied 0.75 at all. The benchmark modal even offered an input box for it. The
+ * cure for a constant that no longer describes the code is to export the thing that does.
+ *
+ * The twin of `DECODE_SCHEDULES` in z30_dsp/ldpc.py, asserted equal by
+ * tests/test_cross_language_parity.py.
+ */
+export interface LdpcDecodeSchedule {
+  /** 'NMS' normalized min-sum, 'SPA' box-plus sum-product, 'DITHER' NMS on perturbed LLRs. */
+  readonly mode: 'NMS' | 'SPA' | 'DITHER';
+  readonly alpha: number;
+  readonly beta: number;
+  readonly damping: number;
+  /** Check nodes are swept in reverse order, to escape asymmetric cycle traps. */
+  readonly reverse: boolean;
+  readonly iters: number;
+}
+
+export const Z30_DECODE_SCHEDULES: readonly LdpcDecodeSchedule[] = [
+  { mode: 'NMS', alpha: 0.82, beta: 0.08, damping: 0.88, reverse: false, iters: 45 },
+  { mode: 'SPA', alpha: 0.95, beta: 0.0, damping: 0.85, reverse: false, iters: 40 },
+  { mode: 'NMS', alpha: 0.74, beta: 0.04, damping: 0.9, reverse: true, iters: 35 },
+  { mode: 'DITHER', alpha: 0.8, beta: 0.06, damping: 0.85, reverse: false, iters: 30 },
+];
 
 /**
  * Default iteration ceiling for the min-sum decoder, and the number the UI must quote.
@@ -98,13 +129,71 @@ export interface LdpcDecodeResult {
   }>;
 }
 
+/**
+ * Peak-to-peak amplitude of the LLR perturbation applied by decode schedule 4 ("DITHER").
+ * The twin of `DITHER_AMPLITUDE` in z30_dsp/ldpc.py; pinned by tests/crc14.test.mjs.
+ */
+export const DITHER_AMPLITUDE = 0.45;
+
+/**
+ * Derives a 32-bit seed from the channel LLRs themselves (FNV-1a over 1/64-LLR quanta).
+ *
+ * Schedule 4 perturbs the channel LLRs to break the symmetric trapping sets a deterministic
+ * schedule stalls on. That perturbation used to come from `Math.random()`, so the decoder was
+ * not a function of its input: two runs of the benchmark at the identical seed could decode a
+ * different set of frames, precisely among the near-threshold frames the benchmark exists to
+ * characterise. AGENTS.md's determinism invariant says `Math.random()` does not belong in that
+ * path.
+ *
+ * Handing the engine's seeded `RandomSource` in from the benchmark would fix the benchmark and
+ * nothing else: `decodeMinSum` is also called by sicDecoder.ts and realReceiver.ts, where
+ * there is no seed to hand it, and a frame captured off the air still has to decode the same
+ * way twice. Deriving the seed from the input instead makes the decoder a pure function
+ * everywhere - the same LLRs always give the same answer, in isolation, in any caller, in
+ * either language. The perturbation only has to be uncorrelated with the code's structure, not
+ * unpredictable, so nothing is lost by making it reproducible.
+ *
+ * Quantising to 1/64 before hashing keeps the derivation on integers, so TypeScript and Python
+ * agree bit for bit; `Math.floor(x * 64 + 0.5)` rather than `Math.round()` because Python
+ * rounds halves to even and JavaScript rounds them up.
+ */
+export function ditherSeedFromLlrs(llrChannel: Float32Array | number[]): number {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < llrChannel.length; i++) {
+    const quantum = Math.floor(llrChannel[i] * 64.0 + 0.5) >>> 0;
+    for (let shift = 0; shift < 32; shift += 8) {
+      h = (h ^ ((quantum >>> shift) & 0xff)) >>> 0;
+      h = Math.imul(h, 0x01000193) >>> 0;
+    }
+  }
+  return h >>> 0;
+}
+
+/**
+ * The schedule-4 LLR perturbation for `llrChannel`: `length` values in +/-DITHER_AMPLITUDE/2.
+ *
+ * mulberry32, the generator of src/dsp/seededRandom.ts, reproduced in z30_dsp/ldpc.py in
+ * unsigned 32-bit arithmetic so that both languages emit an identical sequence.
+ */
+export function ditherVector(llrChannel: Float32Array | number[], length: number): Float64Array {
+  let state = ditherSeedFromLlrs(llrChannel) || 0x9e3779b9;
+  const out = new Float64Array(length);
+  for (let i = 0; i < length; i++) {
+    state = (state + 0x6d2b79f5) >>> 0;
+    let t = state;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    out[i] = (((t ^ (t >>> 14)) >>> 0) / 4294967296 - 0.5) * DITHER_AMPLITUDE;
+  }
+  return out;
+}
+
 export class Z30LdpcEngine {
   private readonly n = Z30_LDPC_PARAMS.n;
   private readonly k = Z30_LDPC_PARAMS.k;
   private readonly m = Z30_LDPC_PARAMS.m;
-  // The min-sum normalisation factor is not a single constant: decodeMinSum() runs four
-  // schedules, each with its own alpha (0.74 to 0.95). Z30_LDPC_PARAMS.alphaMinSum documents
-  // the nominal 0.75 for the spec; the schedules below are what actually runs.
+  // The min-sum normalisation factor is not a single constant: decodeMinSum() runs the four
+  // schedules of Z30_DECODE_SCHEDULES, each with its own alpha (0.74 to 0.95).
 
   // Parity check matrix sparse graph representation
   // checkToVarEdges[c] = array of variable node indices connected to check c
@@ -314,60 +403,6 @@ export class Z30LdpcEngine {
   }
 
   /**
-   * Simulates channel impairments by injecting AWGN noise or random BSC bit errors.
-   * 
-   * @param codeword - Clean 216-bit transmitter codeword
-   * @param errorCount - Number of hard bit flips to apply in BSC mode
-   * @param channelType - 'BSC' (Binary Symmetric Channel) or 'AWGN' (Additive White Gaussian Noise)
-   * @param snrDb - Signal-to-Noise Ratio in dB (for AWGN simulation)
-   * @returns Corrupted bits, floating-point channel Log-Likelihood Ratios (LLRs), and flipped bit indexes
-   */
-  public corruptCodeword(
-    codeword: number[],
-    errorCount: number,
-    channelType: 'BSC' | 'AWGN' = 'BSC',
-    snrDb: number = -20
-  ): { corruptedBits: number[]; llrChannel: Float32Array; bitFlips: number[] } {
-    const corruptedBits = [...codeword];
-    const llrChannel = new Float32Array(this.n);
-    const bitFlips: number[] = [];
-
-    if (channelType === 'BSC') {
-      const chosenIndices = new Set<number>();
-      while (chosenIndices.size < Math.min(errorCount, this.n)) {
-        const randIdx = Math.floor(Math.random() * this.n);
-        chosenIndices.add(randIdx);
-      }
-      chosenIndices.forEach((idx) => {
-        corruptedBits[idx] ^= 1;
-        bitFlips.push(idx);
-      });
-
-      for (let i = 0; i < this.n; i++) {
-        llrChannel[i] = corruptedBits[i] === 0 ? 6.0 : -6.0;
-      }
-    } else {
-      const snrLinear = Math.pow(10, snrDb / 10);
-      const sigma = Math.sqrt(1.0 / (2.0 * snrLinear * (this.k / this.n)));
-
-      for (let i = 0; i < this.n; i++) {
-        const s = codeword[i] === 0 ? 1.0 : -1.0;
-        const u1 = Math.max(1e-10, Math.random());
-        const u2 = Math.random();
-        const noise = sigma * Math.sqrt(-2.0 * Math.log(u1)) * Math.cos(2 * Math.PI * u2);
-        const r = s + noise;
-        llrChannel[i] = (2.0 * r) / (sigma * sigma);
-        corruptedBits[i] = r < 0 ? 1 : 0;
-        if (corruptedBits[i] !== codeword[i]) {
-          bitFlips.push(i);
-        }
-      }
-    }
-
-    return { corruptedBits, llrChannel, bitFlips };
-  }
-
-  /**
    * Ultra-Sensitive Multi-Schedule Damped Log-SPA & Layered Normalized Min-Sum LDPC Decoder.
    * 
    * Algorithmic Architecture:
@@ -427,12 +462,10 @@ export class Z30LdpcEngine {
     // Pass 2: Exact Log-SPA / Box-Plus Belief Propagation with Jacobian Correction (Ultimate weak SNR)
     // Pass 3: Reversed Layer Schedule with Lower Alpha (Trapping set escape)
     // Pass 4: Noise Dithered Perturbation (Stochastic resonance)
-    const passSchedules = [
-      { mode: 'NMS', alpha: 0.82, beta: 0.08, damping: 0.88, reverse: false, iters: Math.min(45, maxIterations) },
-      { mode: 'SPA', alpha: 0.95, beta: 0.00, damping: 0.85, reverse: false, iters: Math.min(40, maxIterations) },
-      { mode: 'NMS', alpha: 0.74, beta: 0.04, damping: 0.90, reverse: true,  iters: Math.min(35, maxIterations) },
-      { mode: 'DITHER', alpha: 0.80, beta: 0.06, damping: 0.85, reverse: false, iters: Math.min(30, maxIterations) },
-    ];
+    const passSchedules = Z30_DECODE_SCHEDULES.map((sched) => ({
+      ...sched,
+      iters: Math.min(sched.iters, maxIterations),
+    }));
 
     let overallBestDecoded = new Array(this.n).fill(0);
     let overallBestSyndromeWeight = 999;
@@ -447,10 +480,11 @@ export class Z30LdpcEngine {
       totalLlrs.set(inputLlr);
 
       if (sched.mode === 'DITHER') {
-        // Inject slight randomized perturbation to break symmetric trapping sets
+        // Perturbation derived from the channel LLRs, not from Math.random() - see
+        // ditherVector(). This is what keeps a seeded benchmark run reproducible.
+        const dither = ditherVector(inputLlr, this.n);
         for (let i = 0; i < this.n; i++) {
-          const dither = (Math.random() - 0.5) * 0.45;
-          totalLlrs[i] += dither;
+          totalLlrs[i] += dither[i];
         }
       }
 

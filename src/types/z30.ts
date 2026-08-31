@@ -169,5 +169,7 @@ export interface LdpcCodeParameters {
   dataSymbols: number; // 54 data symbols
   syncSymbols: number; // 21 Costas array symbols
   totalSymbols: number; // 75 symbols per frame
-  alphaMinSum: number; // 0.75 normalization factor
+  // No alphaMinSum: the decoder runs four schedules with four different alphas, and the single
+  // 0.75 that used to live here was never applied by either implementation. The live table is
+  // Z30_DECODE_SCHEDULES in src/dsp/ldpcCodec.ts.
 }

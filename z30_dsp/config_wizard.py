@@ -1134,13 +1134,18 @@ class ConfigWizardDialog(tk.Toplevel):
 
 def launch_config_wizard_if_needed(
     root: tk.Tk,
-    config_path: str = "config.json",
+    config_path: Optional[str] = None,
     force: bool = False,
     on_complete: Optional[Callable[[StationConfig], None]] = None
 ) -> Optional[ConfigWizardDialog]:
     """
     Helper function for main GUI startup:
     Checks if a valid config exists; if not (or if forced), presents the Setup Wizard.
+
+    `config_path` defaults to None, not to "config.json", so that SettingsManager resolves the
+    per-user path from z30_dsp.paths. The bare relative default meant the wizard wrote into
+    whatever directory z-30 was launched from, and a second launch from elsewhere came up with
+    defaults and offered to run the wizard again.
     """
     mgr = SettingsManager(config_path)
     if force or not mgr.has_valid_config_file():
