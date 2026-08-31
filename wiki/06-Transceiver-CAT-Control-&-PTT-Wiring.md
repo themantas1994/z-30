@@ -67,6 +67,13 @@ passed its CAT test and then never keyed.
 For any rig outside that table, `Direct Serial` refuses and names `rigctld` instead of guessing a
 command set. Hamlib carries per-model command tables; this app does not duplicate them.
 
+**A Direct Serial CAT test confirms the write, not the radio's answer.** There is no serial read
+loop in `catController.ts` — the reader handle is only ever cancelled, never assigned — so in
+`Direct Serial` mode a passing "Test CAT Connection" means the bytes left the port, not that the
+rig understood them. Reading replies means a per-rig response parser for every family, which is
+what `rigctld` already is; Hamlib mode therefore verifies the rig's actual reply and Direct Serial
+mode does not. If you need a CAT link proven end to end, test it in Hamlib mode.
+
 ---
 
 ## ⚡ 9 Supported PTT Keying Architectures
