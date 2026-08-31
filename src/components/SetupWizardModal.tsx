@@ -278,7 +278,16 @@ export const SetupWizardModal: React.FC<SetupWizardModalProps> = ({
     setIsConnectingSerial(true);
     setSerialFeedback('Querying OS native USB/Serial hardware devices...');
     try {
-      const res = await catController.requestAndPairRealPort(form.baudRate || 115200);
+      // The port must come up with the keying line released for THIS station's wiring,
+      // and the form may not be saved yet.
+      catController.configureKeying(form.pttPolarity || 'ACTIVE_HIGH');
+      const res = await catController.requestAndPairRealPort(form.baudRate || 115200, {
+        // The operator's UART framing, which used to be collected here and never passed to
+        // the browser: every port opened 8-N-1 regardless.
+        dataBits: form.dataBits,
+        stopBits: form.stopBits,
+        handshake: form.handshake,
+      });
       if (res.success && res.portInfo) {
         setSerialFeedback(`✓ ${res.message}`);
         setForm((prev) => ({ ...prev, serialPort: res.portInfo!.displayName || res.portInfo!.path }));

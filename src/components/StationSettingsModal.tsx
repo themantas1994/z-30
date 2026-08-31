@@ -141,6 +141,8 @@ export const StationSettingsModal: React.FC<StationSettingsModalProps> = ({
   const [serialFeedback, setSerialFeedback] = useState<string>('');
   const [isPairingCm108, setIsPairingCm108] = useState<boolean>(false);
   const [cm108Feedback, setCm108Feedback] = useState<string>('');
+  const [isPairingPttPort, setIsPairingPttPort] = useState<boolean>(false);
+  const [pttPortFeedback, setPttPortFeedback] = useState<string>('');
   const [discoveredPorts, setDiscoveredPorts] = useState<DiscoveredSerialPort[]>([]);
   const [isQueryingSerial, setIsQueryingSerial] = useState<boolean>(false);
   const [isCustomPortMode, setIsCustomPortMode] = useState<boolean>(false);
@@ -323,7 +325,16 @@ export const StationSettingsModal: React.FC<StationSettingsModalProps> = ({
     setIsConnectingSerial(true);
     setSerialFeedback('Querying OS native USB/Serial hardware devices...');
     try {
-      const res = await catController.requestAndPairRealPort(form.baudRate || 115200);
+      // The port must come up with the keying line released for THIS station's wiring,
+      // and the form may not be saved yet.
+      catController.configureKeying(form.pttPolarity || 'ACTIVE_HIGH');
+      const res = await catController.requestAndPairRealPort(form.baudRate || 115200, {
+        // The operator's UART framing, which used to be collected here and never passed to
+        // the browser: every port opened 8-N-1 regardless.
+        dataBits: form.dataBits,
+        stopBits: form.stopBits,
+        handshake: form.handshake,
+      });
       if (res.success && res.portInfo) {
         setSerialFeedback(`✓ ${res.message}`);
         setForm((prev) => ({ ...prev, serialPort: res.portInfo!.displayName || res.portInfo!.path }));
@@ -336,6 +347,27 @@ export const StationSettingsModal: React.FC<StationSettingsModalProps> = ({
     } finally {
       setIsConnectingSerial(false);
     }
+  };
+
+  // Separate keying port (RTS/DTR/WinKeyer on their own cable)
+  const handlePairPttPort = async () => {
+    setIsPairingPttPort(true);
+    setPttPortFeedback('Select the serial port your PTT line is wired to...');
+    try {
+      const res = await catController.requestAndPairPttPort();
+      setPttPortFeedback(res.message);
+      if (res.success) setForm((prev) => ({ ...prev, pttPort: catController.getPttPortLabel() || prev.pttPort }));
+    } catch (e: any) {
+      setPttPortFeedback(`✗ ${e?.message || 'Failed to pair the PTT port'}`);
+    } finally {
+      setIsPairingPttPort(false);
+    }
+  };
+
+  const handleReleasePttPort = async () => {
+    await catController.releasePttPort();
+    setForm((prev) => ({ ...prev, pttPort: '' }));
+    setPttPortFeedback('Keying returns to the CAT serial port.');
   };
 
   // Real WebHID CM108/CM119 USB Audio GPIO Pairing Handler
@@ -1361,6 +1393,44 @@ export const StationSettingsModal: React.FC<StationSettingsModalProps> = ({
                         <option value="ACTIVE_HIGH">Active High (+12V / Logic 1 = PTT ON)</option>
                         <option value="ACTIVE_LOW">Active Low (Inverted / Optocoupler Pull-to-GND)</option>
                       </select>
+                    </div>
+                  )}
+
+                  {/* Dedicated keying port for RTS/DTR/WinKeyer stations whose PTT is on its
+                      own cable. Unpaired means "key on the CAT port", which is the common
+                      single-cable case; before this existed, a configured PTT port name was
+                      displayed in the keying message while the CAT port's line was driven. */}
+                  {(form.pttMethod === 'RTS' || form.pttMethod === 'DTR' || form.pttMethod === 'WINKEYER') && (
+                    <div>
+                      <div className="flex items-center justify-between mb-1">
+                        <label className="text-[9px] uppercase text-[#888]">Keying Port</label>
+                        <div className="flex items-center space-x-1">
+                          <button
+                            type="button"
+                            onClick={handlePairPttPort}
+                            disabled={isPairingPttPort}
+                            className="text-[9px] bg-[#1E1E1E] hover:bg-[#2A2A2A] text-[#00FF41] border border-[#00FF41]/40 px-1.5 py-0.5 flex items-center space-x-1 font-bold"
+                          >
+                            <Cable className="w-2.5 h-2.5" />
+                            <span>{isPairingPttPort ? 'Pairing...' : 'Pair PTT Port'}</span>
+                          </button>
+                          {catController.isPttPortPaired() && (
+                            <button
+                              type="button"
+                              onClick={handleReleasePttPort}
+                              className="text-[9px] bg-[#1E1E1E] hover:bg-[#2A2A2A] text-yellow-400 border border-yellow-500/40 px-1.5 py-0.5 font-bold"
+                            >
+                              Use CAT Port
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                      <p className="text-[9px] text-[#888]">
+                        {catController.isPttPortPaired()
+                          ? `Keying on a separate port: ${catController.getPttPortLabel()}`
+                          : 'Keying on the CAT serial port. Pair a separate port only if your PTT line is on a different cable (Digirig, a second FTDI, an optocoupler box).'}
+                      </p>
+                      {pttPortFeedback && <p className="text-[9px] text-[#888] mt-1">{pttPortFeedback}</p>}
                     </div>
                   )}
 

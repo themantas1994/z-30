@@ -56,10 +56,32 @@ function makeRecordingController({ ok = true } = {}) {
     calls.push({ method: 'WINKEYER', active: tx });
     return ok;
   };
-  rig.sendRigPtt = (tx) => {
+  rig.sendRigPtt = async (tx) => {
     calls.push({ method: 'CAT', active: tx });
+    return ok;
   };
   return { rig, calls };
+}
+
+/**
+ * A controller whose CAT transport is recorded at the level BELOW sendRigPtt(), so the CAT
+ * keying branch itself is under test: which protocol it speaks, and what it does when the
+ * transport reports that nothing was written.
+ */
+function makeCatController({ family = 'CIV', writeOk = true } = {}) {
+  const rig = new CatController();
+  const wire = [];
+  rig.activeProtocolFamily = family;
+  rig.activeCivAddr = 0x94;
+  rig.sendHardwareBytes = async (bytes) => {
+    wire.push(Array.from(bytes));
+    return writeOk;
+  };
+  rig.sendHardwareText = async (text) => {
+    wire.push(text);
+    return writeOk;
+  };
+  return { rig, wire };
 }
 
 // ------------------------------------------------- Z1: release drives what the key drove
@@ -195,7 +217,7 @@ group('Raw rigctl console');
 
 {
   const { rig, calls } = makeRecordingController();
-  const resp = rig.executeRawCommand('\\set_ptt 1');
+  const resp = await rig.executeRawCommand('\\set_ptt 1');
   check(
     '\\set_ptt 1 with no gate wired is REFUSED',
     resp.startsWith('RPRT -1'),
@@ -206,7 +228,7 @@ group('Raw rigctl console');
 
 {
   const { rig, calls } = makeRecordingController();
-  const resp = rig.executeRawCommand('T 1', {
+  const resp = await rig.executeRawCommand('T 1', {
     assertCanTransmit: () => false, // the gate refuses: placeholder callsign, no licence class...
     txAudioOffsetHz: 1500,
     pttMethod: 'CM108_GPIO',
@@ -219,7 +241,7 @@ group('Raw rigctl console');
 {
   const { rig, calls } = makeRecordingController();
   let gateSawOffset = null;
-  const resp = rig.executeRawCommand('T 1', {
+  const resp = await rig.executeRawCommand('T 1', {
     assertCanTransmit: (offset) => {
       gateSawOffset = offset;
       return true;
@@ -233,9 +255,18 @@ group('Raw rigctl console');
   check('the gate was given the audio offset, not just the dial', gateSawOffset === 1500);
   check(
     'the console keys through the CONFIGURED method, not a CAT default',
-    calls.some((c) => c.method === 'CM108' && c.active === true && c.pin === 4),
+    calls.some((c) => c.method === 'CM108' && c.pin === 4),
     JSON.stringify(calls)
   );
+  check(
+    // This context is ACTIVE_LOW, so the keyed level is LOW. The check used to require a high
+    // level here, which passed only because setPtt dropped the polarity on the way to the
+    // CM108 helper - the assertion had the old defect written into it.
+    '...at the keyed level for its ACTIVE_LOW polarity',
+    calls.some((c) => c.method === 'CM108' && c.pin === 4 && c.active === false),
+    JSON.stringify(calls)
+  );
+  check('...and the transmitter is keyed', rig.getPtt() === true);
   check(
     'no CAT PTT bytes were sent to a station that is not keyed over CAT',
     !calls.some((c) => c.method === 'CAT' && c.active === true),
@@ -247,7 +278,7 @@ group('Raw rigctl console');
   // Refusing to STOP transmitting is not a safety property.
   const { rig, calls } = makeRecordingController();
   await rig.setPtt(true, 'CM108_GPIO', 'ACTIVE_HIGH', { cm108GpioPin: 4 });
-  const resp = rig.executeRawCommand('T 0');
+  const resp = await rig.executeRawCommand('T 0');
   check('T 0 unkeys without needing the gate', resp === 'RPRT 0', resp);
   check(
     '...and releases the pin that was keyed',
@@ -259,36 +290,292 @@ group('Raw rigctl console');
 group('Raw rigctl console verb table');
 
 {
+  // A rig WITH a working CAT transport, so the verb table (lower = get, upper = set) is what
+  // is under test here rather than the transport. The honesty of RPRT when there is no
+  // transport is asserted in the next group.
   const { rig } = makeRecordingController();
-  rig.setFreqHz(14076000);
+  const sent = [];
+  rig.sendRigFrequency = async (hz) => {
+    sent.push({ kind: 'freq', hz });
+    return true;
+  };
+  rig.sendRigMode = async (mode) => {
+    sent.push({ kind: 'mode', mode });
+    return true;
+  };
+  await rig.setFreqHz(14076000);
 
-  check('lower-case f READS the frequency', rig.executeRawCommand('f') === '14076000');
-  check('upper-case F SETS the frequency', rig.executeRawCommand('F 14074000') === 'RPRT 0');
-  check('...and the set actually took effect', rig.executeRawCommand('f') === '14074000');
-  check('F with a nonsense argument is an error', rig.executeRawCommand('F 12').startsWith('RPRT -1'));
+  check('lower-case f READS the frequency', (await rig.executeRawCommand('f')) === '14076000');
+  check('upper-case F SETS the frequency', (await rig.executeRawCommand('F 14074000')) === 'RPRT 0');
+  check('...and the set actually took effect', (await rig.executeRawCommand('f')) === '14074000');
+  check(
+    '...and the frequency reached the radio',
+    sent.some((c) => c.kind === 'freq' && c.hz === 14074000),
+    JSON.stringify(sent)
+  );
+  check('F with a nonsense argument is an error', (await rig.executeRawCommand('F 12')).startsWith('RPRT -1'));
 
-  check('lower-case m READS the mode', rig.executeRawCommand('m').startsWith('PKTUSB'));
-  check('upper-case M SETS the mode', rig.executeRawCommand('M USB') === 'RPRT 0');
-  check('...and the set actually took effect', rig.executeRawCommand('m').startsWith('USB'));
-  check('M with no argument is an error', rig.executeRawCommand('M').startsWith('RPRT -1'));
+  check('lower-case m READS the mode', (await rig.executeRawCommand('m')).startsWith('PKTUSB'));
+  check('upper-case M SETS the mode', (await rig.executeRawCommand('M USB')) === 'RPRT 0');
+  check('...and the set actually took effect', (await rig.executeRawCommand('m')).startsWith('USB'));
+  check('M with no argument is an error', (await rig.executeRawCommand('M')).startsWith('RPRT -1'));
 
-  check('lower-case t READS the PTT state', rig.executeRawCommand('t') === '0');
+  check('lower-case t READS the PTT state', (await rig.executeRawCommand('t')) === '0');
 
-  check('v returns the VFO', rig.executeRawCommand('v') === 'VFOA');
+  check('v returns the VFO', (await rig.executeRawCommand('v')) === 'VFOA');
   check(
     'version returns the Hamlib version string, and is no longer shadowed by v',
-    rig.executeRawCommand('version').startsWith('Hamlib'),
-    rig.executeRawCommand('version')
+    (await rig.executeRawCommand('version')).startsWith('Hamlib'),
+    await rig.executeRawCommand('version')
   );
-  check('\\version works too', rig.executeRawCommand('\\version').startsWith('Hamlib'));
-  check('the long \\get_freq form still works', rig.executeRawCommand('\\get_freq') === '14074000');
-  check('\\set_freq still works', rig.executeRawCommand('\\set_freq 14076000') === 'RPRT 0');
-  check('help lists the commands', rig.executeRawCommand('help').includes('\\get_freq'));
+  check('\\version works too', (await rig.executeRawCommand('\\version')).startsWith('Hamlib'));
+  check('the long \\get_freq form still works', (await rig.executeRawCommand('\\get_freq')) === '14074000');
+  check('\\set_freq still works', (await rig.executeRawCommand('\\set_freq 14076000')) === 'RPRT 0');
+  check('help lists the commands', (await rig.executeRawCommand('help')).includes('\\get_freq'));
 
   // An unknown verb answering "RPRT 0" makes a typo indistinguishable from a command that ran.
-  check('an unknown verb returns a non-zero RPRT', rig.executeRawCommand('qwerty').startsWith('RPRT -1'));
+  check('an unknown verb returns a non-zero RPRT', (await rig.executeRawCommand('qwerty')).startsWith('RPRT -1'));
   const log = rig.getCommandLogs().find((l) => l.command === 'qwerty');
   check('...and is logged as an ERROR', log && log.status === 'ERROR', JSON.stringify(log));
+}
+
+// ------------------------- Z9: a CAT command that was never sent must not report success
+
+group('CAT commands report what the hardware did');
+
+{
+  // No rig protocol and no relay: every CAT command is a no-op. These used to answer "RPRT 0"
+  // and log OK, so the console, the rig log and the app's VFO readout all agreed on a
+  // frequency the radio had never been told about.
+  const { rig } = makeCatController({ family: 'NONE' });
+  const freqResp = await rig.executeRawCommand('F 14074000');
+  check('F with no CAT transport returns a non-zero RPRT', freqResp.startsWith('RPRT -1'), freqResp);
+  check('...and names what is missing', /Direct Serial CAT protocol|rigctld relay|serial port/.test(freqResp), freqResp);
+
+  const modeResp = await rig.executeRawCommand('M USB');
+  check('M with no CAT transport returns a non-zero RPRT', modeResp.startsWith('RPRT -1'), modeResp);
+
+  const log = rig.getCommandLogs().find((l) => l.command.startsWith('set_freq'));
+  check('...and the rig log records it as an ERROR, not OK', log && log.status === 'ERROR', JSON.stringify(log));
+}
+
+{
+  // The defect an operator reported: a green "PTT verified" from a radio never addressed.
+  // setPtt()'s CAT branch reported success whether or not sendRigPtt() wrote anything, on all
+  // three of its silent no-op paths.
+  const { rig } = makeCatController({ family: 'NONE' });
+  const keyed = await rig.setPtt(true, 'CAT', 'ACTIVE_HIGH');
+  check('CAT keying with no protocol and no port FAILS', keyed === false);
+  check('...and leaves PTT de-asserted', rig.getPtt() === false);
+  check('...and explains why', (rig.getLastPttFailure() || '').length > 0, String(rig.getLastPttFailure()));
+
+  const result = await rig.testPttKey('CAT', 'ACTIVE_HIGH', 5);
+  check('...so the wiring test reports a failure, not "✓ CAT PTT verified"', result.success === false, result.message);
+}
+
+{
+  // A configured rig whose serial port cannot be written to is the same class of failure.
+  const { rig } = makeCatController({ family: 'CIV', writeOk: false });
+  check('CAT keying fails when the serial write fails', (await rig.setPtt(true, 'CAT', 'ACTIVE_HIGH')) === false);
+  const result = await rig.testPttKey('CAT', 'ACTIVE_HIGH', 5);
+  check('...and the wiring test fails with it', result.success === false, result.message);
+}
+
+{
+  const { rig, wire } = makeCatController({ family: 'CIV' });
+  check('CAT keying succeeds when the write succeeds', (await rig.setPtt(true, 'CAT', 'ACTIVE_HIGH')) === true);
+  check(
+    'an Icom station is keyed with CI-V 1C 00 01 at the configured address',
+    JSON.stringify(wire[0]) === JSON.stringify([0xfe, 0xfe, 0x94, 0xe0, 0x1c, 0x00, 0x01, 0xfd]),
+    JSON.stringify(wire)
+  );
+  await rig.setPtt(false, 'CAT', 'ACTIVE_HIGH');
+  check(
+    '...and released with the same command carrying 00',
+    JSON.stringify(wire[1]) === JSON.stringify([0xfe, 0xfe, 0x94, 0xe0, 0x1c, 0x00, 0x00, 0xfd]),
+    JSON.stringify(wire)
+  );
+}
+
+{
+  // Yaesu was routed through the Kenwood builders, so every Yaesu station was sent `TX;` - the
+  // READ form - and stayed in receive.
+  const { rig, wire } = makeCatController({ family: 'YAESU' });
+  await rig.setPtt(true, 'CAT', 'ACTIVE_HIGH');
+  await rig.setPtt(false, 'CAT', 'ACTIVE_HIGH');
+  check('a Yaesu station is keyed with TX1; and released with TX0;', wire[0] === 'TX1;' && wire[1] === 'TX0;', JSON.stringify(wire));
+  check('...and never with the Kenwood TX;/RX; pair', !wire.includes('TX;') && !wire.includes('RX;'), JSON.stringify(wire));
+}
+
+{
+  const { rig, wire } = makeCatController({ family: 'KENWOOD' });
+  await rig.setPtt(true, 'CAT', 'ACTIVE_HIGH');
+  check('a Kenwood/Elecraft station is still keyed with TX;', wire[0] === 'TX;', JSON.stringify(wire));
+}
+
+// ------------------------------- Z10: RTS/DTR keying reaches a port, or admits it did not
+
+group('RTS and DTR keying');
+
+{
+  // No port paired is not a no-op: nothing was keyed, and saying otherwise is how an operator
+  // ends up calling CQ into a radio in receive.
+  const rig = new CatController();
+  const keyed = await rig.setPtt(true, 'RTS', 'ACTIVE_HIGH', { pttPort: '/dev/ttyUSB1' });
+  check('RTS keying with no open port FAILS', keyed === false);
+  check('...and leaves PTT de-asserted', rig.getPtt() === false);
+  const result = await rig.testPttKey('DTR', 'ACTIVE_HIGH', 5);
+  check('...and the DTR wiring test reports the failure', result.success === false, result.message);
+}
+
+{
+  const rig = new CatController();
+  const signals = [];
+  rig.serialPort = { setSignals: async (s) => { signals.push(s); }, writable: {}, readable: {} };
+  await rig.setPtt(true, 'RTS', 'ACTIVE_HIGH');
+  await rig.setPtt(false, 'RTS', 'ACTIVE_HIGH');
+  check('ACTIVE_HIGH RTS keying raises RTS and then lowers it', signals[0].requestToSend === true && signals[1].requestToSend === false, JSON.stringify(signals));
+  check('...and never touches DTR', signals.every((s) => s.dataTerminalReady === undefined), JSON.stringify(signals));
+}
+
+{
+  const rig = new CatController();
+  const signals = [];
+  rig.serialPort = { setSignals: async (s) => { signals.push(s); }, writable: {}, readable: {} };
+  await rig.setPtt(true, 'DTR', 'ACTIVE_LOW');
+  await rig.setPtt(false, 'DTR', 'ACTIVE_LOW');
+  check('ACTIVE_LOW DTR keying LOWERS the line to transmit', signals[0].dataTerminalReady === false, JSON.stringify(signals));
+  check('...and raises it to return to receive', signals[1].dataTerminalReady === true, JSON.stringify(signals));
+}
+
+{
+  // A station whose PTT is on its own cable must be keyed on THAT port. `pttPort` was
+  // collected, printed in the keying message, and then ignored.
+  const rig = new CatController();
+  const catSignals = [];
+  const pttSignals = [];
+  rig.serialPort = { setSignals: async (s) => { catSignals.push(s); }, writable: {}, readable: {} };
+  rig.pttSerialPort = { setSignals: async (s) => { pttSignals.push(s); }, writable: {}, readable: {} };
+  rig.pttSerialPortLabel = 'the second FTDI';
+  await rig.setPtt(true, 'RTS', 'ACTIVE_HIGH');
+  check('a paired PTT port is the one keyed', pttSignals.length === 1 && pttSignals[0].requestToSend === true, JSON.stringify({ catSignals, pttSignals }));
+  check('...and the CAT port is left alone', catSignals.length === 0, JSON.stringify(catSignals));
+
+  rig.releasePttEmergency();
+  check('the emergency release drops BOTH ports', catSignals.length === 1 && pttSignals.length === 2, JSON.stringify({ catSignals, pttSignals }));
+}
+
+// -------------------------------------- Z11: keying polarity is applied, not just displayed
+
+group('Keying polarity reaches the hardware');
+
+{
+  // An active-low DRA/URI interface was driven backwards: no carrier while transmitting, PTT
+  // asserted while receiving - and the wiring test still printed "Active Low" and passed.
+  const { rig, calls } = makeRecordingController();
+  await rig.setPtt(true, 'CM108_GPIO', 'ACTIVE_LOW', { cm108GpioPin: 3 });
+  await rig.setPtt(false, 'CM108_GPIO', 'ACTIVE_LOW', { cm108GpioPin: 3 });
+  const levels = calls.filter((c) => c.method === 'CM108').map((c) => c.active);
+  check('ACTIVE_LOW CM108 keying drives the pin LOW to transmit', levels[0] === false, JSON.stringify(calls));
+  check('...and HIGH to return to receive', levels[1] === true, JSON.stringify(calls));
+}
+
+{
+  const { rig, calls } = makeRecordingController();
+  await rig.setPtt(true, 'CM108_GPIO', 'ACTIVE_HIGH', { cm108GpioPin: 3 });
+  check('ACTIVE_HIGH CM108 keying still drives the pin high', calls[0].active === true, JSON.stringify(calls));
+}
+
+{
+  // The emergency release must drive the RELEASED level for this station's wiring; a
+  // hardcoded low released an active-high interface and keyed an active-low one.
+  const { rig, calls } = makeRecordingController();
+  rig.hidDevice = { opened: true };
+  await rig.setPtt(true, 'CM108_GPIO', 'ACTIVE_LOW', { cm108GpioPin: 4 });
+  rig.releasePttEmergency();
+  const emergency = calls.filter((c) => c.method === 'CM108').slice(1);
+  check(
+    'the emergency release drives CM108 HIGH on an active-low station',
+    emergency.length > 0 && emergency.every((c) => c.active === true),
+    JSON.stringify(calls)
+  );
+}
+
+{
+  // The Pi bridge is told the INTENT plus the polarity, so the server can keep its dead-man
+  // bookkeeping in step with the transmitter rather than with the pin's voltage.
+  const { rig, calls } = makeRecordingController();
+  await rig.setPtt(true, 'RASPBERRY_PI_GPIO', 'ACTIVE_LOW', { rpiGpioPin: 17 });
+  check(
+    'the GPIO bridge receives tx=true with the ACTIVE_LOW polarity, not a bare level',
+    calls[0].active === true && calls[0].polarity === 'ACTIVE_LOW',
+    JSON.stringify(calls)
+  );
+}
+
+// -------------------- Z12: opening a port must not key, on either wiring polarity
+
+group('Opening a serial port leaves the keying line released');
+
+{
+  // Chromium raises DTR and RTS when a port opens, which on an active-high keyed station is a
+  // transmit command - the radio keyed on "Connect Serial Port", before any check had run.
+  const rig = new CatController();
+  const signals = [];
+  const port = { setSignals: async (s) => { signals.push(s); }, writable: {}, readable: {} };
+  rig.configureKeying('ACTIVE_HIGH');
+  await rig.deassertKeyingLines(port);
+  check(
+    'an ACTIVE_HIGH station has both lines driven low on open',
+    signals.length === 1 && signals[0].requestToSend === false && signals[0].dataTerminalReady === false,
+    JSON.stringify(signals)
+  );
+}
+
+{
+  // ...but "both low" is the KEYED state on an inverting optocoupler, so a blanket de-assert
+  // would key exactly the stations it is meant to protect.
+  const rig = new CatController();
+  const signals = [];
+  const port = { setSignals: async (s) => { signals.push(s); }, writable: {}, readable: {} };
+  rig.configureKeying('ACTIVE_LOW');
+  await rig.deassertKeyingLines(port);
+  check(
+    'an ACTIVE_LOW station has both lines driven high on open',
+    signals.length === 1 && signals[0].requestToSend === true && signals[0].dataTerminalReady === true,
+    JSON.stringify(signals)
+  );
+  check(
+    'which is the same level its own release drives',
+    await (async () => {
+      const r2 = new CatController();
+      const s2 = [];
+      r2.serialPort = { setSignals: async (x) => { s2.push(x); }, writable: {}, readable: {} };
+      await r2.setPtt(false, 'RTS', 'ACTIVE_LOW');
+      return s2[0].requestToSend === true;
+    })()
+  );
+}
+
+// ----------------- Z13: a keying method that rides on audio fails when the audio does not
+
+group('Audio-keyed methods need their carrier');
+
+{
+  // VOX and the right-channel tone key the radio WITH audio. A test that could not start the
+  // carrier has keyed nothing, and must not report otherwise.
+  const rig = new CatController();
+  const { audioEngine } = await import('../src/dsp/audioEngine.ts');
+  const realStart = audioEngine.startTuneTone;
+  const realStop = audioEngine.stopTransmission;
+  audioEngine.startTuneTone = () => false;
+  audioEngine.stopTransmission = () => {};
+  const result = await rig.testPttKey('VOX', 'ACTIVE_HIGH', 5);
+  audioEngine.startTuneTone = realStart;
+  audioEngine.stopTransmission = realStop;
+
+  check('a VOX test with no audio carrier FAILS', result.success === false, result.message);
+  check('...and leaves PTT de-asserted', rig.getPtt() === false);
 }
 
 // ------------------------------------------------------------------ layered safety net

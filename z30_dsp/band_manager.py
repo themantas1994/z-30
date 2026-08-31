@@ -114,10 +114,22 @@ class HamlibCatClient:
             self.disconnect()
             return f"ERR: {ex}"
 
+    @staticmethod
+    def _accepted(resp: str) -> bool:
+        """
+        True only when rigctld actually acknowledged the command.
+
+        An empty reply used to count as success here, so a daemon that timed out mid-read - or
+        a socket that returned nothing at all - reported a tuned radio. rigctld answers a
+        completed set command with 'RPRT 0' and a refused one with 'RPRT <non-zero>'; silence
+        is neither, and it is the one case where the caller most needs to be told.
+        """
+        cleaned = resp.strip()
+        return cleaned == "RPRT 0" or cleaned == "0"
+
     def set_frequency(self, freq_hz: int) -> bool:
         """Tunes transceiver to specified frequency (Hamlib command: 'F <freq_hz>')."""
-        resp = self.send_command(f"F {freq_hz}")
-        return resp.startswith("RPRT 0") or resp == "0" or resp == ""
+        return self._accepted(self.send_command(f"F {freq_hz}"))
 
     def get_frequency(self) -> Optional[int]:
         """Queries current VFO frequency (Hamlib command: 'f')."""
@@ -132,16 +144,16 @@ class HamlibCatClient:
 
     def set_mode(self, mode: str = "PKTUSB", passband_hz: int = 3000) -> bool:
         """Sets transceiver modulation mode and IF passband (Hamlib command: 'M <mode> <passband>')."""
-        resp = self.send_command(f"M {mode} {passband_hz}")
-        if not (resp.startswith("RPRT 0") or resp == "0" or resp == ""):
-            # Fallback to standard USB if PKTUSB is not supported by rig
-            resp = self.send_command(f"M USB {passband_hz}")
-        return resp.startswith("RPRT 0") or resp == "0" or resp == ""
+        if self._accepted(self.send_command(f"M {mode} {passband_hz}")):
+            return True
+        # Fallback to standard USB if PKTUSB is not supported by rig
+        return self._accepted(self.send_command(f"M USB {passband_hz}"))
 
-    def set_ptt(self, tx: bool) -> bool:
-        """Controls transceiver PTT state (Hamlib command: 'T 1' or 'T 0')."""
-        resp = self.send_command(f"T {1 if tx else 0}")
-        return resp.startswith("RPRT 0") or resp == "0" or resp == ""
+    # set_ptt() used to live here: a second keying implementation, reachable from the CLI band
+    # tool, with none of the checks that stand in front of the browser's. Nothing called it.
+    # AGENTS.md section 4 allows exactly one keying implementation and one gate in front of it,
+    # so the way to key a transmitter from this codebase is the transmit path in
+    # src/dsp/catController.ts - not a spare `T 1` on a socket.
 
 
 # ============================================================================

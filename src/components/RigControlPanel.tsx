@@ -58,10 +58,12 @@ export const RigControlPanel: React.FC<RigControlPanelProps> = ({
 
   const rigctldEndpoint = `${config.hamlibHost || '127.0.0.1'}:${config.hamlibPort || 4532}`;
 
-  const handleCommandSubmit = (e: React.FormEvent) => {
+  const handleCommandSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (terminalInput.trim()) {
-      rigctl.executeRawCommand(
+      // Awaited: the console's RPRT reply is now the radio's answer, not an acknowledgement
+      // that a function was called, so it can only be produced once the hardware has answered.
+      await rigctl.executeRawCommand(
         terminalInput,
         onAssertCanTransmit
           ? {

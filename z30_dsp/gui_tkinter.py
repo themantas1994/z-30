@@ -302,61 +302,38 @@ class Z30TkinterApp:
         self.logger.log_qso_async(rec)
         messagebox.showinfo("Logged", f"Queued asynchronous logging for {call} ({grid}) in ADIF 3.1.4 & SQLite.")
 
+    # -- transmit controls -------------------------------------------------
+    #
+    # This GUI has no modulator, no keying implementation and no compliance gate: the 16-MFSK
+    # synthesiser, the nine PTT methods and canTransmit() all live in the web application. The
+    # buttons below used to set `is_transmitting`, turn red and pop up "Starting 16-MFSK
+    # physical transmission at 1250 Hz" - a claim about a radio that nothing here had addressed,
+    # made without checking a callsign, a licence class or a band edge. They now refuse and say
+    # where transmitting actually works. A receive-only window is a legitimate thing to ship; a
+    # window that says it is transmitting when it is not is not.
+
+    TX_UNAVAILABLE_MESSAGE = (
+        "This Tkinter window is receive-only.\n\n"
+        "It has no transmit modulator and no PTT keying, so it cannot key your radio. Run z-30's "
+        "web transceiver for transmitting:\n\n"
+        "    z30-web       (or: python3 -m z30_dsp.main)\n\n"
+        "That is where the 16-MFSK modulator, the nine PTT keying methods and the transmit "
+        "compliance gate live."
+    )
+
     def _start_tx(self) -> None:
-        """
-        Enables TX and checks if current time matches the selected slot.
-        If at start of selected slot, transmits immediately. Otherwise arms station.
-        """
-        if self.is_transmitting:
-            return
-        if self.is_tuning:
-            self._stop_tx()
-
-        self.tx_enabled = True
-        slot_mode = self.tx_slot_var.get()
-        
-        # Calculate current UTC slot
-        utc_sec = time.time() % 60.0
-        is_even_slot = (int(utc_sec) // 30) % 2 == 0
-        cycle_s = utc_sec % 30.0
-
-        matches_slot = (
-            slot_mode == "MANUAL" or
-            (slot_mode.startswith("EVEN") and is_even_slot) or
-            (slot_mode.startswith("ODD") and not is_even_slot)
-        )
-        at_slot_start = cycle_s <= 1.5
-
-        if slot_mode == "MANUAL" or (matches_slot and at_slot_start):
-            self.is_transmitting = True
-            self.start_tx_btn.config(bg="#EF4444", text="TRANSMITTING...", fg="white")
-            messagebox.showinfo("PTT Active", f"Starting 16-MFSK physical transmission at {self.tx_freq_hz} Hz ({slot_mode}).")
-        else:
-            sec_left = int(30.0 - cycle_s) if not matches_slot else int(60.0 - cycle_s)
-            self.start_tx_btn.config(bg="#FACC15", text=f"ARMED ({sec_left}s)", fg="black")
-            messagebox.showinfo("TX Armed", f"Transmitter armed! Transmission will begin automatically when the {slot_mode} slot starts.")
+        messagebox.showinfo("Transmit unavailable here", self.TX_UNAVAILABLE_MESSAGE)
 
     def _stop_tx(self) -> None:
-        """Immediately halts transmission, disarms TX, and releases PTT."""
+        """Clears local arming state. Nothing here can be keyed, so nothing needs unkeying."""
         self.tx_enabled = False
         self.is_transmitting = False
         self.is_tuning = False
         self.start_tx_btn.config(bg="#00FF41", text="START TX", fg="black")
         self.tune_btn.config(bg="#EAB308", text="TUNE (CW)", fg="black")
-        messagebox.showinfo("PTT Released", "Transmission halted. Rig returned to RX standby mode.")
 
     def _tune_cw(self) -> None:
-        """Keys transmitter with continuous unmodulated CW carrier tone for antenna matching."""
-        if self.is_transmitting:
-            self._stop_tx()
-        
-        self.is_tuning = not self.is_tuning
-        if self.is_tuning:
-            self.tune_btn.config(bg="#EF4444", text="TUNING...", fg="white")
-            messagebox.showinfo("Tune Carrier", f"Antenna Tuning: Continuous CW carrier keyed at {self.tx_freq_hz} Hz. Safety timeout active.")
-        else:
-            self.tune_btn.config(bg="#EAB308", text="TUNE (CW)", fg="black")
-            messagebox.showinfo("Tune Carrier", "Antenna tuning carrier tone stopped.")
+        messagebox.showinfo("Transmit unavailable here", self.TX_UNAVAILABLE_MESSAGE)
 
     def _build_menu(self) -> None:
         """Constructs top application menu bar."""
@@ -407,19 +384,12 @@ class Z30TkinterApp:
                 cycle_s = sec % 30
                 is_even = (sec // 30) % 2 == 0
                 
-                # Check slot trigger if armed
-                if self.tx_enabled and not self.is_transmitting and not self.is_tuning:
-                    slot_mode = self.tx_slot_var.get()
-                    matches = (
-                        slot_mode == "MANUAL" or
-                        (slot_mode.startswith("EVEN") and is_even) or
-                        (slot_mode.startswith("ODD") and not is_even)
-                    )
-                    if matches and cycle_s == 0:
-                        self.is_transmitting = True
-                        self.start_tx_btn.config(bg="#EF4444", text="TRANSMITTING...", fg="white")
+                # The slot trigger that used to live here flipped is_transmitting at the top of
+                # every matching slot and relabelled the button "TRANSMITTING...", with no
+                # carrier behind it. Nothing in this window can key a radio (see _start_tx), so
+                # there is no transmission for a slot to start.
 
-                mode_str = "TX" if self.is_transmitting else ("TUNE" if self.is_tuning else ("ARMED" if self.tx_enabled else "RX"))
+                mode_str = "TUNE" if self.is_tuning else ("ARMED" if self.tx_enabled else "RX")
                 self.utc_label.config(text=f"UTC: {now} [30s CYCLE: {cycle_s:02d}s | {mode_str}]")
                 time.sleep(0.5)
         threading.Thread(target=update_clock, daemon=True).start()

@@ -22,12 +22,62 @@ rigctld -m 2029 -r /dev/ttyUSB0 -s 38400
 
 ---
 
+---
+
+## 🔌 Which transport carries your CAT commands
+
+The **CAT Method** you choose in Station Settings decides this, and nothing else does:
+
+| CAT Method | Frequency, mode and CAT keying go to |
+| :--- | :--- |
+| `Hamlib` | The `rigctld` daemon, through the native server's TCP relay (`/api/rigctl`) |
+| `Direct Serial` | The paired Web Serial port, as that rig family's own native protocol |
+| `None` | Nowhere — VOX or hardware keying only, and you tune the radio yourself |
+
+Two consequences worth knowing:
+
+- **Hamlib mode needs the native server.** A browser cannot open a TCP socket to a daemon, so
+  `rigctld` is only reachable when z-30 is launched through `z30-web`. Opened as a plain page,
+  Hamlib mode has nowhere to send a command, and the app now refuses and says so rather than
+  reporting a set that never left the browser.
+- **Pairing a serial port no longer changes your CAT transport.** It used to: pairing a port
+  for RTS keying silently moved CAT off the daemon and onto raw bytes written to that port —
+  a port `rigctld` already had open.
+
+**A CAT command that could not be sent is reported as a failure** — in the rig log, in the raw
+console's `RPRT` reply, and in the transmit banner. Nothing answers "OK" for a command the radio
+never received.
+
+### Direct Serial protocol coverage
+
+`Direct Serial` speaks each family's real protocol, and only where that protocol is known:
+
+| Rigs | Protocol | PTT command |
+| :--- | :--- | :--- |
+| Icom, Xiegu | CI-V (`FE FE <addr> E0 …`) | `1C 00 01` / `1C 00 00` |
+| Kenwood, Elecraft | Kenwood ASCII, 11-digit `FA` | `TX;` / `RX;` |
+| Yaesu FT-991/991A, FTDX10, FTDX101, FT-710, FT-891 | Yaesu new-CAT ASCII, **9-digit** `FA`, `MD0x;` | **`TX1;` / `TX0;`** |
+| Everything else — including FT-817/857/897 and the 1990s Yaesu rigs | *not implemented* | use `rigctld` |
+
+Yaesu is **not** Kenwood, despite the family resemblance: `TX;` is Yaesu's PTT *read* command and
+keys nothing, there is no `RX;` in the Yaesu set, and `FA` takes nine digits rather than eleven.
+z-30 sent the Kenwood forms to every Yaesu rig until this was fixed, which meant a Yaesu station
+passed its CAT test and then never keyed.
+
+For any rig outside that table, `Direct Serial` refuses and names `rigctld` instead of guessing a
+command set. Hamlib carries per-model command tables; this app does not duplicate them.
+
+---
+
 ## ⚡ 9 Supported PTT Keying Architectures
 
 ### 1. CAT Software Command (`CAT`)
-- **How it works**: Sends digital `\set_ptt 1` and `\set_ptt 0` commands directly over the serial/USB connection to the transceiver micro-controller.
+- **How it works**: Sends the rig family's own PTT command (see the table above) over the serial
+  link, or `T 1` / `T 0` to `rigctld` in Hamlib mode.
 - **Best for**: Radios with built-in USB interfaces (Icom IC-7300, IC-705, Yaesu FT-710, FT-991A, Kenwood TS-590SG, Elecraft K4, Xiegu G90/X6100).
 - **Pros**: Zero extra cables or hardware required.
+- **Reports failure**: if no protocol is configured for your rig, no port is open, or `rigctld`
+  refuses the command, keying fails visibly and no audio is transmitted.
 
 ### 2. RTS Hardware Serial Line (`RTS`)
 - **How it works**: Toggles the Request To Send (RTS) pin on an RS-232 or USB-to-UART bridge (CP2102, FTDI FT232, CH340).
@@ -43,6 +93,28 @@ rigctld -m 2029 -r /dev/ttyUSB0 -s 38400
 ### 3. DTR Hardware Serial Line (`DTR`)
 - **How it works**: Toggles the Data Terminal Ready (DTR) line (Pin 4 on DB9).
 - **Best for**: Legacy interfaces, dual-channel CW/PTT keyers, or interfaces using DTR for PTT and RTS for CW keying.
+
+#### If PTT is on a different cable from CAT
+
+`RTS`, `DTR` and `WINKEYER` key the **CAT port** by default, which is what a single-cable station
+(a Digirig, a rig with one USB connection) wants. If your keying line is on a *second* cable, use
+**Pair PTT Port** in Station Settings → PTT. Until that exists, the app drives the CAT port's line
+— for a while it did that while printing the configured PTT port's name, so the message named one
+cable and the hardware saw another.
+
+#### Opening a port no longer keys your radio
+
+Both Chromium's Web Serial and pyserial assert DTR and RTS when a port opens. On an RTS- or
+DTR-keyed station that is a transmit command: connecting the cable put the radio into transmit
+before any check had run. z-30 now drops both lines immediately after opening any port — the CAT
+port, the PTT port, and the port the setup wizard opens for its keying test.
+
+#### Polarity applies to the hardware, not just the label
+
+`ACTIVE_LOW` inverts what is driven, on **RTS, DTR, CM108/CM119 and Raspberry Pi GPIO alike**.
+CM108 keying used to ignore the setting entirely, so an active-low DRA or URI interface was driven
+backwards — no carrier while transmitting, PTT asserted while receiving — while the wiring test
+printed "Active Low" and reported a pass.
 
 ### 4. Right-Channel Audio PTT Tone (`AUDIO_TONE_RIGHT`)
 - **How it works**: Modulates the Left stereo channel with the 16-MFSK data audio while outputting a continuous 1000 Hz or 1500 Hz sinusoidal tone on the Right stereo channel during transmission.

@@ -753,15 +753,19 @@ class Z30AudioEngine {
       leadInMs?: number;
       hangTimeMs?: number;
     }
-  ) {
+  ): boolean {
+    // Returns whether the frame actually started. Each of the three refusals below used to
+    // return silently while the caller had ALREADY asserted PTT: the transmitter then sat
+    // keyed with no modulation until the 40 s watchdog, and `isTransmitting` never cleared,
+    // which blocked every later cycle. The caller unkeys on false.
     this.initAudioContext();
-    if (!this.ctx || !this.txGain) return;
+    if (!this.ctx || !this.txGain) return false;
 
     this.stopTransmission();
 
     if (symbolIndices.length === 0) {
       console.warn('[AudioEngine] play16MfskSequence called with an empty symbol sequence; nothing transmitted.');
-      return;
+      return false;
     }
 
     const sampleRate = this.ctx.sampleRate;
@@ -775,7 +779,7 @@ class Z30AudioEngine {
     } catch (err) {
       // A malformed symbol sequence must not reach an antenna as a malformed emission.
       console.error('[AudioEngine] Refusing to transmit an invalid symbol sequence:', err);
-      return;
+      return false;
     }
 
     this.isTxActive = true;
@@ -836,14 +840,18 @@ class Z30AudioEngine {
         if (onComplete) onComplete();
       }
     };
+    return true;
   }
 
   /**
    * Play single CW / Tune tone for transmitter alignment with optional Right Channel Tone PTT
    */
-  public startTuneTone(freqHz: number, options?: { enableRightTone?: boolean; toneFreqHz?: number }) {
+  public startTuneTone(freqHz: number, options?: { enableRightTone?: boolean; toneFreqHz?: number }): boolean {
+    // Reports whether a carrier actually started, for the same reason play16MfskSequence()
+    // does: the tune button and the PTT wiring test both key BEFORE calling this, and a
+    // silent refusal left the transmitter keyed with nothing to transmit.
     this.initAudioContext();
-    if (!this.ctx || !this.txGain) return;
+    if (!this.ctx || !this.txGain) return false;
     this.stopTransmission();
     this.isTxActive = true;
     this.activeTxToneFreqHz = freqHz;
@@ -893,6 +901,7 @@ class Z30AudioEngine {
     osc.start();
 
     this.activeTxNodes.push({ osc, gain });
+    return true;
   }
 
   public stopTransmission() {

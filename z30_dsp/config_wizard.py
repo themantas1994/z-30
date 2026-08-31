@@ -111,6 +111,40 @@ class AudioHardwareDetector:
         return inputs, outputs
 
 
+def rigctld_command(host: str, port: int, command: str, timeout_sec: float = 2.0) -> Tuple[bool, str]:
+    """
+    Sends one rigctl command to a local rigctld daemon and returns (reached, reply).
+
+    `reached` is False only when the daemon could not be talked to at all; a daemon that
+    answered "RPRT -1" is reached and refused, and the caller must tell those two apart. The
+    reply is returned verbatim - nothing here substitutes a plausible-looking value for an
+    error, which is what the wizard's CAT test used to do with a hardcoded 14.074000 MHz.
+    """
+    payload = command if command.endswith("\n") else command + "\n"
+    try:
+        with socket.create_connection((host, port), timeout=timeout_sec) as sock:
+            sock.settimeout(timeout_sec)
+            sock.sendall(payload.encode("ascii", errors="ignore"))
+            chunks = []
+            deadline = time.monotonic() + timeout_sec
+            while time.monotonic() < deadline:
+                try:
+                    chunk = sock.recv(4096)
+                except socket.timeout:
+                    break
+                if not chunk:
+                    break
+                chunks.append(chunk)
+                if chunks[-1].endswith(b"\n"):
+                    break
+            return True, b"".join(chunks).decode("utf-8", errors="replace").strip()
+    except OSError as exc:
+        return False, (
+            f"could not reach rigctld ({exc}). Start it with "
+            f"'rigctld -m <model> -r <serial port> -s <baud>'."
+        )
+
+
 class SerialHardwareDetector:
     """Detects available physical and virtual serial (COM) ports querying the real OS."""
 
@@ -583,6 +617,9 @@ class Step3RadioCatPage(WizardBasePage):
     def __init__(self, parent: tk.Widget, wizard: 'ConfigWizardDialog') -> None:
         super().__init__(parent, wizard)
         self.is_ptt_keyed = False
+        # Set by _key_ptt() and waited on by the worker thread that owns the keyed line, so
+        # "Release PTT" and leaving the page both drop the transmitter immediately.
+        self._ptt_release_event = threading.Event()
         self._build_ui()
 
     def _build_ui(self) -> None:
@@ -719,58 +756,115 @@ class Step3RadioCatPage(WizardBasePage):
             self.port_combo.config(state="normal")
             self.baud_combo.config(state="readonly")
 
-    def _test_cat_connection(self) -> None:
-        """Executes a non-blocking background query to verify real CAT communication."""
-        self.test_result_label.config(text="Status: Querying Rig CAT VFO...", foreground="#EAB308")
-        
-        def bg_test():
-            port = self.port_combo.get().strip()
-            rig = self.rig_combo.get()
-            baud = int(self.baud_combo.get()) if self.baud_combo.get().isdigit() else 115200
-            
-            # Check Hamlib Network socket
-            if "TCP" in port or "127.0.0.1" in port or ":" in port:
-                import socket
-                try:
-                    host = "127.0.0.1"
-                    port_num = 4532
-                    if ":" in port:
-                        parts = port.split(":")[-1].split()[0]
-                        if parts.isdigit():
-                            port_num = int(parts)
-                    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                    s.settimeout(1.5)
-                    s.connect((host, port_num))
-                    s.sendall(b"\\get_freq\n")
-                    resp = s.recv(1024).decode("utf-8", errors="ignore").strip()
-                    s.close()
-                    freq_mhz = f"{int(resp)/1e6:.6f} MHz" if resp.isdigit() else "14.074000 MHz"
-                    self.after(0, lambda: self.test_result_label.config(
-                        text=f"✓ Hamlib rigctld OK: {rig} on {host}:{port_num} (VFO: {freq_mhz})",
-                        foreground="#00FF41"
-                    ))
-                    return
-                except Exception as e:
-                    self.after(0, lambda: self.test_result_label.config(
-                        text=f"✗ rigctld connection failed: {e}",
-                        foreground="#EF4444"
-                    ))
-                    return
+    # -- real hardware tests ----------------------------------------------
+    #
+    # Both tests below used to be theatre. `_test_cat_connection` opened and closed the serial
+    # port without sending a byte and reported "✓ Serial Port OK", and on the rigctld path it
+    # printed "(VFO: 14.074000 MHz)" - a hardcoded string from the `else` branch - whenever the
+    # daemon answered anything that was not a bare number, including an outright error. The PTT
+    # test updated two labels and a timer: it said "● TRANSMITTING via CAT Command [Pin: 1
+    # (HIGH)]" and then "✓ PTT Released (Transmitter in RX Standby)" without ever addressing a
+    # serial port, a GPIO or a daemon. An operator who set the station up here was told the
+    # wiring was good by code that had never touched the wiring.
 
-            # Check physical serial port
+    def _set_test_result(self, text: str, colour: str) -> None:
+        """Updates the result label from a worker thread (Tk is not thread-safe)."""
+        self.after(0, lambda: self.test_result_label.config(text=text, foreground=colour))
+
+    def _rigctld_endpoint(self) -> Tuple[str, int]:
+        """The rigctld host/port this wizard should talk to, from the config being edited."""
+        host = getattr(self.config, "net_cat_host", "127.0.0.1") or "127.0.0.1"
+        try:
+            port = int(getattr(self.config, "net_cat_port", 4532) or 4532)
+        except (TypeError, ValueError):
+            port = 4532
+        return host, port
+
+    def _selected_baud(self) -> int:
+        value = self.baud_combo.get()
+        return int(value) if value.isdigit() else 115200
+
+    def _open_keying_serial(self, released_level: bool) -> Any:
+        """
+        Opens the PTT serial port with both modem control lines already in the RELEASED state.
+
+        pyserial raises DTR and RTS when a port opens, exactly as Chromium does, so opening the
+        port to test keying would key an RTS- or DTR-wired transmitter before the test began.
+        Assigning the attributes before open() applies them as the port comes up.
+
+        `released_level` rather than a hardcoded False, because the released level is the HIGH
+        one on an inverting (active-low) interface: driving both lines low there would key
+        precisely the stations this is meant to protect.
+        """
+        import serial  # imported lazily: pyserial is only needed on the hardware paths
+
+        port_name = (self.config.ptt_port or self.port_combo.get()).strip()
+        if not port_name:
+            raise ValueError("No serial port is selected for PTT keying.")
+        ser = serial.Serial()
+        ser.port = port_name
+        ser.baudrate = self._selected_baud()
+        ser.timeout = 1.0
+        ser.rts = released_level
+        ser.dtr = released_level
+        ser.open()
+        return ser
+
+    def _test_cat_connection(self) -> None:
+        """Runs a real CAT query in the background and reports exactly what came back."""
+        method = self.cat_method_combo.get()
+        port = self.port_combo.get().strip()
+        baud = self._selected_baud()
+        rig = self.rig_combo.get()
+        self.test_result_label.config(text="Status: Querying rig CAT...", foreground="#EAB308")
+
+        def bg_test() -> None:
+            if "None" in method:
+                self._set_test_result(
+                    "ℹ CAT is disabled (None / Manual VOX). No query was sent.", "#EAB308"
+                )
+                return
+
+            if "Hamlib" in method:
+                host, port_num = self._rigctld_endpoint()
+                ok, reply = rigctld_command(host, port_num, "f")
+                if not ok:
+                    self._set_test_result(f"✗ rigctld {host}:{port_num}: {reply}", "#EF4444")
+                    return
+                first = reply.split()[0] if reply.split() else ""
+                if not first.lstrip("-").isdigit():
+                    # An error reply is an error. It used to be replaced with 14.074000 MHz.
+                    self._set_test_result(
+                        f"✗ rigctld answered '{reply}' - the daemon is running but could not read "
+                        f"the VFO. Check the rig model and serial settings it was started with.",
+                        "#EF4444",
+                    )
+                    return
+                self._set_test_result(
+                    f"✓ rigctld {host}:{port_num} reports VFO {int(first) / 1e6:.6f} MHz ({rig})",
+                    "#00FF41",
+                )
+                return
+
+            # Direct Serial: this wizard carries no per-rig command tables, so it can verify the
+            # port and nothing more - and says so rather than implying the radio answered.
             try:
                 import serial
-                ser = serial.Serial(port, baudrate=baud, timeout=1.0)
-                ser.close()
-                self.after(0, lambda: self.test_result_label.config(
-                    text=f"✓ Serial Port OK: {port} opened @ {baud} baud",
-                    foreground="#00FF41"
-                ))
-            except Exception as e:
-                self.after(0, lambda: self.test_result_label.config(
-                    text=f"✗ Serial Error on {port}: {e}",
-                    foreground="#EF4444"
-                ))
+            except ImportError as exc:
+                self._set_test_result(f"✗ pyserial is not installed ({exc}).", "#EF4444")
+                return
+            try:
+                handle = serial.Serial(port, baudrate=baud, timeout=1.0)
+                handle.close()
+            except Exception as exc:
+                self._set_test_result(f"✗ Serial error on {port}: {exc}", "#EF4444")
+                return
+            self._set_test_result(
+                f"ℹ Serial port {port} opened at {baud} baud. No CAT command was sent - this wizard "
+                f"has no per-rig command set. Use the z-30 app's Test CAT Connection, or Hamlib, for "
+                f"a protocol-level check.",
+                "#EAB308",
+            )
 
         threading.Thread(target=bg_test, daemon=True).start()
 
@@ -782,27 +876,123 @@ class Step3RadioCatPage(WizardBasePage):
             self._key_ptt()
 
     def _key_ptt(self) -> None:
-        self.is_ptt_keyed = True
-        polarity = self.polarity_var.get()
         method = self.ptt_method_combo.get()
-        pin_state = "1 (HIGH)" if polarity == "ACTIVE_HIGH" else "0 (LOW)"
+        polarity = self.polarity_var.get()
 
+        if "VOX" in method:
+            self.test_result_label.config(
+                text="ℹ VOX has no keying line to test: the radio keys off the transmitted audio "
+                     "itself. Test it from the z-30 app, which can generate that audio.",
+                foreground="#EAB308",
+            )
+            return
+
+        if "CAT" in method and "Hamlib" not in self.cat_method_combo.get():
+            self.test_result_label.config(
+                text="✗ CAT keying from this wizard needs CAT Method 'Hamlib (libhamlib/rigctld)': "
+                     "there is no per-rig serial command set here. Use the z-30 app for Direct Serial "
+                     "CAT keying.",
+                foreground="#EF4444",
+            )
+            return
+
+        if not messagebox.askokcancel(
+            "Key the transmitter?",
+            "This asserts PTT on the real radio for up to 3 seconds.\n\n"
+            "Make sure the antenna or dummy load is connected and the rig is on a frequency you "
+            "are licensed to transmit on.",
+        ):
+            return
+
+        self.is_ptt_keyed = True
+        self._ptt_release_event = threading.Event()
         self.test_ptt_btn.config(text="⏹ Release PTT (Active TX)")
         self.test_result_label.config(
-            text=f"● TRANSMITTING via {method} [Pin: {pin_state}]...",
-            foreground="#EF4444"
+            text=f"● Keying via {method} [{polarity}]...", foreground="#EF4444"
         )
+        threading.Thread(target=self._ptt_worker, args=(method, polarity), daemon=True).start()
 
-        # Safety auto-release after 3.0 seconds
-        self.after(3000, lambda: self._release_ptt() if self.is_ptt_keyed else None)
+    def _ptt_worker(self, method: str, polarity: str) -> None:
+        """
+        Keys the line, holds it for at most 3 s, and releases it - reporting what the hardware
+        actually did at each step. The release runs in a `finally`, so an exception between the
+        two cannot leave a transmitter keyed.
+        """
+        active_high = polarity == "ACTIVE_HIGH"
+        handle = None
+        keyed = False
+        try:
+            if "CAT" in method:
+                host, port_num = self._rigctld_endpoint()
+                ok, reply = rigctld_command(host, port_num, "T 1")
+                if not ok or not reply.strip().startswith("RPRT 0"):
+                    self._set_test_result(
+                        f"✗ rigctld refused the PTT command: {reply}. Nothing was keyed.", "#EF4444"
+                    )
+                    return
+                keyed = True
+                self._set_test_result(
+                    f"● TRANSMITTING via rigctld {host}:{port_num} - releasing in 3 s...", "#EF4444"
+                )
+            else:
+                line = "RTS" if "RTS" in method else "DTR"
+                handle = self._open_keying_serial(released_level=not active_high)
+                if line == "RTS":
+                    handle.rts = active_high
+                else:
+                    handle.dtr = active_high
+                keyed = True
+                self._set_test_result(
+                    f"● TRANSMITTING: {line} on {handle.port} driven "
+                    f"{'high' if active_high else 'low'} [{polarity}] - releasing in 3 s...",
+                    "#EF4444",
+                )
 
-    def _release_ptt(self) -> None:
+            self._ptt_release_event.wait(3.0)
+        except Exception as exc:
+            self._set_test_result(f"✗ PTT test failed: {exc}", "#EF4444")
+        finally:
+            released_note = ""
+            try:
+                if keyed and "CAT" in method:
+                    host, port_num = self._rigctld_endpoint()
+                    ok, reply = rigctld_command(host, port_num, "T 0")
+                    if not ok or not reply.strip().startswith("RPRT 0"):
+                        released_note = (
+                            f" ✗ THE RELEASE WAS REFUSED ({reply}) - check the radio is back in "
+                            f"receive."
+                        )
+                elif handle is not None:
+                    # The RELEASED level for this wiring, not a blanket low - which is the
+                    # keyed level on an active-low interface.
+                    handle.rts = not active_high
+                    handle.dtr = not active_high
+            except Exception as exc:
+                released_note = f" ✗ THE RELEASE FAILED ({exc}) - check the radio is back in receive."
+            finally:
+                if handle is not None:
+                    try:
+                        handle.close()
+                    except Exception:
+                        pass
+            if keyed:
+                self._set_test_result(
+                    ("✓ PTT released (transmitter back in RX standby)" if not released_note
+                     else "PTT release problem:") + released_note,
+                    "#EF4444" if released_note else "#00FF41",
+                )
+            self.after(0, self._reset_ptt_button)
+
+    def _reset_ptt_button(self) -> None:
         self.is_ptt_keyed = False
         self.test_ptt_btn.config(text="PTT Key Test (3s Safety Auto-Release)")
-        self.test_result_label.config(
-            text="✓ PTT Released (Transmitter in RX Standby)",
-            foreground="#00FF41"
-        )
+
+    def _release_ptt(self) -> None:
+        """Asks the worker to release now; the worker owns the hardware handle."""
+        event = getattr(self, "_ptt_release_event", None)
+        if event is not None:
+            event.set()
+        self._reset_ptt_button()
 
     def on_leave(self) -> None:
         if self.is_ptt_keyed:

@@ -39,6 +39,15 @@ running":
    crashed tab, a killed renderer or a sleeping machine cannot send a keepalive — and cannot
    run a browser-side timer either, which is why this layer has to exist separately. A hard
    40 s ceiling applies even if keepalives keep arriving.
+
+   The browser sends this layer the **intent** (`keyed`) plus the wiring (`active_low`), and the
+   server derives the pin level from the two. It used to be sent the level alone and recorded
+   that as the keyed state, which is the opposite of the truth on an active-low interface: such
+   a station registered no countdown when it keyed — so its own keepalives came back rejected
+   and the browser force-unkeyed it about half a second into every frame — and registered one
+   when it *stopped*, after which the watchdog "released" the line by driving it low, keying the
+   transmitter with nobody watching. A defence that can produce the failure it defends against
+   is worse than no defence, because it is trusted.
 3. **`atexit` and `SIGTERM`/`SIGINT` handlers** that release every claimed GPIO pin, so killing
    the server does not leave a radio keyed.
 

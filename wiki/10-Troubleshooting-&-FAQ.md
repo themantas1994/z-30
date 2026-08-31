@@ -45,9 +45,28 @@ z-30's benchmark measures the on-air case directly: with random carrier and timi
   ```
 
 ### 4. Transceiver Does Not Key into Transmit (PTT Issues)
+
+**Read the rig control log first.** Every keying attempt writes a line there, and a command that
+could not be sent is recorded as an `ERROR` naming the missing piece — no port open, no protocol
+for this rig, `rigctld` refused, HID device not paired. A refused transmission also appears in the
+transmit banner, and no audio is generated when keying fails.
+
 - **CAT Mode**: Verify baud rate matches the radio menu setting. Check that the radio is in `Data Mode` (e.g., `USB-D`).
-- **Digirig / RTS Mode**: Ensure PTT Method is set to **`RTS`** on the proper COM/tty port.
+- **CAT Mode, Yaesu, Direct Serial**: only the FT-991/991A, FTDX10, FTDX101, FT-710 and FT-891 are
+  driven directly. Any other Yaesu — the FT-817/857/897 included — needs `rigctld`; z-30 refuses
+  rather than sending a command set it cannot verify for your model.
+- **CAT Mode, "Hamlib"**: `rigctld` is only reachable when z-30 runs through its native server
+  (`z30-web`). From a plain page there is no relay and CAT keying will refuse.
+- **`rigctld` answers `RPRT -1`**: the daemon is running but refused the command. A daemon started
+  with `-P NONE` has no PTT to key — restart it with the right `-P` for your interface.
+- **Digirig / RTS Mode**: Ensure PTT Method is set to **`RTS`** on the proper COM/tty port. If the
+  keying line is on a *second* cable, pair it with **Pair PTT Port** in Station Settings → PTT;
+  otherwise keying goes to the CAT port.
+- **Polarity**: if the radio transmits while receiving and stays silent while transmitting, the
+  `ACTIVE_HIGH` / `ACTIVE_LOW` setting is inverted for your interface.
 - **SignaLink USB Mode**: If using Right-Channel audio tone, ensure PTT method is set to **`Audio Tone (Right Channel)`** and soundcard balance is centered.
+- **`z30 --tkinter`**: that window is receive-only — it has no modulator and no keying. Transmit
+  from the web transceiver (`z30-web`).
 
 ### 5. High Time Offset ($\Delta t > 1.5\text{ s}$)
 - **Symptom**: Transmissions start late; decodes show high $\Delta t$.
