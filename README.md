@@ -81,14 +81,14 @@ deployment and DigiPi — are in
 ```bash
 git clone https://github.com/themantas1994/z-30.git && cd z-30
 chmod +x install_ubuntu.sh && ./install_ubuntu.sh
-z30
+z-30
 ```
 
 **Arch Linux / Manjaro / EndeavourOS / CachyOS**
 ```bash
 git clone https://github.com/themantas1994/z-30.git && cd z-30
 chmod +x install_arch.sh && ./install_arch.sh     # or: makepkg -si
-z30
+z-30
 ```
 
 **Windows 10 / 11** — install Python 3.9+ with *Add python.exe to PATH*, clone the repository,
