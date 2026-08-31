@@ -56,6 +56,49 @@ import {
  */
 export const MAX_TX_SECONDS = 40;
 
+/**
+ * Hardware addressing for a keying method: which pin, which host, which port.
+ *
+ * Declared once and shared by `setPtt`, `testPttKey` and the watchdog context, because the
+ * release path must be able to reproduce exactly what the key path drove. See the note on
+ * `lastPttContext` in `setPtt`.
+ */
+export interface PttHardwareOptions {
+  pttPort?: string;
+  pttToneFreqHz?: number;
+  cm108GpioPin?: number;
+  rpiGpioPin?: number;
+  tciHost?: string;
+  tciPort?: number;
+  winkeyerPort?: string;
+}
+
+/**
+ * What the raw rigctl console needs before it is allowed to key a transmitter.
+ *
+ * The console is a fourth transmit path, and AGENTS.md permits exactly one gate in front of
+ * every path. Rather than reach for the station config itself (which it has no access to), the
+ * console is handed the caller's already-wired gate plus the operator's real keying method, so
+ * `T 1` behaves identically to pressing Start TX.
+ */
+export interface RawConsoleTransmitContext {
+  /** The compliance gate. Must be canTransmit()/assertCanTransmit, not a local re-check. */
+  assertCanTransmit: (audioOffsetHz: number) => boolean;
+  /** Audio offset the station would transmit on, so the band-plan check sees the real RF. */
+  txAudioOffsetHz: number;
+  /** The operator's configured keying method - not a CAT default. */
+  pttMethod: PttMethodType;
+  /** The operator's configured polarity - not an ACTIVE_HIGH default. */
+  pttPolarity: 'ACTIVE_HIGH' | 'ACTIVE_LOW';
+  pttOptions?: PttHardwareOptions;
+}
+
+/** Fallbacks used only when neither the caller nor the last key gave us an address. */
+const DEFAULT_CM108_GPIO_PIN = 3;
+const DEFAULT_RPI_BCM_PIN = 17;
+const DEFAULT_TCI_HOST = '127.0.0.1';
+const DEFAULT_TCI_PORT = 40001;
+
 /** How often the browser re-asserts the server-side GPIO dead-man switch while keyed. */
 const GPIO_KEEPALIVE_INTERVAL_MS = 500;
 
@@ -246,8 +289,17 @@ export class CatController {
   private lastPttContext: {
     method: PttMethodType;
     polarity: 'ACTIVE_HIGH' | 'ACTIVE_LOW';
-    options?: Record<string, any>;
+    options?: PttHardwareOptions;
   } | null = null;
+  /**
+   * What the most recent setPtt() hardware call actually did. testPttKey() reports from this
+   * rather than assuming success, so a test can only pass if the line was really driven.
+   */
+  private lastPttHardwareOutcome: {
+    ok: boolean;
+    hardwareDetail?: string;
+    failureNote?: string;
+  } = { ok: true };
 
   // Real CAT protocol family + Icom CI-V address for the currently configured rig, set via
   // configureRig(). Determines what actual bytes setFreqHz/setMode/setPtt write to the wire.
@@ -390,6 +442,11 @@ export class CatController {
 
   public getMode(): string {
     return this.currentMode;
+  }
+
+  /** Receiver passband in Hz, as reported on the rig faceplate and by `\get_mode`. */
+  public getPassbandHz(): number {
+    return this.currentPassbandHz;
   }
 
   public setMode(mode: string): boolean {
@@ -546,108 +603,160 @@ export class CatController {
   }
 
   /**
-   * Set physical or simulated PTT state based on configured method
+   * Drives the PTT line for the configured keying method.
+   *
+   * The single hardware keying implementation: the sequencer, manual TX, tune and the wiring
+   * test all come through here. Returns whether the hardware actually accepted the command -
+   * `false` means nothing was keyed (or nothing was released), and a caller reporting success
+   * from this method's return value will not be reporting a fiction.
+   *
+   * NOTE: this is NOT the compliance gate. `canTransmit()` is, and callers must run it before
+   * keying; see `assertCanTransmit` in App.tsx.
    */
   public async setPtt(
     tx: boolean,
     method: PttMethodType = 'CAT',
     polarity: 'ACTIVE_HIGH' | 'ACTIVE_LOW' = 'ACTIVE_HIGH',
-    options?: {
-      pttPort?: string;
-      pttToneFreqHz?: number;
-      cm108GpioPin?: number;
-      rpiGpioPin?: number;
-      tciHost?: string;
-      tciPort?: number;
-      winkeyerPort?: string;
-    }
+    options?: PttHardwareOptions
   ): Promise<boolean> {
     this.pttState = tx;
+
+    // The release path must drive the SAME pin/host the key path drove. Callers that unkey
+    // without repeating the options object used to fall straight through to the hardcoded
+    // defaults below: a station keyed on CM108 GPIO 4 was released on GPIO 3 and stayed
+    // transmitting, a station keyed on BCM 27 was released on BCM 17, and a remote TCI SDR was
+    // never told to stop because the release went to 127.0.0.1. Only the Pi path had a
+    // backstop (the server dead-man switch); CM108 and TCI had none.
+    //
+    // Captured BEFORE armTxWatchdog()/disarmTxWatchdog(), both of which overwrite or clear
+    // lastPttContext.
+    const effectiveOptions = options ?? this.lastPttContext?.options;
 
     // Arm (or disarm) the maximum-transmission watchdog before doing anything else, so an
     // exception thrown by the keying code below still leaves a timer that will unkey.
     if (tx) {
-      this.armTxWatchdog(method, polarity, options);
+      this.armTxWatchdog(method, polarity, effectiveOptions);
     } else {
       this.disarmTxWatchdog();
     }
 
+    // Every branch records whether the hardware actually accepted the command, so callers -
+    // notably testPttKey() - can report a real outcome instead of assuming success. Four of the
+    // nine methods used to have a second, parallel implementation inside testPttKey() that only
+    // wrote to the command log; an operator wiring a DRA, a DigiPi, a SunSDR2 or a WinKeyer got
+    // a green tick from hardware that had never been addressed.
+    let hardwareOk = true;
+    let hardwareDetail: string | undefined;
+    let failureNote: string | undefined;
+
     if (method === 'CAT') {
       this.sendRigPtt(tx);
+      hardwareDetail = `CAT command (${this.hardwareCommandStatusNote()})`;
       this.logCommand(`set_ptt ${tx ? '1' : '0'}`, this.hardwareCommandStatusNote(), 'OK');
-    } else if (method === 'RTS') {
+    } else if (method === 'RTS' || method === 'DTR') {
       const activeState = polarity === 'ACTIVE_HIGH' ? tx : !tx;
+      const signal = method === 'RTS' ? 'requestToSend' : 'dataTerminalReady';
+      hardwareDetail = `${method} pin on ${effectiveOptions?.pttPort || 'the paired serial port'}`;
       if (this.serialPort && this.serialPort.setSignals) {
         try {
-          await this.serialPort.setSignals({ requestToSend: activeState });
-          this.logCommand(`RTS_SET ${activeState ? '1' : '0'}`, 'PIN_UPDATED', 'OK');
+          await this.serialPort.setSignals({ [signal]: activeState });
+          this.logCommand(`${method}_SET ${activeState ? '1' : '0'}`, 'PIN_UPDATED', 'OK');
         } catch (e) {
-          console.warn('Failed to set RTS signal on serial port:', e);
+          console.warn(`Failed to set ${method} signal on serial port:`, e);
+          hardwareOk = false;
+          failureNote = `Serial port rejected the ${method} signal change`;
+          this.logCommand(`${method}_SET ${activeState ? '1' : '0'}`, failureNote, 'ERROR');
         }
-      }
-    } else if (method === 'DTR') {
-      const activeState = polarity === 'ACTIVE_HIGH' ? tx : !tx;
-      if (this.serialPort && this.serialPort.setSignals) {
-        try {
-          await this.serialPort.setSignals({ dataTerminalReady: activeState });
-          this.logCommand(`DTR_SET ${activeState ? '1' : '0'}`, 'PIN_UPDATED', 'OK');
-        } catch (e) {
-          console.warn('Failed to set DTR signal on serial port:', e);
-        }
+      } else {
+        // No open port is a failure, not a no-op: nothing was keyed.
+        hardwareOk = false;
+        failureNote = `No serial port is open - pair one with "Connect Serial Port" before keying ${method}`;
+        this.logCommand(`${method}_SET ${activeState ? '1' : '0'}`, failureNote, 'ERROR');
       }
     } else if (method === 'AUDIO_TONE_RIGHT') {
-      const toneFreq = options?.pttToneFreqHz || 1000;
+      const toneFreq = effectiveOptions?.pttToneFreqHz || 1000;
+      hardwareDetail = `Right audio channel @ ${toneFreq} Hz`;
       this.logCommand(
         `AUDIO_TONE_RIGHT_${tx ? 'ACTIVE' : 'RELEASED'}`,
         tx ? `Right-Channel ${toneFreq}Hz PTT Keying Tone Outputting` : 'Right-Channel Tone Standby',
         'OK'
       );
     } else if (method === 'CM108_GPIO') {
-      const pin = options?.cm108GpioPin || 3;
-      const ok = await this.setCm108Gpio(pin, tx);
+      const pin = effectiveOptions?.cm108GpioPin || DEFAULT_CM108_GPIO_PIN;
+      hardwareDetail = `C-Media USB Audio GPIO pin ${pin}`;
+      hardwareOk = await this.setCm108Gpio(pin, tx);
+      if (!hardwareOk) {
+        failureNote = 'CM108/CM119 HID device not paired - use "Pair CM108/CM119 Device" first';
+      }
       this.logCommand(
         `CM108_GPIO_${pin}_${tx ? 'HIGH' : 'LOW'}`,
-        ok
+        hardwareOk
           ? tx
             ? `USB Audio Chip GPIO${pin} Driven High (PTT Active)`
             : `USB Audio Chip GPIO${pin} Released (RX Standby)`
-          : 'CM108/CM119 HID device not paired - use "Pair CM108/CM119 Device" first',
-        ok ? 'OK' : 'ERROR'
+          : failureNote!,
+        hardwareOk ? 'OK' : 'ERROR'
       );
     } else if (method === 'RASPBERRY_PI_GPIO') {
-      const bcmPin = options?.rpiGpioPin || 17;
-      const ok = await this.setRpiGpio(bcmPin, tx, polarity);
+      const bcmPin = effectiveOptions?.rpiGpioPin || DEFAULT_RPI_BCM_PIN;
+      hardwareDetail = `Raspberry Pi BCM pin ${bcmPin}`;
+      hardwareOk = await this.setRpiGpio(bcmPin, tx, polarity);
+      if (!hardwareOk) {
+        failureNote =
+          'GPIO bridge unreachable - only works when running via the native z30_dsp web server on the Pi itself (not a plain browser tab)';
+      }
       this.logCommand(
         `RPI_GPIO_${bcmPin}_${tx ? '1' : '0'}`,
-        ok
+        hardwareOk
           ? tx
             ? `SBC BCM Pin ${bcmPin} Asserted [${polarity}] via local z30_dsp /api/gpio bridge`
             : `SBC BCM Pin ${bcmPin} Released to Standby`
-          : 'GPIO bridge unreachable - only works when running via the native z30_dsp web server on the Pi itself (not a plain browser tab)',
-        ok ? 'OK' : 'ERROR'
+          : failureNote!,
+        hardwareOk ? 'OK' : 'ERROR'
       );
     } else if (method === 'TCI_NETWORK') {
-      const host = options?.tciHost || '127.0.0.1';
-      const port = options?.tciPort || 40001;
-      const ok = await this.sendTciPtt(host, port, tx);
+      const host = effectiveOptions?.tciHost || DEFAULT_TCI_HOST;
+      const port = effectiveOptions?.tciPort || DEFAULT_TCI_PORT;
+      hardwareDetail = `TCI socket ${host}:${port}`;
+      hardwareOk = await this.sendTciPtt(host, port, tx);
+      if (!hardwareOk) {
+        failureNote = `Could not reach TCI server at ${host}:${port}`;
+      }
       this.logCommand(
         `TCI_TX_${tx ? 'ON' : 'OFF'}`,
-        ok ? `${host}:${port} => trx:0:tx:${tx ? 'true' : 'false'};` : `Could not reach TCI server at ${host}:${port}`,
-        ok ? 'OK' : 'ERROR'
+        hardwareOk ? `${host}:${port} => trx:0:tx:${tx ? 'true' : 'false'};` : failureNote!,
+        hardwareOk ? 'OK' : 'ERROR'
       );
     } else if (method === 'WINKEYER') {
-      const ok = await this.setWinkeyerPtt(tx);
+      hardwareDetail = `K1EL WinKeyer on ${effectiveOptions?.winkeyerPort || 'the paired serial port'}`;
+      hardwareOk = await this.setWinkeyerPtt(tx);
+      if (!hardwareOk) {
+        failureNote = 'WinKeyer serial link not open';
+      }
       this.logCommand(
         `WINKEYER_PTT`,
-        ok ? `PTT-follows-key ${tx ? 'engaged (holding key line down)' : 'released'}` : 'WinKeyer serial link not open',
-        ok ? 'OK' : 'ERROR'
+        hardwareOk ? `PTT-follows-key ${tx ? 'engaged (holding key line down)' : 'released'}` : failureNote!,
+        hardwareOk ? 'OK' : 'ERROR'
       );
     } else if (method === 'VOX') {
       // In VOX mode, the physical radio transmitter keys via audio output modulation from the sound card
+      hardwareDetail = 'Sound-card audio carrier (radio VOX circuit)';
       this.logCommand(`VOX_${tx ? 'ACTIVE' : 'STANDBY'}`, tx ? 'Audio Carrier Active (Radio VOX Triggered)' : 'Audio Carrier Inactive', 'OK');
+    } else {
+      hardwareOk = false;
+      failureNote = `Unknown PTT method "${method}"`;
     }
 
-    return true;
+    this.lastPttHardwareOutcome = { ok: hardwareOk, hardwareDetail, failureNote };
+
+    // A key that never reached the hardware must not leave the app believing it is keyed - the
+    // header, the sequencer and the watchdog all read pttState.
+    if (tx && !hardwareOk) {
+      this.pttState = false;
+      this.disarmTxWatchdog();
+    }
+
+    return hardwareOk;
   }
 
   /**
@@ -663,7 +772,7 @@ export class CatController {
   private armTxWatchdog(
     method: PttMethodType,
     polarity: 'ACTIVE_HIGH' | 'ACTIVE_LOW',
-    options?: Record<string, any>
+    options?: PttHardwareOptions
   ): void {
     this.disarmTxWatchdog();
     this.lastPttContext = { method, polarity, options };
@@ -681,7 +790,7 @@ export class CatController {
     }, MAX_TX_SECONDS * 1000);
 
     if (method === 'RASPBERRY_PI_GPIO' && isLocalServerAvailable()) {
-      const pin = options?.rpiGpioPin || 17;
+      const pin = options?.rpiGpioPin || DEFAULT_RPI_BCM_PIN;
       this.gpioKeepaliveTimer = setInterval(() => {
         void keepAliveGpioPin(pin).then((result) => {
           if (!result.success && this.pttState) {
@@ -1089,22 +1198,26 @@ export class CatController {
   }
 
   /**
-   * Real Hardware PTT Test with Method & Polarity Handling (3-Second Safety Auto-Release)
+   * Keys the transmitter for `durationMs` as a wiring test, then releases it.
+   *
+   * This is deliberately a thin wrapper around setPtt() rather than a second implementation of
+   * the nine keying methods. It used to be the latter, and four of those nine branches - CM108,
+   * Raspberry Pi GPIO, TCI and WinKeyer - only wrote a line to the command log describing bytes
+   * they never sent, then returned "verified". An operator wiring a DRA, a DigiPi, a SunSDR2 or
+   * a WinKeyer got a green tick from hardware that was never addressed, and concluded the wiring
+   * was good. Going through setPtt() means the test drives exactly what a real transmission
+   * drives, gets the same watchdog and dead-man coverage, and cannot silently drift from it
+   * again.
+   *
+   * VOX and right-channel tone keying additionally need an audio carrier to key anything at all:
+   * on the production path that carrier is the frame itself, so the test supplies a tone.
    */
   public async testPttKey(
     method: PttMethodType,
     polarity: 'ACTIVE_HIGH' | 'ACTIVE_LOW' = 'ACTIVE_HIGH',
     durationMs: number = 3000,
     onStateChange?: (isKeyed: boolean, statusMsg: string) => void,
-    options?: {
-      pttPort?: string;
-      pttToneFreqHz?: number;
-      cm108GpioPin?: number;
-      rpiGpioPin?: number;
-      tciHost?: string;
-      tciPort?: number;
-      winkeyerPort?: string;
-    }
+    options?: PttHardwareOptions
   ): Promise<PttTestResult> {
     if (this.pttSafetyTimer) {
       clearTimeout(this.pttSafetyTimer);
@@ -1113,247 +1226,79 @@ export class CatController {
 
     const pinDescription =
       polarity === 'ACTIVE_HIGH' ? 'Positive / +12V (Active High)' : 'Negative / Pull-to-GND (Active Low)';
+    const usesAudioCarrier = method === 'VOX' || method === 'AUDIO_TONE_RIGHT';
+    const toneFreq = options?.pttToneFreqHz || 1000;
 
-    // 1. VOX Audio PTT Mode: Trigger audio tone carrier
-    if (method === 'VOX') {
-      this.pttState = true;
-      audioEngine.startTuneTone(1500); // 1500 Hz tone to trigger transceiver VOX circuit
-      if (onStateChange) onStateChange(true, `● VOX Audio Carrier Transmitting (1500 Hz tone triggering rig VOX circuit)...`);
-
-      return new Promise((resolve) => {
-        this.pttSafetyTimer = setTimeout(() => {
-          this.pttState = false;
-          audioEngine.stopTransmission();
-          if (onStateChange) onStateChange(false, `✓ VOX Tone Released (Radio returned to RX standby after 3s safety timeout)`);
-          resolve({
-            success: true,
-            method: 'VOX',
-            isKeyed: false,
-            message: '✓ Audio VOX Keying test completed successfully (3s safety auto-release verified).',
-          });
-        }, durationMs);
+    if (usesAudioCarrier) {
+      // VOX keys off the audio itself; the right-channel method needs the tone its rectifier
+      // watches. Neither keys anything without a carrier, so a silent test would prove nothing.
+      audioEngine.startTuneTone(method === 'VOX' ? 1500 : 1250, {
+        enableRightTone: method === 'AUDIO_TONE_RIGHT',
+        toneFreqHz: toneFreq,
       });
     }
 
-    // 2. Right-Channel Audio PTT Tone Mode (Pseudo-FSK / Hardware Tone Keying)
-    if (method === 'AUDIO_TONE_RIGHT') {
-      this.pttState = true;
-      const toneFreq = options?.pttToneFreqHz || 1000;
-      audioEngine.startTuneTone(1250, { enableRightTone: true, toneFreqHz: toneFreq });
-      if (onStateChange)
-        onStateChange(true, `● Right-Channel ${toneFreq}Hz PTT Keying Tone Outputting to hardware tone rectifier/SignaLink...`);
+    const keyed = await this.setPtt(true, method, polarity, options);
+    const keyOutcome = this.lastPttHardwareOutcome;
+    const hardwareDetail = keyOutcome.hardwareDetail;
 
-      return new Promise((resolve) => {
-        this.pttSafetyTimer = setTimeout(() => {
-          this.pttState = false;
-          audioEngine.stopTransmission();
-          if (onStateChange) onStateChange(false, `✓ Right-Channel PTT Tone Muted (Returned to RX standby after 3s safety timeout)`);
-          resolve({
-            success: true,
-            method: 'AUDIO_TONE_RIGHT',
-            isKeyed: false,
-            hardwareDetail: `Right Audio Channel @ ${toneFreq} Hz Pure Sine Wave`,
-            message: `✓ Right-Channel Audio PTT Tone (${toneFreq}Hz) generated successfully. Tone rectifier triggered PTT.`,
-          });
-        }, durationMs);
-      });
+    if (!keyed) {
+      if (usesAudioCarrier) audioEngine.stopTransmission();
+      const reason = keyOutcome.failureNote || 'the hardware did not accept the keying command';
+      if (onStateChange) onStateChange(false, `✗ PTT test failed: ${reason}`);
+      return {
+        success: false,
+        method,
+        isKeyed: false,
+        pinState: pinDescription,
+        hardwareDetail,
+        message: `✗ ${method} PTT test failed - ${reason}. The transmitter was not keyed.`,
+      };
     }
 
-    // 3. CAT Command PTT Mode
-    if (method === 'CAT') {
-      this.pttState = true;
-      this.sendRigPtt(true);
-      this.logCommand('set_ptt 1', this.hardwareCommandStatusNote(), 'OK');
-      if (onStateChange) onStateChange(true, `● PTT Key Active via CAT Command (${this.hardwareCommandStatusNote()})...`);
-
-      return new Promise((resolve) => {
-        this.pttSafetyTimer = setTimeout(async () => {
-          this.pttState = false;
-          this.sendRigPtt(false);
-          this.logCommand('set_ptt 0', this.hardwareCommandStatusNote(), 'OK');
-          if (onStateChange) onStateChange(false, `✓ CAT PTT Released (rig in RX standby)`);
-          resolve({
-            success: true,
-            method: 'CAT',
-            isKeyed: false,
-            message: '✓ CAT PTT Command test completed successfully (3s safety cutoff executed).',
-          });
-        }, durationMs);
-      });
+    if (onStateChange) {
+      onStateChange(true, `● PTT keyed via ${hardwareDetail || method} [${pinDescription}] - releasing in ${(durationMs / 1000).toFixed(0)}s...`);
     }
 
-    // 4. Hardware RTS Pin PTT Mode
-    if (method === 'RTS') {
-      this.pttState = true;
-      const activeState = polarity === 'ACTIVE_HIGH';
-      if (this.serialPort && this.serialPort.setSignals) {
-        try {
-          await this.serialPort.setSignals({ requestToSend: activeState });
-        } catch (e) {
-          console.warn('Could not set RTS signal:', e);
+    return new Promise((resolve) => {
+      this.pttSafetyTimer = setTimeout(async () => {
+        this.pttSafetyTimer = null;
+        const released = await this.setPtt(false, method, polarity, options);
+        const releaseOutcome = this.lastPttHardwareOutcome;
+        if (usesAudioCarrier) audioEngine.stopTransmission();
+
+        if (!released) {
+          // Keyed but could not be released: the worst outcome of the three, and the one an
+          // operator most needs told. Fall back to the all-paths emergency release.
+          this.releasePttEmergency();
+          const reason = releaseOutcome.failureNote || 'the release command was not accepted';
+          if (onStateChange) onStateChange(false, `✗ PTT release failed: ${reason}`);
+          resolve({
+            success: false,
+            method,
+            isKeyed: false,
+            pinState: pinDescription,
+            hardwareDetail,
+            message:
+              `✗ ${method} keyed but the release failed - ${reason}. An emergency release was ` +
+              'issued across every keying path; verify the radio is back in receive.',
+          });
+          return;
         }
-      }
-      if (onStateChange) onStateChange(true, `● PTT Key Active via RTS Pin [${pinDescription}]...`);
 
-      return new Promise((resolve) => {
-        this.pttSafetyTimer = setTimeout(async () => {
-          this.pttState = false;
-          if (this.serialPort && this.serialPort.setSignals) {
-            try {
-              await this.serialPort.setSignals({ requestToSend: !activeState });
-            } catch (e) {
-              console.warn('Could not reset RTS signal:', e);
-            }
-          }
-          if (onStateChange) onStateChange(false, `✓ RTS Pin Released (De-keyed to RX standby after 3s safety timeout)`);
-          resolve({
-            success: true,
-            method: 'RTS',
-            isKeyed: false,
-            pinState: pinDescription,
-            message: `✓ RTS Pin PTT Key test completed successfully with ${pinDescription}.`,
-          });
-        }, durationMs);
-      });
-    }
-
-    // 5. Hardware DTR Pin PTT Mode
-    if (method === 'DTR') {
-      this.pttState = true;
-      const activeState = polarity === 'ACTIVE_HIGH';
-      if (this.serialPort && this.serialPort.setSignals) {
-        try {
-          await this.serialPort.setSignals({ dataTerminalReady: activeState });
-        } catch (e) {
-          console.warn('Could not set DTR signal:', e);
-        }
-      }
-      if (onStateChange) onStateChange(true, `● PTT Key Active via DTR Pin [${pinDescription}]...`);
-
-      return new Promise((resolve) => {
-        this.pttSafetyTimer = setTimeout(async () => {
-          this.pttState = false;
-          if (this.serialPort && this.serialPort.setSignals) {
-            try {
-              await this.serialPort.setSignals({ dataTerminalReady: !activeState });
-            } catch (e) {
-              console.warn('Could not reset DTR signal:', e);
-            }
-          }
-          if (onStateChange) onStateChange(false, `✓ DTR Pin Released (De-keyed to RX standby after 3s safety timeout)`);
-          resolve({
-            success: true,
-            method: 'DTR',
-            isKeyed: false,
-            pinState: pinDescription,
-            message: `✓ DTR Pin PTT Key test completed successfully with ${pinDescription}.`,
-          });
-        }, durationMs);
-      });
-    }
-
-    // 6. C-Media CM108 / CM119 / CM108AH USB Audio GPIO
-    if (method === 'CM108_GPIO') {
-      this.pttState = true;
-      const pin = options?.cm108GpioPin || 3;
-      this.logCommand(`CM108_TEST_SET`, `USB HID Feature Report: GPIO${pin} = 1 (Asserted)`, 'OK');
-      if (onStateChange) onStateChange(true, `● CM108 USB Audio GPIO${pin} Asserted (DRA / URI Interface Keyed)...`);
-
-      return new Promise((resolve) => {
-        this.pttSafetyTimer = setTimeout(() => {
-          this.pttState = false;
-          this.logCommand(`CM108_TEST_CLR`, `USB HID Feature Report: GPIO${pin} = 0 (De-asserted)`, 'OK');
-          if (onStateChange) onStateChange(false, `✓ CM108 GPIO${pin} Released (RX standby restored after 3s safety timeout)`);
-          resolve({
-            success: true,
-            method: 'CM108_GPIO',
-            isKeyed: false,
-            hardwareDetail: `C-Media USB Audio GPIO Pin ${pin}`,
-            message: `✓ CM108/CM119 USB Audio GPIO${pin} Keying verified (Masters Communications DRA / URI compatible).`,
-          });
-        }, durationMs);
-      });
-    }
-
-    // 7. Raspberry Pi / Linux SBC Direct GPIO Pin
-    if (method === 'RASPBERRY_PI_GPIO') {
-      this.pttState = true;
-      const bcmPin = options?.rpiGpioPin || 17;
-      const activeVal = polarity === 'ACTIVE_HIGH' ? '1' : '0';
-      this.logCommand(`RPI_GPIO_TEST_SET`, `sysfs /libgpiod write: BCM Pin ${bcmPin} => ${activeVal} [${polarity}]`, 'OK');
-      if (onStateChange) onStateChange(true, `● Raspberry Pi BCM GPIO Pin ${bcmPin} Asserted [${pinDescription}]...`);
-
-      return new Promise((resolve) => {
-        this.pttSafetyTimer = setTimeout(() => {
-          this.pttState = false;
-          const inactiveVal = polarity === 'ACTIVE_HIGH' ? '0' : '1';
-          this.logCommand(`RPI_GPIO_TEST_CLR`, `sysfs /libgpiod write: BCM Pin ${bcmPin} => ${inactiveVal}`, 'OK');
-          if (onStateChange) onStateChange(false, `✓ Raspberry Pi BCM Pin ${bcmPin} Released (RX standby restored)`);
-          resolve({
-            success: true,
-            method: 'RASPBERRY_PI_GPIO',
-            isKeyed: false,
-            pinState: pinDescription,
-            hardwareDetail: `Raspberry Pi BCM Pin ${bcmPin}`,
-            message: `✓ Raspberry Pi GPIO BCM Pin ${bcmPin} test succeeded with ${pinDescription}.`,
-          });
-        }, durationMs);
-      });
-    }
-
-    // 8. TCI Protocol Network Socket (SunSDR2 / ExpertSDR / Thetis)
-    if (method === 'TCI_NETWORK') {
-      this.pttState = true;
-      const host = options?.tciHost || '127.0.0.1';
-      const port = options?.tciPort || 40001;
-      this.logCommand(`TCI_TX_TEST`, `${host}:${port} => trx:0:tx:true;`, 'OK');
-      if (onStateChange) onStateChange(true, `● TCI Network Command Sent: trx:0:tx:true (${host}:${port})...`);
-
-      return new Promise((resolve) => {
-        this.pttSafetyTimer = setTimeout(() => {
-          this.pttState = false;
-          this.logCommand(`TCI_RX_TEST`, `${host}:${port} => trx:0:tx:false;`, 'OK');
-          if (onStateChange) onStateChange(false, `✓ TCI Network Command: trx:0:tx:false sent (SDR in RX standby)`);
-          resolve({
-            success: true,
-            method: 'TCI_NETWORK',
-            isKeyed: false,
-            hardwareDetail: `TCI Socket: ${host}:${port}`,
-            message: `✓ TCI Network Socket PTT test verified with ExpertSDR / Thetis protocol.`,
-          });
-        }, durationMs);
-      });
-    }
-
-    // 9. WinKeyer Hardware Keyer IC
-    if (method === 'WINKEYER') {
-      this.pttState = true;
-      const port = options?.winkeyerPort || 'COM1';
-      this.logCommand(`WINKEYER_TEST_SET`, `${port} => 0x02 0x01 (WinKeyer PTT Active)`, 'OK');
-      if (onStateChange) onStateChange(true, `● WinKeyer PTT Command (0x02 0x01) sent to ${port}...`);
-
-      return new Promise((resolve) => {
-        this.pttSafetyTimer = setTimeout(() => {
-          this.pttState = false;
-          this.logCommand(`WINKEYER_TEST_CLR`, `${port} => 0x02 0x00 (WinKeyer PTT Inactive)`, 'OK');
-          if (onStateChange) onStateChange(false, `✓ WinKeyer PTT Command: 0x02 0x00 sent (RX standby restored)`);
-          resolve({
-            success: true,
-            method: 'WINKEYER',
-            isKeyed: false,
-            hardwareDetail: `WinKeyer 2/3 Port: ${port}`,
-            message: `✓ K1EL WinKeyer PTT command sequence test completed successfully.`,
-          });
-        }, durationMs);
-      });
-    }
-
-    return {
-      success: false,
-      method: 'CAT',
-      isKeyed: false,
-      message: 'Unknown PTT method specified.',
-    };
+        if (onStateChange) onStateChange(false, `✓ PTT released after ${(durationMs / 1000).toFixed(0)}s safety timeout`);
+        resolve({
+          success: true,
+          method,
+          isKeyed: false,
+          pinState: pinDescription,
+          hardwareDetail,
+          message:
+            `✓ ${method} PTT verified: ${hardwareDetail || 'the keying line'} was asserted and ` +
+            `released after the ${(durationMs / 1000).toFixed(0)}s safety cutoff.`,
+        });
+      }, durationMs);
+    });
   }
 
   /**
@@ -1375,7 +1320,7 @@ export class CatController {
     // a couple of seconds anyway, but a couple of seconds of unintended carrier is exactly
     // what an emergency release exists to avoid.
     if (context?.method === 'RASPBERRY_PI_GPIO') {
-      const pin = context.options?.rpiGpioPin || 17;
+      const pin = context.options?.rpiGpioPin || DEFAULT_RPI_BCM_PIN;
       const polarity = context.polarity === 'ACTIVE_LOW';
       void setGpioPin(pin, polarity);
     }
@@ -1383,8 +1328,13 @@ export class CatController {
       this.serialPort.setSignals({ requestToSend: false, dataTerminalReady: false }).catch(() => {});
     }
     if (this.hidDevice && this.hidDevice.opened) {
-      this.setCm108Gpio(3, false).catch(() => {});
-      this.setCm108Gpio(4, false).catch(() => {});
+      // 3 and 4 are the two pins the common DRA/URI wiring uses; the configured pin is added
+      // in case this station is on one of the others.
+      const cm108Pins = new Set<number>([3, 4]);
+      if (context?.options?.cm108GpioPin) cm108Pins.add(context.options.cm108GpioPin);
+      for (const pin of cm108Pins) {
+        this.setCm108Gpio(pin, false).catch(() => {});
+      }
     }
     if (this.tciSocket && this.tciSocket.readyState === WebSocket.OPEN) {
       try {
@@ -1578,22 +1528,40 @@ export class CatController {
   }
 
   /**
-   * Execute raw Hamlib rigctl text command
+   * Executes one raw Hamlib rigctl command from the diagnostic console.
+   *
+   * Two things here are load-bearing and were previously wrong.
+   *
+   * **Case is significant.** rigctl's short verbs are case-paired: `f` reads the frequency,
+   * `F` sets it; `m`/`M`, `t`/`T` likewise. This method used to lowercase the verb before
+   * matching, so every uppercase branch was unreachable and `F 14076000` silently fell through
+   * to the `f` getter - the console answered with the current frequency and changed nothing,
+   * while the input placeholder advertised it as a setter. Only the long `\set_*` forms worked.
+   *
+   * **Keying needs the gate.** `T 1` / `\set_ptt 1` is a transmit path, and AGENTS.md allows
+   * exactly one: `canTransmit()`. Before, it called `setPtt(tx)` bare - no callsign check, no
+   * region or licence check, no band-plan check on dial + audio offset - and with the method
+   * and polarity defaulted to CAT/ACTIVE_HIGH rather than the operator's configured ones, so an
+   * RTS or GPIO station got CI-V bytes it was never wired for. It now refuses unless the caller
+   * supplies the gate, and fails closed when none is wired.
    */
-  public executeRawCommand(input: string): string {
+  public executeRawCommand(input: string, txContext?: RawConsoleTransmitContext): string {
     const raw = input.trim();
     if (!raw) return '';
 
     const parts = raw.split(/\s+/);
-    const cmd = parts[0].toLowerCase();
+    // Short verbs match case-sensitively (f = get, F = set); the long backslash forms are
+    // matched case-insensitively, the way rigctl itself accepts them.
+    const verb = parts[0];
+    const long = verb.toLowerCase();
     const arg = parts[1];
 
     let resp = '';
     let status: 'OK' | 'ERROR' = 'OK';
 
-    if (cmd === 'f' || cmd === '\\get_freq') {
+    if (verb === 'f' || long === '\\get_freq') {
       resp = `${this.currentFreqHz}`;
-    } else if (cmd === 'F' || cmd === '\\set_freq') {
+    } else if (verb === 'F' || long === '\\set_freq') {
       const val = parseInt(arg, 10);
       if (!isNaN(val) && val > 100000) {
         this.setFreqHz(val);
@@ -1602,32 +1570,63 @@ export class CatController {
         resp = 'RPRT -1 (Invalid Frequency)';
         status = 'ERROR';
       }
-    } else if (cmd === 'm' || cmd === '\\get_mode') {
+    } else if (verb === 'm' || long === '\\get_mode') {
       resp = `${this.currentMode}\n${this.currentPassbandHz}`;
-    } else if (cmd === 'M' || cmd === '\\set_mode') {
-      this.setMode(arg || 'PKTUSB');
-      resp = 'RPRT 0';
-    } else if (cmd === 't' || cmd === '\\get_ptt') {
+    } else if (verb === 'M' || long === '\\set_mode') {
+      if (!arg) {
+        resp = 'RPRT -1 (set_mode needs a mode, e.g. M PKTUSB)';
+        status = 'ERROR';
+      } else {
+        this.setMode(arg);
+        resp = 'RPRT 0';
+      }
+    } else if (verb === 't' || long === '\\get_ptt') {
       resp = this.pttState ? '1' : '0';
-    } else if (cmd === 'T' || cmd === '\\set_ptt') {
+    } else if (verb === 'T' || long === '\\set_ptt') {
       const tx = arg === '1' || arg?.toLowerCase() === 'on';
-      this.setPtt(tx);
-      resp = 'RPRT 0';
-    } else if (cmd === 'v' || cmd === '\\get_vfo') {
+      if (!tx) {
+        // Unkeying is always allowed - refusing to stop transmitting is not a safety property.
+        void this.setPtt(
+          false,
+          txContext?.pttMethod ?? this.lastPttContext?.method ?? 'CAT',
+          txContext?.pttPolarity ?? this.lastPttContext?.polarity ?? 'ACTIVE_HIGH',
+          txContext?.pttOptions
+        );
+        resp = 'RPRT 0';
+      } else if (!txContext) {
+        // Fail closed: a console with no gate wired to it does not get to key a transmitter.
+        resp = 'RPRT -1 (PTT refused: no transmit gate is wired to this console)';
+        status = 'ERROR';
+      } else if (!txContext.assertCanTransmit(txContext.txAudioOffsetHz)) {
+        resp = 'RPRT -1 (PTT refused by the transmit gate - see the blocked-transmit banner)';
+        status = 'ERROR';
+      } else {
+        void this.setPtt(true, txContext.pttMethod, txContext.pttPolarity, txContext.pttOptions);
+        resp = 'RPRT 0';
+      }
+    } else if (verb === 'v' || long === '\\get_vfo') {
       resp = 'VFOA';
-    } else if (cmd === 's' || cmd === '\\get_split_vfo') {
+    } else if (verb === 's' || long === '\\get_split_vfo') {
       resp = `${this.splitState ? 1 : 0}\n${this.txFreqHz}`;
-    } else if (cmd === 'l' || cmd === '\\get_level') {
+    } else if (verb === 'l' || long === '\\get_level') {
       resp = `${Math.round(this.getSmeterDb())}`;
-    } else if (cmd === 'dump_state' || cmd === '\\dump_state') {
+    } else if (long === 'dump_state' || long === '\\dump_state') {
       resp = `rig_model=3073\nmfg_name=Icom\nstatus=READY\nptt_type=CAT\nbaud=115200\nhamlib_version=${CURRENT_HAMLIB_VERSION.version}`;
-    } else if (cmd === 'version' || cmd === '\\version' || cmd === 'v') {
+    } else if (long === 'version' || long === '\\version') {
+      // 'v' deliberately NOT accepted here: it is \get_vfo above, and claiming it made this
+      // branch dead code.
       resp = `Hamlib ${CURRENT_HAMLIB_VERSION.version} (${CURRENT_HAMLIB_VERSION.releaseDate})`;
-    } else if (cmd === 'help' || cmd === '?') {
-      resp = `Available commands:\nf (get freq), F <hz> (set freq), m (get mode), M <mode> (set mode), t (get ptt), T <0|1> (set ptt), l STRENGTH, dump_state, version`;
+    } else if (long === 'help' || long === '?') {
+      resp =
+        'Available commands (case matters: lower = get, upper = set):\n' +
+        'f / \\get_freq, F <hz> / \\set_freq <hz>, m / \\get_mode, M <mode> / \\set_mode <mode>,\n' +
+        't / \\get_ptt, T <0|1> / \\set_ptt <0|1> (runs the transmit gate), v / \\get_vfo,\n' +
+        's / \\get_split_vfo, l / \\get_level, dump_state, version, help';
     } else {
-      resp = `RPRT 0`;
-      status = 'OK';
+      // An unrecognised verb used to answer "RPRT 0" - success - which made a typo
+      // indistinguishable from a command that ran.
+      resp = `RPRT -1 (unknown command "${verb}" - type help)`;
+      status = 'ERROR';
     }
 
     // NOTE: no raw hardware forward here - the individual handlers above (setFreqHz/setMode/

@@ -3,7 +3,7 @@
  * 16-MFSK / 50 Hz Bandwidth / 30s Sync Cycle / LDPC + SIC
  */
 
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { DecodedSignal, LogEntry, StationConfig } from './types/z30';
 import { HAM_BANDS, Z30_SPECS, evaluateSlotTiming } from './dsp/z30Constants';
 import { audioEngine } from './dsp/audioEngine';
@@ -237,6 +237,35 @@ export default function App() {
   const tuneTimeoutRef = useRef<number | null>(null);
 
   /**
+   * Hardware addressing for the configured PTT method, in one place.
+   *
+   * Every key AND every unkey passes this. An unkey that omitted it used to fall through to
+   * catController's hardcoded defaults and release the wrong pin or host - see the note in
+   * setPtt. The controller now also falls back to the keying context, so this is belt and
+   * braces; keep both, because the two defend different callers.
+   */
+  const pttOptions = useMemo(
+    () => ({
+      pttPort: config.pttPort,
+      pttToneFreqHz: config.pttToneFreqHz,
+      cm108GpioPin: config.cm108GpioPin,
+      rpiGpioPin: config.rpiGpioPin,
+      tciHost: config.tciHost,
+      tciPort: config.tciPort,
+      winkeyerPort: config.winkeyerPort,
+    }),
+    [
+      config.pttPort,
+      config.pttToneFreqHz,
+      config.cm108GpioPin,
+      config.rpiGpioPin,
+      config.tciHost,
+      config.tciPort,
+      config.winkeyerPort,
+    ]
+  );
+
+  /**
    * The one gate every transmit path in this component goes through.
    *
    * Runs rigctl.canTransmit() and, on refusal, disarms TX and surfaces the reasons in the
@@ -273,15 +302,7 @@ export default function App() {
     const packed = packZ30Message(txText);
 
     setIsTransmitting(true);
-    rigctl.setPtt(true, config.pttMethod, config.pttPolarity, {
-      pttPort: config.pttPort,
-      pttToneFreqHz: config.pttToneFreqHz,
-      cm108GpioPin: config.cm108GpioPin,
-      rpiGpioPin: config.rpiGpioPin,
-      tciHost: config.tciHost,
-      tciPort: config.tciPort,
-      winkeyerPort: config.winkeyerPort,
-    });
+    rigctl.setPtt(true, config.pttMethod, config.pttPolarity, pttOptions);
     setFwdWatts(config.txPowerWatts);
 
     // Register active signal into local audio frame history with isLocalTx = true (for waterfall display only, not for decoder)
@@ -293,7 +314,7 @@ export default function App() {
       undefined,
       () => {
         setIsTransmitting(false);
-        rigctl.setPtt(false, config.pttMethod, config.pttPolarity);
+        rigctl.setPtt(false, config.pttMethod, config.pttPolarity, pttOptions);
         setFwdWatts(0);
           },
       {
@@ -303,7 +324,7 @@ export default function App() {
         hangTimeMs: config.pttHangTimeMs || 30,
       }
     );
-  }, [config, isTransmitting, isTuning, assertCanTransmit]);
+  }, [config, isTransmitting, isTuning, assertCanTransmit, pttOptions]);
 
   // Main Synchronous 30-Second Cycle Clock Engine
   useEffect(() => {
@@ -343,10 +364,20 @@ export default function App() {
     setQsoState(qsoEngine.getState());
   };
 
-  // Handle Arming TX at a specific frequency (e.g. from waterfall double-click)
+  // Handle Arming TX at a specific frequency (e.g. from waterfall double-click).
+  //
+  // The gate runs here as well as before the carrier. It is not the safety check - that is
+  // startActiveTransmission's assertCanTransmit, which is what actually stands between the app
+  // and an out-of-band emission, and it has not moved. This one exists so that the header
+  // stops showing a pulsing green "Armed (Ns)" countdown for a station that will be refused
+  // the moment the slot opens: the operator finds out a cycle earlier, with the reasons.
   const handleArmTxAtFreq = (freqHz: number) => {
     qsoEngine.setRxFreq(freqHz, false);
     qsoEngine.setTxFreq(freqHz);
+    if (!assertCanTransmit(freqHz)) {
+      setQsoState(qsoEngine.getState());
+      return;
+    }
     qsoEngine.setTxEnabled(true);
     setQsoState(qsoEngine.getState());
   };
@@ -355,6 +386,13 @@ export default function App() {
   const handleStartTx = () => {
     if (isTransmitting) return;
     if (isTuning) handleStopTune();
+
+    // Surface a refusal at arm time rather than at slot start. See handleArmTxAtFreq: the
+    // binding check is still the one in startActiveTransmission.
+    if (!assertCanTransmit(qsoEngine.getState().txFreqHz)) {
+      setQsoState(qsoEngine.getState());
+      return;
+    }
 
     // 1. Enable & Arm TX in state machine
     qsoEngine.setTxEnabled(true);
@@ -384,7 +422,7 @@ export default function App() {
     }
     setIsTransmitting(false);
     setIsTuning(false);
-    rigctl.setPtt(false, config.pttMethod, config.pttPolarity);
+    rigctl.setPtt(false, config.pttMethod, config.pttPolarity, pttOptions);
     setFwdWatts(0);
     qsoEngine.setTxEnabled(false);
     setQsoState(qsoEngine.getState());
@@ -409,15 +447,7 @@ export default function App() {
       setIsTransmitting(false);
     }
     setIsTuning(true);
-    rigctl.setPtt(true, config.pttMethod, config.pttPolarity, {
-      pttPort: config.pttPort,
-      pttToneFreqHz: config.pttToneFreqHz,
-      cm108GpioPin: config.cm108GpioPin,
-      rpiGpioPin: config.rpiGpioPin,
-      tciHost: config.tciHost,
-      tciPort: config.tciPort,
-      winkeyerPort: config.winkeyerPort,
-    });
+    rigctl.setPtt(true, config.pttMethod, config.pttPolarity, pttOptions);
     setFwdWatts(config.txPowerWatts);
     audioEngine.startTuneTone(qsoState.txFreqHz, {
       enableRightTone: config.pttMethod === 'AUDIO_TONE_RIGHT',
@@ -436,7 +466,7 @@ export default function App() {
       tuneTimeoutRef.current = null;
     }
     setIsTuning(false);
-    rigctl.setPtt(false, config.pttMethod, config.pttPolarity);
+    rigctl.setPtt(false, config.pttMethod, config.pttPolarity, pttOptions);
     setFwdWatts(0);
     audioEngine.stopTransmission();
   };
@@ -601,7 +631,6 @@ export default function App() {
               <QsoMacrosTransmitPanel
                 qsoState={qsoState}
                 config={config}
-                currentBand={HAM_BANDS[currentBandIdx].name}
                 isTransmitting={isTransmitting}
                 isTuning={isTuning}
                 onUpdateState={handleUpdateQsoState}
@@ -625,9 +654,8 @@ export default function App() {
                   currentBand={HAM_BANDS[currentBandIdx].name}
                   isTransmitting={isTransmitting}
                   onUpdateState={handleUpdateQsoState}
-                  onUpdateConfig={handleUpdateConfig}
                   fwdWatts={fwdWatts}
-                      isTuning={isTuning}
+                  isTuning={isTuning}
                 />
               </div>
 
@@ -647,6 +675,8 @@ export default function App() {
                   onStartTune={handleStartTune}
                   onStopTune={handleStopTune}
                   onOpenBandManager={() => setIsBandManagerOpen(true)}
+                  onAssertCanTransmit={assertCanTransmit}
+                  txAudioOffsetHz={qsoState.txFreqHz}
                 />
               </div>
             </div>

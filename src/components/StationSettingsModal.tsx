@@ -49,6 +49,13 @@ import {
   getRigByName,
 } from '../dsp/hamlibCatalog';
 import { catController, DiscoveredSerialPort } from '../dsp/catController';
+import { PythonSourceViewer } from './PythonSourceViewer';
+// The transmit gate's own callsign validator and the one grid decoder, imported rather than
+// re-implemented. Both modals used to carry a looser CALLSIGN_REGEX than canTransmit() does,
+// so the wizard showed "Valid ITU Callsign" for calls the gate refuses at slot start (W1, K1A2)
+// and "Invalid" for ones it permits (DL/W1AW).
+import { isValidCallsign } from '../dsp/bandPlan';
+import { isValidGrid, maidenheadToLatLon } from '../dsp/gridSquare';
 import {
   BAND_PLANS,
   LICENSE_CLASS_LABELS,
@@ -56,7 +63,7 @@ import {
   REGULATORY_REGION_OPTIONS,
   RegulatoryRegion,
 } from '../dsp/bandPlan';
-import { DownloadCloud, CheckCircle, AlertTriangle, Terminal, Cable, Radio as RadioIcon } from 'lucide-react';
+import { DownloadCloud, CheckCircle, AlertTriangle, Terminal, Cable, Radio as RadioIcon, Code2 } from 'lucide-react';
 
 interface StationSettingsModalProps {
   isOpen: boolean;
@@ -67,29 +74,6 @@ interface StationSettingsModalProps {
   onExecuteDecodeNow?: () => void;
   onOpenUpdate?: () => void;
   onOpenBenchmark?: () => void;
-}
-
-// Helpers for validation
-const CALLSIGN_REGEX = /^[A-Z0-9]{1,3}[0-9][A-Z0-9]{0,4}(\/[A-Z0-9]{1,4})?$/i;
-const GRID_REGEX = /^[A-R]{2}[0-9]{2}([A-X]{2})?$/i;
-
-function maidenheadToLatLon(grid: string): { lat: number; lon: number } | null {
-  const g = grid.trim().toUpperCase();
-  if (g.length < 4) return null;
-  try {
-    let lon = (g.charCodeAt(0) - 65) * 20 - 180 + parseInt(g[2], 10) * 2;
-    let lat = (g.charCodeAt(1) - 65) * 10 - 90 + parseInt(g[3], 10) * 1;
-    if (g.length >= 6) {
-      lon += (g.charCodeAt(4) - 65 + 0.5) * (5.0 / 60.0);
-      lat += (g.charCodeAt(5) - 65 + 0.5) * (2.5 / 60.0);
-    } else {
-      lon += 1.0;
-      lat += 0.5;
-    }
-    return { lat, lon };
-  } catch {
-    return null;
-  }
 }
 
 export const StationSettingsModal: React.FC<StationSettingsModalProps> = ({
@@ -104,6 +88,8 @@ export const StationSettingsModal: React.FC<StationSettingsModalProps> = ({
 }) => {
   const [form, setForm] = useState<StationConfig>({ ...config });
   const [activeTab, setActiveTab] = useState<'STATION' | 'AUDIO' | 'RADIO' | 'AUTOMATION' | 'TESTING'>('STATION');
+
+  const [showPythonSource, setShowPythonSource] = useState<boolean>(false);
 
   // Experimental Testing & Signal Generation State (Guarded / Locked by Default)
   const [isExperimentalUnlocked, setIsExperimentalUnlocked] = useState<boolean>(() => audioEngine.isExperimentalModeEnabled());
@@ -421,8 +407,8 @@ export const StationSettingsModal: React.FC<StationSettingsModalProps> = ({
     }
   };
 
-  const isCallValid = CALLSIGN_REGEX.test(form.myCall.trim());
-  const isGridValid = GRID_REGEX.test(form.myGrid.trim()) && (form.myGrid.trim().length === 4 || form.myGrid.trim().length === 6);
+  const isCallValid = isValidCallsign(form.myCall);
+  const isGridValid = isValidGrid(form.myGrid);
   const latLon = maidenheadToLatLon(form.myGrid);
   const dbVal = rmsDb > -99 ? `${rmsDb.toFixed(1)} dB` : '-inf dB';
 
@@ -1854,10 +1840,14 @@ export const StationSettingsModal: React.FC<StationSettingsModalProps> = ({
                   </p>
 
                   <div className="bg-[#0D0B05] p-2 border border-yellow-800/50 text-[10px] text-yellow-200/90 leading-relaxed">
-                    This engine hands the demodulator the exact noise sigma and the exact
-                    carrier, so what it measures is a <strong>genie-aided bound</strong>, not an
-                    on-air decode threshold. It is not comparable with another mode's published
-                    figure - see
+                    Two modes, and the difference matters. <strong>Realistic</strong> (the
+                    default) gives every frame a random carrier and timing offset and makes the
+                    receiver find the frame from the Costas symbols and estimate its own noise
+                    floor - that is a <strong>decode threshold</strong>, and the only figure
+                    comparable with another mode's published number.{' '}
+                    <strong>Ideal</strong> hands the demodulator the exact noise sigma, carrier
+                    and timing - a <strong>genie-aided bound</strong>, roughly 3.5 dB
+                    optimistic, and never to be quoted against another mode. See
                     <span className="text-yellow-300"> wiki/16 Benchmarking, Testing &amp; CI</span>.
                   </div>
 
@@ -1875,6 +1865,43 @@ export const StationSettingsModal: React.FC<StationSettingsModalProps> = ({
                   </div>
                 </div>
               )}
+
+              {/* In-app Python DSP source viewer.
+
+                  AGENTS.md §3 documents this as a live feature and CI's check:generated gate
+                  defends the file it renders, but nothing in src/ referenced the component, so
+                  the viewer existed and could not be opened. Like the benchmark above it is a
+                  bench instrument - it reads generated strings and touches no hardware - so it
+                  sits here rather than in the operating chrome. */}
+              <div className="bg-[#050505] p-3 border border-cyan-900/50 space-y-2">
+                <div className="flex items-center justify-between gap-2 flex-wrap">
+                  <span className="font-bold text-cyan-400 flex items-center space-x-1.5 uppercase text-[11px]">
+                    <Code2 className="w-3.5 h-3.5 text-cyan-400" />
+                    <span>Python DSP Source Viewer</span>
+                  </span>
+                  <button
+                    type="button"
+                    id="toggle-python-source-btn"
+                    onClick={() => setShowPythonSource((v) => !v)}
+                    className="px-3 py-1 bg-[#141414] hover:bg-[#202020] text-cyan-400 border border-cyan-800 text-[11px] font-bold uppercase tracking-wider flex items-center space-x-1.5"
+                  >
+                    <Code2 className="w-3 h-3" />
+                    <span>{showPythonSource ? 'Hide Source' : 'Browse Source'}</span>
+                  </button>
+                </div>
+                <p className="text-[#888] text-[11px] leading-relaxed">
+                  Browses and exports the native <strong className="text-cyan-300">z30_dsp</strong>{' '}
+                  Python modules exactly as they appear in the repository - the modem, the LDPC
+                  codec, the acquisition stage, the SIC decoder and the benchmark that produces
+                  every published figure. Regenerated by the build from the real files, so what
+                  you read here is what the project ships.
+                </p>
+                {showPythonSource && (
+                  <div className="h-[420px]">
+                    <PythonSourceViewer />
+                  </div>
+                )}
+              </div>
 
               {/* Only show generator and verifier if unlocked */}
               {isExperimentalUnlocked && (
@@ -2150,7 +2177,10 @@ export const StationSettingsModal: React.FC<StationSettingsModalProps> = ({
                       </div>
                       <div className="bg-[#111] p-2 border border-[#222]">
                         <span className="text-[#666] block">Error Correction</span>
-                        <span className="font-bold text-purple-300">LDPC (174, 91)</span>
+                        {/* (174, 91) is FT8's code and used to be printed here, copied from
+                            the wrong column of the comparison table in wiki/11. z-30's is
+                            IRA (216, 77), R ~= 0.356 - a protocol invariant. */}
+                        <span className="font-bold text-purple-300">IRA LDPC (216, 77)</span>
                       </div>
                     </div>
                   </div>
@@ -2161,15 +2191,9 @@ export const StationSettingsModal: React.FC<StationSettingsModalProps> = ({
 
           {/* Save & Wizard Footer Actions */}
           <div className="flex items-center justify-between pt-3 border-t border-[#262626]">
-            {/* Re-Run Wizard Trigger */}
-            <button
-              type="button"
-              onClick={handleLaunchWizard}
-              className="px-3 py-1.5 bg-[#141414] hover:bg-[#202020] text-[#00FF41] border border-[#00FF41]/40 text-xs font-bold uppercase flex items-center space-x-1.5"
-            >
-              <Wand2 className="w-3.5 h-3.5" />
-              <span>Run Setup Wizard Again</span>
-            </button>
+            {/* The "Run Setup Wizard" button in the title bar is always in view on every tab,
+                so a second one here was the same action twice on one screen. */}
+            <div />
 
             <div className="flex items-center space-x-2">
               <button

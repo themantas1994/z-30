@@ -742,7 +742,10 @@ export class RfTimeSyncEngine {
    */
   private demodulateDcf77(
     samples: Float32Array | number[],
-    spec: RfTimeStation,
+    // Underscored: DCF77 is a single transmitter on one carrier, so unlike the WWV/WWVH pair
+    // this demodulator needs nothing from the station spec. The parameter stays so all five
+    // demodulators keep one signature.
+    _spec: RfTimeStation,
     bufferStartUtcMs: number,
     snrDb: number
   ): RfDecodeResult {

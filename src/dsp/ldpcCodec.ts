@@ -62,6 +62,15 @@ export const Z30_LDPC_PARAMS: LdpcCodeParameters = {
   alphaMinSum: 0.75,
 };
 
+/**
+ * Default iteration ceiling for the min-sum decoder, and the number the UI must quote.
+ *
+ * It is the default of `decodeMinSum` below and of the Python decoder (`z30_dsp/ldpc.py`).
+ * Exported so that prose reads it instead of retyping it: SpecsModal said "up to 50
+ * iterations" while both implementations have always stopped at 45.
+ */
+export const LDPC_MAX_ITERATIONS = 45;
+
 export interface LdpcEncodeResult {
   infoBits: number[]; // 77 bits
   payloadBits: number[]; // 63 bits
@@ -375,7 +384,7 @@ export class Z30LdpcEngine {
    */
   public decodeMinSum(
     llrChannel: Float32Array | number[],
-    maxIterations: number = 45
+    maxIterations: number = LDPC_MAX_ITERATIONS
   ): LdpcDecodeResult {
     const inputLlr = Float32Array.from(llrChannel);
     const iterationHistory: LdpcDecodeResult['iterationHistory'] = [];

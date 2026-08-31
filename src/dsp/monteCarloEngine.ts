@@ -23,6 +23,25 @@ import { Z30LdpcEngine } from './ldpcCodec';
 import { encodeLdpc216_77, computeCrc14 } from './z30Codec';
 
 export type ChannelModelType = 'AWGN' | 'RAYLEIGH_FADING' | 'CO_CHANNEL_QRM';
+
+/**
+ * What the run measures. The distinction is the whole of wiki/16's opening section, and it is
+ * the difference between a number that may be compared with FT8's published -21.0 dB and one
+ * that may not.
+ *
+ * - `realistic` measures a **decode threshold**. Every frame gets a random carrier offset and
+ *   a random timing offset; the receiver is handed nothing but audio and must find the frame
+ *   from the 21 Costas symbols and estimate its own noise floor. Comparable with other modes'
+ *   on-air figures.
+ * - `ideal` measures a **genie-aided bound**, which is not a threshold. The demodulator is
+ *   handed the exact noise sigma, the exact carrier and perfect symbol timing. It bounds what
+ *   the code can do under ideal detection and nothing more; never quote it against another
+ *   mode's on-air number.
+ *
+ * The browser engine only had the `ideal` path, while the modal labelled its output a
+ * "50% Empirical Decode Threshold" and drew an FT8 reference line next to it.
+ */
+export type MeasurementModeType = 'ideal' | 'realistic';
 export type SimulationModeType = 'MATCHED_FILTER_CORRELATOR_BANK' | 'FULL_PHYSICAL_DSP';
 
 export interface SnrPointResult {
@@ -39,6 +58,15 @@ export interface SnrPointResult {
   maxIterations: number;
   confidenceInterval95: [number, number]; // [lower %, upper %] Wilson score interval
   elapsedMs: number;
+  /**
+   * Acquisition-stage diagnostics, populated in realistic mode only (all zero in ideal mode,
+   * where acquisition does not happen). These are the `Acq fail`, `Timing RMS` and `Freq RMS`
+   * columns of the Python benchmark's table: below roughly -24 dB the Costas pattern stops
+   * being findable at all, and that shows up here rather than being hidden inside the FER.
+   */
+  acquisitionFailures: number;
+  timingRmsMs: number;
+  freqRmsHz: number;
 }
 
 export interface MonteCarloProgress {
@@ -82,6 +110,15 @@ export interface MonteCarloConfig {
   maxLdpcIterations: number;
   alphaMinSum: number;
   /**
+   * `realistic` (default) measures a decode threshold; `ideal` measures a genie-aided bound.
+   * See MeasurementModeType. Mirrors the Python benchmark's `--mode` flag.
+   */
+  measurementMode: MeasurementModeType;
+  /** Half-width of the uniform random carrier offset, in Hz. Realistic mode only. */
+  carrierOffsetHz?: number;
+  /** Half-width of the uniform random timing offset, in seconds. Realistic mode only. */
+  timingOffsetSec?: number;
+  /**
    * PRNG seed for the payloads, the noise and the fading process.
    *
    * Both benchmark engines used to draw from unseeded `Math.random()`, so two runs of the same
@@ -90,6 +127,26 @@ export interface MonteCarloConfig {
    */
   seed?: number;
 }
+
+/**
+ * How far above the median search-grid score the winning acquisition hypothesis must sit
+ * before the receiver believes it has found a frame.
+ *
+ * Chosen from the measured distribution of the statistic, not tuned to flatter the result.
+ * Summing 21 exponentially distributed tone powers over a few thousand hypotheses puts the
+ * peak well above the median even on pure noise, so the bar has to clear that. Measured over
+ * 15 streams per point at the default settings:
+ *
+ *     pure noise (-70 dB)  max 3.1 dB      -25 dB SNR   min 4.2 dB
+ *     -30 dB SNR           max 3.6 dB      -22 dB SNR   min 5.3 dB
+ *
+ * 4.0 dB sits in the gap: noise does not reach it, and a frame that is present from about
+ * -25 dB upwards always does. Between roughly -27 and -26 dB the two distributions genuinely
+ * overlap, and frames there are genuinely sometimes not findable - that is the acquisition
+ * limit the benchmark exists to expose, and it belongs in the Acq Fail column rather than
+ * being smoothed away by a lower bar.
+ */
+const ACQUISITION_SYNC_THRESHOLD_DB = 4.0;
 
 export const DEFAULT_MONTE_CARLO_CONFIG: MonteCarloConfig = {
   minSnrDb: -32.0,
@@ -105,8 +162,23 @@ export const DEFAULT_MONTE_CARLO_CONFIG: MonteCarloConfig = {
   qrmSirDb: -6.0,
   maxLdpcIterations: 45,
   alphaMinSum: 0.75,
+  // The honest default, matching `python -m z30_dsp.benchmark`'s own default. A benchmark
+  // whose default mode produces a bound, presented in a modal that calls the result a
+  // threshold, is how the retracted "+4 dB over FT8" claim happened the first time.
+  measurementMode: 'realistic',
+  carrierOffsetHz: 5.0,
+  timingOffsetSec: 0.5,
   seed: DEFAULT_MONTE_CARLO_SEED,
 };
+
+/**
+ * Sweep range that brackets the documented AWGN threshold, for the realistic mode.
+ * The old default (-32 .. -22 dB) brackets the genie-aided bound instead, and in realistic
+ * mode would sit almost entirely below the point where the sync pattern is findable at all.
+ */
+export const REALISTIC_SWEEP_DEFAULTS = { minSnrDb: -26.0, maxSnrDb: -16.0 };
+/** Sweep range that brackets the genie-aided bound, for the ideal mode. */
+export const IDEAL_SWEEP_DEFAULTS = { minSnrDb: -30.0, maxSnrDb: -20.0 };
 
 export class MonteCarloSimulationEngine {
   /**
@@ -334,6 +406,238 @@ public synthesizePhysicalWaveform(
   }
 
   /**
+   * Builds the audio stream a receiver would actually be handed in realistic mode.
+   *
+   * Three things the ideal path does not do, and which together cost about 3.5 dB:
+   *   - the frame sits at a RANDOM carrier offset, not exactly on the nominal centre;
+   *   - it starts at a RANDOM time, not at sample zero;
+   *   - it is surrounded by noise-only audio, so the receiver has to find it.
+   *
+   * Offsets are drawn from the run's seeded PRNG, so a realistic run is as reproducible as an
+   * ideal one.
+   */
+  public synthesizeReceivedStream(
+    symbols75: number[],
+    snr2500HzDb: number,
+    config: MonteCarloConfig
+  ): {
+    stream: Float32Array;
+    trueStartSample: number;
+    trueCentreFreqHz: number;
+    sigma: number;
+  } {
+    const sampleRateHz = config.sampleRateHz;
+    const carrierHalfHz = config.carrierOffsetHz ?? 5.0;
+    const timingHalfSec = config.timingOffsetSec ?? 0.5;
+
+    const carrierOffsetHz = (this.rng.next() * 2 - 1) * carrierHalfHz;
+    const timingOffsetSec = (this.rng.next() * 2 - 1) * timingHalfSec;
+
+    const trueCentreFreqHz = config.audioCenterFreqHz + carrierOffsetHz;
+    let clean = this.synthesizePhysicalWaveform(symbols75, sampleRateHz, trueCentreFreqHz);
+
+    if (config.channelModel === 'RAYLEIGH_FADING') {
+      clean = this.applyRayleighFading(clean, sampleRateHz, config.fadingDopplerHz || 0.5);
+    }
+
+    // Guard either side, wide enough that the true start can move by the full timing offset
+    // and still leave noise-only audio at both ends - which is what gives the search
+    // somewhere to be wrong, and the noise estimator somewhere to look.
+    const guardSamples = Math.round((timingHalfSec + 0.25) * sampleRateHz);
+    const trueStartSample = guardSamples + Math.round(timingOffsetSec * sampleRateHz);
+    const totalLen = clean.length + 2 * guardSamples;
+
+    const padded = new Float32Array(totalLen);
+    padded.set(clean, trueStartSample);
+
+    // Noise is calibrated against the SIGNAL's own power, not the padded stream's mean power
+    // (which the guard would drag down and so quietly raise the true SNR).
+    let signalEnergy = 0.0;
+    for (let i = 0; i < clean.length; i++) signalEnergy += clean[i] * clean[i];
+    const signalPower = signalEnergy / clean.length;
+    const snrLinear = Math.pow(10, snr2500HzDb / 10.0);
+    const bandwidthFactor = 5000.0 / sampleRateHz;
+    const sigma = Math.sqrt(signalPower / (snrLinear * bandwidthFactor));
+
+    for (let i = 0; i < totalLen; i += 2) {
+      const u1 = Math.max(1e-12, this.rng.next());
+      const u2 = this.rng.next();
+      const mag = sigma * Math.sqrt(-2.0 * Math.log(u1));
+      padded[i] += mag * Math.cos(2.0 * Math.PI * u2);
+      if (i + 1 < totalLen) padded[i + 1] += mag * Math.sin(2.0 * Math.PI * u2);
+    }
+
+    return { stream: padded, trueStartSample, trueCentreFreqHz, sigma };
+  }
+
+  /**
+   * Estimates the per-sample noise standard deviation from the stream itself.
+   *
+   * A real receiver is not told the noise floor. This measures it the way one must: correlate
+   * the audio against a set of probe frequencies well away from the 50 Hz-wide signal, and
+   * take the MEDIAN of the resulting powers. For real Gaussian noise of standard deviation
+   * sigma, the in-phase and quadrature correlator outputs over N samples each have variance
+   * sigma^2 * N / 2, so E[I^2 + Q^2] = sigma^2 * N.
+   *
+   * The median rather than the mean, so a strong carrier sitting on one probe frequency does
+   * not inflate the estimate; and divided by ln(2), because the median of an exponentially
+   * distributed periodogram sits below its mean by exactly that factor.
+   */
+  public estimateNoiseSigma(
+    stream: Float32Array,
+    sampleRateHz: number,
+    signalCentreHz: number
+  ): number {
+    const windowLen = Math.min(stream.length, Math.round(sampleRateHz * Z30_SPECS.SYMBOL_DURATION_SEC));
+    if (windowLen < 64) return 1e-9;
+
+    // Probes spread across the audio passband, skipping a 250 Hz guard around the signal.
+    const probes: number[] = [];
+    for (let f = 300; f <= Math.min(2600, sampleRateHz / 2 - 200); f += 47) {
+      if (Math.abs(f - signalCentreHz) > 250) probes.push(f);
+    }
+    if (probes.length === 0) return 1e-9;
+
+    // A few windows spread through the stream, so a transient does not dominate.
+    const windowStarts: number[] = [];
+    const maxStart = stream.length - windowLen;
+    for (let w = 0; w < 4; w++) {
+      windowStarts.push(Math.max(0, Math.round((maxStart * w) / 3)));
+    }
+
+    const powers: number[] = [];
+    for (const start of windowStarts) {
+      for (const freq of probes) {
+        let re = 0.0;
+        let im = 0.0;
+        const step = (2.0 * Math.PI * freq) / sampleRateHz;
+        for (let n = 0; n < windowLen; n++) {
+          const sample = stream[start + n];
+          re += sample * Math.cos(step * n);
+          im += sample * Math.sin(step * n);
+        }
+        powers.push(re * re + im * im);
+      }
+    }
+
+    powers.sort((a, b) => a - b);
+    const median = powers[Math.floor(powers.length / 2)];
+    const meanPower = median / Math.LN2;
+    return Math.max(1e-9, Math.sqrt(meanPower / windowLen));
+  }
+
+  /**
+   * Finds a z-30 frame in a stream using only the 21 Costas sync symbols.
+   *
+   * The twin of z30_dsp/acquisition.py, and the reason a realistic run is worth about 3.5 dB
+   * less than the genie-aided bound. Two stages, because a search fine enough to be useful is
+   * too large to run directly:
+   *   1. Coarse: a grid over start time (one fifth of a symbol) and carrier offset (1 Hz),
+   *      scored by summing the matched-filter power at the 21 known sync tones.
+   *   2. Fine: a local grid around the coarse peak, refining timing to ~5 ms and frequency to
+   *      0.1 Hz - comfortably inside what 3.125 Hz tone spacing needs.
+   *
+   * `found` is false when nothing in the search space stands out from the noise floor. That is
+   * the honest answer at low SNR, and the caller counts it as a decode failure rather than
+   * papering over it by demodulating at the nominal position anyway.
+   */
+  public acquireFrame(
+    stream: Float32Array,
+    config: MonteCarloConfig
+  ): {
+    found: boolean;
+    startSample: number;
+    centreFreqHz: number;
+    syncScoreDb: number;
+  } {
+    const sampleRateHz = config.sampleRateHz;
+    const nsps = Math.round(sampleRateHz * Z30_SPECS.SYMBOL_DURATION_SEC);
+    const syncPositions = Z30_SPECS.SYNC_POSITIONS;
+    const syncTones = Z30_SPECS.SYNC_TONES;
+    const spacing = Z30_SPECS.TONE_SPACING_HZ;
+    const frameSamples = Z30_SPECS.TOTAL_SYMBOLS * nsps;
+
+    const nominalStart = Math.round(((config.timingOffsetSec ?? 0.5) + 0.25) * sampleRateHz);
+    const timingSearch = Math.round(((config.timingOffsetSec ?? 0.5) + 0.05) * sampleRateHz);
+    // Deliberately much wider than the offset actually applied: a receiver does not know how
+    // far off the transmitter is, and a search that only just covers the true range flatters
+    // the result. z30_dsp/acquisition.py searches +/-12 Hz by default; this matches it.
+    const freqSearch = Math.max(12.0, (config.carrierOffsetHz ?? 5.0) + 1.5);
+
+    // Sums the sync-tone matched-filter power for one (start, centre) hypothesis.
+    const scoreCandidate = (start: number, centreHz: number): number => {
+      if (start < 0 || start + frameSamples > stream.length) return -Infinity;
+      let total = 0.0;
+      for (let k = 0; k < syncPositions.length; k++) {
+        const toneFreq = centreHz + (syncTones[k] - 7.5) * spacing;
+        const base = start + syncPositions[k] * nsps;
+        const step = (2.0 * Math.PI * toneFreq) / sampleRateHz;
+        let re = 0.0;
+        let im = 0.0;
+        for (let n = 0; n < nsps; n++) {
+          const sample = stream[base + n];
+          const theta = step * n;
+          re += sample * Math.cos(theta);
+          im += sample * Math.sin(theta);
+        }
+        total += re * re + im * im;
+      }
+      return total;
+    };
+
+    // ---- coarse stage ----
+    const coarseTimeStep = Math.max(1, Math.round(nsps / 5));
+    const coarseFreqStep = 1.0;
+    let bestScore = -Infinity;
+    let bestStart = nominalStart;
+    let bestFreq = config.audioCenterFreqHz;
+    const coarseScores: number[] = [];
+
+    for (let dt = -timingSearch; dt <= timingSearch; dt += coarseTimeStep) {
+      for (let df = -freqSearch; df <= freqSearch + 1e-9; df += coarseFreqStep) {
+        const score = scoreCandidate(nominalStart + dt, config.audioCenterFreqHz + df);
+        if (!Number.isFinite(score)) continue;
+        coarseScores.push(score);
+        if (score > bestScore) {
+          bestScore = score;
+          bestStart = nominalStart + dt;
+          bestFreq = config.audioCenterFreqHz + df;
+        }
+      }
+    }
+
+    if (coarseScores.length === 0 || !Number.isFinite(bestScore)) {
+      return { found: false, startSample: nominalStart, centreFreqHz: config.audioCenterFreqHz, syncScoreDb: -Infinity };
+    }
+
+    // ---- fine stage ----
+    const fineTimeStep = Math.max(1, Math.round(nsps / 64));
+    for (let dt = -coarseTimeStep; dt <= coarseTimeStep; dt += fineTimeStep) {
+      for (let df = -coarseFreqStep; df <= coarseFreqStep + 1e-9; df += 0.1) {
+        const score = scoreCandidate(bestStart + dt, bestFreq + df);
+        if (score > bestScore) {
+          bestScore = score;
+          bestStart = bestStart + dt;
+          bestFreq = bestFreq + df;
+        }
+      }
+    }
+
+    // How far the winner stands above a typical point in the search space. A frame that is
+    // present lifts its own hypothesis well clear of the field; noise alone does not.
+    coarseScores.sort((a, b) => a - b);
+    const floor = coarseScores[Math.floor(coarseScores.length / 2)];
+    const syncScoreDb = floor > 0 ? 10.0 * Math.log10(bestScore / floor) : -Infinity;
+
+    return {
+      found: syncScoreDb > ACQUISITION_SYNC_THRESHOLD_DB,
+      startSample: bestStart,
+      centreFreqHz: bestFreq,
+      syncScoreDb,
+    };
+  }
+
+  /**
    * Applies Rayleigh / ITU-R F.1487 Ionospheric Multipath Fading
    */
   public applyRayleighFading(
@@ -414,7 +718,28 @@ public synthesizePhysicalWaveform(
     noisyWaveform: Float32Array,
     sampleRateHz: number = 6000,
     audioCenterFreqHz: number = 1250,
-    sigma: number = 1.0
+    sigma: number = 1.0,
+    /**
+     * Sample index where the frame starts. Zero on the ideal path, where the frame is at the
+     * top of the buffer by construction; in realistic mode this is whatever the acquisition
+     * stage decided, which is the point - a receiver demodulates where it BELIEVES the frame
+     * is, and pays for being wrong.
+     */
+    frameStartSample: number = 0,
+    /**
+     * Weight given to the pilot-derived COHERENT phase reference, 0..1, or `null` to use the
+     * built-in distance-weighted schedule.
+     *
+     * Pass 0 for purely non-coherent detection. The coherent term buys a little on a clean,
+     * perfectly-timed buffer, but its reference is a phase, and a timing error of a few
+     * milliseconds rotates each tone by 2*pi*f*dt - by up to several radians across the 50 Hz
+     * tone span. Once that happens the "coherent" term is subtracting signal rather than
+     * adding it, which showed up as frames failing at 12 ms of timing error even at -12 dB SNR
+     * where nothing should fail. A receiver that has just found the frame blind cannot trust
+     * its timing to that precision, which is why z-30's receiver is specified as
+     * non-coherent (AGENTS.md §1).
+     */
+    coherentWeight: number | null = null
   ): {
     channelLlrs: Float32Array; // 216 soft LLRs
     correlatorEnergies: number[][]; // 54 data symbols x 16 tone energies
@@ -442,7 +767,7 @@ public synthesizePhysicalWaveform(
         const toneIdx = syncTones[syncCount % syncTones.length];
         syncCount++;
         const toneFreq = audioCenterFreqHz + (toneIdx - 7.5) * toneSpacingHz;
-        const startSamp = f * samplesPerSymbol;
+        const startSamp = frameStartSample + f * samplesPerSymbol;
 
         let re = 0.0;
         let im = 0.0;
@@ -477,7 +802,29 @@ public synthesizePhysicalWaveform(
     // fully predictable and must be added back in before projecting onto the pilot's raw
     // phase, or the "coherent" LLR term is measured against the wrong reference for any
     // audioCenterFreqHz that isn't an exact multiple of toneSpacingHz.
-    const basePhaseStep = ((2.0 * Math.PI * audioCenterFreqHz * symbolDurationSec) + Math.PI) % (2.0 * Math.PI);
+    const nominalPhaseStep = ((2.0 * Math.PI * audioCenterFreqHz * symbolDurationSec) + Math.PI) % (2.0 * Math.PI);
+
+    // The nominal step above is only exact when the demodulator sits on the EXACT carrier.
+    // After blind acquisition it does not: a residual of a few tenths of a Hz leaves a phase
+    // error of 2*pi*df*Ts per symbol, which accumulates over the gap to the nearest pilot and
+    // wrecks the coherent term - several dB, and invisible in ideal mode where the residual is
+    // zero by construction.
+    //
+    // So measure the real per-symbol phase increment from the pilots instead of assuming it.
+    // Adjacent Costas pilots (the clusters at 0,1,2 / 7,8,9 / ... are one symbol apart) give
+    // an unambiguous estimate: over one symbol the residual cannot wrap. Averaged as unit
+    // vectors so that the average is a circular mean rather than a wrap-broken arithmetic one.
+    // This is ordinary pilot-aided AFC - it uses only what the receiver actually received.
+    let driftRe = 0.0;
+    let driftIm = 0.0;
+    for (let p = 1; p < pilotFrames.length; p++) {
+      if (pilotFrames[p] - pilotFrames[p - 1] !== 1) continue;
+      const residual = pilotPhases[p] - pilotPhases[p - 1] + nominalPhaseStep;
+      driftRe += Math.cos(residual);
+      driftIm += Math.sin(residual);
+    }
+    const perSymbolDrift = driftRe === 0 && driftIm === 0 ? 0 : Math.atan2(driftIm, driftRe);
+    const basePhaseStep = nominalPhaseStep - perSymbolDrift;
 
     let dataSymbolIdx = 0;
 
@@ -500,9 +847,12 @@ public synthesizePhysicalWaveform(
       }
       const rawPhase = (pilotPhases[closestPilotIdx] || 0.0) - basePhaseStep * (frameSymIdx - pilotFrames[closestPilotIdx]);
       const interpPhase = Math.atan2(Math.sin(rawPhase), Math.cos(rawPhase));
-      const pilotCoherence = Math.max(0.35, Math.min(0.85, 1.0 / (1.0 + 0.15 * minPilotDist)));
+      const pilotCoherence =
+        coherentWeight !== null
+          ? coherentWeight
+          : Math.max(0.35, Math.min(0.85, 1.0 / (1.0 + 0.15 * minPilotDist)));
 
-      const startSamp = frameSymIdx * samplesPerSymbol;
+      const startSamp = frameStartSample + frameSymIdx * samplesPerSymbol;
       const energies = new Float32Array(16);
       const toneLogLikes: number[] = new Array(16).fill(0);
 
@@ -753,6 +1103,10 @@ public synthesizePhysicalWaveform(
       let totalIterations = 0;
       let minIter = 999;
       let maxIter = 0;
+      let acquisitionFailures = 0;
+      let timingSqErrSumMs = 0;
+      let freqSqErrSumHz = 0;
+      let acquiredCount = 0;
 
       // Update progress state
       this.currentProgress.currentSnrIdx = ptIdx;
@@ -776,9 +1130,92 @@ public synthesizePhysicalWaveform(
         let channelLlrs: Float32Array;
         let rawErrors = 0;
 
-        const runFullDsp = config.simulationMode === 'FULL_PHYSICAL_DSP' || f === 0;
+        // Realistic mode always runs the full physical chain: the fast correlator-bank path
+        // models an ideal matched-filter receiver analytically and has nowhere to put an
+        // acquisition stage, so it cannot produce a threshold - only a bound.
+        const realistic = config.measurementMode === 'realistic';
+        const runFullDsp = realistic || config.simulationMode === 'FULL_PHYSICAL_DSP' || f === 0;
 
-        if (runFullDsp) {
+        if (realistic) {
+          const { stream, trueStartSample, trueCentreFreqHz } = this.synthesizeReceivedStream(
+            fullSymbols75,
+            snr,
+            config
+          );
+
+          const acq = this.acquireFrame(stream, config);
+          // The receiver measures the noise floor itself, at wherever it thinks the signal is.
+          const estimatedSigma = this.estimateNoiseSigma(stream, config.sampleRateHz, acq.centreFreqHz);
+
+          if (!acq.found) {
+            // Nothing found. Counted as a failed frame, not retried at the true position -
+            // that retry is exactly the gift that turns a threshold back into a bound.
+            acquisitionFailures++;
+            failureCount++;
+            totalRawBitErrors += 108; // half of 216 bits: no information was recovered
+            totalPostLdpcBitErrors += 39;
+            totalIterations += config.maxLdpcIterations;
+            if (config.maxLdpcIterations > maxIter) maxIter = config.maxLdpcIterations;
+            if (config.maxLdpcIterations < minIter) minIter = config.maxLdpcIterations;
+
+            completedFramesOverall++;
+            this.currentProgress.currentFrameInPoint = f + 1;
+            this.currentProgress.overallProgressPercent = Number(
+              ((completedFramesOverall / totalFramesAll) * 100).toFixed(1)
+            );
+            if (f % 5 === 0 || f === config.framesPerPoint - 1) {
+              this.notify();
+              await new Promise((resolve) => setTimeout(resolve, 0));
+            }
+            continue;
+          }
+
+          acquiredCount++;
+          const timingErrMs = ((acq.startSample - trueStartSample) / config.sampleRateHz) * 1000;
+          const freqErrHz = acq.centreFreqHz - trueCentreFreqHz;
+          timingSqErrSumMs += timingErrMs * timingErrMs;
+          freqSqErrSumHz += freqErrHz * freqErrHz;
+
+          const demod = this.demodulateToLlrs(
+            stream,
+            config.sampleRateHz,
+            acq.centreFreqHz,
+            estimatedSigma,
+            acq.startSample,
+            // Purely non-coherent, which is what z-30's receiver is specified to be
+            // (AGENTS.md §1) and what a receiver that has just acquired blind can actually
+            // support. Measured over 30 frames per point at the default seed, keeping the
+            // semi-coherent term costs 1-2 dB and caps the high-SNR end near 83% instead of
+            // 100%, because a few milliseconds of timing error rotates each tone by
+            // 2*pi*f*dt and the "coherent" contribution starts cancelling signal.
+            0
+          );
+          channelLlrs = demod.channelLlrs;
+
+          for (let i = 0; i < 216; i++) {
+            const hardDec = channelLlrs[i] < 0 ? 1 : 0;
+            if (hardDec !== codeword216[i]) rawErrors++;
+          }
+
+          if (f === 0) {
+            const decResult = customCodec.decodeMinSum(channelLlrs, config.maxLdpcIterations);
+            const previewStart = acq.startSample;
+            this.currentProgress.latestWaveformPreview = {
+              timeDomainClean: stream.slice(previewStart, previewStart + 300),
+              timeDomainNoisy: stream.slice(previewStart, previewStart + 300),
+              noiseOnly: stream.slice(0, 300),
+              spectrumFreqs: [],
+              spectrumMagnitudesDb: [],
+              correlatorEnergies: demod.correlatorEnergies.slice(0, 12),
+              transmittedSymbols: dataSymbols54.slice(0, 12),
+              demodulatedSymbols: demod.detectedDataSymbols.slice(0, 12),
+              channelLlrs: channelLlrs.slice(0, 32),
+              snrDb: snr,
+              decodedSuccess: decResult.success,
+              iterations: decResult.iterations,
+            };
+          }
+        } else if (runFullDsp) {
           // Synthesize physical 16-MFSK continuous-phase waveform
           let cleanWaveform = this.synthesizePhysicalWaveform(
             fullSymbols75,
@@ -920,6 +1357,9 @@ public synthesizePhysicalWaveform(
         maxIterations: maxIter,
         confidenceInterval95: ci,
         elapsedMs: Math.round(elapsed),
+        acquisitionFailures,
+        timingRmsMs: acquiredCount > 0 ? Number(Math.sqrt(timingSqErrSumMs / acquiredCount).toFixed(1)) : 0,
+        freqRmsHz: acquiredCount > 0 ? Number(Math.sqrt(freqSqErrSumHz / acquiredCount).toFixed(2)) : 0,
       };
 
       results.push(pointResult);

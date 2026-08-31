@@ -7,7 +7,7 @@ import { StationConfig, TxSlot } from '../types/z30';
 import { Z30_SPECS, evaluateSlotTiming } from '../dsp/z30Constants';
 import { audioEngine } from '../dsp/audioEngine';
 import { formatUtcTime, formatTimeInTimezone } from '../dsp/timeUtils';
-import { Radio, Mic, MicOff, Volume2, VolumeX, BookOpen, Settings, HelpCircle, Square, Zap, Clock, Wand2, Maximize2, Minimize2, Globe, DownloadCloud } from 'lucide-react';
+import { Radio, Mic, MicOff, Volume2, VolumeX, BookOpen, Settings, HelpCircle, Square, Zap, Clock, Wand2, Maximize2, Minimize2, Globe, DownloadCloud, ScanLine } from 'lucide-react';
 import { updateEngine, UpdateCheckResult } from '../dsp/updateEngine';
 
 interface HeaderProps {
@@ -203,6 +203,10 @@ export const Header: React.FC<HeaderProps> = ({
               </div>
               <div className="flex space-x-3 text-[9px] uppercase text-[#888] hidden sm:flex items-center mt-0.5">
                 <span className="flex items-center"><span className="w-1.5 h-1.5 rounded-full bg-[#00FF41] mr-1.5"></span>CAT: {config.rigModel.split(' ')[0]}</span>
+                <span className="flex items-center" title="Selected band and dial frequency">
+                  <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 mr-1.5"></span>
+                  {currentBandName}: {(dialFreqHz / 1e6).toFixed(6)} MHz
+                </span>
                 <span className="flex items-center"><span className="w-1.5 h-1.5 rounded-full bg-[#00FF41] mr-1.5"></span>BW: 50Hz</span>
                 <span className="flex items-center"><span className="w-1.5 h-1.5 rounded-full bg-yellow-500 mr-1.5"></span>SYNC: 30s</span>
               </div>
@@ -331,6 +335,18 @@ export const Header: React.FC<HeaderProps> = ({
               <span>{isTuning ? 'TUNING...' : 'TUNE (CW)'}</span>
             </button>
           </div>
+
+          {/* Decode Now. App.tsx has always passed executeDecodeCycle here; there was simply no
+              button behind it, so the only way to decode was to wait for the 24 s mark. */}
+          <button
+            id="header-decode-now-btn"
+            onClick={onTriggerDecode}
+            title="Run a SIC decode pass over the current receive buffer now, without waiting for the 24 s slot boundary"
+            className="p-1.5 bg-[#141414] hover:bg-[#1A1A1A] text-purple-400 hover:text-purple-300 border border-purple-800 text-xs flex items-center space-x-1"
+          >
+            <ScanLine className="w-3.5 h-3.5" />
+            <span className="hidden md:inline text-[11px]">Decode</span>
+          </button>
 
           {/* Audio Mute */}
           <button

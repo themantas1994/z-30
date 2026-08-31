@@ -1,5 +1,5 @@
 /**
- * Comprehensive Amateur Radio Electronic Logbook Modal (ADIF 3.1.4 / CSV / SQL)
+ * Comprehensive Amateur Radio Electronic Logbook Modal (ADIF 3.1.4 / Cabrillo / JSON / CSV / SQL)
  * ==============================================================================
  * Features:
  * - Search & filter by Callsign, Maidenhead Grid, Band, or Notes
@@ -26,6 +26,9 @@ import {
   Database,
   CheckCircle,
   Filter,
+  Trophy,
+  Braces,
+  CalendarRange,
 } from 'lucide-react';
 
 interface LogbookModalProps {
@@ -34,7 +37,6 @@ interface LogbookModalProps {
   entries: LogEntry[];
   myCall: string;
   myGrid: string;
-  onRefreshEntries?: () => void;
 }
 
 export const LogbookModal: React.FC<LogbookModalProps> = ({
@@ -46,6 +48,9 @@ export const LogbookModal: React.FC<LogbookModalProps> = ({
 }) => {
   const [searchTerm, setSearchTerm] = useState<string>('');
   const [selectedBand, setSelectedBand] = useState<string>('ALL');
+  // wiki/14 promises filtering by callsign, band OR DATE RANGE. The date half did not exist.
+  const [dateFrom, setDateFrom] = useState<string>('');
+  const [dateTo, setDateTo] = useState<string>('');
   const [showAddForm, setShowAddForm] = useState<boolean>(false);
   const [importNotice, setImportNotice] = useState<string | null>(null);
 
@@ -68,9 +73,17 @@ export const LogbookModal: React.FC<LogbookModalProps> = ({
         (e.grid && e.grid.toLowerCase().includes(searchTerm.toLowerCase())) ||
         (e.notes && e.notes.toLowerCase().includes(searchTerm.toLowerCase()));
       const matchBand = selectedBand === 'ALL' || e.band === selectedBand;
-      return matchSearch && matchBand;
+      // LogEntry.utcDate is documented as "YYYY-MM-DD or YYYYMMDD" and both really occur, so
+      // normalise before comparing rather than trusting the stored shape.
+      const entryDate = (e.utcDate || '').replace(/[^0-9]/g, '');
+      const fromDigits = dateFrom.replace(/[^0-9]/g, '');
+      const toDigits = dateTo.replace(/[^0-9]/g, '');
+      const matchDate =
+        (!fromDigits || (entryDate !== '' && entryDate >= fromDigits)) &&
+        (!toDigits || (entryDate !== '' && entryDate <= toDigits));
+      return matchSearch && matchBand && matchDate;
     });
-  }, [entries, searchTerm, selectedBand]);
+  }, [entries, searchTerm, selectedBand, dateFrom, dateTo]);
 
   // Statistics
   const uniqueGrids = new Set(entries.map((e) => e.grid).filter(Boolean)).size;
@@ -86,6 +99,16 @@ export const LogbookModal: React.FC<LogbookModalProps> = ({
   const handleExportCsv = () => {
     const content = qsoLogger.exportToCsv(filteredEntries);
     downloadFile(content, `z30_logbook_${myCall}_${new Date().toISOString().substring(0, 10)}.csv`, 'text/csv');
+  };
+
+  const handleExportCabrillo = () => {
+    const content = qsoLogger.exportToCabrillo(filteredEntries, { myCall, myGrid });
+    downloadFile(content, `z30_logbook_${myCall}_${new Date().toISOString().substring(0, 10)}.cbr`, 'text/plain');
+  };
+
+  const handleExportJson = () => {
+    const content = qsoLogger.exportToJson(filteredEntries);
+    downloadFile(content, `z30_logbook_${myCall}_${new Date().toISOString().substring(0, 10)}.json`, 'application/json');
   };
 
   const handleExportSql = () => {
@@ -204,6 +227,26 @@ export const LogbookModal: React.FC<LogbookModalProps> = ({
             >
               <FileSpreadsheet className="w-3 h-3 text-emerald-400" />
               <span>CSV</span>
+            </button>
+
+            <button
+              id="export-cabrillo-btn"
+              onClick={handleExportCabrillo}
+              className="flex items-center space-x-1 px-2 py-1 bg-[#1A1A1A] hover:bg-[#262626] border border-[#333] text-xs text-[#D4D4D4]"
+              title="Export Cabrillo v3.0 contest log. Complete the CONTEST, OPERATORS, NAME and ADDRESS header lines before submitting."
+            >
+              <Trophy className="w-3 h-3 text-yellow-400" />
+              <span>Cabrillo</span>
+            </button>
+
+            <button
+              id="export-json-btn"
+              onClick={handleExportJson}
+              className="flex items-center space-x-1 px-2 py-1 bg-[#1A1A1A] hover:bg-[#262626] border border-[#333] text-xs text-[#D4D4D4]"
+              title="Export JSON. The only lossless format: every field a QSO record carries, including SIC pass and LDPC iterations."
+            >
+              <Braces className="w-3 h-3 text-cyan-400" />
+              <span>JSON</span>
             </button>
 
             <button
@@ -340,6 +383,35 @@ export const LogbookModal: React.FC<LogbookModalProps> = ({
                 onChange={(e) => setSearchTerm(e.target.value)}
                 className="w-full bg-[#0A0A0A] border border-[#333] px-2 py-1 text-xs text-[#D4D4D4] focus:outline-none focus:border-[#00FF41]"
               />
+            </div>
+
+            <div className="flex items-center space-x-1.5 text-[10px] text-[#888]">
+              <CalendarRange className="w-3.5 h-3.5" />
+              <input
+                type="date"
+                value={dateFrom}
+                onChange={(e) => setDateFrom(e.target.value)}
+                title="Only show QSOs on or after this UTC date"
+                className="bg-[#0A0A0A] border border-[#333] px-1.5 py-1 text-xs text-[#D4D4D4] focus:outline-none focus:border-[#00FF41]"
+              />
+              <span>to</span>
+              <input
+                type="date"
+                value={dateTo}
+                onChange={(e) => setDateTo(e.target.value)}
+                title="Only show QSOs on or before this UTC date"
+                className="bg-[#0A0A0A] border border-[#333] px-1.5 py-1 text-xs text-[#D4D4D4] focus:outline-none focus:border-[#00FF41]"
+              />
+              {(dateFrom || dateTo) && (
+                <button
+                  type="button"
+                  onClick={() => { setDateFrom(''); setDateTo(''); }}
+                  className="px-1.5 py-1 bg-[#1A1A1A] border border-[#333] text-[#888] hover:text-[#D4D4D4]"
+                  title="Clear the date range"
+                >
+                  Clear
+                </button>
+              )}
             </div>
 
             <div className="flex items-center space-x-2">

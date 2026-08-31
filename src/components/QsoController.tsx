@@ -5,7 +5,7 @@
 
 import React from 'react';
 import { StationConfig } from '../types/z30';
-import { QsoState } from '../dsp/qsoEngine';
+import { QsoState, calculateMaidenheadDistanceAndAzimuth } from '../dsp/qsoEngine';
 import { Send, Compass, MapPin } from 'lucide-react';
 
 interface QsoControllerProps {
@@ -14,16 +14,16 @@ interface QsoControllerProps {
   currentBand: string;
   isTransmitting: boolean;
   onUpdateState: (partial: Partial<QsoState>) => void;
-  onUpdateConfig?: (partial: Partial<StationConfig>) => void;
-  onCallingCq?: () => void;
-  onToggleTx?: () => void;
-  onStartTx?: () => void;
-  onStopTx?: () => void;
-  onStartTune?: () => void;
-  onStopTune?: () => void;
   isTuning?: boolean;
   fwdWatts?: number;
 }
+
+// This interface used to also declare onUpdateConfig, onCallingCq, onToggleTx, onStartTx,
+// onStopTx, onStartTune and onStopTune. None was ever destructured, so none could be called -
+// tsc does not flag an unused prop that is never pulled out of the props object, which is how
+// seven dead callbacks survived here. The transmit controls they suggest live in
+// QsoMacrosTransmitPanel and the header, which is where they belong; removed rather than
+// duplicated.
 
 export const QsoController: React.FC<QsoControllerProps> = ({
   qsoState,
@@ -35,27 +35,13 @@ export const QsoController: React.FC<QsoControllerProps> = ({
   isTuning = false,
 }) => {
 
-  // Approximate distance calculation between grids if both exist
-  const calculateDistanceKm = (grid1: string, grid2: string): number | null => {
-    if (!grid1 || !grid2 || grid1.length < 4 || grid2.length < 4) return null;
-    const g1 = grid1.toUpperCase();
-    const g2 = grid2.toUpperCase();
-    const lon1 = (g1.charCodeAt(0) - 65) * 20 + parseInt(g1[2], 10) * 2 - 180 + 1;
-    const lat1 = (g1.charCodeAt(1) - 65) * 10 + parseInt(g1[3], 10) * 1 - 90 + 0.5;
-    const lon2 = (g2.charCodeAt(0) - 65) * 20 + parseInt(g2[2], 10) * 2 - 180 + 1;
-    const lat2 = (g2.charCodeAt(1) - 65) * 10 + parseInt(g2[3], 10) * 1 - 90 + 0.5;
-    
-    const R = 6371; // km
-    const dLat = (lat2 - lat1) * (Math.PI / 180);
-    const dLon = (lon2 - lon1) * (Math.PI / 180);
-    const a =
-      Math.sin(dLat / 2) * Math.sin(dLat / 2) +
-      Math.cos(lat1 * (Math.PI / 180)) * Math.cos(lat2 * (Math.PI / 180)) * Math.sin(dLon / 2) * Math.sin(dLon / 2);
-    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-    return Math.round(R * c);
-  };
-
-  const distKm = calculateDistanceKm(config.myGrid, qsoState.targetDxGrid);
+  // Distance comes from the DSP-layer great-circle helper, not a fifth inline Maidenhead
+  // decoder. The copy that used to live here rounded the square centre differently from
+  // qsoEngine's, so the same pair of grids could show two distances in one app.
+  const distKm =
+    config.myGrid && qsoState.targetDxGrid
+      ? calculateMaidenheadDistanceAndAzimuth(config.myGrid, qsoState.targetDxGrid).distanceKm || null
+      : null;
 
   return (
     <div

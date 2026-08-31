@@ -2978,44 +2978,30 @@ if __name__ == "__main__":
 `,
   },
   {
-    filename: "config_wizard.py",
-    path: "z30_dsp/config_wizard.py",
-    description: "Tkinter startup configuration wizard with callsign and grid validation, audio device enumeration, and CAT/PTT hardware tests.",
+    filename: "station_settings.py",
+    path: "z30_dsp/station_settings.py",
+    description: "Station configuration schema, callsign and Maidenhead validation, and JSON persistence - importable without Tkinter so the validation rules can be tested.",
     code: `"""
-z-30 Amateur Radio Digital Mode - Startup Configuration Wizard
-==============================================================
-Module: config_wizard.py
-Author: Lead Python GUI & DSP Architecture Engineer
-Target: Python 3.10+ / Tkinter & ttk
+z-30 station configuration schema, validation, and JSON persistence.
 
-Features:
-- Multi-step modular Wizard dialog container (< Back, Next >, Cancel, Finish).
-- Operator Info page with real-time ITU callsign & Maidenhead grid regex validation.
-- Audio Device Enumeration (sounddevice / PyAudio / fallback) with real-time VU test meter.
-- Radio CAT & PTT Hardware configuration (Hamlib, Direct Serial, Network rigctld).
-- RTS / DTR Pin Polarity logic (Active High vs Active Low / Inverted Open-Collector).
-- Interactive background-threaded CAT & PTT toggle tester with 3-second safety cutoff.
-- SettingsManager for robust JSON schema loading, validation, saving, and defaults.
-- Self-contained execution & seamless integration into the z-30 GUI pipeline.
+Split out of \`config_wizard.py\` so that the validation rules can be imported - and tested -
+without Tkinter. \`config_wizard\` imports Tk at module scope and subclasses \`ttk.Frame\` at class
+definition time, so importing it at all requires a Tk build; on a headless box, in CI, or in a
+minimal container there is none. That put the callsign rules that the setup wizard enforces
+beyond the reach of the test suite, which is precisely how they drifted away from the browser
+transmit gate in the first place.
+
+Nothing here touches a GUI or a radio. \`config_wizard\` re-exports both names, so existing
+imports keep working.
 """
 
 from dataclasses import dataclass, asdict, field
 import json
-import math
 import os
-import re
-import socket
 import sys
-import threading
-import time
-import tkinter as tk
-from tkinter import ttk, messagebox
-from typing import Optional, Dict, List, Tuple, Any, Callable
+import re
+from typing import Optional, Tuple
 
-
-# ============================================================================
-# 1. DATA MODELS & SETTINGS MANAGER
-# ============================================================================
 
 @dataclass
 class StationConfig:
@@ -3070,9 +3056,20 @@ class SettingsManager:
     """
     DEFAULT_CONFIG_PATH = "config.json"
 
-    # ITU International Callsign Regex (Prefix + Num + Suffix, optional /P /M /QRP)
+    # ITU International Callsign Regex - the SAME pattern as isValidCallsign() in
+    # src/dsp/bandPlan.ts, which is what the browser transmit gate enforces.
+    #
+    # This used to be the looser \`[A-Z0-9]{1,3}[0-9][A-Z0-9]{0,4}\` form the two React modals
+    # also carried, so three implementations agreed with each other and disagreed with the one
+    # that actually decides whether a station may key up: the wizard accepted "W1" and "K1A2"
+    # (which the gate refuses at slot start, because a suffix must contain letters) and rejected
+    # "DL/W1AW" (which the gate permits, because portable prefixes are real). A setup wizard
+    # that blesses a callsign the transmit gate will refuse is worse than no check.
+    #
+    # Shared cases live in tests/vectors/callsign_vectors.json and are asserted from both
+    # languages.
     CALLSIGN_REGEX = re.compile(
-        r"^[A-Z0-9]{1,3}[0-9][A-Z0-9]{0,4}(/[A-Z0-9]{1,4})?$",
+        r"^(?:[A-Z0-9]{1,3}/)?[A-Z0-9]{1,3}[0-9][A-Z]{1,4}(?:/[A-Z0-9]{1,4})?$",
         re.IGNORECASE
     )
 
@@ -3092,10 +3089,16 @@ class SettingsManager:
         cleaned = callsign.strip().upper()
         if not cleaned:
             return False, "Callsign cannot be blank."
-        if len(cleaned) < 3 or len(cleaned) > 12:
-            return False, "Callsign length must be between 3 and 12 characters."
+        # Upper bound matches the widest string the shared regex can accept
+        # (3-char portable prefix + 3 + digit + 4 + 4-char suffix, with two slashes).
+        if len(cleaned) < 3 or len(cleaned) > 17:
+            return False, "Callsign length must be between 3 and 17 characters."
         if not cls.CALLSIGN_REGEX.match(cleaned):
             return False, "Invalid ITU callsign format (e.g. W1AW, K3LR, DL1ABC, JA1ZLO/1)."
+        # The TypeScript gate additionally requires a letter in the base prefix, so that a
+        # digits-only prefix cannot pass. Kept in step deliberately.
+        if not re.search(r"[A-Z]", cleaned.split("/")[0] or cleaned):
+            return False, "Invalid ITU callsign format (the prefix must contain a letter)."
         return True, "Valid ITU Callsign"
 
     @classmethod
@@ -3172,6 +3175,52 @@ class SettingsManager:
         except Exception as ex:
             print(f"[SettingsManager] Failed to write {self.config_path}: {ex}")
             return False
+`,
+  },
+  {
+    filename: "config_wizard.py",
+    path: "z30_dsp/config_wizard.py",
+    description: "Tkinter startup configuration wizard with callsign and grid validation, audio device enumeration, and CAT/PTT hardware tests.",
+    code: `"""
+z-30 Amateur Radio Digital Mode - Startup Configuration Wizard
+==============================================================
+Module: config_wizard.py
+Author: Lead Python GUI & DSP Architecture Engineer
+Target: Python 3.10+ / Tkinter & ttk
+
+Features:
+- Multi-step modular Wizard dialog container (< Back, Next >, Cancel, Finish).
+- Operator Info page with real-time ITU callsign & Maidenhead grid regex validation.
+- Audio Device Enumeration (sounddevice / PyAudio / fallback) with real-time VU test meter.
+- Radio CAT & PTT Hardware configuration (Hamlib, Direct Serial, Network rigctld).
+- RTS / DTR Pin Polarity logic (Active High vs Active Low / Inverted Open-Collector).
+- Interactive background-threaded CAT & PTT toggle tester with 3-second safety cutoff.
+- SettingsManager for robust JSON schema loading, validation, saving, and defaults.
+- Self-contained execution & seamless integration into the z-30 GUI pipeline.
+"""
+
+from dataclasses import dataclass, asdict, field
+import json
+import math
+import os
+import re
+import socket
+import sys
+import threading
+import time
+import tkinter as tk
+from tkinter import ttk, messagebox
+from typing import Optional, Dict, List, Tuple, Any, Callable
+
+
+# ============================================================================
+# 1. DATA MODELS & SETTINGS MANAGER
+# ============================================================================
+
+# StationConfig and SettingsManager now live in station_settings.py so that the validation
+# rules are importable without Tkinter (this module is not - it subclasses ttk.Frame below).
+# Re-exported here because callers and the wiki both refer to them by this module.
+from .station_settings import StationConfig, SettingsManager  # noqa: F401
 
 
 # ============================================================================
@@ -8250,6 +8299,109 @@ class TestEndToEnd:
                 decoded += 1
 
         assert decoded == trials, f"only {decoded}/{trials} strong frames survived the blind chain"
+`,
+  },
+  {
+    filename: "test_config_wizard.py",
+    path: "tests/test_config_wizard.py",
+    description: "Callsign and grid validation, driven by the same shared vectors the TypeScript transmit gate is asserted against.",
+    code: `"""
+Callsign and grid validation in the Python setup wizard, driven by the SAME vectors the
+TypeScript side asserts.
+
+Why this file exists: \`SettingsManager.validate_callsign\` used to carry a looser pattern than
+\`isValidCallsign()\` in \`src/dsp/bandPlan.ts\`, which is what the browser transmit gate actually
+enforces. Three implementations agreed with each other and disagreed with the only one that
+decides whether a station may key up, so the wizard blessed callsigns (\`W1\`, \`K1A2\`) that the
+gate refuses at slot start, and rejected one (\`DL/W1AW\`) that it permits. A setup wizard that
+tells an operator their station is ready, for a station that cannot transmit, is worse than no
+wizard.
+
+The vectors live in \`tests/vectors/callsign_vectors.json\`, in the spirit of
+\`tests/vectors/crc14_vectors.json\`: one file, both languages, no way to fix one side only.
+"""
+
+import json
+import os
+import re
+
+import pytest
+
+from z30_dsp.station_settings import SettingsManager
+
+VECTOR_PATH = os.path.join(os.path.dirname(__file__), "vectors", "callsign_vectors.json")
+
+with open(VECTOR_PATH, "r", encoding="utf-8") as handle:
+    VECTORS = json.load(handle)
+
+
+def _accepts(call):
+    """True if the wizard would accept this callsign."""
+    ok, _msg = SettingsManager.validate_callsign(call)
+    return ok
+
+
+@pytest.mark.parametrize(
+    "call,why",
+    [(entry["call"], entry["why"]) for entry in VECTORS["valid"]],
+)
+def test_wizard_accepts_valid_callsigns(call, why):
+    assert _accepts(call), f"wizard rejected {call!r}, which the transmit gate accepts ({why})"
+
+
+@pytest.mark.parametrize(
+    "call,why",
+    [(entry["call"], entry["why"]) for entry in VECTORS["invalid"]],
+)
+def test_wizard_rejects_invalid_callsigns(call, why):
+    assert not _accepts(call), f"wizard accepted {call!r}, which the transmit gate refuses ({why})"
+
+
+def test_wizard_pattern_matches_the_shared_vector_file():
+    """
+    The wizard's compiled pattern must BE the shared pattern.
+
+    Asserting the behaviour above is the real guard, but this catches the case where someone
+    edits the regex and adjusts the vectors to match, rather than the other way round.
+    """
+    assert SettingsManager.CALLSIGN_REGEX.pattern == VECTORS["pattern"]
+
+
+def test_the_three_measured_divergences_are_fixed():
+    """
+    The exact three cases the UI audit measured, named so a regression says which one broke.
+    """
+    assert _accepts("DL/W1AW"), "portable prefixes are real and the transmit gate permits them"
+    assert not _accepts("W1"), "a callsign needs a suffix"
+    assert not _accepts("K1A2"), "a suffix must be letters"
+
+
+def test_callsign_validation_is_case_insensitive_and_trims():
+    assert _accepts("  w1aw  ")
+
+
+@pytest.mark.parametrize("grid", ["FN31", "FN31pr", "JO65", "AA00", "RR99"])
+def test_wizard_accepts_valid_grids(grid):
+    ok, _msg = SettingsManager.validate_grid(grid)
+    assert ok
+
+
+@pytest.mark.parametrize("grid", ["", "FN", "FN3", "FN311", "SS31", "FN31ZZ", "1N31"])
+def test_wizard_rejects_invalid_grids(grid):
+    ok, _msg = SettingsManager.validate_grid(grid)
+    assert not ok
+
+
+def test_grid_pattern_agrees_with_the_typescript_one():
+    """
+    src/dsp/gridSquare.ts uses ^[A-R]{2}[0-9]{2}([A-X]{2})?$ with a 4-or-6 length rule. The
+    Python side must not be looser, or the wizard and the app disagree about the same locator.
+    """
+    ts_pattern = re.compile(r"^[A-R]{2}[0-9]{2}([A-X]{2})?$", re.IGNORECASE)
+    for grid in ["FN31", "FN31PR", "JO65", "SS31", "FN31ZZ", "FN3", "FN311"]:
+        ts_ok = bool(ts_pattern.match(grid)) and len(grid) in (4, 6)
+        py_ok, _msg = SettingsManager.validate_grid(grid)
+        assert py_ok == ts_ok, f"{grid!r}: python={py_ok} typescript={ts_ok}"
 `,
   },
   {

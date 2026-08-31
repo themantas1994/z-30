@@ -1,0 +1,54 @@
+{
+  "_comment": [
+    "Shared callsign validation vectors, asserted from both languages.",
+    "",
+    "The browser transmit gate (isValidCallsign in src/dsp/bandPlan.ts) decides whether a",
+    "station may key up. Three other implementations - both React settings modals and the",
+    "Python setup wizard - used to carry a LOOSER pattern, so the wizard showed a green",
+    "'Valid ITU Callsign' for callsigns the gate refuses at slot start, and a red 'Invalid'",
+    "for ones it permits. An operator who trusts the wizard and then cannot transmit has been",
+    "told two different things by one program.",
+    "",
+    "The three disagreements the audit measured are the first three 'divergence' cases below.",
+    "",
+    "Asserted by tests/frontend.test.mjs (TypeScript) and tests/test_config_wizard.py (Python)."
+  ],
+  "pattern": "^(?:[A-Z0-9]{1,3}/)?[A-Z0-9]{1,3}[0-9][A-Z]{1,4}(?:/[A-Z0-9]{1,4})?$",
+  "extra_rule": "The base prefix (the part before any trailing '/suffix') must contain a letter.",
+  "_limits": [
+    "This is a STRUCTURAL check, not an allocation lookup: it rejects an empty box, a name",
+    "typed into the callsign field and obvious typos, which is what the transmit gate needs.",
+    "It cannot tell whether a well-formed callsign was actually issued to the operator, and",
+    "well-formed strings that are not real callsigns (e.g. '111A') pass. Do not add cases here",
+    "that assert otherwise without changing the gate itself - and changing the gate is a",
+    "transmit-path change."
+  ],
+  "valid": [
+    { "call": "W1AW", "why": "canonical US callsign" },
+    { "call": "K3LR", "why": "US contest station" },
+    { "call": "DL1ABC", "why": "two-letter prefix, three-letter suffix" },
+    { "call": "JA1ZLO", "why": "Japanese club station" },
+    { "call": "G0ABC", "why": "UK, zero in the digit position" },
+    { "call": "VK2DEF", "why": "Australian" },
+    { "call": "DL/W1AW", "why": "divergence case: portable PREFIX. The gate permits it; the UI used to show 'Invalid'." },
+    { "call": "W1AW/P", "why": "portable suffix" },
+    { "call": "JA1ZLO/1", "why": "numeric portable suffix" },
+    { "call": "3DA0RS", "why": "prefix containing a digit, but also a letter" },
+    { "call": "w1aw", "why": "lower case is accepted and upper-cased" }
+  ],
+  "invalid": [
+    { "call": "W1", "why": "divergence case: no suffix at all. The gate refuses it; the UI used to show 'Valid'." },
+    { "call": "K1A2", "why": "divergence case: suffix ends in a digit. The gate refuses it; the UI used to show 'Valid'." },
+    { "call": "", "why": "empty box" },
+    { "call": "   ", "why": "whitespace only" },
+    { "call": "NOCALL", "why": "placeholder with no digit" },
+    { "call": "12345", "why": "a number typed into the callsign field" },
+    { "call": "ABCDEF", "why": "no digit" },
+    { "call": "W1AW/", "why": "trailing slash with no suffix" },
+    { "call": "W1AWXYZAB", "why": "suffix longer than four characters" },
+    { "call": "1AW", "why": "no digit in the digit position" },
+    { "call": "A1", "why": "prefix and digit but no suffix" },
+    { "call": "W1AW-1", "why": "hyphen is not a valid separator; only '/' is" },
+    { "call": "W 1AW", "why": "embedded space" }
+  ]
+}

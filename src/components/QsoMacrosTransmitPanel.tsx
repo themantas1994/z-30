@@ -20,7 +20,6 @@ import {
 interface QsoMacrosTransmitPanelProps {
   qsoState: QsoState;
   config: StationConfig;
-  currentBand: string;
   isTransmitting: boolean;
   isTuning: boolean;
   onUpdateState: (partial: Partial<QsoState>) => void;
@@ -36,7 +35,6 @@ interface QsoMacrosTransmitPanelProps {
 export const QsoMacrosTransmitPanel: React.FC<QsoMacrosTransmitPanelProps> = ({
   qsoState,
   config,
-  currentBand,
   isTransmitting,
   isTuning,
   onUpdateState,
@@ -54,9 +52,7 @@ export const QsoMacrosTransmitPanel: React.FC<QsoMacrosTransmitPanelProps> = ({
     config.myCall,
     config.myGrid,
     qsoState.targetDxCall || 'DX',
-    qsoState.targetDxGrid || 'FN31',
-    qsoState.mySentReport,
-    qsoState.myRcvdReport
+    qsoState.mySentReport
   );
 
   const handleMacroSelect = (macroKey: QsoState['currentTxMacro']) => {

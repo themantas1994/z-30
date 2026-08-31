@@ -75,10 +75,23 @@ picks one according to the configured rule:
 
 - Bidirectional serial communication over Hamlib `rigctld` (default port `4532`) or native
   serial ports (`COM1..COM32`, `/dev/ttyUSB*`, `/dev/ttyACM*`).
-- Reads VFO dial frequency, operating mode (`USB` / `PKTUSB`) and live hardware S-meter power
-  in dBm.
-- A live CAT terminal for raw Hamlib commands (`\get_freq`, `\set_freq`, `\get_mode`,
-  `\set_ptt`, `\get_level`).
+- Reads and sets the VFO dial frequency (band selector, direct MHz entry, and +/-100 Hz /
+  +/-1 kHz nudge buttons), and reads the operating mode (`USB` / `PKTUSB`) and passband live
+  from the controller rather than displaying a fixed label.
+- Keys the tune carrier and opens the band manager.
+- **The S-meter readout is rendered in the waterfall header**, not in this panel, because that
+  is where an operator watches the band; the reading itself comes from
+  `catController.getSmeterInfo()`. The panel shows the rigctld endpoint, baud rate and the
+  configured PTT method.
+- A live CAT terminal for raw Hamlib commands. **Case is significant, as in real rigctl**:
+  lower-case short verbs read, upper-case short verbs set — `f` / `F <hz>`, `m` / `M <mode>`,
+  `t` / `T <0|1>` — alongside the long forms `\get_freq`, `\set_freq`, `\get_mode`,
+  `\set_mode`, `\get_ptt`, `\set_ptt`, `\get_vfo`, `\get_level`, `\version`,
+  `dump_state` and `help`. An unrecognised verb returns a non-zero `RPRT`, not success.
+- **`T 1` / `\set_ptt 1` runs the same transmit gate as every other transmit path** and is
+  refused, with the reason, if the station is not clear to transmit. It keys through the
+  operator's configured PTT method and polarity, not a CAT default. See
+  [13. Operating Safety, Compliance & Security](13-Operating-Safety-Compliance-&-Security.md).
 - Synchronous PTT keying via CAT commands, RTS/DTR serial pins, or audio tones.
 
 Full wiring, daemon invocation and per-rig notes live in
@@ -149,8 +162,23 @@ custom preset outside your privileges is refused at transmit time rather than si
 
 - Tabular logbook recording date, UTC time, callsign, band, dial frequency, mode (`Z-30`),
   sent/received reports, Maidenhead grid, distance (km/mi) and operator notes.
-- One-click export to **ADIF 3.1.4 (`.adi`)**, **Cabrillo**, **JSON** and **CSV**.
-- Search and filter by callsign, band or date range.
+- One-click export to five formats:
+  - **ADIF 3.1.4 (`.adi`)** — for LoTW, eQSL, Club Log and contest loggers. `MODE` is `MFSK`
+    with `SUBMODE` `Z30`, because ADIF's `MODE` is a closed enumeration and `z-30` is not in
+    it; a record with an unlisted `MODE` gets rejected or mis-filed.
+  - **Cabrillo v3.0 (`.cbr`)** — the contest submission format. The header fields the log
+    cannot know (`CONTEST`, `OPERATORS`, `NAME`, `ADDRESS`, `CLAIMED-SCORE`) are emitted empty
+    for you to complete: a submission with invented values is worse than a visibly incomplete
+    one.
+  - **JSON (`.json`)** — the only lossless format. ADIF flattens the SIC pass and LDPC
+    iteration count into a comment, CSV loses types, and Cabrillo keeps only what a contest
+    robot scores; this round-trips every field a QSO record carries.
+  - **CSV (`.csv`)** — RFC 4180, for spreadsheets.
+  - **SQLite dump (`.sql`)** — schema plus inserts, for anyone who would rather query their log
+    than read it.
+- Search and filter by callsign, grid or notes; by band; and by **UTC date range** (from/to,
+  with a Clear button). Every export writes the **filtered** set, so the date range doubles as
+  the contest-period selector for a Cabrillo submission.
 - The authoritative copy is the file on disk (`~/.z30/logbook.json` plus an ADIF export beside
   it); the browser store is a cache. See
   [13. Operating Safety, Compliance & Local Security](13-Operating-Safety-Compliance-&-Security.md).
