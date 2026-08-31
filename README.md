@@ -25,7 +25,8 @@ frame, protects it with a rate-0.356 irregular repeat-accumulate LDPC code and a
 and pulls colliding stations apart with three passes of successive interference cancellation.
 
 It ships as two halves of the same specification: an **interactive Web/PWA transceiver** (60 FPS
-waterfall, Web Audio DSP, live S-meter, ADIF logbook) and a **native Python 3 package**
+waterfall, Web Audio DSP, live S-meter, logbook with ADIF/Cabrillo/JSON/CSV/SQLite export) and a
+**native Python 3 package**
 (`z30_dsp`) with Hamlib CAT control, nine PTT keying methods, six auto-reply strategies, and RF
 clock calibration against WWV, CHU, DCF77, MSF, WWVB and JJY — no internet required.
 
@@ -129,7 +130,7 @@ z-30 is an experimental mode and is not coordinated with any band plan authority
 | [01. New User Guide & First Steps](wiki/01-New-User-Guide-&-First-Steps.md) | Wizard, audio levels, time sync, first QSO |
 | [02. Developer Setup & Contributing](wiki/02-Developer-Setup-&-Contributing.md) | Environments, architecture, docs policy, PR checklist |
 | [03. DSP & Physical Layer Specification](wiki/03-DSP-&-Physical-Layer-Specification.md) | Signal chain, waveform maths, Costas sync, slot timing |
-| [04. Forward Error Correction & LDPC](wiki/04-Forward-Error-Correction-&-LDPC.md) | Message packing, CRC-14, (216, 77) code, min-sum decoding |
+| [04. Forward Error Correction & LDPC](wiki/04-Forward-Error-Correction-&-LDPC.md) | Message packing, CRC-14, (216, 77) code, four-schedule min-sum/SPA decoding |
 | [05. Successive Interference Cancellation](wiki/05-Successive-Interference-Cancellation-(SIC).md) | The 3-pass co-channel recovery engine |
 | [06. Transceiver CAT Control & PTT Wiring](wiki/06-Transceiver-CAT-Control-&-PTT-Wiring.md) | `rigctld`, wiring diagrams for all 9 keying methods |
 | [07. RF Time Synchronization Engine](wiki/07-RF-Time-Synchronization-Engine.md) | WWV/CHU/DCF77/MSF/WWVB/JJY calibration without NTP |
