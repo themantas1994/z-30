@@ -416,8 +416,8 @@ export const Header: React.FC<HeaderProps> = ({
               onClick={onOpenUpdate}
               title={
                 updateInfo?.hasUpdate
-                  ? `Update Available: v${updateInfo.latestVersion} on https://github.com/themantas1994/z-30`
-                  : 'Check for Updates from https://github.com/themantas1994/z-30'
+                  ? `${updateInfo.behind} commit(s) behind https://github.com/themantas1994/z-30 (main)`
+                  : 'Check for upstream commits from https://github.com/themantas1994/z-30'
               }
               className={`p-1.5 border text-xs flex items-center space-x-1 transition-all ${
                 updateInfo?.hasUpdate
@@ -427,7 +427,9 @@ export const Header: React.FC<HeaderProps> = ({
             >
               <DownloadCloud className="w-3.5 h-3.5 text-cyan-400" />
               <span className="hidden md:inline text-[11px] font-bold">
-                {updateInfo?.hasUpdate ? 'Update Available' : 'Update'}
+                {/* The count, not the word "available". "N behind" is the fact; whether that
+                    warrants updating is the operator's call and the modal's job to explain. */}
+                {updateInfo?.hasUpdate ? `${updateInfo.behind} behind` : 'Update'}
               </span>
               {updateInfo?.hasUpdate && (
                 <span className="w-2 h-2 rounded-full bg-[#00FF41] animate-ping ml-0.5" />

@@ -42,9 +42,10 @@ import threading
 import time
 import webbrowser
 from http.server import HTTPServer, SimpleHTTPRequestHandler
-from typing import Any, Dict, Optional, Set, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple
 from urllib.parse import urlparse, parse_qs
 
+from . import git_sync
 from .paths import logbook_adif_path, logbook_json_path, station_config_path
 
 logging.basicConfig(level=logging.INFO, format="[z-30 WebUI] %(message)s")
@@ -268,6 +269,17 @@ class GpioBridge:
             "max_keyed_sec": GPIO_MAX_KEYED_SEC,
         }
 
+    def any_pin_keyed(self) -> bool:
+        """
+        True while any PTT line is asserted.
+
+        The update endpoint asks before it touches the checkout: fast-forwarding the tree under
+        a running transmission would swap the served bundle and the Python sources out from
+        under a keyed transmitter, and the operator is on the air and not looking at the screen.
+        """
+        with self._lock:
+            return bool(self._keyed_pins)
+
     def release_all(self) -> None:
         """Unkeys every claimed pin and releases it. Registered with atexit and the signal handlers."""
         with self._lock:
@@ -434,6 +446,78 @@ class OperatorStore:
 # 6. HTTP REQUEST HANDLER
 # ============================================================================
 
+class UpdateJob:
+    """
+    Runs one upstream fast-forward at a time, in a worker thread, with a readable log.
+
+    An update is slow (a network fetch, then a checkout) and the HTTP handler must not block
+    for it: a request that takes thirty seconds looks like a hung radio, and the browser's own
+    fetch timeout would abandon it half-way with no way to find out what happened. So `start()`
+    returns immediately and the UI polls `snapshot()` for progress, which also means a reload
+    mid-update reconnects to the running job instead of starting a second one.
+
+    Serialised by a lock for the obvious reason: two concurrent `git merge` invocations in one
+    working tree corrupt the index.
+    """
+
+    def __init__(self) -> None:
+        self._lock = threading.RLock()
+        self._thread: Optional[threading.Thread] = None
+        self._running = False
+        self._log: List[str] = []
+        self._result: Optional[Dict[str, Any]] = None
+        self._started_at: float = 0.0
+
+    def is_running(self) -> bool:
+        with self._lock:
+            return self._running
+
+    def snapshot(self) -> Dict[str, Any]:
+        with self._lock:
+            return {
+                "success": True,
+                "running": self._running,
+                "log": list(self._log),
+                "result": self._result,
+                "elapsed_sec": round(time.time() - self._started_at, 1) if self._started_at else 0.0,
+            }
+
+    def start(self, reinstall_python: bool, rebuild_web: bool) -> Dict[str, Any]:
+        with self._lock:
+            if self._running:
+                return {"success": False, "error": "An update is already running.", "running": True}
+            self._running = True
+            self._log = []
+            self._result = None
+            self._started_at = time.time()
+
+        def append(message: str) -> None:
+            with self._lock:
+                self._log.append(message)
+            logger.info(f"[update] {message}")
+
+        def worker() -> None:
+            try:
+                result = git_sync.apply_update(
+                    on_log=append,
+                    reinstall_python=reinstall_python,
+                    rebuild_web=rebuild_web,
+                )
+                payload = result.to_dict()
+            except Exception as exc:  # a crashed worker must not leave the job "running" forever
+                append(f"Update failed unexpectedly: {exc}")
+                payload = {"success": False, "error": str(exc), "log": []}
+            with self._lock:
+                self._result = payload
+                self._running = False
+
+        thread = threading.Thread(target=worker, name="z30-update", daemon=True)
+        with self._lock:
+            self._thread = thread
+        thread.start()
+        return {"success": True, "running": True}
+
+
 class SpaRequestHandler(SimpleHTTPRequestHandler):
     """
     Serves the compiled single-page application plus the local hardware/storage APIs.
@@ -448,6 +532,7 @@ class SpaRequestHandler(SimpleHTTPRequestHandler):
     allowed_origin: str = ""
     allowed_hosts: Set[str] = set()
     gpio_bridge: Optional[GpioBridge] = None
+    update_job: Optional[UpdateJob] = None
 
     server_version = "z30-web"
     sys_version = ""
@@ -580,6 +665,13 @@ class SpaRequestHandler(SimpleHTTPRequestHandler):
             if path == "/api/station-config":
                 self._send_json(200, OperatorStore.read_station_config())
                 return
+            if path == "/api/update/status":
+                self._handle_update_status()
+                return
+            if path == "/api/update/progress":
+                self._send_json(200, self.update_job.snapshot() if self.update_job else
+                                {"success": True, "running": False, "log": [], "result": None})
+                return
             self._send_json(404, {"success": False, "error": f"Unknown API endpoint '{path}'."})
             return
 
@@ -622,6 +714,8 @@ class SpaRequestHandler(SimpleHTTPRequestHandler):
             self._handle_logbook_write(payload)
         elif path == "/api/station-config":
             self._handle_station_config_write(payload)
+        elif path == "/api/update/apply":
+            self._handle_update_apply(payload)
         else:
             self._send_json(404, {"success": False, "error": f"Unknown API endpoint '{path}'."})
 
@@ -690,6 +784,47 @@ class SpaRequestHandler(SimpleHTTPRequestHandler):
             return
         result = OperatorStore.write_station_config(payload.get("config"))
         self._send_json(200 if result.get("success") else 500, result)
+
+    # -- upstream synchronisation -----------------------------------------
+
+    def _handle_update_status(self) -> None:
+        """
+        Reports how many commits behind `origin/main` this installation is.
+
+        `?fetch=0` answers from the last fetch without touching the network, which is what the
+        Update button's badge polls; the modal's explicit "Check now" fetches.
+        """
+        query = parse_qs(urlparse(self.path).query)
+        do_fetch = (query.get("fetch") or ["1"])[0] != "0"
+        status = git_sync.read_status(fetch=do_fetch).to_dict()
+        status["success"] = True
+        status["update_running"] = bool(self.update_job and self.update_job.is_running())
+        self._send_json(200, status)
+
+    def _handle_update_apply(self, payload: Any) -> None:
+        """
+        Fast-forwards this checkout onto upstream, in a worker thread.
+
+        Refused outright while a PTT line is asserted. Replacing the served bundle and the
+        Python sources under a running transmission is not something to do to an operator who
+        is on the air, and the update is never so urgent that it cannot wait for the slot to
+        end.
+        """
+        if self.gpio_bridge is not None and self.gpio_bridge.any_pin_keyed():
+            self._send_json(409, {
+                "success": False,
+                "error": "The transmitter is keyed. Finish or stop the transmission before updating.",
+            })
+            return
+        if self.update_job is None:
+            self._send_json(503, {"success": False, "error": "Updater unavailable."})
+            return
+        body = payload if isinstance(payload, dict) else {}
+        result = self.update_job.start(
+            reinstall_python=bool(body.get("reinstall_python")),
+            rebuild_web=bool(body.get("rebuild_web")),
+        )
+        self._send_json(200 if result.get("success") else 409, result)
 
     def log_message(self, format, *args):
         # Suppress noisy per-asset HTTP logs.
@@ -799,6 +934,7 @@ def run_web_app(
         allowed_hosts = {f"127.0.0.1:{app_port}", f"localhost:{app_port}"}
 
     BoundHandler.gpio_bridge = gpio_bridge
+    BoundHandler.update_job = UpdateJob()
 
     handler = lambda *args, **kwargs: BoundHandler(*args, directory=dist_dir, **kwargs)
 

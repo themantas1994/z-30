@@ -1660,89 +1660,155 @@ cross-platform hardware CAT integration.
     category: "Advanced & Packaging",
     description: "How to check for updates, sync upstream git commits from themantas1994/z-30, and perform zero-downtime updates across Linux, Windows, Android, and Web PWA.",
     tags: ["update","github","git","sync","upgrade","releases","pwa","termux","ubuntu","arch"],
-    markdown: `# 🔄 Software Updates & GitHub Upstream Synchronization
+    markdown: `# 🔄 Software Updates & Upstream Synchronisation
 
-The **z-30 Amateur Radio Transceiver Suite** is actively developed on GitHub at:
-**[https://github.com/themantas1994/z-30](https://github.com/themantas1994/z-30)**
-
----
-
-## 🌟 Update Channels
-
-z-30 provides two upstream update channels:
-
-1. **Stable Releases**: Official GitHub releases tagged by version (e.g. \`v1.0.0\`, \`v1.0.1\`). Recommended for field stations and daily operations.
-2. **Main Branch (Nightly / Development)**: Tracks the latest bleeding-edge commits on \`main\` branch. Includes experimental DSP filters, new rig CAT definitions, and performance optimizations.
+The **z-30 Amateur Radio Transceiver Suite** is developed on GitHub at
+**[https://github.com/themantas1994/z-30](https://github.com/themantas1994/z-30)**.
 
 ---
 
-## 🖥️ 1. In-App Web GUI & PWA Updates
+## 📌 Commits, not versions
 
-When running the Web UI / PWA:
-1. Click the **Update** button (with the download cloud icon) in the top right navigation bar or open **Station Settings ➔ 1. Station & Operator ➔ Software Version**.
-2. Click **Check Now** to query the GitHub API (\`api.github.com/repos/themantas1994/z-30\`).
-3. If an update is detected, click **Reload / Refresh PWA**. This automatically:
-   - Unregisters legacy Service Workers.
-   - Clears the browser \`CacheStorage\` and Web Audio buffers.
-   - Reloads the page with the latest compiled assets from network.
+**z-30 has no release channels and no version to compare.** It is developed on \`main\`, and an
+installation is either at the tip of \`main\` or some number of commits behind it. That number is
+the whole of what the update mechanism reports, and \`git\` already tracks it exactly: a \`git
+fetch\` and a count of the commits between \`HEAD\` and \`origin/main\`.
+
+> **Correction (2026-08-31):** every earlier revision of this page described "two upstream
+> update channels", Stable Releases and a Main Branch nightly, and the app carried a selector
+> for them. Neither worked. Both the CLI updater and the web UI compared a hardcoded
+> \`1.0.0\` against the newest release tag and the upstream \`package.json\` version - all three of
+> which had been \`1.0.0\` since the repository was created - so the check answered "up to date"
+> no matter how far behind the checkout was. The "development" channel compared against a
+> hand-edited \`CURRENT_COMMIT_SHA\` that had itself gone stale. An installation two hundred
+> commits behind was told it was current. Version strings nobody bumps are not version strings,
+> and the channels they distinguished did not exist: there has only ever been \`main\`.
+
+The version number that remains in \`package.json\` and \`pyproject.toml\` is packaging metadata.
+Nothing in the update path reads it.
 
 ---
 
-## ⚡ 2. Native Terminal & CLI Update Tool (\`z30 --update\`)
+## 🖥️ 1. Updating from the app
 
-The native Python package includes an automated upstream synchronizer:
+**Click the Update button in the top navigation bar.** It shows how many commits behind
+\`origin/main\` this installation is, lists what those commits are, and updates when you press
+**Update now**.
+
+When z-30 is started with the \`z30\` command, the native server is behind the page and does the
+work itself:
+
+1. \`git fetch origin main\` in the real checkout.
+2. \`git merge --ff-only origin/main\`.
+3. The result reports what changed, and the modal offers a reload when the interface moved.
+
+**Fast-forward only.** The update either advances \`HEAD\` onto the upstream commit or refuses
+and changes nothing. It cannot produce a merge commit, cannot leave a conflicted tree, and
+cannot discard your work. It is refused, with the reason shown, when:
+
+| Condition | Why |
+| :--- | :--- |
+| The working tree has uncommitted changes | A station that has patched its own copy is not something an Update button gets to overwrite. Commit or stash first. |
+| The checkout has commits upstream does not | It cannot be fast-forwarded. Merge or rebase it by hand. |
+| **The transmitter is keyed** | Replacing the served bundle and the Python sources under a running transmission, while the operator is on the air and not looking at the screen, is not something to do. Finish the slot first. |
+| This is not a git checkout | A pip or distribution-package install updates through that package manager. |
+
+The repository commits its built web bundle (\`z30_dsp/web_dist/\`), which is why the button
+works on a station with no Node toolchain: once the fast-forward lands, the new interface is
+already on disk and the browser only has to purge its caches and reload. Nothing is rebuilt by
+default. When the Python package itself changed, the modal says so - restart z-30 so the server
+runs the new code.
+
+**Opened from static hosting or as a PWA with no native server behind it**, the modal can still
+tell you how far behind you are - it compares the bundle's build-stamped commit against the
+GitHub commits API - but it cannot update anything, says so, and gives you the one command to
+run instead. The build stamp is injected by \`vite.config.ts\` from \`git rev-parse HEAD\` at build
+time, so it cannot drift the way the hand-maintained constant did.
+
+---
+
+## ⚡ 2. Updating from the terminal (\`z30 --update\`)
+
+The same \`z30_dsp/git_sync\` module, with a terminal front end. The button and the command can
+never disagree about whether an installation is current, because they are the same code.
 
 \`\`\`bash
-# Run the built-in updater
+# Report status, then ask before fast-forwarding.
 z30 --update
 
-# Or run non-interactively with auto-pull
+# Apply without asking.
 z30 --update -y
+
+# Report only, change nothing. Exits non-zero when behind, so a startup script
+# or a cron job can act on it without parsing any output.
+z30 --update --check
+
+# Also refresh dependencies / rebuild the bundle from source, for a developer checkout.
+z30 --update -y --reinstall
+z30 --update -y --rebuild
+\`\`\`
+
+Sample output:
+
+\`\`\`
+==================================================================
+      z-30 TRANSCEIVER - UPSTREAM SYNCHRONISATION
+      https://github.com/themantas1994/z-30
+==================================================================
+Checking https://github.com/themantas1994/z-30 (main)...
+
+Repository:    /home/pi/z-30
+Branch:        main
+Local commit:  cf06ee7
+Upstream:      a91d3f2 (origin/main)
+
+[!] 3 commits behind upstream:
+      a91d3f2  fix(cat): release the pin the key actually drove
+      7c1e044  feat(dsp): seed the dithered decode schedule
+      2b90aa1  docs(wiki): correct the decoder schedule count
+
+Fast-forward to a91d3f2 now? [Y/n]:
 \`\`\`
 
 ---
 
-## 🐧 3. Platform Specific Terminal Commands
+## 🔌 3. The local API
 
-### Ubuntu / Debian / Raspberry Pi OS (DigiPi)
+\`z30_dsp/web_server.py\` exposes the same information to the app over three endpoints, behind
+the same token + \`Origin\` + \`Host\` triple check as every other \`/api/\` route (see
+[13. Operating Safety, Compliance & Security](13-Operating-Safety-Compliance-&-Security.md)):
+
+| Endpoint | Purpose |
+| :--- | :--- |
+| \`GET /api/update/status?fetch=1\` | How far behind upstream, what the pending commits are, whether a fast-forward would succeed. \`fetch=0\` answers from the last fetch without touching the network. |
+| \`POST /api/update/apply\` | Starts the fast-forward in a worker thread. Returns immediately; refused with HTTP 409 while PTT is asserted, or if an update is already running. |
+| \`GET /api/update/progress\` | The running log and the final outcome. Polled by the modal, so reloading the page mid-update reconnects to the running job instead of starting a second one. |
+
+Every git invocation is an argument list, never a shell string - commit subjects and branch
+names are attacker-influenceable on a repository anyone can open a pull request against.
+
+---
+
+## 🐧 4. Platform notes
+
+The update *is* the fast-forward; the per-platform installer scripts exist to install
+dependencies, not to update source. Re-run one only when dependencies changed - the updater
+says so, or use \`--reinstall\`.
+
 \`\`\`bash
-cd z-30
-git pull origin main
-chmod +x install_ubuntu.sh
-./install_ubuntu.sh
+# Any platform, in the z-30 checkout:
+git pull --ff-only origin main
+
+# Then, only if dependencies changed:
+./install_ubuntu.sh          # Ubuntu / Debian / Raspberry Pi OS
+./install_arch.sh            # Arch / Manjaro / EndeavourOS  (or: makepkg -si)
+./install_android_termux.sh  # Android Termux
+run_windows.bat              # Windows 10 / 11
+pip install --upgrade -e .   # Generic Python
 \`\`\`
 
-### Arch Linux / Manjaro / EndeavourOS
-\`\`\`bash
-cd z-30
-git pull origin main
-chmod +x install_arch.sh
-./install_arch.sh
-# Or rebuild AUR package:
-makepkg -si
-\`\`\`
-
-### Windows 10 & 11
-\`\`\`cmd
-cd z-30
-git pull origin main
-run_windows.bat
-\`\`\`
-
-### Android Termux (Mobile Field Radio)
-\`\`\`bash
-cd z-30
-git pull origin main
-chmod +x install_android_termux.sh
-./install_android_termux.sh
-\`\`\`
-
-### Generic Python Pip
-\`\`\`bash
-git pull origin main
-pip install --upgrade -e .
-npm install && npm run build
-\`\`\`
+See [09. Cross-Platform Build & Packaging](09-Cross-Platform-Build-&-Packaging.md) for what
+each installer does.
 `,
   },
   {
@@ -2258,18 +2324,18 @@ Sample output from the default mode:
 ================================================================================================
 SNR (2500Hz)   | Frames  | Success  | FER       | Decode %  | Avg Iters  | Acq fail | Timing RMS  | Freq RMS
 ------------------------------------------------------------------------------------------------
- -28.0 dB      | 40      | 0        | 1.0000    |     0.0%  |  150.0     | 25       |   1330.7 ms |   6.19 Hz
- -27.0 dB      | 40      | 0        | 1.0000    |     0.0%  |  150.0     | 17       |   1251.3 ms |   5.06 Hz
- -26.0 dB      | 40      | 0        | 1.0000    |     0.0%  |  150.0     | 3        |    281.3 ms |   3.46 Hz
- -25.0 dB      | 40      | 3        | 0.9250    |     7.5%  |  138.9     | 1        |    104.7 ms |   0.99 Hz
- -24.0 dB      | 40      | 4        | 0.9000    |    10.0%  |  138.6     | 0        |     17.8 ms |   0.32 Hz
- -23.0 dB      | 40      | 7        | 0.8250    |    17.5%  |  124.2     | 0        |     13.7 ms |   0.18 Hz
- -22.0 dB      | 40      | 13       | 0.6750    |    32.5%  |  106.3     | 0        |     13.5 ms |   0.18 Hz
- -21.0 dB      | 40      | 21       | 0.4750    |    52.5%  |   74.3     | 0        |      9.6 ms |   0.14 Hz  <-- 50% crossing interpolates to -21.1 dB
- -20.0 dB      | 40      | 27       | 0.3250    |    67.5%  |   51.1     | 0        |      7.2 ms |   0.12 Hz
- -19.0 dB      | 40      | 32       | 0.2000    |    80.0%  |   36.0     | 0        |      7.5 ms |   0.10 Hz
- -18.0 dB      | 40      | 36       | 0.1000    |    90.0%  |   19.0     | 0        |      4.4 ms |   0.09 Hz  <-- 90% crossing
- -17.0 dB      | 40      | 40       | 0.0000    |   100.0%  |    2.5     | 0        |      3.9 ms |   0.07 Hz
+ -28.0 dB      | 40      | 0        | 1.0000    |     0.0%  |  150.0     | 15       |    311.3 ms |   4.61 Hz
+ -27.0 dB      | 40      | 0        | 1.0000    |     0.0%  |  150.0     | 3        |    190.0 ms |   2.41 Hz
+ -26.0 dB      | 40      | 0        | 1.0000    |     0.0%  |  150.0     | 1        |    124.4 ms |   2.24 Hz
+ -25.0 dB      | 40      | 0        | 1.0000    |     0.0%  |  150.0     | 1        |    144.7 ms |   0.83 Hz
+ -24.0 dB      | 40      | 0        | 1.0000    |     0.0%  |  150.0     | 0        |     17.8 ms |   0.32 Hz
+ -23.0 dB      | 40      | 22       | 0.4500    |    55.0%  |   77.6     | 0        |     13.7 ms |   0.18 Hz  <-- 50% crossing interpolates to -23.1 dB
+ -22.0 dB      | 40      | 34       | 0.1500    |    85.0%  |   24.9     | 0        |     13.5 ms |   0.18 Hz
+ -21.0 dB      | 40      | 40       | 0.0000    |   100.0%  |    1.2     | 0        |      9.6 ms |   0.14 Hz  <-- 90% crossing interpolates to -21.7 dB
+ -20.0 dB      | 40      | 40       | 0.0000    |   100.0%  |    1.1     | 0        |      7.2 ms |   0.12 Hz
+ -19.0 dB      | 40      | 40       | 0.0000    |   100.0%  |    1.0     | 0        |      7.5 ms |   0.10 Hz
+ -18.0 dB      | 40      | 40       | 0.0000    |   100.0%  |    1.0     | 0        |      4.4 ms |   0.09 Hz
+ -17.0 dB      | 40      | 40       | 0.0000    |   100.0%  |    1.0     | 0        |      3.9 ms |   0.07 Hz
 ================================================================================================
 \`\`\`
 
@@ -2280,7 +2346,7 @@ columns rather than being hidden inside the frame error rate.
 
 ---
 
-## 🖥️ The in-app benchmark, and why its numbers are not the published ones
+## 🖥️ The in-app benchmark, and why it now agrees with the Python one
 
 **Station Settings → 5. Experimental Testing → Launch Benchmark Suite** runs the same two modes
 in the browser, over \`src/dsp/monteCarloEngine.ts\`. It has a **Measurement mode** selector, and
@@ -2292,36 +2358,55 @@ timing offset (±0.5 s), searches for the frame using only the 21 Costas symbols
 counts a frame it cannot find as a failure. The \`Acq Fail\`, \`Timing RMS\` and \`Freq RMS\` columns
 of the results table are the same diagnostics the Python table carries.
 
-**It is a bench instrument, not the reference.** Use it to watch how a change moves the curve
-without leaving the app; quote the Python benchmark when you publish a number. Measured at seed
-\`20260830\`, 40 frames per point:
+The two engines model the same receiver, and the two constants that say so are shared and
+pinned by \`tests/test_cross_language_parity.py\`:
+
+| Constant | Value | What it fixes |
+| :--- | :--- | :--- |
+| \`SLOT_SEARCH_MARGIN_SEC\` | 0.05 s | The timing search half-width is the station's timing uncertainty plus this margin — ±0.55 s at the default ±0.5 s offset. z-30 is slot-synchronised, so a real receiver knows where the frame should start and searches a window, not an arbitrary stream. |
+| \`REALISTIC_PILOT_COHERENCE\` | 0.0 | Purely non-coherent demodulation, which is what z-30's receiver is specified to be. \`ideal\` mode keeps the pilot-adaptive weight, because it is handed perfect timing. |
+
+Measured at seed \`20260830\`, 40 frames per point, AWGN:
 
 | | Python (\`z30_dsp/benchmark.py\`) | Browser (\`monteCarloEngine.ts\`) |
 | :--- | :--- | :--- |
 | Genie-aided bound, 50% | -24.6 dB | ≈ -24.2 dB |
-| AWGN blind acquisition, 50% | **-21.1 dB** | ≈ -22.9 dB |
+| AWGN blind acquisition, 50% | **-23.1 dB** | **-23.0 dB** |
 
-The two agree closely on the bound and differ by roughly 1.8 dB on the threshold. One reason is
-real and worth knowing rather than papering over:
+> **Correction (2026-08-31, second revision):** this page used to publish that same row as
+> **-21.1 dB** against **≈ -22.9 dB** and explain the 1.8 dB gap by saying the browser searched a
+> narrower timing window. That explanation was wrong, and so was the Python figure.
+>
+> Both were tested paired — the identical frame, fading realisation, carrier offset, timing
+> offset and noise decoded twice, changing one thing at a time:
+>
+> - **Timing search width** (full-stream vs slot-synchronised), 200 frames from -26 to -22 dB:
+>   **zero discordant decodes**, exact two-sided McNemar p = 1. The search width accounted for
+>   none of the gap.
+> - **Demodulator coherent weight** (pilot-adaptive 0.35–0.85 vs zero), 160 frames from -24 to
+>   -21 dB: **59 discordant pairs, 55 won by the non-coherent receiver and 4 by the
+>   semi-coherent one**, exact two-sided McNemar p = 1.7×10⁻¹² — greater than 99.9999999%
+>   confidence, clearing the ≥99% bar [\`AGENTS.md\` §5](../AGENTS.md#5-honest-numbers) sets for a
+>   result that changes a published figure.
+>
+> The Python benchmark had been applying a pilot-aided semi-coherent term through the whole
+> realistic path. Under the timing error that blind acquisition actually leaves, a few
+> milliseconds rotates each tone by $2\\pi f \\Delta t$, so that term is measured against the wrong
+> phase reference and cancels signal instead of reinforcing it. The browser engine had already
+> been dropping it. **The Python benchmark was measuring a receiver worse than the one z-30
+> specifies, and the published threshold was 2.0 dB pessimistic as a result.**
+>
+> The trade-off side is recorded rather than left out: at -24 dB, below the point where the
+> Costas pattern is reliably findable, both receivers are near zero and the semi-coherent one
+> took that point 3–0. The full per-point table is in the \`REALISTIC_PILOT_COHERENCE\` comment in
+> \`z30_dsp/benchmark.py\`.
 
-1. **The timing search is narrower.** The browser searches ±0.55 s around the slot boundary,
-   which is what a slot-synchronised receiver actually has to do; \`acquire_frame\` defaults to
-   searching the whole stream. A narrower search mis-locks less often.
-
-> **Correction (2026-08-31):** this page used to list a second reason - "the decoders are not the
-> same: the browser runs a three-schedule min-sum cascade; the Python decoder runs a single
-> normalised min-sum schedule." That was false in both directions. \`z30_dsp/ldpc.py\` and
-> \`src/dsp/ldpcCodec.ts\` have always run the identical **four**-schedule cascade described in
-> [04. Forward Error Correction & LDPC](04-Forward-Error-Correction-&-LDPC.md#the-four-decode-schedules).
-> A paired benchmark validated that the cascade design is genuinely better than the single-schedule
-> decoder this page mistakenly described (see "A worked example" below) - it just isn't the reason
-> the Python and browser thresholds disagree with each other, since both run the same one. What,
-> if anything beyond the timing-window difference above, accounts for the remaining gap has not
-> been measured; this page will not guess at a second reason again without a benchmark behind it.
-
-So: **the figures in this page and in the wiki come from the Python benchmark.** If you change
-the DSP, the browser engine will tell you quickly which way the curve moved; confirm the number
-with a seeded Python run before it goes anywhere near documentation.
+Both engines now run the same receiver model and land 0.1 dB apart on the threshold, which is
+inside the sampling noise of 40 frames per point. **The Python benchmark is still the
+reference**: it is the one CI runs, the one the seed defaults are pinned to, and the one whose
+output the tables above are copied from. Use the browser engine to see which way a change moved
+the curve without leaving the app; confirm with a seeded Python run before a number reaches
+documentation.
 
 One thing the browser engine is *not* free to differ on: \`ideal\` and \`realistic\` mean exactly
 what they mean here. A browser run in \`ideal\` mode is a bound, is labelled a bound in the UI,

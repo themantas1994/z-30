@@ -68,19 +68,19 @@ export default function App() {
   const [isUpdateOpen, setIsUpdateOpen] = useState<boolean>(false);
   const [isBenchmarkOpen, setIsBenchmarkOpen] = useState<boolean>(false);
 
-  // Background update check on application startup
+  // How far behind upstream this station is, checked once in the background at startup so the
+  // header badge is truthful before the operator thinks to look.
+  //
+  // Unconditional now. This used to be gated on a `z30_auto_check_updates` flag whose only
+  // writer was a settings tab in the update modal; that tab is gone, so the flag could only
+  // ever read back its default. The check is a single `git fetch` (or one GitHub request) two
+  // and a half seconds after start, it does not block anything, and nothing is downloaded or
+  // applied without the operator pressing Update.
   useEffect(() => {
-    try {
-      const autoCheck = localStorage.getItem('z30_auto_check_updates') !== 'false';
-      if (autoCheck) {
-        // Run update check in background without blocking startup
-        setTimeout(() => {
-          updateEngine.checkForUpdates('STABLE', false).catch(() => {});
-        }, 2500);
-      }
-    } catch {
-      // ignore
-    }
+    const timer = setTimeout(() => {
+      updateEngine.checkForUpdates(false).catch(() => {});
+    }, 2500);
+    return () => clearTimeout(timer);
   }, []);
 
   useEffect(() => qsoLogger.subscribeToStorageStatus(setStorageStatus), []);

@@ -1,166 +1,150 @@
 #!/usr/bin/env python3
 """
-z-30 Transceiver & DSP Suite - GitHub Upstream Updater
-======================================================
+z-30 Transceiver & DSP Suite - Upstream Updater CLI
+===================================================
 Repository: https://github.com/themantas1994/z-30
 
-Checks for updates, pulls latest git commits, rebuilds Web UI assets,
-and updates native Python DSP dependencies.
+The terminal front end for `z30_dsp.git_sync`. The web UI's Update button and the
+`/api/update` endpoints go through the same module, so `z30 --update` and the button do
+exactly the same thing and can never disagree about whether an installation is current.
+
+This used to compare a hardcoded `CURRENT_VERSION = "1.0.0"` against the latest GitHub
+release tag, print "Your z-30 Transceiver is up to date!" whenever they matched - which was
+always, because neither had changed since the repository was created - and only then, if the
+comparison had somehow said otherwise, offer a `git pull`. An installation two hundred commits
+behind was told it was current. See the module docstring of git_sync.py.
 """
 
-import os
+import argparse
 import sys
-import json
-import urllib.request
-import urllib.error
-import subprocess
-import shutil
-from typing import Dict, Any, Optional
 
-GITHUB_REPO = "themantas1994/z-30"
-API_URL = f"https://api.github.com/repos/{GITHUB_REPO}"
-RAW_URL = f"https://raw.githubusercontent.com/{GITHUB_REPO}/main"
-CURRENT_VERSION = "1.0.0"
+from z30_dsp import git_sync
 
 
-def print_banner():
+def print_banner() -> None:
     print("==================================================================")
-    print("      z-30 TRANSCEIVER - GITHUB UPSTREAM UPDATER ENGINE           ")
-    print("      Repository: https://github.com/themantas1994/z-30           ")
+    print("      z-30 TRANSCEIVER - UPSTREAM SYNCHRONISATION                 ")
+    print(f"      {git_sync.GITHUB_URL}")
     print("==================================================================")
 
 
-def check_remote_version() -> Dict[str, Any]:
-    """Fetches latest release and commits from GitHub."""
-    headers = {"User-Agent": "z30-Updater/1.0", "Accept": "application/vnd.github.v3+json"}
-    result: Dict[str, Any] = {
-        "current_version": CURRENT_VERSION,
-        "latest_version": CURRENT_VERSION,
-        "has_update": False,
-        "release_name": "",
-        "release_body": "",
-        "latest_commit": "",
-        "commit_message": "",
-        "html_url": f"https://github.com/{GITHUB_REPO}",
-    }
+def print_status(status: git_sync.SyncStatus) -> None:
+    if not status.is_git_checkout:
+        print("\nThis copy of z-30 is not a git checkout.")
+        print(status.blocked_reason or "")
+        return
 
-    # 1. Query latest release
-    try:
-        req = urllib.request.Request(f"{API_URL}/releases/latest", headers=headers)
-        with urllib.request.urlopen(req, timeout=5) as response:
-            data = json.loads(response.read().decode("utf-8"))
-            tag = data.get("tag_name", "").lstrip("v")
-            result["latest_version"] = tag
-            result["release_name"] = data.get("name", tag)
-            result["release_body"] = data.get("body", "")
-            result["html_url"] = data.get("html_url", result["html_url"])
-            if tag and tag != CURRENT_VERSION:
-                result["has_update"] = True
-    except Exception as e:
-        # Fallback to checking raw package.json
-        try:
-            req = urllib.request.Request(f"{RAW_URL}/package.json", headers=headers)
-            with urllib.request.urlopen(req, timeout=5) as response:
-                data = json.loads(response.read().decode("utf-8"))
-                remote_v = data.get("version", CURRENT_VERSION)
-                result["latest_version"] = remote_v
-                if remote_v != CURRENT_VERSION:
-                    result["has_update"] = True
-        except Exception:
-            pass
+    print(f"\nRepository:    {status.repo_dir}")
+    print(f"Branch:        {status.branch}")
+    print(f"Local commit:  {status.local_short}")
+    print(f"Upstream:      {status.upstream_short} ({git_sync.DEFAULT_REMOTE}/{git_sync.DEFAULT_BRANCH})")
 
-    # 2. Query latest commit
-    try:
-        req = urllib.request.Request(f"{API_URL}/commits?per_page=1", headers=headers)
-        with urllib.request.urlopen(req, timeout=5) as response:
-            commits = json.loads(response.read().decode("utf-8"))
-            if commits and isinstance(commits, list):
-                c = commits[0]
-                result["latest_commit"] = c.get("sha", "")[:7]
-                result["commit_message"] = c.get("commit", {}).get("message", "").split("\n")[0]
-    except Exception:
-        pass
+    if status.error:
+        print(f"\n! {status.error}")
+        print("  The figures below come from the last successful fetch and may be stale.")
 
-    return result
+    if status.behind == 0 and status.ahead == 0:
+        print("\n[OK] This installation is at the tip of upstream.")
+    elif status.behind:
+        plural = "" if status.behind == 1 else "s"
+        print(f"\n[!] {status.behind} commit{plural} behind upstream:")
+        for commit in status.pending:
+            print(f"      {commit.short_sha}  {commit.subject}")
+        if len(status.pending) < status.behind:
+            print(f"      ... and {status.behind - len(status.pending)} more")
+
+    if status.ahead:
+        print(f"\n[i] This checkout is {status.ahead} commit(s) ahead of upstream.")
+    if status.dirty:
+        print("[i] The working tree has uncommitted changes.")
+    if status.behind and not status.can_update and status.blocked_reason:
+        print(f"\nCannot update automatically: {status.blocked_reason}")
 
 
-def is_git_repo(path: str = ".") -> bool:
-    """Checks if directory is a git repository."""
-    return os.path.exists(os.path.join(path, ".git"))
-
-
-def perform_git_update(repo_dir: str = ".") -> bool:
-    """Executes git pull and updates local dependencies."""
-    print(f"\n[Updater] Fetching latest changes from git origin (https://github.com/{GITHUB_REPO})...")
-    try:
-        subprocess.run(["git", "fetch", "--all"], cwd=repo_dir, check=True)
-        subprocess.run(["git", "pull", "origin", "main"], cwd=repo_dir, check=True)
-        print("[Updater] ✓ Git repository successfully updated to latest commit.")
-    except Exception as e:
-        print(f"[Updater] ✗ Git pull failed: {e}")
-        return False
-
-    # Check for npm and rebuild web UI if available
-    pkg_json = os.path.join(repo_dir, "package.json")
-    if os.path.exists(pkg_json) and shutil.which("npm"):
-        print("[Updater] Rebuilding Web DSP distribution bundle (npm run build)...")
-        try:
-            subprocess.run(["npm", "run", "build"], cwd=repo_dir, check=True)
-            print("[Updater] ✓ Web UI distribution built successfully.")
-        except Exception as e:
-            print(f"[Updater] ⚠ Web build warning: {e}")
-
-    # Update Python editable package
-    if shutil.which("pip"):
-        print("[Updater] Refreshing Python package installation (pip install -e .)...")
-        try:
-            subprocess.run([sys.executable, "-m", "pip", "install", "-e", "."], cwd=repo_dir, check=True)
-            print("[Updater] ✓ Python DSP suite refreshed.")
-        except Exception as e:
-            print(f"[Updater] ⚠ Pip install notice: {e}")
-
-    print("\n[Updater] ✓ Update process complete! You can now run 'z30' to start the latest version.")
-    return True
-
-
-def run_updater(interactive: bool = True):
+def run_updater(
+    interactive: bool = True,
+    check_only: bool = False,
+    reinstall_python: bool = False,
+    rebuild_web: bool = False,
+) -> int:
+    """Returns a process exit code: 0 current or updated, 1 behind or failed."""
     print_banner()
-    print(f"Current Installed Version: v{CURRENT_VERSION}")
-    print(f"Checking https://github.com/{GITHUB_REPO} for updates...\n")
+    print(f"Checking {git_sync.GITHUB_URL} ({git_sync.DEFAULT_BRANCH})...")
 
-    info = check_remote_version()
+    status = git_sync.read_status()
+    print_status(status)
 
-    print(f"Latest Upstream Version:  v{info['latest_version']}")
-    if info.get("latest_commit"):
-        print(f"Latest GitHub Commit:     {info['latest_commit']} ({info.get('commit_message', '')})")
+    if status.behind == 0:
+        return 0 if not status.error else 1
+    if check_only:
+        # A non-zero exit lets a cron job or a startup script act on "this box is behind"
+        # without parsing any of the text above.
+        return 1
+    if not status.can_update:
+        return 1
 
-    if info["has_update"]:
-        print(f"\n★ A NEW UPDATE IS AVAILABLE: v{info['latest_version']} (Current: v{CURRENT_VERSION})")
-        if info.get("release_name"):
-            print(f"Release: {info['release_name']}")
-        if info.get("release_body"):
-            print(f"\nRelease Notes:\n{info['release_body']}\n")
-    else:
-        print("\n✓ Your z-30 Transceiver is up to date!")
+    if interactive:
+        try:
+            answer = input(f"\nFast-forward to {status.upstream_short} now? [Y/n]: ").strip().lower()
+        except (EOFError, KeyboardInterrupt):
+            print()
+            return 1
+        if answer not in ("", "y", "yes"):
+            print("Left unchanged.")
+            return 1
 
-    # If in git repo, offer automatic pull
-    root_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-    if is_git_repo(root_dir):
-        if interactive and info["has_update"]:
-            ans = input("\nWould you like to pull and apply the update now? [Y/n]: ").strip().lower()
-            if ans in ("", "y", "yes"):
-                perform_git_update(root_dir)
-        elif not interactive:
-            perform_git_update(root_dir)
-    else:
-        print("\nTo update manually from GitHub:")
-        print(f"  git clone https://github.com/{GITHUB_REPO}.git")
-        print("  cd z-30 && ./install_ubuntu.sh (or install_arch.sh / run_windows.bat)")
+    print()
+    result = git_sync.apply_update(
+        on_log=lambda line: print(f"  {line}"),
+        reinstall_python=reinstall_python,
+        rebuild_web=rebuild_web,
+    )
+    if not result.success:
+        print(f"\n[FAIL] {result.error}")
+        return 1
+
+    print(f"\n[OK] Updated to {result.to_commit[:7]}.")
+    if result.restart_required:
+        print("      The Python package changed - restart z-30 to run the new code.")
+    if result.web_assets_changed:
+        print("      The web bundle changed - reload the browser tab (or restart z-30).")
+    return 0
 
 
-def main():
-    interactive = "--yes" not in sys.argv and "-y" not in sys.argv
-    run_updater(interactive=interactive)
+def main() -> None:
+    parser = argparse.ArgumentParser(
+        prog="z30 --update",
+        description="Fast-forward this z-30 installation onto the upstream main branch.",
+    )
+    parser.add_argument(
+        "-y", "--yes", action="store_true",
+        help="Apply the update without asking.",
+    )
+    parser.add_argument(
+        "--check", action="store_true",
+        help="Report how far behind upstream this installation is and change nothing. "
+             "Exits non-zero when behind, so a startup script can act on it.",
+    )
+    parser.add_argument(
+        "--reinstall", action="store_true",
+        help="Also run 'pip install -e .' afterwards, for when dependencies changed.",
+    )
+    parser.add_argument(
+        "--rebuild", action="store_true",
+        help="Also run 'npm run build' afterwards. Not normally needed: the repository ships "
+             "the built bundle, so a fast-forward already brings the new interface with it.",
+    )
+    # Tolerate the flags z30's own argv carries when it routes here.
+    args, _unknown = parser.parse_known_args()
+
+    sys.exit(
+        run_updater(
+            interactive=not args.yes,
+            check_only=args.check,
+            reinstall_python=args.reinstall,
+            rebuild_web=args.rebuild,
+        )
+    )
 
 
 if __name__ == "__main__":

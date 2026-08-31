@@ -37,7 +37,7 @@ Mathematical Specification & Design Rationale:
    - Parity check equations (m = n - k): 139 checks.
    - Code rate (R): R = 77 / 216 ≈ 0.3564. Against an idealised AWGN channel with perfect
      synchronisation, the seeded benchmark crosses 50% decode near -24.6 dB SNR and 90% near
-     -23.6 dB (2500 Hz reference bandwidth). That is a bound on the code under ideal detection,
+     -23.4 dB (2500 Hz reference bandwidth). That is a bound on the code under ideal detection,
      not an over-the-air threshold - see the docstring of z30_dsp/benchmark.py.
    - Modulation Symbol Mapping: 216 coded bits / (4 bits/symbol) = 54 data symbols in 16-MFSK.
      Coupled with 21 Costas synchronization symbols, total frame = 75 symbols (24.0s duration at Ts=320ms).
@@ -66,12 +66,15 @@ Mathematical Specification & Design Rationale:
 
 5. Vectorized Normalized Min-Sum Belief Propagation Decoder:
    - Check Node Update: L_{c->v} = alpha * prod(sign(L_{v'->c})) * min_{v' != v}(|L_{v'->c}|)
-     where alpha = 0.75 is the empirical normalization factor mitigating check node overestimation.
+     where alpha is the schedule's own empirical normalization factor mitigating check node
+     overestimation - see DECODE_SCHEDULES; there is no single alpha for the decoder.
    - Variable Node Update: L_{v->c} = L_{ch, v} + sum_{c' != c} L_{c'->v}
    - Early stopping condition: syndrome s = H * c^T == 0 (mod 2) and CRC valid.
 """
 
-from typing import Tuple, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
+import math
+
 import numpy as np
 
 Z30_CHECK_TO_INFO: List[List[int]] = [
@@ -105,25 +108,109 @@ Z30_CHECK_TO_INFO: List[List[int]] = [
   [39,50,54,76,18],[47,63,64,75,12],[52,58,73,1,36],[59,74,16,26,39],
 ]
 
+#: The four decode schedules \`decode_min_sum\` runs, in order, stopping at the first that
+#: produces a codeword whose syndrome is zero and whose CRC-14 matches.
+#:
+#: There is deliberately no single "the decoder's alpha". One used to be documented in wiki/04,
+#: accepted as a constructor argument here, exported as \`Z30_LDPC_PARAMS.alphaMinSum\` in
+#: TypeScript and rendered in the Specs modal as 0.75 - a value none of these four schedules
+#: has ever used. The table is the specification; anything that wants to describe the decoder
+#: reads it rather than retyping a number beside it.
+#:
+#: The twin of \`Z30_DECODE_SCHEDULES\` in src/dsp/ldpcCodec.ts, asserted equal by
+#: tests/test_cross_language_parity.py.
+DECODE_SCHEDULES: Tuple[Dict[str, Any], ...] = (
+    {'mode': 'NMS', 'alpha': 0.82, 'beta': 0.08, 'damping': 0.88, 'reverse': False, 'iters': 45},
+    {'mode': 'SPA', 'alpha': 0.95, 'beta': 0.00, 'damping': 0.85, 'reverse': False, 'iters': 40},
+    {'mode': 'NMS', 'alpha': 0.74, 'beta': 0.04, 'damping': 0.90, 'reverse': True, 'iters': 35},
+    {'mode': 'DITHER', 'alpha': 0.80, 'beta': 0.06, 'damping': 0.85, 'reverse': False, 'iters': 30},
+)
+
+#: Peak-to-peak amplitude of the LLR perturbation applied by decode schedule 4 ("DITHER").
+#: Shared with src/dsp/ldpcCodec.ts and pinned by tests/test_cross_language_parity.py.
+DITHER_AMPLITUDE: float = 0.45
+
+_FNV32_OFFSET_BASIS = 0x811C9DC5
+_FNV32_PRIME = 0x01000193
+_UINT32_MASK = 0xFFFFFFFF
+
+
+def dither_seed_from_llrs(llr_channel: "np.ndarray | List[float]") -> int:
+    """
+    Derives a 32-bit seed from the channel LLRs themselves (FNV-1a over 1/64-LLR quanta).
+
+    Schedule 4 perturbs the channel LLRs to break the symmetric trapping sets a deterministic
+    schedule stalls on. That perturbation used to come from \`np.random.rand()\` - the unseeded
+    global generator - so the decoder was not a function of its input: two seeded benchmark
+    runs of the identical configuration could decode a different set of frames, precisely
+    among the near-threshold frames the benchmark exists to characterise. AGENTS.md's
+    determinism invariant says unseeded RNG does not belong in that path.
+
+    Threading a seeded generator in from the benchmark would fix the benchmark and nothing
+    else: \`decode_min_sum\` is also called by the SIC decoder and by the live receive path,
+    where there is no seed to thread, and a frame captured off the air still has to decode the
+    same way twice. Deriving the seed from the input instead makes the decoder a pure function
+    everywhere - the same LLRs always give the same answer, in isolation, in any caller, in
+    either language. The perturbation only has to be uncorrelated with the code's structure,
+    not unpredictable, so nothing is lost by making it reproducible.
+
+    Quantising to 1/64 before hashing keeps the derivation on integers, so Python and
+    TypeScript agree bit for bit; \`math.floor(x * 64 + 0.5)\` rather than \`round()\` because
+    Python rounds halves to even and JavaScript rounds them up.
+    """
+    h = _FNV32_OFFSET_BASIS
+    for value in llr_channel:
+        quantum = math.floor(float(value) * 64.0 + 0.5) & _UINT32_MASK
+        for shift in (0, 8, 16, 24):
+            h ^= (quantum >> shift) & 0xFF
+            h = (h * _FNV32_PRIME) & _UINT32_MASK
+    return h
+
+
+def dither_vector(llr_channel: "np.ndarray | List[float]", length: int) -> "np.ndarray":
+    """
+    The schedule-4 LLR perturbation for \`llr_channel\`: \`length\` values in +/-DITHER_AMPLITUDE/2.
+
+    mulberry32, the same generator as src/dsp/seededRandom.ts, reproduced here in unsigned
+    32-bit arithmetic so that both languages emit an identical sequence.
+    """
+    state = dither_seed_from_llrs(llr_channel) or 0x9E3779B9
+    out = np.zeros(length, dtype=np.float64)
+    for i in range(length):
+        state = (state + 0x6D2B79F5) & _UINT32_MASK
+        t = state
+        t = ((t ^ (t >> 15)) * (t | 1)) & _UINT32_MASK
+        t = (t ^ (t + ((t ^ (t >> 7)) * (t | 61)))) & _UINT32_MASK
+        unit = ((t ^ (t >> 14)) & _UINT32_MASK) / 4294967296.0
+        out[i] = (unit - 0.5) * DITHER_AMPLITUDE
+    return out
+
+
 class Z30LdpcCodec:
     """
     Production-grade Systematic (216, 77) LDPC Codec.
     Implements IRA forward-substitution encoding and normalized Min-Sum belief propagation.
     """
 
-    def __init__(self, max_iterations: int = 45, alpha: float = 0.75) -> None:
+    def __init__(self, max_iterations: int = 45) -> None:
         """
         Initializes the (216, 77) LDPC Codec.
 
         Args:
-            max_iterations (int): Maximum belief propagation iterations (default: 45).
-            alpha (float): Normalized Min-Sum scaling factor (default: 0.75).
+            max_iterations (int): Maximum belief propagation iterations (default: 45). This is
+                schedule 1's cap; the four schedules of \`decode_min_sum\` carry their own.
+
+        There is deliberately no \`alpha\` argument. One used to be accepted here, defaulting to
+        0.75, stored as \`self.alpha\` - and never read by the decoder, which has always applied
+        the four per-schedule alphas in \`decode_min_sum\` instead. Constructing the codec with
+        \`alpha=0.5\` changed nothing, while the number was quoted in wiki/04 and rendered in the
+        Specs modal as though it were live. A parameter that cannot affect the result is worse
+        than no parameter: it invites tuning that silently does nothing.
         """
         self.k: int = 77   # Information block length (63 payload + 14 CRC)
         self.n: int = 216  # Total coded codeword length
         self.m: int = 139  # Parity check equations (216 - 77)
         self.max_iterations: int = max_iterations
-        self.alpha: float = alpha
 
         # Pre-construct Parity Check Matrix H and sparse adjacency lists
         self.H = self._build_parity_check_matrix()
@@ -276,10 +363,8 @@ class Z30LdpcCodec:
 
         # Multi-schedule decoding passes
         schedules = [
-            {'mode': 'NMS', 'alpha': 0.82, 'beta': 0.08, 'damping': 0.88, 'reverse': False, 'iters': min(45, self.max_iterations)},
-            {'mode': 'SPA', 'alpha': 0.95, 'beta': 0.00, 'damping': 0.85, 'reverse': False, 'iters': min(40, self.max_iterations)},
-            {'mode': 'NMS', 'alpha': 0.74, 'beta': 0.04, 'damping': 0.90, 'reverse': True,  'iters': min(35, self.max_iterations)},
-            {'mode': 'DITHER', 'alpha': 0.80, 'beta': 0.06, 'damping': 0.85, 'reverse': False, 'iters': min(30, self.max_iterations)},
+            dict(sched, iters=min(sched['iters'], self.max_iterations))
+            for sched in DECODE_SCHEDULES
         ]
 
         best_codeword = np.zeros(self.n, dtype=np.uint8)
@@ -290,7 +375,9 @@ class Z30LdpcCodec:
         for sched in schedules:
             total_llrs = np.copy(input_llr)
             if sched['mode'] == 'DITHER':
-                total_llrs += (np.random.rand(self.n) - 0.5) * 0.45
+                # Derived from the channel LLRs, not from the unseeded global RNG - see
+                # dither_vector(). This is what keeps a seeded benchmark reproducible.
+                total_llrs += dither_vector(input_llr, self.n)
 
             # Check-to-variable message buffers
             c_to_v = [np.zeros(len(self.check_to_vars[c]), dtype=np.float32) for c in range(self.m)]
@@ -1278,6 +1365,28 @@ COARSE_FREQ_OVERSAMPLE = 8
 #: Spectrogram hops per symbol period.
 COARSE_TIME_OVERSAMPLE = 8
 
+#: Extra timing search either side of the station's own timing uncertainty, in seconds.
+#:
+#: z-30 is slot-synchronised: frames start on a 30-second UTC boundary, and a station whose
+#: clock is off by more than the slot guard cannot be worked at all. So a real receiver knows
+#: where the frame should begin to within its timing uncertainty, and searches a window around
+#: that - it does not search an arbitrary stream. The margin is what covers the receiver's own
+#: clock error on top of the transmitter's.
+#:
+#: Shared with src/dsp/monteCarloEngine.ts and pinned by tests/test_cross_language_parity.py:
+#: the two benchmark engines have to search the same window or they measure different things.
+SLOT_SEARCH_MARGIN_SEC = 0.05
+
+
+def slot_timing_search_sec(max_time_offset_sec: float) -> float:
+    """
+    Half-width of the timing search for a slot-synchronised receiver, in seconds.
+
+    \`max_time_offset_sec\` is the station timing uncertainty the run models (the benchmark's
+    --time-offset). The twin of the same expression in monteCarloEngine.ts's acquireFrame().
+    """
+    return float(max_time_offset_sec) + SLOT_SEARCH_MARGIN_SEC
+
 
 @dataclass(frozen=True)
 class Acquisition:
@@ -1362,8 +1471,12 @@ def acquire_frame(
         stream: real audio samples at \`cfg.sample_rate_hz\`, longer than one frame.
         nominal_base_freq_hz: where the frame is expected; the search spans +/- freq_search_hz.
         freq_search_hz: half-width of the carrier search, in Hz.
-        time_search_sec: half-width of the timing search. Defaults to searching the whole
-            stream, which is what a receiver with no prior timing knowledge must do.
+        time_search_sec: half-width of the timing search around the middle of the stream, where
+            a slot-synchronised receiver expects the frame. Pass \`slot_timing_search_sec(...)\`
+            for the model a real z-30 receiver runs. Defaults to searching the whole stream,
+            which is what a receiver with no prior timing knowledge would have to do - a
+            strictly harder problem than the one z-30 actually poses, and one that mis-locks on
+            noise more often simply because it is offered more chances to.
 
     Returns an \`Acquisition\`. \`found\` is False when nothing in the search space stands out
     from the noise floor, which is the honest answer at low SNR and is counted as a decode
@@ -1505,10 +1618,42 @@ import numpy as np
 from z30_dsp.modem import Z30Modulator, Z30Config
 from z30_dsp.ldpc import Z30LdpcCodec
 from z30_dsp.channel import ChannelImpairments, impair_frame, WATTERSON_PRESETS
-from z30_dsp.acquisition import acquire_frame
+from z30_dsp.acquisition import acquire_frame, slot_timing_search_sec
 
 #: Default PRNG seed. Fixed so the default run is reproducible; override with --seed.
 DEFAULT_BENCHMARK_SEED: int = 20260830
+
+#: Weight of the coherent term in the per-tone likelihood, in \`realistic\` mode.
+#:
+#: Zero: z-30's receiver is specified to demodulate non-coherently, and under the timing error
+#: a blind acquisition actually leaves, the pilot-aided "coherent" contribution subtracts
+#: performance rather than adding it. A few milliseconds of timing error rotates each tone by
+#: 2*pi*f*dt, so the term is measured against the wrong phase reference and starts cancelling
+#: signal instead of reinforcing it.
+#:
+#: This is not a preference. It was measured paired - the same frame, fading realisation,
+#: carrier offset, timing offset, noise and acquisition result decoded twice, once with the
+#: pilot-distance-adaptive weight (0.35 to 0.85) this benchmark used to apply and once with
+#: zero - at SNR -24/-23/-22/-21 dB, 40 frames per point, seed DEFAULT_BENCHMARK_SEED:
+#:
+#:      SNR     semi-coherent   non-coherent   semi-only wins   non-coherent-only wins
+#:     -24 dB       10.0%           2.5%             3                    0
+#:     -23 dB        7.5%          37.5%             1                   13
+#:     -22 dB       27.5%          90.0%             0                   25
+#:     -21 dB       57.5%         100.0%             0                   17
+#:
+#: Pooled: 59 discordant pairs, 55 won by the non-coherent receiver and 4 by the semi-coherent
+#: one. An exact two-sided McNemar test gives p = 1.7e-12 - better than 99.9999999% confidence
+#: that the non-coherent receiver decodes more frames at these operating points, clearing the
+#: >=99% bar AGENTS.md section 5 sets for a result that changes a published figure. The -24 dB
+#: row is recorded rather than dropped: both receivers are near zero there, below the point
+#: where the Costas pattern is reliably findable at all, and the semi-coherent one took that
+#: point 3-0.
+#:
+#: \`ideal\` mode keeps the adaptive weight. It hands the demodulator perfect symbol timing, so
+#: the phase reference is exact and the coherent term is worth having - which is why the bound
+#: is a bound.
+REALISTIC_PILOT_COHERENCE: float = 0.0
 
 
 def generate_random_frame(
@@ -1585,9 +1730,16 @@ def demodulate_mfsk_llrs(
     sigma: float,
     audio_center_hz: float = 1250.0,
     start_sample: int = 0,
+    pilot_coherence: Optional[float] = None,
 ) -> np.ndarray:
     """
     Pilot-Aided Semi-Coherent 16-tone matched filter bank with exact Log-MAP LLR calculation.
+
+    Args:
+        pilot_coherence: weight of the coherent term in the per-tone likelihood, 0 to 1. \`None\`
+            keeps the pilot-distance-adaptive weight (0.35 to 0.85). Pass 0.0 for a purely
+            non-coherent receiver, which is what z-30 is specified to be (AGENTS.md section 1)
+            and what \`realistic\` mode measures - see NON_COHERENT_PILOT_WEIGHT.
     """
     samples_per_symbol = int(cfg.sample_rate_hz * cfg.symbol_duration_sec)
     sync_positions = cfg.sync_positions
@@ -1646,7 +1798,10 @@ def demodulate_mfsk_llrs(
         raw_phase = pilot_phases[closest_p] - base_phase_step * (frame_sym_idx - pilot_frames[closest_p])
         interp_phase = np.arctan2(np.sin(raw_phase), np.cos(raw_phase))
         min_pilot_dist = abs(pilot_frames[closest_p] - frame_sym_idx)
-        pilot_coherence = max(0.35, min(0.85, 1.0 / (1.0 + 0.15 * min_pilot_dist)))
+        sym_coherence = (
+            pilot_coherence if pilot_coherence is not None
+            else max(0.35, min(0.85, 1.0 / (1.0 + 0.15 * min_pilot_dist)))
+        )
         
         start_samp = start_sample + frame_sym_idx * samples_per_symbol
         segment = noisy_wave[start_samp:start_samp + samples_per_symbol]
@@ -1668,7 +1823,7 @@ def demodulate_mfsk_llrs(
             proj = corr_cos * np.cos(interp_phase) + corr_sin * np.sin(interp_phase)
             coherent = proj * s_corr
             
-            tone_log_likes[tone] = pilot_coherence * coherent + (1.0 - pilot_coherence) * non_coherent
+            tone_log_likes[tone] = sym_coherence * coherent + (1.0 - sym_coherence) * non_coherent
             
         # Exact Log-MAP demapping
         for bit in range(4):
@@ -1719,7 +1874,7 @@ def run_monte_carlo_snr_sweep(
     )
     cfg = Z30Config(sample_rate_hz=sample_rate_hz)
     modulator = Z30Modulator(cfg)
-    codec = Z30LdpcCodec(max_iterations=45, alpha=0.75)
+    codec = Z30LdpcCodec(max_iterations=45)
     
     snr_points = np.arange(min_snr_db, max_snr_db + 1e-4, step_snr_db)
     results = []
@@ -1781,8 +1936,17 @@ def run_monte_carlo_snr_sweep(
                     buf, snr, cfg.sample_rate_hz, rng, frame_power
                 )
 
-                # 4b. Blind acquisition: the receiver gets audio and nothing else.
-                acq = acquire_frame(noisy_wave, cfg, nominal_base_freq_hz=1250.0)
+                # 4b. Blind acquisition: the receiver gets audio and nothing else, and
+                #     searches the window a slot-synchronised receiver actually has rather
+                #     than the whole stream. Measured paired over 200 frames at -26 to -22 dB,
+                #     the two search widths produced zero discordant decodes (p = 1), so this
+                #     is a faithfulness fix and not a change to the curve - see wiki/16.
+                acq = acquire_frame(
+                    noisy_wave,
+                    cfg,
+                    nominal_base_freq_hz=1250.0,
+                    time_search_sec=slot_timing_search_sec(max_time_offset_sec),
+                )
                 start_sample = acq.start_sample
                 base_freq = acq.base_freq_hz
                 sigma = acq.noise_sigma
@@ -1793,9 +1957,13 @@ def run_monte_carlo_snr_sweep(
                 if abs(start_sample - true_start) > cfg.symbol_duration_sec * cfg.sample_rate_hz / 2:
                     acq_failures += 1
 
-            # 5. Demodulate via 16-tone matched filters -> Soft LLRs
+            # 5. Demodulate via 16-tone matched filters -> Soft LLRs.
+            #    Purely non-coherent in realistic mode; see REALISTIC_PILOT_COHERENCE.
             channel_llrs = demodulate_mfsk_llrs(
-                noisy_wave, cfg, sigma, audio_center_hz=base_freq, start_sample=start_sample
+                noisy_wave, cfg, sigma,
+                audio_center_hz=base_freq,
+                start_sample=start_sample,
+                pilot_coherence=None if mode == "ideal" else REALISTIC_PILOT_COHERENCE,
             )
 
             # 6. Run actual Systematic (216, 77) Normalized Min-Sum LDPC Decoder
@@ -2030,9 +2198,10 @@ import threading
 import time
 import webbrowser
 from http.server import HTTPServer, SimpleHTTPRequestHandler
-from typing import Any, Dict, Optional, Set, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple
 from urllib.parse import urlparse, parse_qs
 
+from . import git_sync
 from .paths import logbook_adif_path, logbook_json_path, station_config_path
 
 logging.basicConfig(level=logging.INFO, format="[z-30 WebUI] %(message)s")
@@ -2256,6 +2425,17 @@ class GpioBridge:
             "max_keyed_sec": GPIO_MAX_KEYED_SEC,
         }
 
+    def any_pin_keyed(self) -> bool:
+        """
+        True while any PTT line is asserted.
+
+        The update endpoint asks before it touches the checkout: fast-forwarding the tree under
+        a running transmission would swap the served bundle and the Python sources out from
+        under a keyed transmitter, and the operator is on the air and not looking at the screen.
+        """
+        with self._lock:
+            return bool(self._keyed_pins)
+
     def release_all(self) -> None:
         """Unkeys every claimed pin and releases it. Registered with atexit and the signal handlers."""
         with self._lock:
@@ -2422,6 +2602,78 @@ class OperatorStore:
 # 6. HTTP REQUEST HANDLER
 # ============================================================================
 
+class UpdateJob:
+    """
+    Runs one upstream fast-forward at a time, in a worker thread, with a readable log.
+
+    An update is slow (a network fetch, then a checkout) and the HTTP handler must not block
+    for it: a request that takes thirty seconds looks like a hung radio, and the browser's own
+    fetch timeout would abandon it half-way with no way to find out what happened. So \`start()\`
+    returns immediately and the UI polls \`snapshot()\` for progress, which also means a reload
+    mid-update reconnects to the running job instead of starting a second one.
+
+    Serialised by a lock for the obvious reason: two concurrent \`git merge\` invocations in one
+    working tree corrupt the index.
+    """
+
+    def __init__(self) -> None:
+        self._lock = threading.RLock()
+        self._thread: Optional[threading.Thread] = None
+        self._running = False
+        self._log: List[str] = []
+        self._result: Optional[Dict[str, Any]] = None
+        self._started_at: float = 0.0
+
+    def is_running(self) -> bool:
+        with self._lock:
+            return self._running
+
+    def snapshot(self) -> Dict[str, Any]:
+        with self._lock:
+            return {
+                "success": True,
+                "running": self._running,
+                "log": list(self._log),
+                "result": self._result,
+                "elapsed_sec": round(time.time() - self._started_at, 1) if self._started_at else 0.0,
+            }
+
+    def start(self, reinstall_python: bool, rebuild_web: bool) -> Dict[str, Any]:
+        with self._lock:
+            if self._running:
+                return {"success": False, "error": "An update is already running.", "running": True}
+            self._running = True
+            self._log = []
+            self._result = None
+            self._started_at = time.time()
+
+        def append(message: str) -> None:
+            with self._lock:
+                self._log.append(message)
+            logger.info(f"[update] {message}")
+
+        def worker() -> None:
+            try:
+                result = git_sync.apply_update(
+                    on_log=append,
+                    reinstall_python=reinstall_python,
+                    rebuild_web=rebuild_web,
+                )
+                payload = result.to_dict()
+            except Exception as exc:  # a crashed worker must not leave the job "running" forever
+                append(f"Update failed unexpectedly: {exc}")
+                payload = {"success": False, "error": str(exc), "log": []}
+            with self._lock:
+                self._result = payload
+                self._running = False
+
+        thread = threading.Thread(target=worker, name="z30-update", daemon=True)
+        with self._lock:
+            self._thread = thread
+        thread.start()
+        return {"success": True, "running": True}
+
+
 class SpaRequestHandler(SimpleHTTPRequestHandler):
     """
     Serves the compiled single-page application plus the local hardware/storage APIs.
@@ -2436,6 +2688,7 @@ class SpaRequestHandler(SimpleHTTPRequestHandler):
     allowed_origin: str = ""
     allowed_hosts: Set[str] = set()
     gpio_bridge: Optional[GpioBridge] = None
+    update_job: Optional[UpdateJob] = None
 
     server_version = "z30-web"
     sys_version = ""
@@ -2568,6 +2821,13 @@ class SpaRequestHandler(SimpleHTTPRequestHandler):
             if path == "/api/station-config":
                 self._send_json(200, OperatorStore.read_station_config())
                 return
+            if path == "/api/update/status":
+                self._handle_update_status()
+                return
+            if path == "/api/update/progress":
+                self._send_json(200, self.update_job.snapshot() if self.update_job else
+                                {"success": True, "running": False, "log": [], "result": None})
+                return
             self._send_json(404, {"success": False, "error": f"Unknown API endpoint '{path}'."})
             return
 
@@ -2610,6 +2870,8 @@ class SpaRequestHandler(SimpleHTTPRequestHandler):
             self._handle_logbook_write(payload)
         elif path == "/api/station-config":
             self._handle_station_config_write(payload)
+        elif path == "/api/update/apply":
+            self._handle_update_apply(payload)
         else:
             self._send_json(404, {"success": False, "error": f"Unknown API endpoint '{path}'."})
 
@@ -2678,6 +2940,47 @@ class SpaRequestHandler(SimpleHTTPRequestHandler):
             return
         result = OperatorStore.write_station_config(payload.get("config"))
         self._send_json(200 if result.get("success") else 500, result)
+
+    # -- upstream synchronisation -----------------------------------------
+
+    def _handle_update_status(self) -> None:
+        """
+        Reports how many commits behind \`origin/main\` this installation is.
+
+        \`?fetch=0\` answers from the last fetch without touching the network, which is what the
+        Update button's badge polls; the modal's explicit "Check now" fetches.
+        """
+        query = parse_qs(urlparse(self.path).query)
+        do_fetch = (query.get("fetch") or ["1"])[0] != "0"
+        status = git_sync.read_status(fetch=do_fetch).to_dict()
+        status["success"] = True
+        status["update_running"] = bool(self.update_job and self.update_job.is_running())
+        self._send_json(200, status)
+
+    def _handle_update_apply(self, payload: Any) -> None:
+        """
+        Fast-forwards this checkout onto upstream, in a worker thread.
+
+        Refused outright while a PTT line is asserted. Replacing the served bundle and the
+        Python sources under a running transmission is not something to do to an operator who
+        is on the air, and the update is never so urgent that it cannot wait for the slot to
+        end.
+        """
+        if self.gpio_bridge is not None and self.gpio_bridge.any_pin_keyed():
+            self._send_json(409, {
+                "success": False,
+                "error": "The transmitter is keyed. Finish or stop the transmission before updating.",
+            })
+            return
+        if self.update_job is None:
+            self._send_json(503, {"success": False, "error": "Updater unavailable."})
+            return
+        body = payload if isinstance(payload, dict) else {}
+        result = self.update_job.start(
+            reinstall_python=bool(body.get("reinstall_python")),
+            rebuild_web=bool(body.get("rebuild_web")),
+        )
+        self._send_json(200 if result.get("success") else 409, result)
 
     def log_message(self, format, *args):
         # Suppress noisy per-asset HTTP logs.
@@ -2787,6 +3090,7 @@ def run_web_app(
         allowed_hosts = {f"127.0.0.1:{app_port}", f"localhost:{app_port}"}
 
     BoundHandler.gpio_bridge = gpio_bridge
+    BoundHandler.update_job = UpdateJob()
 
     handler = lambda *args, **kwargs: BoundHandler(*args, directory=dist_dir, **kwargs)
 
@@ -3002,6 +3306,8 @@ import sys
 import re
 from typing import Optional, Tuple
 
+from z30_dsp.paths import default_config_path
+
 
 @dataclass
 class StationConfig:
@@ -3052,9 +3358,21 @@ class StationConfig:
 class SettingsManager:
     """
     Manages loading, validating, caching, and persisting configuration data
-    to a local \`config.json\` file with full backward compatibility and fallbacks.
+    to the operator's \`config.json\` with full backward compatibility and fallbacks.
+
+    The path comes from \`z30_dsp.paths.default_config_path()\` - the same per-user directory
+    ($Z30_HOME, else $XDG_CONFIG_HOME/z30, else ~/.z30) that the logbook and the web UI's
+    station config already resolve through. It used to default to the bare relative string
+    "config.json", which \`paths.py\` was written to stop: the file landed in whatever directory
+    the app happened to be launched from, so starting z-30 from a desktop shortcut and from a
+    terminal in the source tree gave two different configs and the second launch silently came
+    up with defaults. Every caller that constructs a SettingsManager without an explicit path -
+    the Tk setup wizard, \`z30 --wizard\`, \`z30 --tkinter\` - inherited that bare string and kept
+    reproducing the bug the rest of the codebase had already fixed.
+
+    Resolved lazily rather than at import time so that $Z30_HOME set after import (as the test
+    suite does) is still honoured.
     """
-    DEFAULT_CONFIG_PATH = "config.json"
 
     # ITU International Callsign Regex - the SAME pattern as isValidCallsign() in
     # src/dsp/bandPlan.ts, which is what the browser transmit gate enforces.
@@ -3080,7 +3398,7 @@ class SettingsManager:
     )
 
     def __init__(self, config_path: Optional[str] = None) -> None:
-        self.config_path = config_path or self.DEFAULT_CONFIG_PATH
+        self.config_path = config_path or default_config_path()
         self.current_config = StationConfig()
 
     @classmethod
@@ -3168,6 +3486,9 @@ class SettingsManager:
         cfg_to_save = config or self.current_config
         try:
             data = asdict(cfg_to_save)
+            parent = os.path.dirname(os.path.abspath(self.config_path))
+            if parent:
+                os.makedirs(parent, exist_ok=True)
             with open(self.config_path, "w", encoding="utf-8") as f:
                 json.dump(data, f, indent=4)
             self.current_config = cfg_to_save
@@ -4317,13 +4638,18 @@ class ConfigWizardDialog(tk.Toplevel):
 
 def launch_config_wizard_if_needed(
     root: tk.Tk,
-    config_path: str = "config.json",
+    config_path: Optional[str] = None,
     force: bool = False,
     on_complete: Optional[Callable[[StationConfig], None]] = None
 ) -> Optional[ConfigWizardDialog]:
     """
     Helper function for main GUI startup:
     Checks if a valid config exists; if not (or if forced), presents the Setup Wizard.
+
+    \`config_path\` defaults to None, not to "config.json", so that SettingsManager resolves the
+    per-user path from z30_dsp.paths. The bare relative default meant the wizard wrote into
+    whatever directory z-30 was launched from, and a second launch from elsewhere came up with
+    defaults and offered to run the wizard again.
     """
     mgr = SettingsManager(config_path)
     if force or not mgr.has_valid_config_file():
@@ -4368,6 +4694,8 @@ import socket
 import logging
 from typing import Dict, Optional, Tuple, Callable, List
 from dataclasses import dataclass, asdict
+
+from z30_dsp.paths import default_config_path
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format="[%(asctime)s] %(levelname)s - %(message)s")
@@ -4506,8 +4834,12 @@ class BandManager:
     and automatic transceiver frequency tuning via Hamlib CAT.
     """
 
-    def __init__(self, config_path: str = "config.json", hamlib_client: Optional[HamlibCatClient] = None):
-        self.config_path = config_path
+    def __init__(self, config_path: Optional[str] = None, hamlib_client: Optional[HamlibCatClient] = None):
+        # Resolved through z30_dsp.paths for the same reason SettingsManager is: this reads and
+        # writes the operator's config.json, the same file the setup wizard writes. A bare
+        # relative default here meant \`z30 --bands\` and \`z30 --wizard\` could edit two different
+        # files depending on which directory each was launched from.
+        self.config_path = config_path or default_config_path()
         self.hamlib = hamlib_client or HamlibCatClient()
         self.bands: Dict[str, int] = dict(DEFAULT_BANDS)
         self.active_band: str = "20m"
@@ -4588,6 +4920,9 @@ class BandManager:
         data["dial_frequency_hz"] = self.active_frequency_hz
 
         try:
+            parent = os.path.dirname(os.path.abspath(self.config_path))
+            if parent:
+                os.makedirs(parent, exist_ok=True)
             with open(self.config_path, "w", encoding="utf-8") as f:
                 json.dump(data, f, indent=2)
             logger.info(f"Saved band configuration to {self.config_path}")
@@ -4930,7 +5265,7 @@ except ImportError:
 
 def main():
     """Command-line interface for testing BandManager."""
-    bm = BandManager("config.json")
+    bm = BandManager()
 
     if len(sys.argv) > 1:
         cmd = sys.argv[1].lower()
@@ -7100,172 +7435,587 @@ if __name__ == "__main__":
 `,
   },
   {
-    filename: "updater.py",
-    path: "z30_dsp/updater.py",
-    description: "GitHub update engine for version comparison, git synchronization and package rebuilds.",
-    code: `#!/usr/bin/env python3
-"""
-z-30 Transceiver & DSP Suite - GitHub Upstream Updater
-======================================================
-Repository: https://github.com/themantas1994/z-30
+    filename: "git_sync.py",
+    path: "z30_dsp/git_sync.py",
+    description: "Upstream synchronisation: how many commits behind origin/main this installation is, and a fast-forward-only update that refuses to overwrite local work.",
+    code: `"""
+z-30 Upstream Synchronisation
+=============================
 
-Checks for updates, pulls latest git commits, rebuilds Web UI assets,
-and updates native Python DSP dependencies.
+Answers one question - "is this installation running the current upstream commit, and if not,
+bring it there" - for the CLI updater, the local server's /api/update endpoints, and the web
+UI's Update button, all from one implementation.
+
+Commits, not versions
+---------------------
+z-30 is not released on a version cadence; it is developed on \`main\`, and an installation is
+either at the tip of \`main\` or some number of commits behind it. The previous updater compared
+a hardcoded \`CURRENT_VERSION = "1.0.0"\` against the newest GitHub release tag and against the
+\`version\` field of the upstream package.json. Both of those had been 1.0.0 for the life of the
+repository, so \`has_update\` was False no matter how far behind the checkout actually was, and
+the one thing the operator wanted to know - "am I running the current code" - was the one thing
+it could not answer. Worse, the version string had to be bumped by hand, so the mechanism was
+only ever as correct as the last person to remember.
+
+\`git\` already tracks exactly this, exactly correctly. \`git fetch\` followed by a count of the
+commits between HEAD and origin/main is the whole answer, needs no release to be cut, no
+version string to be maintained, and no GitHub API token or rate limit.
+
+What "apply" is allowed to do
+-----------------------------
+Fast-forward only. \`git merge --ff-only\` either advances HEAD to the upstream commit or fails
+without touching anything. It cannot invent a merge commit, cannot leave a conflicted tree
+behind, and cannot destroy a local change - and if it refuses, the install has genuinely
+diverged and wants a human, not an automated retry with a bigger hammer. \`git pull\` (the old
+updater's choice) merges, and \`git reset --hard\` would silently discard the operator's own
+edits to their own station's code.
+
+Anything uncommitted in the working tree blocks the update for the same reason: a station that
+has patched its own copy is not something an Update button gets to overwrite.
+
+This module runs git with argument lists and never through a shell, so nothing derived from a
+remote branch name or commit message is ever interpreted as a command.
 """
 
+from dataclasses import dataclass, field, asdict
 import os
-import sys
-import json
-import urllib.request
-import urllib.error
 import subprocess
-import shutil
-from typing import Dict, Any, Optional
+import sys
+import time
+from typing import Any, Callable, Dict, List, Optional, Tuple
+
+#: Upstream this installation tracks. z-30 has no release channels: there is \`main\`, and there
+#: is however far behind \`main\` you are.
+DEFAULT_REMOTE = "origin"
+DEFAULT_BRANCH = "main"
 
 GITHUB_REPO = "themantas1994/z-30"
-API_URL = f"https://api.github.com/repos/{GITHUB_REPO}"
-RAW_URL = f"https://raw.githubusercontent.com/{GITHUB_REPO}/main"
-CURRENT_VERSION = "1.0.0"
+GITHUB_URL = f"https://github.com/{GITHUB_REPO}"
+
+#: Ceilings on each git invocation. A fetch talks to the network, so it gets the long one; the
+#: local queries are all sub-second in a healthy repository and a multi-second answer means
+#: something is wrong (an index lock held by another process, a filesystem stall) that the UI
+#: should be told about rather than hang on.
+NETWORK_TIMEOUT_SEC = 45.0
+LOCAL_TIMEOUT_SEC = 15.0
+#: A dependency install or a bundle rebuild is genuinely slow on a Raspberry Pi.
+BUILD_TIMEOUT_SEC = 900.0
 
 
-def print_banner():
-    print("==================================================================")
-    print("      z-30 TRANSCEIVER - GITHUB UPSTREAM UPDATER ENGINE           ")
-    print("      Repository: https://github.com/themantas1994/z-30           ")
-    print("==================================================================")
+@dataclass
+class PendingCommit:
+    """One upstream commit this installation does not have yet."""
+    sha: str
+    short_sha: str
+    subject: str
+    author: str
+    date: str
+
+    def to_dict(self) -> Dict[str, Any]:
+        return asdict(self)
 
 
-def check_remote_version() -> Dict[str, Any]:
-    """Fetches latest release and commits from GitHub."""
-    headers = {"User-Agent": "z30-Updater/1.0", "Accept": "application/vnd.github.v3+json"}
-    result: Dict[str, Any] = {
-        "current_version": CURRENT_VERSION,
-        "latest_version": CURRENT_VERSION,
-        "has_update": False,
-        "release_name": "",
-        "release_body": "",
-        "latest_commit": "",
-        "commit_message": "",
-        "html_url": f"https://github.com/{GITHUB_REPO}",
-    }
+@dataclass
+class SyncStatus:
+    """Where this installation sits relative to upstream \`main\`."""
+    #: False when z-30 is running from a wheel or a source copy with no .git - a pip or
+    #: package-manager install, which updates through its own package manager, not through us.
+    is_git_checkout: bool = False
+    repo_dir: Optional[str] = None
+    branch: str = ""
+    local_commit: str = ""
+    upstream_commit: str = ""
+    #: Commits upstream has that this checkout does not, and vice versa.
+    behind: int = 0
+    ahead: int = 0
+    #: Uncommitted changes in the working tree. Blocks an automatic update.
+    dirty: bool = False
+    pending: List[PendingCommit] = field(default_factory=list)
+    #: True when the fetch succeeded and there is nothing to pull.
+    up_to_date: bool = False
+    #: True when \`apply_update\` would run: a clean git checkout that is behind upstream.
+    can_update: bool = False
+    #: Why it cannot, when can_update is False and the operator would otherwise wonder.
+    blocked_reason: Optional[str] = None
+    #: Set when the check itself failed (no network, no remote, git missing).
+    error: Optional[str] = None
+    checked_at: str = ""
+    remote_url: str = GITHUB_URL
 
-    # 1. Query latest release
+    @property
+    def local_short(self) -> str:
+        return self.local_commit[:7]
+
+    @property
+    def upstream_short(self) -> str:
+        return self.upstream_commit[:7]
+
+    def to_dict(self) -> Dict[str, Any]:
+        data = asdict(self)
+        data["pending"] = [c.to_dict() for c in self.pending]
+        data["local_short"] = self.local_short
+        data["upstream_short"] = self.upstream_short
+        return data
+
+
+def _run_git(
+    args: List[str],
+    cwd: str,
+    timeout: float = LOCAL_TIMEOUT_SEC,
+) -> Tuple[int, str, str]:
+    """
+    Runs one git command and returns (returncode, stdout, stderr), all decoded and stripped.
+
+    Never uses a shell, so a branch name or a commit subject cannot become a command. A missing
+    git binary or a timeout is reported as a non-zero return rather than raising, because every
+    caller here wants to turn a failure into a message for the operator.
+    """
     try:
-        req = urllib.request.Request(f"{API_URL}/releases/latest", headers=headers)
-        with urllib.request.urlopen(req, timeout=5) as response:
-            data = json.loads(response.read().decode("utf-8"))
-            tag = data.get("tag_name", "").lstrip("v")
-            result["latest_version"] = tag
-            result["release_name"] = data.get("name", tag)
-            result["release_body"] = data.get("body", "")
-            result["html_url"] = data.get("html_url", result["html_url"])
-            if tag and tag != CURRENT_VERSION:
-                result["has_update"] = True
-    except Exception as e:
-        # Fallback to checking raw package.json
-        try:
-            req = urllib.request.Request(f"{RAW_URL}/package.json", headers=headers)
-            with urllib.request.urlopen(req, timeout=5) as response:
-                data = json.loads(response.read().decode("utf-8"))
-                remote_v = data.get("version", CURRENT_VERSION)
-                result["latest_version"] = remote_v
-                if remote_v != CURRENT_VERSION:
-                    result["has_update"] = True
-        except Exception:
-            pass
+        completed = subprocess.run(
+            ["git"] + args,
+            cwd=cwd,
+            capture_output=True,
+            timeout=timeout,
+            # Environment hardening: never stop for credentials or an editor. An update that
+            # silently blocks on a password prompt looks exactly like a hung application.
+            env={**os.environ, "GIT_TERMINAL_PROMPT": "0", "GIT_OPTIONAL_LOCKS": "0"},
+        )
+    except subprocess.TimeoutExpired:
+        return 124, "", f"git {' '.join(args)} timed out after {timeout:.0f}s"
+    except OSError as exc:
+        return 127, "", f"git is not available: {exc}"
+    return (
+        completed.returncode,
+        completed.stdout.decode("utf-8", "replace").strip(),
+        completed.stderr.decode("utf-8", "replace").strip(),
+    )
 
-    # 2. Query latest commit
-    try:
-        req = urllib.request.Request(f"{API_URL}/commits?per_page=1", headers=headers)
-        with urllib.request.urlopen(req, timeout=5) as response:
-            commits = json.loads(response.read().decode("utf-8"))
-            if commits and isinstance(commits, list):
-                c = commits[0]
-                result["latest_commit"] = c.get("sha", "")[:7]
-                result["commit_message"] = c.get("commit", {}).get("message", "").split("\\n")[0]
-    except Exception:
-        pass
 
+def repo_root(start: Optional[str] = None) -> Optional[str]:
+    """
+    The git working tree containing the installed package, or None if there isn't one.
+
+    None is the normal answer for a pip or AUR install: those are updated by their package
+    manager and the Update button says so rather than pretending it can pull.
+    """
+    base = start or os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+    if not os.path.isdir(base):
+        return None
+    code, out, _err = _run_git(["rev-parse", "--show-toplevel"], cwd=base)
+    if code != 0 or not out:
+        return None
+    return os.path.abspath(out)
+
+
+def _parse_commits(raw: str) -> List[PendingCommit]:
+    commits: List[PendingCommit] = []
+    for line in raw.splitlines():
+        # %x1f is the ASCII unit separator: commit subjects contain every printable character,
+        # so splitting them on anything a human might type loses fields.
+        parts = line.split("\\x1f")
+        if len(parts) != 4:
+            continue
+        sha, subject, author, date = parts
+        commits.append(
+            PendingCommit(
+                sha=sha,
+                short_sha=sha[:7],
+                subject=subject,
+                author=author,
+                date=date,
+            )
+        )
+    return commits
+
+
+def read_status(
+    repo_dir: Optional[str] = None,
+    remote: str = DEFAULT_REMOTE,
+    branch: str = DEFAULT_BRANCH,
+    fetch: bool = True,
+) -> SyncStatus:
+    """
+    Reports how far behind upstream this installation is.
+
+    \`fetch=False\` answers from whatever the last fetch left in the remote-tracking ref, which is
+    what a fast page load wants; the default contacts the network.
+    """
+    status = SyncStatus(checked_at=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()))
+
+    # Resolved through repo_root() even when the caller named a directory: a supplied path is
+    # a hint about where to look, not an assertion that a repository is there. Taking it at
+    # face value reported a wheel install as a git checkout and then failed confusingly two
+    # commands later.
+    root = repo_root(start=repo_dir) if repo_dir else repo_root()
+    if root is None:
+        status.blocked_reason = (
+            "This copy of z-30 is not a git checkout, so there is nothing to fast-forward. "
+            "Installs from pip or a distribution package update through that package manager."
+        )
+        return status
+
+    status.is_git_checkout = True
+    status.repo_dir = root
+
+    code, out, err = _run_git(["rev-parse", "--abbrev-ref", "HEAD"], cwd=root)
+    status.branch = out if code == 0 else ""
+
+    code, out, err = _run_git(["rev-parse", "HEAD"], cwd=root)
+    if code != 0:
+        status.error = err or "Could not read the current commit."
+        return status
+    status.local_commit = out
+
+    if fetch:
+        code, _out, err = _run_git(
+            ["fetch", "--quiet", remote, branch], cwd=root, timeout=NETWORK_TIMEOUT_SEC
+        )
+        if code != 0:
+            # A failed fetch is not fatal: report what the last one left behind, and say why
+            # the figure may be stale rather than silently showing "up to date" while offline.
+            status.error = err or f"Could not reach {remote}/{branch}."
+
+    code, out, err = _run_git(["rev-parse", f"{remote}/{branch}"], cwd=root)
+    if code != 0:
+        status.error = status.error or err or f"No remote-tracking ref for {remote}/{branch}."
+        return status
+    status.upstream_commit = out
+
+    code, out, _err = _run_git(["status", "--porcelain", "--untracked-files=no"], cwd=root)
+    status.dirty = bool(out.strip()) if code == 0 else False
+
+    code, out, _err = _run_git(
+        ["rev-list", "--left-right", "--count", f"HEAD...{remote}/{branch}"], cwd=root
+    )
+    if code == 0 and out:
+        parts = out.split()
+        if len(parts) == 2:
+            status.ahead = int(parts[0])
+            status.behind = int(parts[1])
+
+    if status.behind:
+        code, out, _err = _run_git(
+            [
+                "log",
+                "--no-merges",
+                "--max-count=25",
+                "--pretty=format:%H%x1f%s%x1f%an%x1f%aI",
+                f"HEAD..{remote}/{branch}",
+            ],
+            cwd=root,
+        )
+        if code == 0:
+            status.pending = _parse_commits(out)
+
+    status.up_to_date = status.behind == 0 and status.error is None
+    status.can_update, status.blocked_reason = _update_eligibility(status)
+    return status
+
+
+def _update_eligibility(status: SyncStatus) -> Tuple[bool, Optional[str]]:
+    """Whether \`apply_update\` would do anything, and the reason when it would not."""
+    if not status.is_git_checkout:
+        return False, status.blocked_reason
+    if status.behind == 0:
+        return False, None
+    if status.dirty:
+        return False, (
+            "The working tree has uncommitted changes. z-30 will not overwrite local edits to "
+            "your own station's code - commit or stash them, then update."
+        )
+    if status.ahead:
+        return False, (
+            f"This checkout has {status.ahead} commit(s) upstream does not, so it cannot be "
+            "fast-forwarded. Merge or rebase it by hand."
+        )
+    return True, None
+
+
+@dataclass
+class UpdateResult:
+    """Outcome of an update attempt, including the log the operator sees."""
+    success: bool = False
+    from_commit: str = ""
+    to_commit: str = ""
+    log: List[str] = field(default_factory=list)
+    error: Optional[str] = None
+    #: True when the served web bundle changed, so the browser must purge caches and reload.
+    web_assets_changed: bool = False
+    #: True when the Python package changed, so the running process is now stale.
+    restart_required: bool = False
+
+    def to_dict(self) -> Dict[str, Any]:
+        return asdict(self)
+
+
+#: Paths whose change means the running process is serving or executing stale code.
+WEB_ASSET_PREFIXES = ("z30_dsp/web_dist/", "dist/", "public/", "src/", "index.html")
+PYTHON_PREFIXES = ("z30_dsp/", "pyproject.toml", "requirements.txt")
+
+
+def apply_update(
+    repo_dir: Optional[str] = None,
+    remote: str = DEFAULT_REMOTE,
+    branch: str = DEFAULT_BRANCH,
+    on_log: Optional[Callable[[str], None]] = None,
+    reinstall_python: bool = False,
+    rebuild_web: bool = False,
+) -> UpdateResult:
+    """
+    Fast-forwards this checkout onto upstream and reports what changed.
+
+    Deliberately does no rebuilding by default. The repository commits its built web bundle
+    (\`z30_dsp/web_dist/\`), which is the whole reason the Update button can work at all on a
+    station with no Node toolchain: once the fast-forward lands, the new UI is already on disk
+    and the browser only has to purge its caches and reload. \`reinstall_python\` and
+    \`rebuild_web\` are there for a developer checkout that wants the source rebuilt too, and
+    each is reported separately so a failed optional step does not read as a failed update.
+    """
+    result = UpdateResult()
+    lines: List[str] = []
+
+    def log(message: str) -> None:
+        lines.append(message)
+        if on_log is not None:
+            on_log(message)
+
+    status = read_status(repo_dir=repo_dir, remote=remote, branch=branch, fetch=True)
+    result.from_commit = status.local_commit
+    result.log = lines
+
+    if not status.is_git_checkout:
+        result.error = status.blocked_reason
+        log(result.error or "Not a git checkout.")
+        return result
+    if status.error and status.behind == 0:
+        result.error = status.error
+        log(f"Could not reach upstream: {status.error}")
+        return result
+    if status.behind == 0:
+        result.success = True
+        result.to_commit = status.local_commit
+        log(f"Already at {remote}/{branch} ({status.local_short}). Nothing to do.")
+        return result
+    if not status.can_update:
+        result.error = status.blocked_reason or "This checkout cannot be fast-forwarded."
+        log(result.error)
+        return result
+
+    root = status.repo_dir or "."
+    log(f"Fast-forwarding {status.local_short} -> {status.upstream_short} "
+        f"({status.behind} commit(s) from {remote}/{branch}).")
+
+    code, _out, err = _run_git(
+        ["merge", "--ff-only", f"{remote}/{branch}"], cwd=root, timeout=NETWORK_TIMEOUT_SEC
+    )
+    if code != 0:
+        result.error = err or "git merge --ff-only failed."
+        log(f"Update refused: {result.error}")
+        return result
+
+    code, new_head, _err = _run_git(["rev-parse", "HEAD"], cwd=root)
+    result.to_commit = new_head if code == 0 else status.upstream_commit
+    log(f"Now at {result.to_commit[:7]}.")
+
+    code, changed, _err = _run_git(
+        ["diff", "--name-only", result.from_commit, result.to_commit], cwd=root
+    )
+    changed_paths = changed.splitlines() if code == 0 else []
+    result.web_assets_changed = any(
+        p.startswith(WEB_ASSET_PREFIXES) for p in changed_paths
+    )
+    result.restart_required = any(p.startswith(PYTHON_PREFIXES) for p in changed_paths)
+    log(f"{len(changed_paths)} file(s) changed.")
+
+    if reinstall_python:
+        log("Refreshing the Python package (pip install -e .)...")
+        ok, message = _run_build_step(
+            [sys.executable, "-m", "pip", "install", "-e", "."], root
+        )
+        log(message)
+        if not ok:
+            # An optional step. The fast-forward already succeeded and reverting it would be a
+            # far more destructive act than leaving the operator to run pip themselves.
+            log("The code is updated; only the dependency refresh failed.")
+
+    if rebuild_web:
+        log("Rebuilding the web bundle (npm run build)...")
+        ok, message = _run_build_step(["npm", "run", "build"], root)
+        log(message)
+        if ok:
+            result.web_assets_changed = True
+
+    result.success = True
     return result
 
 
-def is_git_repo(path: str = ".") -> bool:
-    """Checks if directory is a git repository."""
-    return os.path.exists(os.path.join(path, ".git"))
-
-
-def perform_git_update(repo_dir: str = ".") -> bool:
-    """Executes git pull and updates local dependencies."""
-    print(f"\\n[Updater] Fetching latest changes from git origin (https://github.com/{GITHUB_REPO})...")
+def _run_build_step(argv: List[str], cwd: str) -> Tuple[bool, str]:
+    """Runs one optional post-update build command, never through a shell."""
     try:
-        subprocess.run(["git", "fetch", "--all"], cwd=repo_dir, check=True)
-        subprocess.run(["git", "pull", "origin", "main"], cwd=repo_dir, check=True)
-        print("[Updater] ✓ Git repository successfully updated to latest commit.")
-    except Exception as e:
-        print(f"[Updater] ✗ Git pull failed: {e}")
-        return False
+        completed = subprocess.run(
+            argv, cwd=cwd, capture_output=True, timeout=BUILD_TIMEOUT_SEC
+        )
+    except subprocess.TimeoutExpired:
+        return False, f"{argv[0]} timed out after {BUILD_TIMEOUT_SEC:.0f}s."
+    except OSError as exc:
+        return False, f"{argv[0]} could not be run: {exc}"
+    if completed.returncode != 0:
+        tail = completed.stderr.decode("utf-8", "replace").strip().splitlines()[-4:]
+        return False, f"{argv[0]} failed: " + " / ".join(tail)
+    return True, f"{argv[0]} completed."
+`,
+  },
+  {
+    filename: "updater.py",
+    path: "z30_dsp/updater.py",
+    description: "Terminal front end for git_sync - the same engine the Update button in the web UI drives.",
+    code: `#!/usr/bin/env python3
+"""
+z-30 Transceiver & DSP Suite - Upstream Updater CLI
+===================================================
+Repository: https://github.com/themantas1994/z-30
 
-    # Check for npm and rebuild web UI if available
-    pkg_json = os.path.join(repo_dir, "package.json")
-    if os.path.exists(pkg_json) and shutil.which("npm"):
-        print("[Updater] Rebuilding Web DSP distribution bundle (npm run build)...")
-        try:
-            subprocess.run(["npm", "run", "build"], cwd=repo_dir, check=True)
-            print("[Updater] ✓ Web UI distribution built successfully.")
-        except Exception as e:
-            print(f"[Updater] ⚠ Web build warning: {e}")
+The terminal front end for \`z30_dsp.git_sync\`. The web UI's Update button and the
+\`/api/update\` endpoints go through the same module, so \`z30 --update\` and the button do
+exactly the same thing and can never disagree about whether an installation is current.
 
-    # Update Python editable package
-    if shutil.which("pip"):
-        print("[Updater] Refreshing Python package installation (pip install -e .)...")
-        try:
-            subprocess.run([sys.executable, "-m", "pip", "install", "-e", "."], cwd=repo_dir, check=True)
-            print("[Updater] ✓ Python DSP suite refreshed.")
-        except Exception as e:
-            print(f"[Updater] ⚠ Pip install notice: {e}")
+This used to compare a hardcoded \`CURRENT_VERSION = "1.0.0"\` against the latest GitHub
+release tag, print "Your z-30 Transceiver is up to date!" whenever they matched - which was
+always, because neither had changed since the repository was created - and only then, if the
+comparison had somehow said otherwise, offer a \`git pull\`. An installation two hundred commits
+behind was told it was current. See the module docstring of git_sync.py.
+"""
 
-    print("\\n[Updater] ✓ Update process complete! You can now run 'z30' to start the latest version.")
-    return True
+import argparse
+import sys
+
+from z30_dsp import git_sync
 
 
-def run_updater(interactive: bool = True):
+def print_banner() -> None:
+    print("==================================================================")
+    print("      z-30 TRANSCEIVER - UPSTREAM SYNCHRONISATION                 ")
+    print(f"      {git_sync.GITHUB_URL}")
+    print("==================================================================")
+
+
+def print_status(status: git_sync.SyncStatus) -> None:
+    if not status.is_git_checkout:
+        print("\\nThis copy of z-30 is not a git checkout.")
+        print(status.blocked_reason or "")
+        return
+
+    print(f"\\nRepository:    {status.repo_dir}")
+    print(f"Branch:        {status.branch}")
+    print(f"Local commit:  {status.local_short}")
+    print(f"Upstream:      {status.upstream_short} ({git_sync.DEFAULT_REMOTE}/{git_sync.DEFAULT_BRANCH})")
+
+    if status.error:
+        print(f"\\n! {status.error}")
+        print("  The figures below come from the last successful fetch and may be stale.")
+
+    if status.behind == 0 and status.ahead == 0:
+        print("\\n[OK] This installation is at the tip of upstream.")
+    elif status.behind:
+        plural = "" if status.behind == 1 else "s"
+        print(f"\\n[!] {status.behind} commit{plural} behind upstream:")
+        for commit in status.pending:
+            print(f"      {commit.short_sha}  {commit.subject}")
+        if len(status.pending) < status.behind:
+            print(f"      ... and {status.behind - len(status.pending)} more")
+
+    if status.ahead:
+        print(f"\\n[i] This checkout is {status.ahead} commit(s) ahead of upstream.")
+    if status.dirty:
+        print("[i] The working tree has uncommitted changes.")
+    if status.behind and not status.can_update and status.blocked_reason:
+        print(f"\\nCannot update automatically: {status.blocked_reason}")
+
+
+def run_updater(
+    interactive: bool = True,
+    check_only: bool = False,
+    reinstall_python: bool = False,
+    rebuild_web: bool = False,
+) -> int:
+    """Returns a process exit code: 0 current or updated, 1 behind or failed."""
     print_banner()
-    print(f"Current Installed Version: v{CURRENT_VERSION}")
-    print(f"Checking https://github.com/{GITHUB_REPO} for updates...\\n")
+    print(f"Checking {git_sync.GITHUB_URL} ({git_sync.DEFAULT_BRANCH})...")
 
-    info = check_remote_version()
+    status = git_sync.read_status()
+    print_status(status)
 
-    print(f"Latest Upstream Version:  v{info['latest_version']}")
-    if info.get("latest_commit"):
-        print(f"Latest GitHub Commit:     {info['latest_commit']} ({info.get('commit_message', '')})")
+    if status.behind == 0:
+        return 0 if not status.error else 1
+    if check_only:
+        # A non-zero exit lets a cron job or a startup script act on "this box is behind"
+        # without parsing any of the text above.
+        return 1
+    if not status.can_update:
+        return 1
 
-    if info["has_update"]:
-        print(f"\\n★ A NEW UPDATE IS AVAILABLE: v{info['latest_version']} (Current: v{CURRENT_VERSION})")
-        if info.get("release_name"):
-            print(f"Release: {info['release_name']}")
-        if info.get("release_body"):
-            print(f"\\nRelease Notes:\\n{info['release_body']}\\n")
-    else:
-        print("\\n✓ Your z-30 Transceiver is up to date!")
+    if interactive:
+        try:
+            answer = input(f"\\nFast-forward to {status.upstream_short} now? [Y/n]: ").strip().lower()
+        except (EOFError, KeyboardInterrupt):
+            print()
+            return 1
+        if answer not in ("", "y", "yes"):
+            print("Left unchanged.")
+            return 1
 
-    # If in git repo, offer automatic pull
-    root_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-    if is_git_repo(root_dir):
-        if interactive and info["has_update"]:
-            ans = input("\\nWould you like to pull and apply the update now? [Y/n]: ").strip().lower()
-            if ans in ("", "y", "yes"):
-                perform_git_update(root_dir)
-        elif not interactive:
-            perform_git_update(root_dir)
-    else:
-        print("\\nTo update manually from GitHub:")
-        print(f"  git clone https://github.com/{GITHUB_REPO}.git")
-        print("  cd z-30 && ./install_ubuntu.sh (or install_arch.sh / run_windows.bat)")
+    print()
+    result = git_sync.apply_update(
+        on_log=lambda line: print(f"  {line}"),
+        reinstall_python=reinstall_python,
+        rebuild_web=rebuild_web,
+    )
+    if not result.success:
+        print(f"\\n[FAIL] {result.error}")
+        return 1
+
+    print(f"\\n[OK] Updated to {result.to_commit[:7]}.")
+    if result.restart_required:
+        print("      The Python package changed - restart z-30 to run the new code.")
+    if result.web_assets_changed:
+        print("      The web bundle changed - reload the browser tab (or restart z-30).")
+    return 0
 
 
-def main():
-    interactive = "--yes" not in sys.argv and "-y" not in sys.argv
-    run_updater(interactive=interactive)
+def main() -> None:
+    parser = argparse.ArgumentParser(
+        prog="z30 --update",
+        description="Fast-forward this z-30 installation onto the upstream main branch.",
+    )
+    parser.add_argument(
+        "-y", "--yes", action="store_true",
+        help="Apply the update without asking.",
+    )
+    parser.add_argument(
+        "--check", action="store_true",
+        help="Report how far behind upstream this installation is and change nothing. "
+             "Exits non-zero when behind, so a startup script can act on it.",
+    )
+    parser.add_argument(
+        "--reinstall", action="store_true",
+        help="Also run 'pip install -e .' afterwards, for when dependencies changed.",
+    )
+    parser.add_argument(
+        "--rebuild", action="store_true",
+        help="Also run 'npm run build' afterwards. Not normally needed: the repository ships "
+             "the built bundle, so a fast-forward already brings the new interface with it.",
+    )
+    # Tolerate the flags z30's own argv carries when it routes here.
+    args, _unknown = parser.parse_known_args()
+
+    sys.exit(
+        run_updater(
+            interactive=not args.yes,
+            check_only=args.check,
+            reinstall_python=args.reinstall,
+            rebuild_web=args.rebuild,
+        )
+    )
 
 
 if __name__ == "__main__":
@@ -7297,7 +8047,7 @@ SEED = 20260830
 
 @pytest.fixture(scope="module")
 def codec() -> Z30LdpcCodec:
-    return Z30LdpcCodec(max_iterations=45, alpha=0.75)
+    return Z30LdpcCodec(max_iterations=45)
 
 
 def build_parity_check_matrix() -> np.ndarray:
@@ -7695,6 +8445,7 @@ def server(tmp_path, monkeypatch, bridge):
         allowed_hosts = {f"127.0.0.1:{port}", f"localhost:{port}"}
 
     BoundHandler.gpio_bridge = bridge
+    BoundHandler.update_job = ws.UpdateJob()
     httpd = ws.ThreadedHTTPServer(sock, lambda *a, **k: BoundHandler(*a, directory=str(dist), **k))
     thread = threading.Thread(target=httpd.serve_forever, daemon=True)
     thread.start()
@@ -7906,6 +8657,64 @@ def test_bind_fails_loudly_rather_than_drifting_to_another_port():
         assert "--port" in str(excinfo.value)
     finally:
         first.close()
+
+
+# -- upstream update endpoints ---------------------------------------------
+#
+# The update endpoints fast-forward the operator's checkout of the software that keys their
+# transmitter, from a button in a browser. They sit behind the same token/Origin/Host triple
+# check as everything else here, and behind one guard of their own.
+
+def test_update_status_requires_the_token_like_every_other_endpoint(server):
+    status, _headers, body = request(server, "/api/update/status?fetch=0")
+    assert status == 403
+    assert "token" in json.loads(body)["error"].lower()
+
+
+def test_update_apply_requires_the_token(server):
+    status, _headers, body = request(
+        server, "/api/update/apply", {}, {"Content-Type": "text/plain"}
+    )
+    assert status == 403
+    assert "token" in json.loads(body)["error"].lower()
+
+
+def test_update_status_reports_the_checkout_without_touching_the_network(server):
+    status, _headers, body = request(server, "/api/update/status?fetch=0", None, authed())
+    assert status == 200
+    payload = json.loads(body)
+    assert payload["success"] is True
+    # Commits, not versions: there is no version field to compare and none is reported.
+    for key in ("behind", "ahead", "local_commit", "upstream_commit", "can_update", "pending"):
+        assert key in payload
+    assert "latest_version" not in payload
+
+
+def test_update_is_refused_while_the_transmitter_is_keyed(server, bridge):
+    """
+    Swapping the served bundle and the Python sources out from under a keyed transmitter is
+    not something to do to an operator who is on the air and not looking at the screen.
+    """
+    keyed = bridge.set_pin(17, True)
+    assert keyed["success"] is True
+    assert bridge.any_pin_keyed() is True
+
+    status, _headers, body = request(server, "/api/update/apply", {}, authed())
+    assert status == 409
+    assert "keyed" in json.loads(body)["error"].lower()
+
+    # And the refusal did not touch the transmitter on its way out.
+    assert bridge.any_pin_keyed() is True
+    bridge.set_pin(17, False)
+
+
+def test_update_progress_is_readable_before_any_update_has_run(server):
+    status, _headers, body = request(server, "/api/update/progress", None, authed())
+    assert status == 200
+    payload = json.loads(body)
+    assert payload["running"] is False
+    assert payload["log"] == []
+    assert payload["result"] is None
 `,
   },
   {
@@ -7924,6 +8733,8 @@ host move with it. So the default is that z-30 keeps the correction to itself.
 
 import json
 import os
+import pathlib
+import re
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -8052,6 +8863,70 @@ def test_every_user_file_lives_in_one_directory(isolated_home):
         paths.station_config_path(),
     ):
         assert os.path.dirname(path) == str(isolated_home)
+
+
+# -- the config writers, not just the path helpers --------------------------
+#
+# The helpers above were already correct while the two classes that actually write config.json
+# still carried their own bare "config.json" default and never called into paths.py at all. A
+# test that only exercises paths.default_config_path() cannot see that, which is how the fix
+# stayed half-applied: \`z30 --wizard\`, \`z30 --tkinter\` and \`z30 --bands\` went on writing into
+# whatever directory they were launched from.
+
+def test_settings_manager_writes_into_the_user_data_directory(isolated_home):
+    from z30_dsp.station_settings import SettingsManager
+
+    mgr = SettingsManager()
+    assert os.path.isabs(mgr.config_path)
+    assert os.path.dirname(mgr.config_path) == str(isolated_home)
+
+    assert mgr.save_config() is True
+    assert (isolated_home / "config.json").is_file()
+
+
+def test_band_manager_writes_the_same_file_as_the_settings_manager(isolated_home):
+    from z30_dsp.band_manager import BandManager
+    from z30_dsp.station_settings import SettingsManager
+
+    # Both classes persist into the operator's config.json. When they disagree about where it
+    # is, the setup wizard and the band manager silently edit two different files.
+    assert BandManager().config_path == SettingsManager().config_path
+    assert os.path.dirname(BandManager().config_path) == str(isolated_home)
+
+
+def test_no_config_writer_keeps_a_relative_default(isolated_home):
+    """
+    A bare "config.json" default anywhere is the bug paths.py was written to remove.
+
+    Checked by construction rather than by reading source, so a new writer that inherits the
+    default from somewhere else is caught too.
+    """
+    from z30_dsp.band_manager import BandManager
+    from z30_dsp.station_settings import SettingsManager
+
+    for path in (SettingsManager().config_path, BandManager().config_path):
+        assert os.path.isabs(path), f"{path} is relative to the launch directory"
+
+
+def test_the_tk_wizard_helper_does_not_default_to_a_relative_path():
+    """
+    \`launch_config_wizard_if_needed\` and \`ConfigWizardDialog\` both build a SettingsManager with
+    no path when the caller supplies none, which is how \`z30 --wizard\` reached the bare default.
+
+    config_wizard imports Tk at module scope, so on a headless box it cannot be imported at all
+    - which is exactly why its rules were split into station_settings.py. Read the signature
+    instead of importing it.
+    """
+    source = (
+        pathlib.Path(__file__).resolve().parents[1] / "z30_dsp" / "config_wizard.py"
+    ).read_text(encoding="utf-8")
+
+    signature = re.search(
+        r"def launch_config_wizard_if_needed\\((.*?)\\)\\s*->", source, re.DOTALL
+    )
+    assert signature, "launch_config_wizard_if_needed not found"
+    assert 'config_path: str = "config.json"' not in signature.group(1)
+    assert "config_path: Optional[str] = None" in signature.group(1)
 `,
   },
   {
