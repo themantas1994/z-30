@@ -8,36 +8,44 @@ the two settings modals, `z30_dsp/web_server.py`, `z30_dsp/config_wizard.py`,
 Trigger: an operator reports that z-30 connects to the radio successfully and then sends nothing —
 no PTT during the transmit cycle.
 
-**This is a review document, not a fix.** Nothing in the transmit path was changed. Every finding
-below was reproduced by running the real code; the commands and their actual output are quoted.
-`wiki/06` and `wiki/13` were read first and are treated as the specification; where code and wiki
-disagree, the wiki is taken as correct and the code is the defect.
+Every finding below was reproduced by running the real code; the commands and their actual output
+are quoted. `wiki/06` and `wiki/13` were read first and are treated as the specification; where
+code and wiki disagreed, the wiki was taken as correct and the code as the defect.
 
-The existing guard suite (`tests/transmitPath.test.mjs`) **passes** with all of this present —
-see finding 15.
+**Status: all sixteen findings are fixed in this branch.** The report is kept as the record of
+what was wrong and why, because several of the fixes only make sense next to the failure they
+close. Each finding carries the fix below its description; the summary table's Status column is
+the index. Regression guards were added for every one that can be tested without a radio
+attached — `tests/transmitPath.test.mjs` went from 47 checks to 92, and
+`tests/test_web_server_api.py` gained seven for the server's keying semantics.
+
+When the audit was written, the guard suite **passed in full with every one of these defects
+live** — it covered CM108, Pi GPIO, TCI and WinKeyer, but neither `CAT` (the default keying
+method) nor `RTS`/`DTR`, and nothing at all asserted what the server does with an active-low
+station. That gap is finding 15, and closing it is what stops this list coming back.
 
 ---
 
 ## Summary
 
-| # | Severity | Finding |
-| :-- | :--- | :--- |
-| 1 | Critical | The `CAT` keying method reports success without sending anything |
-| 2 | Critical | The server's GPIO dead-man switch is polarity-blind: an `ACTIVE_LOW` station is cut off mid-frame, then re-keyed 2 s after it stops |
-| 3 | High | All 30 Yaesu rigs in the catalog are sent commands that cannot key them |
-| 4 | High | CM108/CM119 keying ignores `pttPolarity` — inverted keying on active-low wiring |
-| 5 | High | The Tk setup wizard's "PTT Key Test" keys nothing and reports success |
-| 6 | High | `z30 --tkinter` (and the automatic fallback in `main.py`) simulates transmitting |
-| 7 | High | Serial pairing reports "✓ Real Serial Hardware Paired" when the port failed to open |
-| 8 | Medium | `App.tsx` discards `setPtt()`'s return value — audio is transmitted into a radio still in RX |
-| 9 | Medium | A `rigctld` error reply (`RPRT -1`) is logged as `OK`, and `setPtt` returns before the daemon answers |
-| 10 | Medium | "Test CAT Connection" routes on `config.serialPort`, so it can test a different path than the one that transmits |
-| 11 | Medium | A band change sends two different frequencies; a custom dial is overwritten by the stock one |
-| 12 | Medium | The Tk wizard's CAT test fabricates a VFO reading when `rigctld` returns an error |
-| 13 | Low | `pttPort` and `winkeyerPort` are never used; RTS/DTR/WinKeyer drive whatever single port is paired |
-| 14 | Low | `dataBits`, `stopBits` and `handshake` are collected in the UI and never reach `port.open()` |
-| 15 | Low | The guard suite covers CM108/RPi/TCI/WinKeyer but not `CAT`, `RTS` or `DTR` |
-| 16 | Low | `HamlibCatClient.set_ptt()` is a second keying implementation with no gate (currently unreferenced) |
+| # | Severity | Finding | Fixed by |
+| :-- | :--- | :--- | :--- |
+| 1 | Critical | The `CAT` keying method reports success without sending anything | `sendRigPtt`/`sendRigFrequency`/`sendRigMode` return whether anything was written; the `CAT` branch fails and logs `ERROR` on it |
+| 2 | Critical | The server's GPIO dead-man switch is polarity-blind: an `ACTIVE_LOW` station is cut off mid-frame, then re-keyed 2 s after it stops | the browser sends intent + polarity; `GpioBridge` derives the level and keeps the countdown in step |
+| 3 | High | All 30 Yaesu rigs in the catalog are sent commands that cannot key them | a `YAESU` protocol family (`TX1;`/`TX0;`, 9-digit `FA`, `MD0x;`) on an explicit model allowlist; other Yaesu rigs refuse and name `rigctld` |
+| 4 | High | CM108/CM119 keying ignores `pttPolarity` — inverted keying on active-low wiring | polarity resolved before `setCm108Gpio`, including in the emergency release |
+| 5 | High | The Tk setup wizard's "PTT Key Test" keys nothing and reports success | the wizard keys through `rigctld` or pyserial for real, with a confirmation, a 3 s auto-release and a `finally` release |
+| 6 | High | `z30 --tkinter` (and the automatic fallback in `main.py`) simulates transmitting | the Tk window refuses to claim a transmission it cannot make; `main.py` says the fallback is receive-only |
+| 7 | High | Serial pairing reports "✓ Real Serial Hardware Paired" when the port failed to open | a failed `port.open()` returns failure and names the likely holder of the port |
+| 8 | Medium | `App.tsx` discards `setPtt()`'s return value — audio is transmitted into a radio still in RX | `App.tsx` awaits `setPtt()` and abandons the frame, with the reason in the banner, when keying fails |
+| 9 | Medium | A `rigctld` error reply (`RPRT -1`) is logged as `OK`, and `setPtt` returns before the daemon answers | `relayRigctl` parses `RPRT` and returns false on non-zero; `setPtt` awaits it |
+| 10 | Medium | "Test CAT Connection" routes on `config.serialPort`, so it can test a different path than the one that transmits | `testCatConnection` routes on the CAT method, the same predicate the transmit path uses |
+| 11 | Medium | A band change sends two different frequencies; a custom dial is overwritten by the stock one | `setBandByName(band, dialHz)` — one command carrying the operator's dial |
+| 12 | Medium | The Tk wizard's CAT test fabricates a VFO reading when `rigctld` returns an error | the fabricated frequency is gone; the daemon's actual reply is reported, errors as errors |
+| 13 | Low | `pttPort` and `winkeyerPort` are never used; RTS/DTR/WinKeyer drive whatever single port is paired | a real second keying port (`Pair PTT Port`), used by RTS/DTR/WinKeyer when paired |
+| 14 | Low | `dataBits`, `stopBits` and `handshake` are collected in the UI and never reach `port.open()` | `serialPortOptions()` passes data bits, stop bits and hardware handshake to `port.open()` |
+| 15 | Low | The guard suite covers CM108/RPi/TCI/WinKeyer but not `CAT`, `RTS` or `DTR` | `CAT`, `RTS`, `DTR`, polarity and the server's keying semantics all have guards now |
+| 16 | Low | `HamlibCatClient.set_ptt()` is a second keying implementation with no gate (currently unreferenced) | `HamlibCatClient.set_ptt()` removed; an empty rigctld reply no longer counts as success |
 
 Findings 1, 3, 5, 6, 7 and 10 each independently produce exactly the reported symptom: a green
 connection tick followed by a transmit cycle in which the radio never keys.
@@ -439,17 +447,52 @@ through the same checks, before something calls it.
 
 ---
 
-## What to fix first
+## What changed, and what an operator will notice
 
-The reporter's symptom is most likely finding 1 in combination with 3, 6, 7 or 10, depending on
-their setup. Ordered by what makes the failure visible soonest:
+The order below is the order the fixes were made, which is roughly the order in which each one
+makes the next failure visible.
 
-1. **Finding 1** — make `sendRigPtt`/`sendRigFrequency`/`sendRigMode` report whether they wrote
-   anything, and let `setPtt` fail on it. Nothing else in this list can be diagnosed by an operator
-   while the app answers "✓ verified" to a command it never sent.
-2. **Finding 2** — the dead-man switch currently manufactures the stuck transmitter it exists to
-   prevent, on any active-low SBC station.
-3. **Findings 5, 6 and 12** — the Python surfaces that report on hardware they never address.
-4. **Findings 3 and 4** — wrong bytes and wrong levels for hardware the wiki says is supported.
-5. **Finding 15** — extend the guard suite to `CAT`/`RTS`/`DTR` and to the server's keying
-   semantics, so none of the above can come back quietly.
+1. **Findings 1, 9 and 12 — a command that was not sent now says so.** This is the one that made
+   the rest diagnosable. `sendRigPtt`, `sendRigFrequency` and `sendRigMode` report whether the
+   wire actually took the bytes; the relay parses `RPRT` instead of treating a completed TCP
+   exchange as a completed command; the rig log records the outcome rather than the intention;
+   and the raw console's `RPRT` reply is now the radio's answer, which is why
+   `executeRawCommand()` had to become `async`.
+2. **Findings 8, and the audio early-returns.** `App.tsx` awaits keying and abandons the frame if
+   the radio did not key, naming the reason in the transmit banner. `play16MfskSequence()` and
+   `startTuneTone()` report whether a carrier started, so a refusal cannot leave PTT asserted with
+   nothing to transmit.
+3. **Finding 2 — the dead-man switch speaks in transmitter state, not pin voltage.** An
+   active-low station now registers its countdown when it keys, holds it with its own keepalives,
+   and the watchdog releases rather than keys. This one changed the `/api/gpio` body; the older
+   `{"pin", "value"}` form is still accepted with active-high semantics so a cached bundle keeps
+   working.
+4. **Findings 3, 4, 13 and 14 — the bytes and the levels the hardware actually needs.** Yaesu gets
+   its own protocol family on an explicit model allowlist; polarity reaches CM108; RTS/DTR/WinKeyer
+   can key a second cable; and the UART framing the operator configured reaches `port.open()`.
+5. **Findings 5, 6, 7, 12 and 16 — nothing reports on hardware it has not addressed.** The setup
+   wizard keys for real or explains why it cannot, the Tk window admits it is receive-only, serial
+   pairing fails when the port did not open, and the spare ungated `set_ptt()` is gone.
+6. **Finding 15 — guards, so this cannot come back quietly.** `CAT`, `RTS`, `DTR`, both polarities,
+   the Yaesu and CI-V byte sequences, the separate keying port and the server's keyed-state
+   bookkeeping are all asserted now.
+
+Two things an operator will notice immediately, and should:
+
+- **Some setups that looked like they worked will now report a failure.** That is the point: a
+  station whose CAT link was never reaching the radio was already not transmitting; it just said
+  otherwise. The message names the missing piece.
+- **`z30 --tkinter` no longer offers to transmit.** It never could.
+
+## Still open, deliberately
+
+- **Direct Serial CAT does not read replies.** There is no serial read loop, so a Direct Serial
+  test confirms the write, not the radio's answer — it says so in the result. Reading replies means
+  a per-rig parser for every family; `rigctld` already has those, and Hamlib mode uses them.
+- **Yaesu coverage is six models.** The `FA` digit count and mode codes vary across Yaesu
+  generations, and the FT-817/857/897 and the 1990s rigs are a different binary protocol per
+  family. Rather than guess, everything outside the allowlist refuses and names `rigctld`. Adding
+  a model means verifying it against that rig's CAT manual, not widening a regex.
+- **The Python wizard has no band-plan gate.** Its PTT test keys the radio after an explicit
+  confirmation, exactly as the browser's wiring test does; neither runs `canTransmit()`, which
+  guards the four transmit paths listed in AGENTS.md §4. Worth a decision, not a silent change.

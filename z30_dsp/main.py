@@ -29,7 +29,13 @@ def main():
             from z30_dsp.web_server import main as web_main
             web_main()
         except Exception as e:
-            print(f"[z-30] Web application launch notice: {e}. Falling back to Tkinter...")
+            # The Tkinter window is receive-only: no modulator, no PTT keying, no transmit
+            # gate. Falling back to it with one line of console output handed an operator who
+            # asked for a transceiver something that cannot key a radio, which looked exactly
+            # like "the program connects but never transmits". Say so plainly instead.
+            print(f"[z-30] The web transceiver could not start: {e}")
+            print("[z-30] Falling back to the RECEIVE-ONLY Tkinter window.")
+            print("[z-30] It cannot key a transmitter. To transmit, fix the error above and run 'z30-web'.")
             try:
                 from z30_dsp.gui_tkinter import main as gui_main
                 gui_main()

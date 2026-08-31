@@ -921,12 +921,62 @@ rigctld -m 2029 -r /dev/ttyUSB0 -s 38400
 
 ---
 
+---
+
+## 🔌 Which transport carries your CAT commands
+
+The **CAT Method** you choose in Station Settings decides this, and nothing else does:
+
+| CAT Method | Frequency, mode and CAT keying go to |
+| :--- | :--- |
+| \`Hamlib\` | The \`rigctld\` daemon, through the native server's TCP relay (\`/api/rigctl\`) |
+| \`Direct Serial\` | The paired Web Serial port, as that rig family's own native protocol |
+| \`None\` | Nowhere — VOX or hardware keying only, and you tune the radio yourself |
+
+Two consequences worth knowing:
+
+- **Hamlib mode needs the native server.** A browser cannot open a TCP socket to a daemon, so
+  \`rigctld\` is only reachable when z-30 is launched through \`z30-web\`. Opened as a plain page,
+  Hamlib mode has nowhere to send a command, and the app now refuses and says so rather than
+  reporting a set that never left the browser.
+- **Pairing a serial port no longer changes your CAT transport.** It used to: pairing a port
+  for RTS keying silently moved CAT off the daemon and onto raw bytes written to that port —
+  a port \`rigctld\` already had open.
+
+**A CAT command that could not be sent is reported as a failure** — in the rig log, in the raw
+console's \`RPRT\` reply, and in the transmit banner. Nothing answers "OK" for a command the radio
+never received.
+
+### Direct Serial protocol coverage
+
+\`Direct Serial\` speaks each family's real protocol, and only where that protocol is known:
+
+| Rigs | Protocol | PTT command |
+| :--- | :--- | :--- |
+| Icom, Xiegu | CI-V (\`FE FE <addr> E0 …\`) | \`1C 00 01\` / \`1C 00 00\` |
+| Kenwood, Elecraft | Kenwood ASCII, 11-digit \`FA\` | \`TX;\` / \`RX;\` |
+| Yaesu FT-991/991A, FTDX10, FTDX101, FT-710, FT-891 | Yaesu new-CAT ASCII, **9-digit** \`FA\`, \`MD0x;\` | **\`TX1;\` / \`TX0;\`** |
+| Everything else — including FT-817/857/897 and the 1990s Yaesu rigs | *not implemented* | use \`rigctld\` |
+
+Yaesu is **not** Kenwood, despite the family resemblance: \`TX;\` is Yaesu's PTT *read* command and
+keys nothing, there is no \`RX;\` in the Yaesu set, and \`FA\` takes nine digits rather than eleven.
+z-30 sent the Kenwood forms to every Yaesu rig until this was fixed, which meant a Yaesu station
+passed its CAT test and then never keyed.
+
+For any rig outside that table, \`Direct Serial\` refuses and names \`rigctld\` instead of guessing a
+command set. Hamlib carries per-model command tables; this app does not duplicate them.
+
+---
+
 ## ⚡ 9 Supported PTT Keying Architectures
 
 ### 1. CAT Software Command (\`CAT\`)
-- **How it works**: Sends digital \`\\set_ptt 1\` and \`\\set_ptt 0\` commands directly over the serial/USB connection to the transceiver micro-controller.
+- **How it works**: Sends the rig family's own PTT command (see the table above) over the serial
+  link, or \`T 1\` / \`T 0\` to \`rigctld\` in Hamlib mode.
 - **Best for**: Radios with built-in USB interfaces (Icom IC-7300, IC-705, Yaesu FT-710, FT-991A, Kenwood TS-590SG, Elecraft K4, Xiegu G90/X6100).
 - **Pros**: Zero extra cables or hardware required.
+- **Reports failure**: if no protocol is configured for your rig, no port is open, or \`rigctld\`
+  refuses the command, keying fails visibly and no audio is transmitted.
 
 ### 2. RTS Hardware Serial Line (\`RTS\`)
 - **How it works**: Toggles the Request To Send (RTS) pin on an RS-232 or USB-to-UART bridge (CP2102, FTDI FT232, CH340).
@@ -942,6 +992,28 @@ rigctld -m 2029 -r /dev/ttyUSB0 -s 38400
 ### 3. DTR Hardware Serial Line (\`DTR\`)
 - **How it works**: Toggles the Data Terminal Ready (DTR) line (Pin 4 on DB9).
 - **Best for**: Legacy interfaces, dual-channel CW/PTT keyers, or interfaces using DTR for PTT and RTS for CW keying.
+
+#### If PTT is on a different cable from CAT
+
+\`RTS\`, \`DTR\` and \`WINKEYER\` key the **CAT port** by default, which is what a single-cable station
+(a Digirig, a rig with one USB connection) wants. If your keying line is on a *second* cable, use
+**Pair PTT Port** in Station Settings → PTT. Until that exists, the app drives the CAT port's line
+— for a while it did that while printing the configured PTT port's name, so the message named one
+cable and the hardware saw another.
+
+#### Opening a port no longer keys your radio
+
+Both Chromium's Web Serial and pyserial assert DTR and RTS when a port opens. On an RTS- or
+DTR-keyed station that is a transmit command: connecting the cable put the radio into transmit
+before any check had run. z-30 now drops both lines immediately after opening any port — the CAT
+port, the PTT port, and the port the setup wizard opens for its keying test.
+
+#### Polarity applies to the hardware, not just the label
+
+\`ACTIVE_LOW\` inverts what is driven, on **RTS, DTR, CM108/CM119 and Raspberry Pi GPIO alike**.
+CM108 keying used to ignore the setting entirely, so an active-low DRA or URI interface was driven
+backwards — no carrier while transmitting, PTT asserted while receiving — while the wiring test
+printed "Active Low" and reported a pass.
 
 ### 4. Right-Channel Audio PTT Tone (\`AUDIO_TONE_RIGHT\`)
 - **How it works**: Modulates the Left stereo channel with the 16-MFSK data audio while outputting a continuous 1000 Hz or 1500 Hz sinusoidal tone on the Right stereo channel during transmission.
@@ -1325,9 +1397,28 @@ z-30's benchmark measures the on-air case directly: with random carrier and timi
   \`\`\`
 
 ### 4. Transceiver Does Not Key into Transmit (PTT Issues)
+
+**Read the rig control log first.** Every keying attempt writes a line there, and a command that
+could not be sent is recorded as an \`ERROR\` naming the missing piece — no port open, no protocol
+for this rig, \`rigctld\` refused, HID device not paired. A refused transmission also appears in the
+transmit banner, and no audio is generated when keying fails.
+
 - **CAT Mode**: Verify baud rate matches the radio menu setting. Check that the radio is in \`Data Mode\` (e.g., \`USB-D\`).
-- **Digirig / RTS Mode**: Ensure PTT Method is set to **\`RTS\`** on the proper COM/tty port.
+- **CAT Mode, Yaesu, Direct Serial**: only the FT-991/991A, FTDX10, FTDX101, FT-710 and FT-891 are
+  driven directly. Any other Yaesu — the FT-817/857/897 included — needs \`rigctld\`; z-30 refuses
+  rather than sending a command set it cannot verify for your model.
+- **CAT Mode, "Hamlib"**: \`rigctld\` is only reachable when z-30 runs through its native server
+  (\`z30-web\`). From a plain page there is no relay and CAT keying will refuse.
+- **\`rigctld\` answers \`RPRT -1\`**: the daemon is running but refused the command. A daemon started
+  with \`-P NONE\` has no PTT to key — restart it with the right \`-P\` for your interface.
+- **Digirig / RTS Mode**: Ensure PTT Method is set to **\`RTS\`** on the proper COM/tty port. If the
+  keying line is on a *second* cable, pair it with **Pair PTT Port** in Station Settings → PTT;
+  otherwise keying goes to the CAT port.
+- **Polarity**: if the radio transmits while receiving and stays silent while transmitting, the
+  \`ACTIVE_HIGH\` / \`ACTIVE_LOW\` setting is inverted for your interface.
 - **SignaLink USB Mode**: If using Right-Channel audio tone, ensure PTT method is set to **\`Audio Tone (Right Channel)\`** and soundcard balance is centered.
+- **\`z30 --tkinter\`**: that window is receive-only — it has no modulator and no keying. Transmit
+  from the web transceiver (\`z30-web\`).
 
 ### 5. High Time Offset ($\\Delta t > 1.5\\text{ s}$)
 - **Symptom**: Transmissions start late; decodes show high $\\Delta t$.
@@ -1951,6 +2042,15 @@ running":
    crashed tab, a killed renderer or a sleeping machine cannot send a keepalive — and cannot
    run a browser-side timer either, which is why this layer has to exist separately. A hard
    40 s ceiling applies even if keepalives keep arriving.
+
+   The browser sends this layer the **intent** (\`keyed\`) plus the wiring (\`active_low\`), and the
+   server derives the pin level from the two. It used to be sent the level alone and recorded
+   that as the keyed state, which is the opposite of the truth on an active-low interface: such
+   a station registered no countdown when it keyed — so its own keepalives came back rejected
+   and the browser force-unkeyed it about half a second into every frame — and registered one
+   when it *stopped*, after which the watchdog "released" the line by driving it low, keying the
+   transmitter with nobody watching. A defence that can produce the failure it defends against
+   is worse than no defence, because it is trusted.
 3. **\`atexit\` and \`SIGTERM\`/\`SIGINT\` handlers** that release every claimed GPIO pin, so killing
    the server does not leave a radio keyed.
 

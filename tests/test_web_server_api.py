@@ -23,12 +23,25 @@ TOKEN = "test-token-not-a-real-one"
 
 
 class FakeGpioDevice:
-    """Stands in for gpiozero's DigitalOutputDevice so the bridge can be tested off a Pi."""
+    """
+    Stands in for gpiozero's DigitalOutputDevice so the bridge can be tested off a Pi.
 
-    def __init__(self, pin: int) -> None:
+    `active_high` is modelled because the PTT polarity rides on it: `value` is the LOGICAL
+    state (on() = keyed, as gpiozero defines it) while `level` is the voltage actually on the
+    pin. The two differ on an active-low interface, and that difference is the whole of the
+    dead-man switch bug these tests now pin down.
+    """
+
+    def __init__(self, pin: int, active_high: bool = True, initial_value: bool = False) -> None:
         self.pin = pin
-        self.value = False
+        self.active_high = active_high
+        self.value = bool(initial_value)
         self.closed = False
+
+    @property
+    def level(self) -> bool:
+        """The electrical level on the pin, which is what the radio's PTT input sees."""
+        return self.value if self.active_high else not self.value
 
     def on(self) -> None:
         self.value = True
@@ -157,13 +170,102 @@ def test_only_the_configured_ptt_pin_can_be_driven(server, bridge):
 
 
 def test_configured_pin_keys_and_unkeys(server, bridge):
-    status, _headers, _body = request(server, "/api/gpio", {"pin": 17, "value": True}, authed())
+    status, _headers, _body = request(server, "/api/gpio", {"pin": 17, "keyed": True}, authed())
     assert status == 200
     assert bridge._devices[17].value is True  # noqa: SLF001
 
-    status, _headers, _body = request(server, "/api/gpio", {"pin": 17, "value": False}, authed())
+    status, _headers, _body = request(server, "/api/gpio", {"pin": 17, "keyed": False}, authed())
     assert status == 200
     assert bridge._devices[17].value is False  # noqa: SLF001
+
+
+def test_a_legacy_value_only_body_still_keys_active_high(server, bridge):
+    """
+    A cached older bundle sends {"pin", "value"} with no intent field. Reading it as an
+    active-high level keeps that station working; rejecting it would strand a browser holding
+    a stale cache with a transmitter it can key but not release.
+    """
+    status, _headers, _body = request(server, "/api/gpio", {"pin": 17, "value": True}, authed())
+    assert status == 200
+    assert bridge._devices[17].value is True  # noqa: SLF001
+    assert bridge.any_pin_keyed() is True
+
+    request(server, "/api/gpio", {"pin": 17, "value": False}, authed())
+    assert bridge.any_pin_keyed() is False
+
+
+# -- PTT polarity ----------------------------------------------------------
+#
+# The browser used to send the electrical LEVEL and this server recorded it as the keyed
+# state. On an active-low station the two are opposites, so keying registered no dead-man
+# countdown - the browser's own keepalives were then rejected and it force-unkeyed the
+# transmitter about half a second into every frame - while releasing registered one, after
+# which the watchdog "released" the line by driving it low, which on active-low wiring keys
+# the transmitter with nobody watching.
+
+def test_active_low_keying_drives_the_line_low_and_registers_the_dead_man(server, bridge):
+    status, _headers, body = request(
+        server, "/api/gpio", {"pin": 17, "keyed": True, "active_low": True}, authed()
+    )
+    assert status == 200
+    device = bridge._devices[17]  # noqa: SLF001
+    assert device.level is False, "an active-low station keys by pulling the line to ground"
+    assert device.value is True, "...which is the KEYED state, not a released one"
+    assert bridge.any_pin_keyed() is True
+    assert bridge.keepalive(17)["success"] is True, "the station's own keepalives must be accepted"
+
+    assert json.loads(body)["keyed"] is True
+
+
+def test_active_low_release_raises_the_line_and_clears_the_dead_man(server, bridge):
+    request(server, "/api/gpio", {"pin": 17, "keyed": True, "active_low": True}, authed())
+    request(server, "/api/gpio", {"pin": 17, "keyed": False, "active_low": True}, authed())
+
+    device = bridge._devices[17]  # noqa: SLF001
+    assert device.level is True, "releasing an active-low station lets the line rise"
+    assert bridge.any_pin_keyed() is False, "a released transmitter must not hold a countdown"
+
+
+def test_the_watchdog_never_keys_an_active_low_station(bridge, monkeypatch):
+    """The stuck-transmitter defence must not be able to create the thing it defends against."""
+    monkeypatch.setattr(ws, "GPIO_KEEPALIVE_TIMEOUT_SEC", 0.3)
+    bridge.set_pin(17, True, True)
+    bridge.set_pin(17, False, True)
+    device = bridge._devices[17]  # noqa: SLF001
+
+    time.sleep(0.7)
+    assert device.level is True, "the watchdog drove an already-released active-low line into TX"
+    assert device.value is False
+
+
+def test_the_watchdog_releases_a_keyed_active_low_station(bridge, monkeypatch):
+    monkeypatch.setattr(ws, "GPIO_KEEPALIVE_TIMEOUT_SEC", 0.3)
+    bridge.set_pin(17, True, True)
+    device = bridge._devices[17]  # noqa: SLF001
+    assert device.level is False
+
+    time.sleep(0.7)
+    assert device.level is True, "the watchdog did not release an active-low PTT line"
+
+
+def test_release_all_leaves_an_active_low_line_released(bridge):
+    bridge.set_pin(17, True, True)
+    device = bridge._devices[17]  # noqa: SLF001
+    bridge.release_all()
+    assert device.level is True, "shutdown left an active-low transmitter keyed"
+    assert device.closed is True
+
+
+def test_changing_polarity_rebuilds_the_pin_rather_than_reinterpreting_it(bridge):
+    bridge.set_pin(17, True, False)
+    first = bridge._devices[17]  # noqa: SLF001
+    assert first.level is True
+
+    bridge.set_pin(17, False, False)
+    bridge.set_pin(17, True, True)
+    second = bridge._devices[17]  # noqa: SLF001
+    assert second is not first, "the device must be rebuilt when the wiring polarity changes"
+    assert second.level is False
 
 
 # -- dead-man switch -------------------------------------------------------

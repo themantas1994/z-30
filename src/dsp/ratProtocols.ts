@@ -15,17 +15,30 @@
  * the standard CI-V convention of 2 decimal digits packed per byte, least-significant byte
  * first (a mechanical, unambiguous algorithm, not a memorized magic sequence).
  *
- * Kenwood-style ASCII (Kenwood, Elecraft, and modern "new CAT" Yaesu rigs - FT-991A, FTDX10,
- * FTDX101, FT-891, FT-710): semicolon-terminated ASCII commands (FA/MD/TX/RX), verified
- * against the decades-stable Kenwood TS-2000 command set that Elecraft and modern Yaesu CAT
- * protocols are built on.
+ * Kenwood-style ASCII (Kenwood and Elecraft): semicolon-terminated ASCII commands
+ * (FA/MD/TX/RX), verified against the decades-stable Kenwood TS-2000 command set that Elecraft
+ * CAT is built on.
  *
- * Older Yaesu ("old CAT", 5-byte binary frames used by e.g. FT-747/FT-757/FT-1000/FT-920) is
- * NOT implemented here - it's a materially different binary protocol per rig family, and is
- * intentionally left as a known gap rather than guessed at.
+ * Yaesu "new CAT" (FT-991/FT-991A, FTDX10, FTDX101, FT-710, FT-891) looks like the Kenwood set
+ * at a glance and is NOT the same protocol. Yaesu was routed through the Kenwood builders here
+ * until this was corrected, which meant every Yaesu station keyed nothing:
+ *
+ *   - `TX;` is Yaesu's PTT *read* command; the setter is `TX1;` (CAT transmit). A rig sent
+ *     `TX;` answers with its current state and stays in receive.
+ *   - There is no `RX;` in the Yaesu set; releasing is `TX0;`.
+ *   - `FA` takes 9 digits on these rigs, not Kenwood's 11.
+ *   - Mode is `MD0x;` - a leading P1 channel digit Kenwood does not have.
+ *
+ * Older Yaesu ("old CAT", 5-byte binary frames used by e.g. FT-817/FT-857/FT-897, FT-747,
+ * FT-757, FT-1000, FT-920) is NOT implemented here - it's a materially different binary
+ * protocol per rig family, and is intentionally left as a known gap rather than guessed at.
+ * The same goes for the new-CAT rigs whose `FA` digit count differs from the nine used below:
+ * `getProtocolFamilyForRig()` answers 'NONE' for both, the transmit path then refuses to key
+ * over Direct Serial, and the operator is pointed at `rigctld`, which carries Hamlib's
+ * per-model tables. A refusal an operator can act on beats bytes a radio silently discards.
  */
 
-export type CatProtocolFamily = 'CIV' | 'KENWOOD' | 'NONE';
+export type CatProtocolFamily = 'CIV' | 'KENWOOD' | 'YAESU' | 'NONE';
 
 // ---------------------------------------------------------------------------
 // Icom CI-V
@@ -140,18 +153,73 @@ export function kenwoodSetPtt(tx: boolean): string {
 }
 
 // ---------------------------------------------------------------------------
+// Yaesu "new CAT" ASCII
+// ---------------------------------------------------------------------------
+
+/** Yaesu takes nine digits, where Kenwood takes eleven. */
+export function yaesuSetFrequency(hz: number): string {
+  return `FA${Math.max(0, Math.round(hz)).toString().padStart(9, '0')};`;
+}
+
+/**
+ * Yaesu mode codes (P2 of `MD0x;`): 1=LSB 2=USB 3=CW 4=FM 5=AM 6=RTTY-LSB 7=CW-R 8=DATA-LSB
+ * 9=RTTY-USB C=DATA-USB. As with CI-V and Kenwood, the DATA sub-mode is left to the operator's
+ * front-panel selection rather than guessed at, so this sets the base mode only.
+ */
+const YAESU_MODE_CODES: Record<string, string> = {
+  LSB: '1',
+  USB: '2',
+  CW: '3',
+  FM: '4',
+  AM: '5',
+  RTTY: '9',
+  CWR: '7',
+  RTTYR: '6',
+};
+
+export function yaesuSetMode(mode: string): string {
+  const code = YAESU_MODE_CODES[mode.toUpperCase()] ?? YAESU_MODE_CODES.USB;
+  return `MD0${code};`;
+}
+
+/** `TX1;` keys via CAT and `TX0;` releases. `TX;` alone is the read form and keys nothing. */
+export function yaesuSetPtt(tx: boolean): string {
+  return tx ? 'TX1;' : 'TX0;';
+}
+
+// ---------------------------------------------------------------------------
 // Family classification
 // ---------------------------------------------------------------------------
 
 /**
- * Derives the real CAT protocol family from a rig's manufacturer. Xiegu radios (G90, X5105,
- * X6100, G106, G1M) are documented CI-V-compatible interfaces, hence grouped with Icom.
- * Elecraft (K3/K3S/K4/KX2/KX3/K2) use the Kenwood TS-2000-derived command set, as do modern
- * "new CAT" Yaesu rigs.
+ * Yaesu models this file can speak on a serial line, by the catalog's `model` string.
+ *
+ * Deliberately a short allowlist rather than "every rig whose manufacturer is Yaesu". Yaesu's
+ * ASCII CAT is not one protocol: the `FA` digit count and the available mode codes differ
+ * between generations, and the FT-817/857/897 and the 1990s rigs are not ASCII at all. These
+ * six are the modern data-mode rigs whose nine-digit form is well established. Anything else
+ * Yaesu gets 'NONE', which the transmit path turns into a refusal naming `rigctld` - Hamlib
+ * carries the per-model tables and this file does not pretend to.
  */
-export function getProtocolFamilyForMfg(mfg: string): CatProtocolFamily {
+const YAESU_NEW_CAT_MODELS = new Set<string>([
+  'FT-991A',
+  'FT-991',
+  'FTDX10',
+  'FTDX101D',
+  'FT-710',
+  'FT-891',
+]);
+
+/**
+ * Derives the real CAT protocol family from a rig's manufacturer and model. Xiegu radios (G90,
+ * X5105, X6100, G106, G1M) are documented CI-V-compatible interfaces, hence grouped with Icom.
+ * Elecraft (K3/K3S/K4/KX2/KX3/K2) use the Kenwood TS-2000-derived command set. Yaesu has its
+ * own set and its own allowlist - see YAESU_NEW_CAT_MODELS.
+ */
+export function getProtocolFamilyForRig(mfg: string, model?: string): CatProtocolFamily {
   const m = mfg.toLowerCase();
   if (m === 'icom' || m === 'xiegu') return 'CIV';
-  if (m === 'kenwood' || m === 'elecraft' || m === 'yaesu') return 'KENWOOD';
+  if (m === 'kenwood' || m === 'elecraft') return 'KENWOOD';
+  if (m === 'yaesu') return model && YAESU_NEW_CAT_MODELS.has(model) ? 'YAESU' : 'NONE';
   return 'NONE';
 }

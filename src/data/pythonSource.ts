@@ -2327,6 +2327,9 @@ class GpioBridge:
     def __init__(self, allowed_pin: int = DEFAULT_GPIO_PTT_PIN) -> None:
         self.allowed_pin = allowed_pin
         self._devices: Dict[int, Any] = {}
+        # PTT polarity per claimed pin, as the browser reported it. Held so that the watchdog
+        # and the shutdown handlers drive the RELEASED level rather than a hardcoded low.
+        self._pin_active_low: Dict[int, bool] = {}
         self._lock = threading.RLock()
         self._keyed_pins: Dict[int, Dict[str, float]] = {}
         self._import_error: Optional[str] = None
@@ -2359,7 +2362,45 @@ class GpioBridge:
 
     # -- pin access --------------------------------------------------------
 
-    def _write_pin(self, bcm_pin: int, active: bool) -> Dict[str, Any]:
+    def _device_for(self, bcm_pin: int, active_low: bool) -> Any:
+        """
+        Returns the output device for a pin, built for this station's PTT polarity.
+
+        gpiozero's \`active_high\` carries the polarity, so \`device.on()\` means KEYED and
+        \`device.off()\` means RELEASED whichever way the interface is wired, and every caller
+        below - including the watchdog and the shutdown handlers - can speak in keyed/released
+        terms without having to remember which level that is. \`initial_value=False\` means
+        claiming the pin releases it rather than keying it.
+        """
+        existing = self._devices.get(bcm_pin)
+        if existing is not None and self._pin_active_low.get(bcm_pin) == active_low:
+            return existing
+        if existing is not None:
+            # Polarity changed (the operator edited it in Station Settings). Rebuild the device
+            # rather than driving the old one at the new meaning.
+            try:
+                existing.off()
+                existing.close()
+            except Exception:
+                pass
+            self._devices.pop(bcm_pin, None)
+        device = self._DigitalOutputDevice(bcm_pin, active_high=not active_low, initial_value=False)
+        self._devices[bcm_pin] = device
+        self._pin_active_low[bcm_pin] = active_low
+        return device
+
+    def _write_pin(self, bcm_pin: int, keyed: bool, active_low: Optional[bool] = None) -> Dict[str, Any]:
+        """
+        Drives the PTT line to \`keyed\` and keeps the dead-man bookkeeping in step with it.
+
+        \`keyed\` is the transmitter's state, NOT the pin's voltage. It used to be the voltage,
+        which the countdown logic then recorded as the keyed state: an active-low station
+        registered no countdown when it keyed (so its own keepalives were rejected and the
+        browser force-unkeyed it half a second into every frame) and registered one when it
+        released - after which this watchdog "released" the line by driving it low, which on
+        active-low wiring keys the transmitter. The layer that exists to prevent a stuck
+        transmitter was creating one.
+        """
         with self._lock:
             if self._DigitalOutputDevice is None:
                 return {
@@ -2367,11 +2408,11 @@ class GpioBridge:
                     "error": f"gpiozero is not available ({self._import_error}). Install it with "
                              "'pip install gpiozero' on the Raspberry Pi / SBC running this server.",
                 }
+            if active_low is None:
+                active_low = self._pin_active_low.get(bcm_pin, False)
             try:
-                if bcm_pin not in self._devices:
-                    self._devices[bcm_pin] = self._DigitalOutputDevice(bcm_pin)
-                device = self._devices[bcm_pin]
-                if active:
+                device = self._device_for(bcm_pin, active_low)
+                if keyed:
                     device.on()
                 else:
                     device.off()
@@ -2380,7 +2421,7 @@ class GpioBridge:
                 return {"success": False, "error": f"GPIO write to BCM pin {bcm_pin} failed: {exc}"}
 
             now = time.monotonic()
-            if active:
+            if keyed:
                 state = self._keyed_pins.get(bcm_pin)
                 if state is None:
                     self._keyed_pins[bcm_pin] = {"keyed_at": now, "last_keepalive": now}
@@ -2388,9 +2429,16 @@ class GpioBridge:
                     state["last_keepalive"] = now
             else:
                 self._keyed_pins.pop(bcm_pin, None)
-            return {"success": True, "pin": bcm_pin, "value": active}
+            return {
+                "success": True,
+                "pin": bcm_pin,
+                "keyed": keyed,
+                "active_low": active_low,
+                # The electrical level, for a UI or a log that wants to show the pin itself.
+                "value": (not keyed) if active_low else keyed,
+            }
 
-    def set_pin(self, bcm_pin: int, active: bool) -> Dict[str, Any]:
+    def set_pin(self, bcm_pin: int, keyed: bool, active_low: bool = False) -> Dict[str, Any]:
         """Keys or unkeys the configured PTT pin, refreshing the dead-man countdown."""
         if bcm_pin != self.allowed_pin:
             return {
@@ -2398,7 +2446,7 @@ class GpioBridge:
                 "error": f"BCM pin {bcm_pin} is not the configured PTT pin. This server only drives "
                          f"pin {self.allowed_pin}; start it with '--gpio-pin=<n>' to change that.",
             }
-        result = self._write_pin(bcm_pin, active)
+        result = self._write_pin(bcm_pin, keyed, active_low)
         if result.get("success"):
             result["keepalive_timeout_sec"] = GPIO_KEEPALIVE_TIMEOUT_SEC
             result["max_keyed_sec"] = GPIO_MAX_KEYED_SEC
@@ -2442,6 +2490,8 @@ class GpioBridge:
         with self._lock:
             for pin, device in self._devices.items():
                 try:
+                    # off() is the RELEASED state for either polarity, because the device was
+                    # built with active_high set from the station's wiring.
                     device.off()
                 except Exception:
                     pass
@@ -2451,6 +2501,7 @@ class GpioBridge:
                     pass
                 logger.info(f"Released GPIO BCM pin {pin} on shutdown.")
             self._devices.clear()
+            self._pin_active_low.clear()
             self._keyed_pins.clear()
 
     def shutdown(self) -> None:
@@ -2880,7 +2931,14 @@ class SpaRequestHandler(SimpleHTTPRequestHandler):
 
     def _handle_gpio(self, payload: Any) -> None:
         """
-        Keys or unkeys the configured PTT pin. Body: {"pin": <BCM pin>, "value": <bool>}.
+        Keys or unkeys the configured PTT pin. Body:
+        {"pin": <BCM pin>, "keyed": <bool>, "active_low": <bool>}.
+
+        \`keyed\` is the transmitter's intended state and \`active_low\` is the wiring; the bridge
+        derives the pin level from the two. A body carrying only the older {"value": <level>}
+        is still accepted and read with active-high semantics, so a stale cached bundle keeps
+        working rather than keying at random.
+
         Called from catController.ts's setRpiGpio(). While keyed, the UI must keep calling
         /api/gpio/keepalive or the watchdog in GpioBridge drops the line.
         """
@@ -2889,16 +2947,21 @@ class SpaRequestHandler(SimpleHTTPRequestHandler):
             return
         try:
             pin = int(payload["pin"])
-            value = bool(payload["value"])
+            active_low = bool(payload.get("active_low", False))
+            if "keyed" in payload:
+                keyed = bool(payload["keyed"])
+            else:
+                keyed = bool(payload["value"])
+                active_low = False
         except (TypeError, KeyError, ValueError) as exc:
             self._send_json(400, {"success": False, "error": f"Invalid request body: {exc}"})
             return
         if pin != self.gpio_bridge.allowed_pin:
             # A rejected pin is a bad request, not a hardware outage - say so with 400 so the
             # UI can tell a misconfiguration from a Pi that simply has no gpiozero installed.
-            self._send_json(400, self.gpio_bridge.set_pin(pin, value))
+            self._send_json(400, self.gpio_bridge.set_pin(pin, keyed, active_low))
             return
-        result = self.gpio_bridge.set_pin(pin, value)
+        result = self.gpio_bridge.set_pin(pin, keyed, active_low)
         self._send_json(200 if result.get("success") else 503, result)
 
     def _handle_gpio_keepalive(self, payload: Any) -> None:
@@ -3267,7 +3330,13 @@ def main():
             from z30_dsp.web_server import main as web_main
             web_main()
         except Exception as e:
-            print(f"[z-30] Web application launch notice: {e}. Falling back to Tkinter...")
+            # The Tkinter window is receive-only: no modulator, no PTT keying, no transmit
+            # gate. Falling back to it with one line of console output handed an operator who
+            # asked for a transceiver something that cannot key a radio, which looked exactly
+            # like "the program connects but never transmits". Say so plainly instead.
+            print(f"[z-30] The web transceiver could not start: {e}")
+            print("[z-30] Falling back to the RECEIVE-ONLY Tkinter window.")
+            print("[z-30] It cannot key a transmitter. To transmit, fix the error above and run 'z30-web'.")
             try:
                 from z30_dsp.gui_tkinter import main as gui_main
                 gui_main()
@@ -3614,6 +3683,40 @@ class AudioHardwareDetector:
             (2, "[2] Line Out / Virtual Audio Cable", 2),
         ]
         return inputs, outputs
+
+
+def rigctld_command(host: str, port: int, command: str, timeout_sec: float = 2.0) -> Tuple[bool, str]:
+    """
+    Sends one rigctl command to a local rigctld daemon and returns (reached, reply).
+
+    \`reached\` is False only when the daemon could not be talked to at all; a daemon that
+    answered "RPRT -1" is reached and refused, and the caller must tell those two apart. The
+    reply is returned verbatim - nothing here substitutes a plausible-looking value for an
+    error, which is what the wizard's CAT test used to do with a hardcoded 14.074000 MHz.
+    """
+    payload = command if command.endswith("\\n") else command + "\\n"
+    try:
+        with socket.create_connection((host, port), timeout=timeout_sec) as sock:
+            sock.settimeout(timeout_sec)
+            sock.sendall(payload.encode("ascii", errors="ignore"))
+            chunks = []
+            deadline = time.monotonic() + timeout_sec
+            while time.monotonic() < deadline:
+                try:
+                    chunk = sock.recv(4096)
+                except socket.timeout:
+                    break
+                if not chunk:
+                    break
+                chunks.append(chunk)
+                if chunks[-1].endswith(b"\\n"):
+                    break
+            return True, b"".join(chunks).decode("utf-8", errors="replace").strip()
+    except OSError as exc:
+        return False, (
+            f"could not reach rigctld ({exc}). Start it with "
+            f"'rigctld -m <model> -r <serial port> -s <baud>'."
+        )
 
 
 class SerialHardwareDetector:
@@ -4088,6 +4191,9 @@ class Step3RadioCatPage(WizardBasePage):
     def __init__(self, parent: tk.Widget, wizard: 'ConfigWizardDialog') -> None:
         super().__init__(parent, wizard)
         self.is_ptt_keyed = False
+        # Set by _key_ptt() and waited on by the worker thread that owns the keyed line, so
+        # "Release PTT" and leaving the page both drop the transmitter immediately.
+        self._ptt_release_event = threading.Event()
         self._build_ui()
 
     def _build_ui(self) -> None:
@@ -4224,58 +4330,115 @@ class Step3RadioCatPage(WizardBasePage):
             self.port_combo.config(state="normal")
             self.baud_combo.config(state="readonly")
 
-    def _test_cat_connection(self) -> None:
-        """Executes a non-blocking background query to verify real CAT communication."""
-        self.test_result_label.config(text="Status: Querying Rig CAT VFO...", foreground="#EAB308")
-        
-        def bg_test():
-            port = self.port_combo.get().strip()
-            rig = self.rig_combo.get()
-            baud = int(self.baud_combo.get()) if self.baud_combo.get().isdigit() else 115200
-            
-            # Check Hamlib Network socket
-            if "TCP" in port or "127.0.0.1" in port or ":" in port:
-                import socket
-                try:
-                    host = "127.0.0.1"
-                    port_num = 4532
-                    if ":" in port:
-                        parts = port.split(":")[-1].split()[0]
-                        if parts.isdigit():
-                            port_num = int(parts)
-                    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                    s.settimeout(1.5)
-                    s.connect((host, port_num))
-                    s.sendall(b"\\\\get_freq\\n")
-                    resp = s.recv(1024).decode("utf-8", errors="ignore").strip()
-                    s.close()
-                    freq_mhz = f"{int(resp)/1e6:.6f} MHz" if resp.isdigit() else "14.074000 MHz"
-                    self.after(0, lambda: self.test_result_label.config(
-                        text=f"✓ Hamlib rigctld OK: {rig} on {host}:{port_num} (VFO: {freq_mhz})",
-                        foreground="#00FF41"
-                    ))
-                    return
-                except Exception as e:
-                    self.after(0, lambda: self.test_result_label.config(
-                        text=f"✗ rigctld connection failed: {e}",
-                        foreground="#EF4444"
-                    ))
-                    return
+    # -- real hardware tests ----------------------------------------------
+    #
+    # Both tests below used to be theatre. \`_test_cat_connection\` opened and closed the serial
+    # port without sending a byte and reported "✓ Serial Port OK", and on the rigctld path it
+    # printed "(VFO: 14.074000 MHz)" - a hardcoded string from the \`else\` branch - whenever the
+    # daemon answered anything that was not a bare number, including an outright error. The PTT
+    # test updated two labels and a timer: it said "● TRANSMITTING via CAT Command [Pin: 1
+    # (HIGH)]" and then "✓ PTT Released (Transmitter in RX Standby)" without ever addressing a
+    # serial port, a GPIO or a daemon. An operator who set the station up here was told the
+    # wiring was good by code that had never touched the wiring.
 
-            # Check physical serial port
+    def _set_test_result(self, text: str, colour: str) -> None:
+        """Updates the result label from a worker thread (Tk is not thread-safe)."""
+        self.after(0, lambda: self.test_result_label.config(text=text, foreground=colour))
+
+    def _rigctld_endpoint(self) -> Tuple[str, int]:
+        """The rigctld host/port this wizard should talk to, from the config being edited."""
+        host = getattr(self.config, "net_cat_host", "127.0.0.1") or "127.0.0.1"
+        try:
+            port = int(getattr(self.config, "net_cat_port", 4532) or 4532)
+        except (TypeError, ValueError):
+            port = 4532
+        return host, port
+
+    def _selected_baud(self) -> int:
+        value = self.baud_combo.get()
+        return int(value) if value.isdigit() else 115200
+
+    def _open_keying_serial(self, released_level: bool) -> Any:
+        """
+        Opens the PTT serial port with both modem control lines already in the RELEASED state.
+
+        pyserial raises DTR and RTS when a port opens, exactly as Chromium does, so opening the
+        port to test keying would key an RTS- or DTR-wired transmitter before the test began.
+        Assigning the attributes before open() applies them as the port comes up.
+
+        \`released_level\` rather than a hardcoded False, because the released level is the HIGH
+        one on an inverting (active-low) interface: driving both lines low there would key
+        precisely the stations this is meant to protect.
+        """
+        import serial  # imported lazily: pyserial is only needed on the hardware paths
+
+        port_name = (self.config.ptt_port or self.port_combo.get()).strip()
+        if not port_name:
+            raise ValueError("No serial port is selected for PTT keying.")
+        ser = serial.Serial()
+        ser.port = port_name
+        ser.baudrate = self._selected_baud()
+        ser.timeout = 1.0
+        ser.rts = released_level
+        ser.dtr = released_level
+        ser.open()
+        return ser
+
+    def _test_cat_connection(self) -> None:
+        """Runs a real CAT query in the background and reports exactly what came back."""
+        method = self.cat_method_combo.get()
+        port = self.port_combo.get().strip()
+        baud = self._selected_baud()
+        rig = self.rig_combo.get()
+        self.test_result_label.config(text="Status: Querying rig CAT...", foreground="#EAB308")
+
+        def bg_test() -> None:
+            if "None" in method:
+                self._set_test_result(
+                    "ℹ CAT is disabled (None / Manual VOX). No query was sent.", "#EAB308"
+                )
+                return
+
+            if "Hamlib" in method:
+                host, port_num = self._rigctld_endpoint()
+                ok, reply = rigctld_command(host, port_num, "f")
+                if not ok:
+                    self._set_test_result(f"✗ rigctld {host}:{port_num}: {reply}", "#EF4444")
+                    return
+                first = reply.split()[0] if reply.split() else ""
+                if not first.lstrip("-").isdigit():
+                    # An error reply is an error. It used to be replaced with 14.074000 MHz.
+                    self._set_test_result(
+                        f"✗ rigctld answered '{reply}' - the daemon is running but could not read "
+                        f"the VFO. Check the rig model and serial settings it was started with.",
+                        "#EF4444",
+                    )
+                    return
+                self._set_test_result(
+                    f"✓ rigctld {host}:{port_num} reports VFO {int(first) / 1e6:.6f} MHz ({rig})",
+                    "#00FF41",
+                )
+                return
+
+            # Direct Serial: this wizard carries no per-rig command tables, so it can verify the
+            # port and nothing more - and says so rather than implying the radio answered.
             try:
                 import serial
-                ser = serial.Serial(port, baudrate=baud, timeout=1.0)
-                ser.close()
-                self.after(0, lambda: self.test_result_label.config(
-                    text=f"✓ Serial Port OK: {port} opened @ {baud} baud",
-                    foreground="#00FF41"
-                ))
-            except Exception as e:
-                self.after(0, lambda: self.test_result_label.config(
-                    text=f"✗ Serial Error on {port}: {e}",
-                    foreground="#EF4444"
-                ))
+            except ImportError as exc:
+                self._set_test_result(f"✗ pyserial is not installed ({exc}).", "#EF4444")
+                return
+            try:
+                handle = serial.Serial(port, baudrate=baud, timeout=1.0)
+                handle.close()
+            except Exception as exc:
+                self._set_test_result(f"✗ Serial error on {port}: {exc}", "#EF4444")
+                return
+            self._set_test_result(
+                f"ℹ Serial port {port} opened at {baud} baud. No CAT command was sent - this wizard "
+                f"has no per-rig command set. Use the z-30 app's Test CAT Connection, or Hamlib, for "
+                f"a protocol-level check.",
+                "#EAB308",
+            )
 
         threading.Thread(target=bg_test, daemon=True).start()
 
@@ -4287,27 +4450,123 @@ class Step3RadioCatPage(WizardBasePage):
             self._key_ptt()
 
     def _key_ptt(self) -> None:
-        self.is_ptt_keyed = True
-        polarity = self.polarity_var.get()
         method = self.ptt_method_combo.get()
-        pin_state = "1 (HIGH)" if polarity == "ACTIVE_HIGH" else "0 (LOW)"
+        polarity = self.polarity_var.get()
 
+        if "VOX" in method:
+            self.test_result_label.config(
+                text="ℹ VOX has no keying line to test: the radio keys off the transmitted audio "
+                     "itself. Test it from the z-30 app, which can generate that audio.",
+                foreground="#EAB308",
+            )
+            return
+
+        if "CAT" in method and "Hamlib" not in self.cat_method_combo.get():
+            self.test_result_label.config(
+                text="✗ CAT keying from this wizard needs CAT Method 'Hamlib (libhamlib/rigctld)': "
+                     "there is no per-rig serial command set here. Use the z-30 app for Direct Serial "
+                     "CAT keying.",
+                foreground="#EF4444",
+            )
+            return
+
+        if not messagebox.askokcancel(
+            "Key the transmitter?",
+            "This asserts PTT on the real radio for up to 3 seconds.\\n\\n"
+            "Make sure the antenna or dummy load is connected and the rig is on a frequency you "
+            "are licensed to transmit on.",
+        ):
+            return
+
+        self.is_ptt_keyed = True
+        self._ptt_release_event = threading.Event()
         self.test_ptt_btn.config(text="⏹ Release PTT (Active TX)")
         self.test_result_label.config(
-            text=f"● TRANSMITTING via {method} [Pin: {pin_state}]...",
-            foreground="#EF4444"
+            text=f"● Keying via {method} [{polarity}]...", foreground="#EF4444"
         )
+        threading.Thread(target=self._ptt_worker, args=(method, polarity), daemon=True).start()
 
-        # Safety auto-release after 3.0 seconds
-        self.after(3000, lambda: self._release_ptt() if self.is_ptt_keyed else None)
+    def _ptt_worker(self, method: str, polarity: str) -> None:
+        """
+        Keys the line, holds it for at most 3 s, and releases it - reporting what the hardware
+        actually did at each step. The release runs in a \`finally\`, so an exception between the
+        two cannot leave a transmitter keyed.
+        """
+        active_high = polarity == "ACTIVE_HIGH"
+        handle = None
+        keyed = False
+        try:
+            if "CAT" in method:
+                host, port_num = self._rigctld_endpoint()
+                ok, reply = rigctld_command(host, port_num, "T 1")
+                if not ok or not reply.strip().startswith("RPRT 0"):
+                    self._set_test_result(
+                        f"✗ rigctld refused the PTT command: {reply}. Nothing was keyed.", "#EF4444"
+                    )
+                    return
+                keyed = True
+                self._set_test_result(
+                    f"● TRANSMITTING via rigctld {host}:{port_num} - releasing in 3 s...", "#EF4444"
+                )
+            else:
+                line = "RTS" if "RTS" in method else "DTR"
+                handle = self._open_keying_serial(released_level=not active_high)
+                if line == "RTS":
+                    handle.rts = active_high
+                else:
+                    handle.dtr = active_high
+                keyed = True
+                self._set_test_result(
+                    f"● TRANSMITTING: {line} on {handle.port} driven "
+                    f"{'high' if active_high else 'low'} [{polarity}] - releasing in 3 s...",
+                    "#EF4444",
+                )
 
-    def _release_ptt(self) -> None:
+            self._ptt_release_event.wait(3.0)
+        except Exception as exc:
+            self._set_test_result(f"✗ PTT test failed: {exc}", "#EF4444")
+        finally:
+            released_note = ""
+            try:
+                if keyed and "CAT" in method:
+                    host, port_num = self._rigctld_endpoint()
+                    ok, reply = rigctld_command(host, port_num, "T 0")
+                    if not ok or not reply.strip().startswith("RPRT 0"):
+                        released_note = (
+                            f" ✗ THE RELEASE WAS REFUSED ({reply}) - check the radio is back in "
+                            f"receive."
+                        )
+                elif handle is not None:
+                    # The RELEASED level for this wiring, not a blanket low - which is the
+                    # keyed level on an active-low interface.
+                    handle.rts = not active_high
+                    handle.dtr = not active_high
+            except Exception as exc:
+                released_note = f" ✗ THE RELEASE FAILED ({exc}) - check the radio is back in receive."
+            finally:
+                if handle is not None:
+                    try:
+                        handle.close()
+                    except Exception:
+                        pass
+            if keyed:
+                self._set_test_result(
+                    ("✓ PTT released (transmitter back in RX standby)" if not released_note
+                     else "PTT release problem:") + released_note,
+                    "#EF4444" if released_note else "#00FF41",
+                )
+            self.after(0, self._reset_ptt_button)
+
+    def _reset_ptt_button(self) -> None:
         self.is_ptt_keyed = False
         self.test_ptt_btn.config(text="PTT Key Test (3s Safety Auto-Release)")
-        self.test_result_label.config(
-            text="✓ PTT Released (Transmitter in RX Standby)",
-            foreground="#00FF41"
-        )
+
+    def _release_ptt(self) -> None:
+        """Asks the worker to release now; the worker owns the hardware handle."""
+        event = getattr(self, "_ptt_release_event", None)
+        if event is not None:
+            event.set()
+        self._reset_ptt_button()
 
     def on_leave(self) -> None:
         if self.is_ptt_keyed:
@@ -4795,10 +5054,22 @@ class HamlibCatClient:
             self.disconnect()
             return f"ERR: {ex}"
 
+    @staticmethod
+    def _accepted(resp: str) -> bool:
+        """
+        True only when rigctld actually acknowledged the command.
+
+        An empty reply used to count as success here, so a daemon that timed out mid-read - or
+        a socket that returned nothing at all - reported a tuned radio. rigctld answers a
+        completed set command with 'RPRT 0' and a refused one with 'RPRT <non-zero>'; silence
+        is neither, and it is the one case where the caller most needs to be told.
+        """
+        cleaned = resp.strip()
+        return cleaned == "RPRT 0" or cleaned == "0"
+
     def set_frequency(self, freq_hz: int) -> bool:
         """Tunes transceiver to specified frequency (Hamlib command: 'F <freq_hz>')."""
-        resp = self.send_command(f"F {freq_hz}")
-        return resp.startswith("RPRT 0") or resp == "0" or resp == ""
+        return self._accepted(self.send_command(f"F {freq_hz}"))
 
     def get_frequency(self) -> Optional[int]:
         """Queries current VFO frequency (Hamlib command: 'f')."""
@@ -4813,16 +5084,16 @@ class HamlibCatClient:
 
     def set_mode(self, mode: str = "PKTUSB", passband_hz: int = 3000) -> bool:
         """Sets transceiver modulation mode and IF passband (Hamlib command: 'M <mode> <passband>')."""
-        resp = self.send_command(f"M {mode} {passband_hz}")
-        if not (resp.startswith("RPRT 0") or resp == "0" or resp == ""):
-            # Fallback to standard USB if PKTUSB is not supported by rig
-            resp = self.send_command(f"M USB {passband_hz}")
-        return resp.startswith("RPRT 0") or resp == "0" or resp == ""
+        if self._accepted(self.send_command(f"M {mode} {passband_hz}")):
+            return True
+        # Fallback to standard USB if PKTUSB is not supported by rig
+        return self._accepted(self.send_command(f"M USB {passband_hz}"))
 
-    def set_ptt(self, tx: bool) -> bool:
-        """Controls transceiver PTT state (Hamlib command: 'T 1' or 'T 0')."""
-        resp = self.send_command(f"T {1 if tx else 0}")
-        return resp.startswith("RPRT 0") or resp == "0" or resp == ""
+    # set_ptt() used to live here: a second keying implementation, reachable from the CLI band
+    # tool, with none of the checks that stand in front of the browser's. Nothing called it.
+    # AGENTS.md section 4 allows exactly one keying implementation and one gate in front of it,
+    # so the way to key a transmitter from this codebase is the transmit path in
+    # src/dsp/catController.ts - not a spare \`T 1\` on a socket.
 
 
 # ============================================================================
@@ -7318,61 +7589,38 @@ class Z30TkinterApp:
         self.logger.log_qso_async(rec)
         messagebox.showinfo("Logged", f"Queued asynchronous logging for {call} ({grid}) in ADIF 3.1.4 & SQLite.")
 
+    # -- transmit controls -------------------------------------------------
+    #
+    # This GUI has no modulator, no keying implementation and no compliance gate: the 16-MFSK
+    # synthesiser, the nine PTT methods and canTransmit() all live in the web application. The
+    # buttons below used to set \`is_transmitting\`, turn red and pop up "Starting 16-MFSK
+    # physical transmission at 1250 Hz" - a claim about a radio that nothing here had addressed,
+    # made without checking a callsign, a licence class or a band edge. They now refuse and say
+    # where transmitting actually works. A receive-only window is a legitimate thing to ship; a
+    # window that says it is transmitting when it is not is not.
+
+    TX_UNAVAILABLE_MESSAGE = (
+        "This Tkinter window is receive-only.\\n\\n"
+        "It has no transmit modulator and no PTT keying, so it cannot key your radio. Run z-30's "
+        "web transceiver for transmitting:\\n\\n"
+        "    z30-web       (or: python3 -m z30_dsp.main)\\n\\n"
+        "That is where the 16-MFSK modulator, the nine PTT keying methods and the transmit "
+        "compliance gate live."
+    )
+
     def _start_tx(self) -> None:
-        """
-        Enables TX and checks if current time matches the selected slot.
-        If at start of selected slot, transmits immediately. Otherwise arms station.
-        """
-        if self.is_transmitting:
-            return
-        if self.is_tuning:
-            self._stop_tx()
-
-        self.tx_enabled = True
-        slot_mode = self.tx_slot_var.get()
-        
-        # Calculate current UTC slot
-        utc_sec = time.time() % 60.0
-        is_even_slot = (int(utc_sec) // 30) % 2 == 0
-        cycle_s = utc_sec % 30.0
-
-        matches_slot = (
-            slot_mode == "MANUAL" or
-            (slot_mode.startswith("EVEN") and is_even_slot) or
-            (slot_mode.startswith("ODD") and not is_even_slot)
-        )
-        at_slot_start = cycle_s <= 1.5
-
-        if slot_mode == "MANUAL" or (matches_slot and at_slot_start):
-            self.is_transmitting = True
-            self.start_tx_btn.config(bg="#EF4444", text="TRANSMITTING...", fg="white")
-            messagebox.showinfo("PTT Active", f"Starting 16-MFSK physical transmission at {self.tx_freq_hz} Hz ({slot_mode}).")
-        else:
-            sec_left = int(30.0 - cycle_s) if not matches_slot else int(60.0 - cycle_s)
-            self.start_tx_btn.config(bg="#FACC15", text=f"ARMED ({sec_left}s)", fg="black")
-            messagebox.showinfo("TX Armed", f"Transmitter armed! Transmission will begin automatically when the {slot_mode} slot starts.")
+        messagebox.showinfo("Transmit unavailable here", self.TX_UNAVAILABLE_MESSAGE)
 
     def _stop_tx(self) -> None:
-        """Immediately halts transmission, disarms TX, and releases PTT."""
+        """Clears local arming state. Nothing here can be keyed, so nothing needs unkeying."""
         self.tx_enabled = False
         self.is_transmitting = False
         self.is_tuning = False
         self.start_tx_btn.config(bg="#00FF41", text="START TX", fg="black")
         self.tune_btn.config(bg="#EAB308", text="TUNE (CW)", fg="black")
-        messagebox.showinfo("PTT Released", "Transmission halted. Rig returned to RX standby mode.")
 
     def _tune_cw(self) -> None:
-        """Keys transmitter with continuous unmodulated CW carrier tone for antenna matching."""
-        if self.is_transmitting:
-            self._stop_tx()
-        
-        self.is_tuning = not self.is_tuning
-        if self.is_tuning:
-            self.tune_btn.config(bg="#EF4444", text="TUNING...", fg="white")
-            messagebox.showinfo("Tune Carrier", f"Antenna Tuning: Continuous CW carrier keyed at {self.tx_freq_hz} Hz. Safety timeout active.")
-        else:
-            self.tune_btn.config(bg="#EAB308", text="TUNE (CW)", fg="black")
-            messagebox.showinfo("Tune Carrier", "Antenna tuning carrier tone stopped.")
+        messagebox.showinfo("Transmit unavailable here", self.TX_UNAVAILABLE_MESSAGE)
 
     def _build_menu(self) -> None:
         """Constructs top application menu bar."""
@@ -7423,19 +7671,12 @@ class Z30TkinterApp:
                 cycle_s = sec % 30
                 is_even = (sec // 30) % 2 == 0
                 
-                # Check slot trigger if armed
-                if self.tx_enabled and not self.is_transmitting and not self.is_tuning:
-                    slot_mode = self.tx_slot_var.get()
-                    matches = (
-                        slot_mode == "MANUAL" or
-                        (slot_mode.startswith("EVEN") and is_even) or
-                        (slot_mode.startswith("ODD") and not is_even)
-                    )
-                    if matches and cycle_s == 0:
-                        self.is_transmitting = True
-                        self.start_tx_btn.config(bg="#EF4444", text="TRANSMITTING...", fg="white")
+                # The slot trigger that used to live here flipped is_transmitting at the top of
+                # every matching slot and relabelled the button "TRANSMITTING...", with no
+                # carrier behind it. Nothing in this window can key a radio (see _start_tx), so
+                # there is no transmission for a slot to start.
 
-                mode_str = "TX" if self.is_transmitting else ("TUNE" if self.is_tuning else ("ARMED" if self.tx_enabled else "RX"))
+                mode_str = "TUNE" if self.is_tuning else ("ARMED" if self.tx_enabled else "RX")
                 self.utc_label.config(text=f"UTC: {now} [30s CYCLE: {cycle_s:02d}s | {mode_str}]")
                 time.sleep(0.5)
         threading.Thread(target=update_clock, daemon=True).start()
@@ -8419,12 +8660,25 @@ TOKEN = "test-token-not-a-real-one"
 
 
 class FakeGpioDevice:
-    """Stands in for gpiozero's DigitalOutputDevice so the bridge can be tested off a Pi."""
+    """
+    Stands in for gpiozero's DigitalOutputDevice so the bridge can be tested off a Pi.
 
-    def __init__(self, pin: int) -> None:
+    \`active_high\` is modelled because the PTT polarity rides on it: \`value\` is the LOGICAL
+    state (on() = keyed, as gpiozero defines it) while \`level\` is the voltage actually on the
+    pin. The two differ on an active-low interface, and that difference is the whole of the
+    dead-man switch bug these tests now pin down.
+    """
+
+    def __init__(self, pin: int, active_high: bool = True, initial_value: bool = False) -> None:
         self.pin = pin
-        self.value = False
+        self.active_high = active_high
+        self.value = bool(initial_value)
         self.closed = False
+
+    @property
+    def level(self) -> bool:
+        """The electrical level on the pin, which is what the radio's PTT input sees."""
+        return self.value if self.active_high else not self.value
 
     def on(self) -> None:
         self.value = True
@@ -8553,13 +8807,102 @@ def test_only_the_configured_ptt_pin_can_be_driven(server, bridge):
 
 
 def test_configured_pin_keys_and_unkeys(server, bridge):
-    status, _headers, _body = request(server, "/api/gpio", {"pin": 17, "value": True}, authed())
+    status, _headers, _body = request(server, "/api/gpio", {"pin": 17, "keyed": True}, authed())
     assert status == 200
     assert bridge._devices[17].value is True  # noqa: SLF001
 
-    status, _headers, _body = request(server, "/api/gpio", {"pin": 17, "value": False}, authed())
+    status, _headers, _body = request(server, "/api/gpio", {"pin": 17, "keyed": False}, authed())
     assert status == 200
     assert bridge._devices[17].value is False  # noqa: SLF001
+
+
+def test_a_legacy_value_only_body_still_keys_active_high(server, bridge):
+    """
+    A cached older bundle sends {"pin", "value"} with no intent field. Reading it as an
+    active-high level keeps that station working; rejecting it would strand a browser holding
+    a stale cache with a transmitter it can key but not release.
+    """
+    status, _headers, _body = request(server, "/api/gpio", {"pin": 17, "value": True}, authed())
+    assert status == 200
+    assert bridge._devices[17].value is True  # noqa: SLF001
+    assert bridge.any_pin_keyed() is True
+
+    request(server, "/api/gpio", {"pin": 17, "value": False}, authed())
+    assert bridge.any_pin_keyed() is False
+
+
+# -- PTT polarity ----------------------------------------------------------
+#
+# The browser used to send the electrical LEVEL and this server recorded it as the keyed
+# state. On an active-low station the two are opposites, so keying registered no dead-man
+# countdown - the browser's own keepalives were then rejected and it force-unkeyed the
+# transmitter about half a second into every frame - while releasing registered one, after
+# which the watchdog "released" the line by driving it low, which on active-low wiring keys
+# the transmitter with nobody watching.
+
+def test_active_low_keying_drives_the_line_low_and_registers_the_dead_man(server, bridge):
+    status, _headers, body = request(
+        server, "/api/gpio", {"pin": 17, "keyed": True, "active_low": True}, authed()
+    )
+    assert status == 200
+    device = bridge._devices[17]  # noqa: SLF001
+    assert device.level is False, "an active-low station keys by pulling the line to ground"
+    assert device.value is True, "...which is the KEYED state, not a released one"
+    assert bridge.any_pin_keyed() is True
+    assert bridge.keepalive(17)["success"] is True, "the station's own keepalives must be accepted"
+
+    assert json.loads(body)["keyed"] is True
+
+
+def test_active_low_release_raises_the_line_and_clears_the_dead_man(server, bridge):
+    request(server, "/api/gpio", {"pin": 17, "keyed": True, "active_low": True}, authed())
+    request(server, "/api/gpio", {"pin": 17, "keyed": False, "active_low": True}, authed())
+
+    device = bridge._devices[17]  # noqa: SLF001
+    assert device.level is True, "releasing an active-low station lets the line rise"
+    assert bridge.any_pin_keyed() is False, "a released transmitter must not hold a countdown"
+
+
+def test_the_watchdog_never_keys_an_active_low_station(bridge, monkeypatch):
+    """The stuck-transmitter defence must not be able to create the thing it defends against."""
+    monkeypatch.setattr(ws, "GPIO_KEEPALIVE_TIMEOUT_SEC", 0.3)
+    bridge.set_pin(17, True, True)
+    bridge.set_pin(17, False, True)
+    device = bridge._devices[17]  # noqa: SLF001
+
+    time.sleep(0.7)
+    assert device.level is True, "the watchdog drove an already-released active-low line into TX"
+    assert device.value is False
+
+
+def test_the_watchdog_releases_a_keyed_active_low_station(bridge, monkeypatch):
+    monkeypatch.setattr(ws, "GPIO_KEEPALIVE_TIMEOUT_SEC", 0.3)
+    bridge.set_pin(17, True, True)
+    device = bridge._devices[17]  # noqa: SLF001
+    assert device.level is False
+
+    time.sleep(0.7)
+    assert device.level is True, "the watchdog did not release an active-low PTT line"
+
+
+def test_release_all_leaves_an_active_low_line_released(bridge):
+    bridge.set_pin(17, True, True)
+    device = bridge._devices[17]  # noqa: SLF001
+    bridge.release_all()
+    assert device.level is True, "shutdown left an active-low transmitter keyed"
+    assert device.closed is True
+
+
+def test_changing_polarity_rebuilds_the_pin_rather_than_reinterpreting_it(bridge):
+    bridge.set_pin(17, True, False)
+    first = bridge._devices[17]  # noqa: SLF001
+    assert first.level is True
+
+    bridge.set_pin(17, False, False)
+    bridge.set_pin(17, True, True)
+    second = bridge._devices[17]  # noqa: SLF001
+    assert second is not first, "the device must be rebuilt when the wiring polarity changes"
+    assert second.level is False
 
 
 # -- dead-man switch -------------------------------------------------------

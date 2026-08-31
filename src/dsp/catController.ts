@@ -33,7 +33,7 @@ import { StationConfig, PttMethodType } from '../types/z30';
 import { getRigByName, CURRENT_HAMLIB_VERSION } from './hamlibCatalog';
 import {
   CatProtocolFamily,
-  getProtocolFamilyForMfg,
+  getProtocolFamilyForRig,
   parseCivAddr,
   buildCivFrame,
   civSetFrequency,
@@ -42,6 +42,9 @@ import {
   kenwoodSetFrequency,
   kenwoodSetMode,
   kenwoodSetPtt,
+  yaesuSetFrequency,
+  yaesuSetMode,
+  yaesuSetPtt,
 } from './ratProtocols';
 
 /**
@@ -185,6 +188,14 @@ export interface WebSerialSignals {
   dataTerminalReady?: boolean;
 }
 
+/** UART line settings the operator configures, as passed to `SerialPort.open()`. */
+export interface SerialLineSettings {
+  dataBits?: number;
+  stopBits?: number;
+  /** "None", "Hardware (RTS/CTS)" or "Software (XON/XOFF)", as the settings modals word it. */
+  handshake?: string;
+}
+
 export interface WebSerialPortLike {
   open(options: {
     baudRate: number;
@@ -276,6 +287,18 @@ export class CatController {
   private pairedSerialPorts: DiscoveredSerialPort[] = [];
   private portListeners: Array<(ports: DiscoveredSerialPort[]) => void> = [];
 
+  // A second, optional serial port used only for keying: RTS/DTR PTT and WinKeyer. Stations
+  // with CAT on one cable and PTT on another (Digirig, a second FTDI, a homebrew optocoupler
+  // box) had no way to say so - `config.pttPort` was displayed in the PTT message and then
+  // ignored, and the line was driven on the CAT port instead. Null means "key on the CAT
+  // port", which is the common single-cable case and stays the default.
+  private pttSerialPort: WebSerialPortLike | null = null;
+  private pttSerialWriter: WritableStreamDefaultWriter<Uint8Array> | null = null;
+  private pttSerialPortLabel: string | null = null;
+  private serialLineSettings: SerialLineSettings | null = null;
+  /** Keying polarity, so an opened port lands in the released state for this station. */
+  private keyingPolarity: 'ACTIVE_HIGH' | 'ACTIVE_LOW' = 'ACTIVE_HIGH';
+
   // Active PTT safety timer
   private pttSafetyTimer: ReturnType<typeof setTimeout> | null = null;
   /**
@@ -329,7 +352,7 @@ export class CatController {
    */
   public configureRig(rigModelName: string): void {
     const rig = getRigByName(rigModelName);
-    this.activeProtocolFamily = rig ? getProtocolFamilyForMfg(rig.mfg) : 'NONE';
+    this.activeProtocolFamily = rig ? getProtocolFamilyForRig(rig.mfg, rig.model) : 'NONE';
     this.activeCivAddr = parseCivAddr(rig?.defaultCiv, 0x00);
   }
 
@@ -348,23 +371,43 @@ export class CatController {
     this.hamlibRelayEnabled = enabled;
   }
 
-  /** True when rigctl commands should be relayed to a daemon rather than written to serial. */
+  /**
+   * True when rigctl commands should be relayed to a daemon rather than written to serial.
+   *
+   * The operator's chosen CAT method decides the transport, and nothing else. This used to
+   * also require `!this.isSerialConnected`, so pairing a serial port for RTS keying silently
+   * moved CAT off the daemon and onto raw CI-V/Kenwood bytes written to that port - a port
+   * which, on a Hamlib station, rigctld already owns. Two programs writing one UART is not a
+   * configuration anybody chose; it just looked like "CAT stopped working".
+   */
   private useHamlibRelay(): boolean {
-    return this.hamlibRelayEnabled && !this.isSerialConnected && isLocalServerAvailable();
+    return this.hamlibRelayEnabled && isLocalServerAvailable();
   }
 
   /**
-   * Sends one rigctl command to the daemon and records the reply in the diagnostic log.
-   * Fire-and-forget: the transmit path cannot block on a network round trip.
+   * Sends one rigctl command to the daemon, records the reply in the diagnostic log, and
+   * reports whether the DAEMON accepted it - not merely whether the relay reached it.
+   *
+   * `result.success` only means the HTTP relay completed a TCP exchange. rigctld answers a
+   * refused command with `RPRT <non-zero>`, which this used to log green: a `T 1` refused by a
+   * daemon started with `-P NONE`, or against a rig whose PTT is not on the CAT link, showed
+   * in the rig log as OK while the transmitter stayed in receive. The rig log is the only
+   * diagnostic surface an operator has here, so it has to be able to say no.
    */
-  private relayRigctl(command: string): void {
-    void sendRigctlCommand(command, this.hamlibHost, this.hamlibPort).then((result) => {
-      if (result.success) {
-        this.logCommand(command, (result.data?.response || '').trim() || 'OK', 'OK');
-      } else {
-        this.logCommand(command, result.error || 'rigctld relay failed', 'ERROR');
-      }
-    });
+  private async relayRigctl(command: string, timeoutSec = 2.0): Promise<boolean> {
+    const result = await sendRigctlCommand(command, this.hamlibHost, this.hamlibPort, timeoutSec);
+    if (!result.success) {
+      this.logCommand(command, result.error || 'rigctld relay failed', 'ERROR');
+      return false;
+    }
+    const response = (result.data?.response || '').trim();
+    const rprt = /^RPRT\s+(-?\d+)/.exec(response);
+    if (rprt && rprt[1] !== '0') {
+      this.logCommand(command, `${response} (rigctld refused the command)`, 'ERROR');
+      return false;
+    }
+    this.logCommand(command, response || 'OK', 'OK');
+    return true;
   }
 
   /**
@@ -413,27 +456,48 @@ export class CatController {
     return this.currentFreqHz;
   }
 
-  public setFreqHz(hz: number): boolean {
+  public async setFreqHz(hz: number): Promise<boolean> {
     this.currentFreqHz = Math.round(hz);
     const bandIdx = HAM_BANDS.findIndex(b => Math.abs(b.dialFreqHz - hz) < 500000);
     if (bandIdx !== -1) {
       this.currentBandIdx = bandIdx;
     }
-    this.sendRigFrequency(this.currentFreqHz);
-    this.logCommand(`set_freq ${hz}`, this.hardwareCommandStatusNote(), 'OK');
-    return true;
+    const sent = await this.sendRigFrequency(this.currentFreqHz);
+    // Logged from the outcome, not from the intent. A dial the radio never received used to
+    // appear in the rig log as a successful set_freq, so an operator comparing the app's VFO
+    // with the radio's had nothing to tell them which one was real.
+    this.logCommand(
+      `set_freq ${this.currentFreqHz}`,
+      sent ? this.hardwareCommandStatusNote() : `not sent: ${this.catUnavailableReason()}`,
+      sent ? 'OK' : 'ERROR'
+    );
+    return sent;
   }
 
-  public setBandByName(bandName: string): boolean {
+  /**
+   * Selects a band and tunes to its dial frequency.
+   *
+   * `dialFreqHz` exists so that a caller with a custom dial for this band (Band Manager
+   * presets) can pass it. Without it, App.tsx had to call setFreqHz() for the custom dial and
+   * then setBandByName() for the band, which sent a SECOND frequency - the stock one - a
+   * moment later. The radio ended up on the stock dial while the app, and therefore the
+   * transmit gate's band-plan check, believed it was on the custom one.
+   */
+  public async setBandByName(bandName: string, dialFreqHz?: number): Promise<boolean> {
     const band = HAM_BANDS.find(b => b.name === bandName || b.bandMeters === bandName);
-    if (band) {
-      this.currentFreqHz = band.dialFreqHz;
-      this.currentBandIdx = HAM_BANDS.indexOf(band);
-      this.sendRigFrequency(band.dialFreqHz);
-      this.logCommand(`set_freq ${band.dialFreqHz}`, `${this.hardwareCommandStatusNote()} (${band.name})`, 'OK');
-      return true;
-    }
-    return false;
+    if (!band) return false;
+    const targetHz = Math.round(dialFreqHz ?? band.dialFreqHz);
+    this.currentFreqHz = targetHz;
+    this.currentBandIdx = HAM_BANDS.indexOf(band);
+    const sent = await this.sendRigFrequency(targetHz);
+    this.logCommand(
+      `set_freq ${targetHz}`,
+      sent
+        ? `${this.hardwareCommandStatusNote()} (${band.name})`
+        : `not sent: ${this.catUnavailableReason()}`,
+      sent ? 'OK' : 'ERROR'
+    );
+    return sent;
   }
 
   public getCurrentBand(): typeof HAM_BANDS[0] {
@@ -449,11 +513,15 @@ export class CatController {
     return this.currentPassbandHz;
   }
 
-  public setMode(mode: string): boolean {
+  public async setMode(mode: string): Promise<boolean> {
     this.currentMode = mode.toUpperCase();
-    this.sendRigMode(this.currentMode);
-    this.logCommand(`set_mode ${mode}`, this.hardwareCommandStatusNote(), 'OK');
-    return true;
+    const sent = await this.sendRigMode(this.currentMode);
+    this.logCommand(
+      `set_mode ${mode}`,
+      sent ? this.hardwareCommandStatusNote() : `not sent: ${this.catUnavailableReason()}`,
+      sent ? 'OK' : 'ERROR'
+    );
+    return sent;
   }
 
   /**
@@ -462,48 +530,102 @@ export class CatController {
    * connected, or an unrecognized rig family) intentionally sends nothing - there is no
    * meaningful protocol to speak to a device that isn't there or isn't identified.
    */
-  private sendRigFrequency(hz: number): void {
+  private async sendRigFrequency(hz: number): Promise<boolean> {
     if (this.useHamlibRelay()) {
-      this.relayRigctl(`F ${Math.round(hz)}`);
-      return;
+      return this.relayRigctl(`F ${Math.round(hz)}`);
     }
     if (this.activeProtocolFamily === 'CIV') {
-      this.sendHardwareBytes(civSetFrequency(this.activeCivAddr, hz));
-    } else if (this.activeProtocolFamily === 'KENWOOD') {
-      this.sendHardwareText(kenwoodSetFrequency(hz));
+      return this.sendHardwareBytes(civSetFrequency(this.activeCivAddr, hz));
     }
+    if (this.activeProtocolFamily === 'KENWOOD') {
+      return this.sendHardwareText(kenwoodSetFrequency(hz));
+    }
+    if (this.activeProtocolFamily === 'YAESU') {
+      return this.sendHardwareText(yaesuSetFrequency(hz));
+    }
+    return false;
   }
 
-  private sendRigMode(mode: string): void {
+  private async sendRigMode(mode: string): Promise<boolean> {
     if (this.useHamlibRelay()) {
       // rigctld takes a mode name plus a passband in Hz; 0 asks it to use the rig's default.
-      this.relayRigctl(`M ${mode} 0`);
-      return;
+      return this.relayRigctl(`M ${mode} 0`);
     }
     if (this.activeProtocolFamily === 'CIV') {
-      this.sendHardwareBytes(civSetMode(this.activeCivAddr, mode));
-    } else if (this.activeProtocolFamily === 'KENWOOD') {
-      this.sendHardwareText(kenwoodSetMode(mode));
+      return this.sendHardwareBytes(civSetMode(this.activeCivAddr, mode));
     }
+    if (this.activeProtocolFamily === 'KENWOOD') {
+      return this.sendHardwareText(kenwoodSetMode(mode));
+    }
+    if (this.activeProtocolFamily === 'YAESU') {
+      return this.sendHardwareText(yaesuSetMode(mode));
+    }
+    return false;
   }
 
-  private sendRigPtt(tx: boolean): void {
+  /**
+   * Writes a real PTT command and reports whether it reached the radio.
+   *
+   * This returned `void`, and `setPtt`'s CAT branch reported success regardless. All three of
+   * its ways of doing nothing - no protocol configured for the selected rig, no open serial
+   * port, a write that threw - were silent, so "Test PTT" answered "✓ CAT PTT verified" for a
+   * transmitter that had never been addressed, and the sequencer transmitted a full frame into
+   * a radio sitting in receive. A keying function that cannot say "no" is worse than none.
+   */
+  private async sendRigPtt(tx: boolean): Promise<boolean> {
     if (this.useHamlibRelay()) {
-      this.relayRigctl(`T ${tx ? 1 : 0}`);
-      return;
+      // A shorter deadline than the other relayed commands, because the transmit path waits on
+      // this one: keying happens in the first half-second of the slot, and a frame is 24 s of a
+      // 30 s slot. A daemon that has not answered a PTT command within a second is not going to
+      // key the radio in time for this slot, and reporting that beats eating the slot's margin.
+      return this.relayRigctl(`T ${tx ? 1 : 0}`, 1.0);
     }
     if (this.activeProtocolFamily === 'CIV') {
-      this.sendHardwareBytes(civSetPtt(this.activeCivAddr, tx));
-    } else if (this.activeProtocolFamily === 'KENWOOD') {
-      this.sendHardwareText(kenwoodSetPtt(tx));
+      return this.sendHardwareBytes(civSetPtt(this.activeCivAddr, tx));
     }
+    if (this.activeProtocolFamily === 'KENWOOD') {
+      return this.sendHardwareText(kenwoodSetPtt(tx));
+    }
+    if (this.activeProtocolFamily === 'YAESU') {
+      return this.sendHardwareText(yaesuSetPtt(tx));
+    }
+    return false;
   }
 
   private hardwareCommandStatusNote(): string {
     if (this.useHamlibRelay()) return `Hamlib rigctld relay ${this.hamlibHost}:${this.hamlibPort}`;
     if (this.activeProtocolFamily === 'CIV') return `CI-V 0x${this.activeCivAddr.toString(16).padStart(2, '0')}`;
     if (this.activeProtocolFamily === 'KENWOOD') return 'Kenwood-style ASCII';
-    return 'no rig protocol configured (state tracked locally only)';
+    if (this.activeProtocolFamily === 'YAESU') return 'Yaesu new-CAT ASCII';
+    return 'no rig protocol configured';
+  }
+
+  /**
+   * Why a CAT command could not be sent, in words an operator can act on. Only called once
+   * something has already failed, so it names the missing piece rather than describing success.
+   */
+  private catUnavailableReason(): string {
+    // The transport in use decides the diagnosis. Checking the serial port first would tell a
+    // Hamlib operator whose daemon is down to go and pair a serial port, which is the wrong
+    // cable and the wrong fix.
+    if (this.useHamlibRelay()) {
+      return (
+        `rigctld at ${this.hamlibHost}:${this.hamlibPort} did not accept the command - check that it ` +
+        'is running, that it was started for this rig, and that its PTT type is not "none" ' +
+        '(see the rig control log for the daemon\'s own reply)'
+      );
+    }
+    if (this.activeProtocolFamily === 'NONE') {
+      return this.hamlibRelayEnabled
+        ? 'CAT is set to Hamlib but the native z-30 server is not backing this page, so no rigctld relay exists - ' +
+            'launch z-30 with "z30-web", or switch CAT Method to Direct Serial'
+        : 'no Direct Serial CAT protocol is known for the selected rig - choose a supported model, ' +
+            'or switch CAT Method to Hamlib and run rigctld, which carries per-model command tables';
+    }
+    if (!this.serialPort || !this.serialPort.writable) {
+      return 'no serial port is open - pair the radio with "Connect Serial Port" before using CAT keying';
+    }
+    return 'the serial port rejected the CAT command';
   }
 
   /**
@@ -603,6 +725,15 @@ export class CatController {
   }
 
   /**
+   * Why the last keying attempt failed, or null if it succeeded. The transmit path in App.tsx
+   * puts this in front of the operator instead of starting a frame into a radio that never
+   * left receive.
+   */
+  public getLastPttFailure(): string | null {
+    return this.lastPttHardwareOutcome.ok ? null : this.lastPttHardwareOutcome.failureNote || 'the hardware did not accept the keying command';
+  }
+
+  /**
    * Drives the PTT line for the configured keying method.
    *
    * The single hardware keying implementation: the sequencer, manual TX, tune and the wiring
@@ -650,17 +781,30 @@ export class CatController {
     let failureNote: string | undefined;
 
     if (method === 'CAT') {
-      this.sendRigPtt(tx);
+      hardwareOk = await this.sendRigPtt(tx);
       hardwareDetail = `CAT command (${this.hardwareCommandStatusNote()})`;
-      this.logCommand(`set_ptt ${tx ? '1' : '0'}`, this.hardwareCommandStatusNote(), 'OK');
+      if (!hardwareOk) failureNote = this.catUnavailableReason();
+      this.logCommand(
+        `set_ptt ${tx ? '1' : '0'}`,
+        hardwareOk ? this.hardwareCommandStatusNote() : `not sent: ${failureNote!}`,
+        hardwareOk ? 'OK' : 'ERROR'
+      );
     } else if (method === 'RTS' || method === 'DTR') {
       const activeState = polarity === 'ACTIVE_HIGH' ? tx : !tx;
       const signal = method === 'RTS' ? 'requestToSend' : 'dataTerminalReady';
-      hardwareDetail = `${method} pin on ${effectiveOptions?.pttPort || 'the paired serial port'}`;
-      if (this.serialPort && this.serialPort.setSignals) {
+      // The keying port, which is the separately paired PTT port when the operator has one -
+      // a Digirig or a second FTDI cable alongside a CAT link. `pttPort` was collected in
+      // Station Settings, printed in this very message, and then never used: the line was
+      // always driven on whichever single port happened to be paired for CAT.
+      const keyingPort = this.pttSerialPort || this.serialPort;
+      const portLabel = this.pttSerialPort
+        ? this.pttSerialPortLabel || 'the paired PTT port'
+        : 'the paired CAT serial port';
+      hardwareDetail = `${method} pin on ${portLabel}`;
+      if (keyingPort && keyingPort.setSignals) {
         try {
-          await this.serialPort.setSignals({ [signal]: activeState });
-          this.logCommand(`${method}_SET ${activeState ? '1' : '0'}`, 'PIN_UPDATED', 'OK');
+          await keyingPort.setSignals({ [signal]: activeState });
+          this.logCommand(`${method}_SET ${activeState ? '1' : '0'}`, `PIN_UPDATED on ${portLabel}`, 'OK');
         } catch (e) {
           console.warn(`Failed to set ${method} signal on serial port:`, e);
           hardwareOk = false;
@@ -670,7 +814,9 @@ export class CatController {
       } else {
         // No open port is a failure, not a no-op: nothing was keyed.
         hardwareOk = false;
-        failureNote = `No serial port is open - pair one with "Connect Serial Port" before keying ${method}`;
+        failureNote =
+          `No serial port is open for ${method} keying - pair one with "Connect Serial Port", or ` +
+          '"Pair PTT Port" if PTT is on a different cable from CAT';
         this.logCommand(`${method}_SET ${activeState ? '1' : '0'}`, failureNote, 'ERROR');
       }
     } else if (method === 'AUDIO_TONE_RIGHT') {
@@ -683,17 +829,23 @@ export class CatController {
       );
     } else if (method === 'CM108_GPIO') {
       const pin = effectiveOptions?.cm108GpioPin || DEFAULT_CM108_GPIO_PIN;
-      hardwareDetail = `C-Media USB Audio GPIO pin ${pin}`;
-      hardwareOk = await this.setCm108Gpio(pin, tx);
+      // Polarity applies here exactly as it does on the Pi's GPIO. It used to be dropped on
+      // the way in, so an active-low DRA/URI interface was driven backwards in both
+      // directions - no carrier while transmitting, PTT asserted while receiving - and the
+      // wiring test still reported "Negative / Pull-to-GND (Active Low)" and a pass, because
+      // that string was built from the argument rather than from what was driven.
+      const activeState = polarity === 'ACTIVE_HIGH' ? tx : !tx;
+      hardwareDetail = `C-Media USB Audio GPIO pin ${pin} [${polarity}]`;
+      hardwareOk = await this.setCm108Gpio(pin, activeState);
       if (!hardwareOk) {
         failureNote = 'CM108/CM119 HID device not paired - use "Pair CM108/CM119 Device" first';
       }
       this.logCommand(
-        `CM108_GPIO_${pin}_${tx ? 'HIGH' : 'LOW'}`,
+        `CM108_GPIO_${pin}_${activeState ? 'HIGH' : 'LOW'}`,
         hardwareOk
           ? tx
-            ? `USB Audio Chip GPIO${pin} Driven High (PTT Active)`
-            : `USB Audio Chip GPIO${pin} Released (RX Standby)`
+            ? `USB Audio Chip GPIO${pin} driven ${activeState ? 'high' : 'low'} (PTT active, ${polarity})`
+            : `USB Audio Chip GPIO${pin} released to ${activeState ? 'high' : 'low'} (RX standby, ${polarity})`
           : failureNote!,
         hardwareOk ? 'OK' : 'ERROR'
       );
@@ -968,9 +1120,78 @@ export class CatController {
   }
 
   /**
+   * Line settings for `SerialPort.open()`, from the operator's configuration.
+   *
+   * `dataBits`, `stopBits` and `handshake` are collected by both settings modals and were
+   * never passed to the browser, so every port opened 8-N-1 with no flow control regardless of
+   * what the operator had configured. A rig set to two stop bits, or an interface that needs
+   * hardware handshake, saw framing errors instead of commands - "connected, but the radio
+   * ignores everything".
+   */
+  private serialPortOptions(baudRate: number, line?: SerialLineSettings): {
+    baudRate: number;
+    dataBits?: number;
+    stopBits?: number;
+    parity?: string;
+    flowControl?: string;
+  } {
+    const settings = line ?? this.serialLineSettings;
+    const handshake = (settings?.handshake || '').toLowerCase();
+    return {
+      baudRate,
+      dataBits: settings?.dataBits === 7 ? 7 : 8,
+      stopBits: settings?.stopBits === 2 ? 2 : 1,
+      parity: 'none',
+      // Web Serial only models hardware (RTS/CTS) flow control; XON/XOFF is a software
+      // convention the browser does not implement, so it stays "none" rather than being
+      // silently mapped onto the RTS line this app also uses for PTT.
+      flowControl: handshake.includes('hardware') ? 'hardware' : 'none',
+    };
+  }
+
+  /**
+   * Puts RTS and DTR into the RELEASED state for this station's wiring on a freshly opened port.
+   *
+   * Chromium asserts both lines when a port opens. On an active-high RTS- or DTR-keyed station
+   * that is a transmit command: the radio keyed the moment the operator pressed "Connect Serial
+   * Port", before any compliance check had run, and stayed keyed until something else lowered
+   * the line.
+   *
+   * The released state is NOT simply "both low", which is why this takes the polarity: on an
+   * active-low interface (an inverting optocoupler) a low line is the keyed one, and blanket
+   * de-assertion would key exactly the stations it was meant to protect. ACTIVE_HIGH is the
+   * default because it is the commoner wiring and the safer guess when nothing is configured.
+   */
+  private async deassertKeyingLines(port: WebSerialPortLike): Promise<void> {
+    if (!port.setSignals) return;
+    const released = this.keyingPolarity !== 'ACTIVE_LOW' ? false : true;
+    try {
+      await port.setSignals({ requestToSend: released, dataTerminalReady: released });
+    } catch (e) {
+      // A port that refuses signal control cannot be keyed on RTS/DTR either; setPtt reports
+      // that when the operator actually tries.
+      console.warn('Could not put RTS/DTR into the released state after opening the port:', e);
+    }
+  }
+
+  /**
+   * Tells the controller which keying polarity the operator has configured, so that opening a
+   * port leaves the line in the released state for THIS station rather than a hardcoded low.
+   * App.tsx calls this whenever the config changes; the settings modals call it from the form
+   * before pairing, because a port can be paired before the config is saved.
+   */
+  public configureKeying(polarity: 'ACTIVE_HIGH' | 'ACTIVE_LOW'): void {
+    this.keyingPolarity = polarity;
+  }
+
+  /**
    * Prompts OS native hardware selection dialog to query and pair a real serial / USB device
    */
-  public async requestAndPairRealPort(baudRate: number = 115200): Promise<{ success: boolean; portInfo?: DiscoveredSerialPort; message: string }> {
+  public async requestAndPairRealPort(
+    baudRate: number = 115200,
+    line?: SerialLineSettings
+  ): Promise<{ success: boolean; portInfo?: DiscoveredSerialPort; message: string }> {
+    if (line) this.serialLineSettings = line;
     if (!this.isWebSerialSupported()) {
       return {
         success: false,
@@ -992,20 +1213,40 @@ export class CatController {
       const port: WebSerialPortLike = selectedPort;
       this.serialPort = port;
 
-      // Try opening port with chosen baud rate
+      // Try opening the port with the configured line settings. A failure here is reported as
+      // a failure: this used to warn to the console and then return "✓ Real Serial Hardware
+      // Paired" anyway, which is what an operator saw when rigctld, WSJT-X or a stale process
+      // already held the port. Every later CAT write then hit a port with no writable stream
+      // and did nothing, silently.
       try {
-        await port.open({ baudRate });
+        await port.open(this.serialPortOptions(baudRate));
         this.isSerialConnected = true;
         this.isConnected = true;
       } catch (openErr: any) {
-        // Port might already be open or opening failed
-        if (String(openErr?.message).includes('already open')) {
+        // "already open" means this page opened it earlier - that is still a usable port.
+        if (String(openErr?.message).toLowerCase().includes('already open')) {
           this.isSerialConnected = true;
           this.isConnected = true;
         } else {
-          console.warn('Could not open serial port immediately:', openErr);
+          this.serialPort = null;
+          this.isSerialConnected = false;
+          this.isConnected = false;
+          const detail = String(openErr?.message || openErr || 'unknown error');
+          this.logCommand('SERIAL_PAIR_FAIL', detail, 'ERROR');
+          return {
+            success: false,
+            message:
+              `✗ Serial port could not be opened at ${baudRate} baud: ${detail}. ` +
+              'If Hamlib rigctld, WSJT-X or another program already has this port, close it first - ' +
+              'only one program can hold a serial port.',
+          };
         }
       }
+
+      // Leave the keying lines de-asserted. Chromium asserts DTR and RTS when a port opens, so
+      // on an RTS- or DTR-keyed station simply connecting the cable put the radio into
+      // transmit until something else happened to lower the line.
+      await this.deassertKeyingLines(port);
 
       const allPorts = await this.queryRealSerialPorts();
       const matched = allPorts.find(p => p.nativePort === selectedPort) || {
@@ -1037,6 +1278,102 @@ export class CatController {
    */
   public async connectWebSerial(baudRate: number = 115200): Promise<{ success: boolean; message: string }> {
     return this.requestAndPairRealPort(baudRate);
+  }
+
+  /**
+   * Pairs a SECOND serial port used only for keying - RTS/DTR PTT and WinKeyer.
+   *
+   * For the common single-cable station this is unnecessary: PTT rides the CAT port and
+   * nothing here needs to be paired. It exists for the wiring `wiki/06` §2 describes, where
+   * PTT is on its own cable (a Digirig, a second FTDI, an optocoupler box) - and where the app
+   * previously drove the CAT port's RTS line instead, keying nothing while reporting the
+   * configured PTT port's name.
+   *
+   * The port is opened at 9600 baud because no data is sent on it for RTS/DTR keying; only the
+   * modem control lines matter, and they are driven by setSignals() regardless of baud. Both
+   * lines are dropped immediately after opening, for the reason in deassertKeyingLines().
+   */
+  public async requestAndPairPttPort(
+    baudRate: number = 9600
+  ): Promise<{ success: boolean; message: string }> {
+    if (!this.isWebSerialSupported()) {
+      return {
+        success: false,
+        message: 'Web Serial API is not supported in this browser. Use Chrome or Edge on the desktop.',
+      };
+    }
+    try {
+      const selected = await (navigator as any).serial.requestPort();
+      if (!selected) return { success: false, message: 'No PTT serial port selected.' };
+      if (selected === this.serialPort) {
+        return {
+          success: false,
+          message:
+            'That is the port already paired for CAT. Leave the PTT port unpaired to key on the CAT ' +
+            'port - a separate PTT port is only for stations whose keying line is on a different cable.',
+        };
+      }
+
+      const port: WebSerialPortLike = selected;
+      try {
+        await port.open({ baudRate });
+      } catch (openErr: any) {
+        if (!String(openErr?.message).toLowerCase().includes('already open')) {
+          const detail = String(openErr?.message || openErr || 'unknown error');
+          this.logCommand('PTT_PORT_PAIR_FAIL', detail, 'ERROR');
+          return { success: false, message: `✗ PTT port could not be opened: ${detail}` };
+        }
+      }
+      await this.deassertKeyingLines(port);
+
+      this.pttSerialPort = port;
+      const info = port.getInfo ? port.getInfo() : {};
+      const vid = info.usbVendorId;
+      this.pttSerialPortLabel =
+        (vid !== undefined && USB_VENDOR_MAP[vid]) ||
+        (vid !== undefined ? `USB serial device 0x${vid.toString(16).padStart(4, '0')}` : 'the paired PTT port');
+      this.logCommand('PTT_PORT_PAIR_OK', `Keying port paired: ${this.pttSerialPortLabel}`, 'OK');
+      return { success: true, message: `✓ PTT keying port paired: ${this.pttSerialPortLabel}` };
+    } catch (e: any) {
+      if (e?.name === 'NotFoundError') {
+        return { success: false, message: 'PTT port pairing cancelled: no port selected.' };
+      }
+      return { success: false, message: String(e?.message || 'Failed to pair the PTT port') };
+    }
+  }
+
+  /** True when keying goes to its own port rather than to the CAT port. */
+  public isPttPortPaired(): boolean {
+    return !!this.pttSerialPort;
+  }
+
+  public getPttPortLabel(): string | null {
+    return this.pttSerialPortLabel;
+  }
+
+  /** Drops the separate keying port back to "key on the CAT port". */
+  public async releasePttPort(): Promise<void> {
+    const port = this.pttSerialPort;
+    this.pttSerialPort = null;
+    this.pttSerialPortLabel = null;
+    if (this.pttSerialWriter) {
+      try {
+        await this.pttSerialWriter.close();
+      } catch {
+        // ignore
+      }
+      this.pttSerialWriter = null;
+    }
+    if (port) {
+      // Never leave a keying line asserted on a port being handed back to the OS.
+      await this.deassertKeyingLines(port);
+      try {
+        await port.close();
+      } catch {
+        // ignore
+      }
+      this.logCommand('PTT_PORT_RELEASED', 'Keying returns to the CAT serial port', 'OK');
+    }
   }
 
   public async disconnectWebSerial(): Promise<void> {
@@ -1081,8 +1418,15 @@ export class CatController {
       };
     }
 
-    // 2. Direct Serial CAT or Web Serial Connection Mode
-    if (catMethod === 'Direct Serial' || (catMethod === 'Hamlib' && config.serialPort && !config.serialPort.startsWith('127.0.0.1'))) {
+    // 2. Direct Serial CAT.
+    //
+    // Routed on the CAT METHOD the operator chose, which is what the transmit path routes on
+    // too (see useHamlibRelay). This used to branch on whether `config.serialPort` looked like
+    // a device path - and the shipped default is '/dev/ttyUSB0 (COM3)' - so a Hamlib station
+    // that never edited that field had its CAT link tested over Web Serial while frequency,
+    // mode and PTT went to the rigctld relay. The test and the radio disagreed about which
+    // cable was under test.
+    if (catMethod === 'Direct Serial') {
       // If physical Web Serial port is NOT connected
       if (!this.isSerialConnected || !this.serialPort) {
         // Test if port is open in browser
@@ -1099,17 +1443,34 @@ export class CatController {
       // or Kenwood-style "FA;") - this app does not implement a serial read/parse loop, so
       // this only verifies the write itself succeeds, not that the rig actually answered.
       try {
+        let written = false;
         if (this.activeProtocolFamily === 'CIV') {
-          await this.sendHardwareBytes(buildCivFrame(this.activeCivAddr, [0x03]));
+          written = await this.sendHardwareBytes(buildCivFrame(this.activeCivAddr, [0x03]));
         } else if (this.activeProtocolFamily === 'KENWOOD') {
-          await this.sendHardwareText('FA;');
+          written = await this.sendHardwareText('FA;');
+        } else if (this.activeProtocolFamily === 'YAESU') {
+          written = await this.sendHardwareText('FA;');
         } else {
           return {
             success: false,
-            message: `✗ Unrecognized rig protocol family for "${rigName}" - no CI-V/Kenwood-ASCII command set is known for this manufacturer, so no real CAT command can be sent.`,
+            message:
+              `✗ No Direct Serial command set is implemented for "${rigName}". Icom and Xiegu (CI-V), ` +
+              'Kenwood and Elecraft (Kenwood ASCII) and the modern Yaesu new-CAT rigs are supported ' +
+              'directly; everything else - including the FT-817/857/897 and the 1990s Yaesu rigs, whose ' +
+              'CAT is a different binary protocol per family - must go through Hamlib rigctld, which ' +
+              'carries the per-model tables. Switch CAT Method to "Hamlib" and start rigctld.',
             rigName,
             portUsed: config.serialPort,
-            details: 'Direct Serial CAT requires an Icom/Xiegu (CI-V) or Kenwood/Elecraft/Yaesu (Kenwood-ASCII) rig selection.',
+            details: 'No command set is guessed at for an unsupported model; a wrong command would be sent silently.',
+          };
+        }
+
+        if (!written) {
+          return {
+            success: false,
+            message: `✗ CAT Write Failed: the frequency query could not be written to ${config.serialPort}. The port is paired but not writable - re-pair it, and check that no other program holds it.`,
+            rigName,
+            portUsed: config.serialPort,
           };
         }
 
@@ -1231,11 +1592,25 @@ export class CatController {
 
     if (usesAudioCarrier) {
       // VOX keys off the audio itself; the right-channel method needs the tone its rectifier
-      // watches. Neither keys anything without a carrier, so a silent test would prove nothing.
-      audioEngine.startTuneTone(method === 'VOX' ? 1500 : 1250, {
+      // watches. Neither keys anything without a carrier, so a silent test would prove nothing -
+      // and a carrier that failed to start must fail the test rather than pass it quietly.
+      const carrierStarted = audioEngine.startTuneTone(method === 'VOX' ? 1500 : 1250, {
         enableRightTone: method === 'AUDIO_TONE_RIGHT',
         toneFreqHz: toneFreq,
       });
+      if (!carrierStarted) {
+        const reason =
+          'the audio carrier could not be started, and this method keys the radio with audio - ' +
+          'check the output device in Station Settings';
+        if (onStateChange) onStateChange(false, `✗ PTT test failed: ${reason}`);
+        return {
+          success: false,
+          method,
+          isKeyed: false,
+          pinState: pinDescription,
+          message: `✗ ${method} PTT test failed - ${reason}. The transmitter was not keyed.`,
+        };
+      }
     }
 
     const keyed = await this.setPtt(true, method, polarity, options);
@@ -1312,28 +1687,34 @@ export class CatController {
       this.pttSafetyTimer = null;
     }
     const context = this.lastPttContext;
+    const activeLow = context?.polarity === 'ACTIVE_LOW';
     this.disarmTxWatchdog();
     this.pttState = false;
-    this.sendRigPtt(false);
+    void this.sendRigPtt(false);
     audioEngine.stopTransmission();
     // Drop the SBC GPIO line explicitly. The server's dead-man switch would release it within
     // a couple of seconds anyway, but a couple of seconds of unintended carrier is exactly
     // what an emergency release exists to avoid.
     if (context?.method === 'RASPBERRY_PI_GPIO') {
       const pin = context.options?.rpiGpioPin || DEFAULT_RPI_BCM_PIN;
-      const polarity = context.polarity === 'ACTIVE_LOW';
-      void setGpioPin(pin, polarity);
+      void setGpioPin(pin, false, activeLow);
     }
-    if (this.serialPort && this.serialPort.setSignals) {
-      this.serialPort.setSignals({ requestToSend: false, dataTerminalReady: false }).catch(() => {});
+    // Both serial ports: on a station keyed from a separate PTT cable, dropping only the CAT
+    // port's lines leaves the transmitter keyed.
+    for (const port of [this.serialPort, this.pttSerialPort]) {
+      if (port && port.setSignals) {
+        port.setSignals({ requestToSend: false, dataTerminalReady: false }).catch(() => {});
+      }
     }
     if (this.hidDevice && this.hidDevice.opened) {
       // 3 and 4 are the two pins the common DRA/URI wiring uses; the configured pin is added
-      // in case this station is on one of the others.
+      // in case this station is on one of the others. The level written is the RELEASED one
+      // for this station's polarity - writing a hardcoded low released an active-high
+      // interface and keyed an active-low one.
       const cm108Pins = new Set<number>([3, 4]);
       if (context?.options?.cm108GpioPin) cm108Pins.add(context.options.cm108GpioPin);
       for (const pin of cm108Pins) {
-        this.setCm108Gpio(pin, false).catch(() => {});
+        this.setCm108Gpio(pin, activeLow).catch(() => {});
       }
     }
     if (this.tciSocket && this.tciSocket.readyState === WebSocket.OPEN) {
@@ -1354,13 +1735,14 @@ export class CatController {
    * command sent in a session actually reached the radio; every command after that silently
    * no-op'd because serialPort.writable had already been closed, with no visible error.
    */
-  private async sendHardwareBytes(bytes: Uint8Array): Promise<void> {
-    if (!this.serialPort || !this.serialPort.writable) return;
+  private async sendHardwareBytes(bytes: Uint8Array): Promise<boolean> {
+    if (!this.serialPort || !this.serialPort.writable) return false;
     try {
       if (!this.serialWriter) {
         this.serialWriter = this.serialPort.writable.getWriter();
       }
       await this.serialWriter!.write(bytes);
+      return true;
     } catch (e) {
       console.warn('Web Serial write error:', e);
       // The writer may have become invalid (e.g. port closed externally) - drop it so the
@@ -1371,11 +1753,39 @@ export class CatController {
         // ignore
       }
       this.serialWriter = null;
+      return false;
     }
   }
 
-  private async sendHardwareText(text: string): Promise<void> {
-    await this.sendHardwareBytes(this.textEncoder.encode(text));
+  private async sendHardwareText(text: string): Promise<boolean> {
+    return this.sendHardwareBytes(this.textEncoder.encode(text));
+  }
+
+  /**
+   * Writes to the separately paired PTT port, for keyers that live on their own cable.
+   * Returns false when that port is not paired or the write failed, so a keying caller can
+   * report a real outcome rather than assuming one.
+   */
+  private async sendPttPortBytes(bytes: Uint8Array): Promise<boolean> {
+    const port = this.pttSerialPort || this.serialPort;
+    if (!port || !port.writable) return false;
+    if (port === this.serialPort) return this.sendHardwareBytes(bytes);
+    try {
+      if (!this.pttSerialWriter) {
+        this.pttSerialWriter = port.writable.getWriter();
+      }
+      await this.pttSerialWriter!.write(bytes);
+      return true;
+    } catch (e) {
+      console.warn('PTT port write error:', e);
+      try {
+        this.pttSerialWriter?.releaseLock();
+      } catch {
+        // ignore
+      }
+      this.pttSerialWriter = null;
+      return false;
+    }
   }
 
   /**
@@ -1439,8 +1849,13 @@ export class CatController {
    * backend running ON the Pi itself, not e.g. a plain static web deployment.
    */
   private async setRpiGpio(bcmPin: number, tx: boolean, polarity: 'ACTIVE_HIGH' | 'ACTIVE_LOW'): Promise<boolean> {
-    const activeLevel = polarity === 'ACTIVE_HIGH' ? tx : !tx;
-    const result = await setGpioPin(bcmPin, activeLevel);
+    // The server is told the INTENT (keyed / not keyed) plus the polarity, and derives the
+    // level itself. It used to be handed the level alone, which it then recorded as the keyed
+    // state: on an active-low station keying registered no dead-man countdown (so the browser
+    // keepalive failed and force-unkeyed the transmitter half a second into every frame),
+    // while releasing registered one - and the watchdog's "release" two seconds later drove
+    // the line low, which on active-low wiring keys the transmitter with nobody watching.
+    const result = await setGpioPin(bcmPin, tx, polarity === 'ACTIVE_LOW');
     if (!result.success) {
       console.warn('RPi GPIO bridge request failed:', result.error);
     }
@@ -1459,16 +1874,19 @@ export class CatController {
    */
   private winkeyerConfigured = false;
   private async setWinkeyerPtt(tx: boolean): Promise<boolean> {
-    if (!this.serialPort || !this.serialPort.writable) return false;
+    const port = this.pttSerialPort || this.serialPort;
+    if (!port || !port.writable) return false;
     if (!this.winkeyerConfigured) {
       // Admin: Host Open (0x00 0x02), then PINCFG bit0=1 (PTT enabled, follows key line),
       // then lead-in=1 (10ms units), tail=160 (10ms units, matching the app's PTT hang time).
-      await this.sendHardwareBytes(new Uint8Array([0x00, 0x02, 0x09, 0x01, 0x04, 0x01, 0xa0]));
+      const opened = await this.sendPttPortBytes(new Uint8Array([0x00, 0x02, 0x09, 0x01, 0x04, 0x01, 0xa0]));
+      if (!opened) return false;
       this.winkeyerConfigured = true;
     }
     // Key Immediate (0x02 <state>): 1 = key down (PTT follows, per PINCFG), 0 = key up.
-    await this.sendHardwareBytes(new Uint8Array([0x02, tx ? 0x01 : 0x00]));
-    return true;
+    // The write result is the return value: it used to be discarded and `true` returned
+    // regardless, so a keyer that had been unplugged still reported a verified key.
+    return this.sendPttPortBytes(new Uint8Array([0x02, tx ? 0x01 : 0x00]));
   }
 
   /**
@@ -1545,7 +1963,7 @@ export class CatController {
    * RTS or GPIO station got CI-V bytes it was never wired for. It now refuses unless the caller
    * supplies the gate, and fails closed when none is wired.
    */
-  public executeRawCommand(input: string, txContext?: RawConsoleTransmitContext): string {
+  public async executeRawCommand(input: string, txContext?: RawConsoleTransmitContext): Promise<string> {
     const raw = input.trim();
     if (!raw) return '';
 
@@ -1564,8 +1982,11 @@ export class CatController {
     } else if (verb === 'F' || long === '\\set_freq') {
       const val = parseInt(arg, 10);
       if (!isNaN(val) && val > 100000) {
-        this.setFreqHz(val);
-        resp = 'RPRT 0';
+        // RPRT 0 is rigctl's "the command succeeded", so it is reported from the hardware
+        // outcome rather than from having called the setter.
+        const sent = await this.setFreqHz(val);
+        resp = sent ? 'RPRT 0' : `RPRT -1 (frequency not sent: ${this.catUnavailableReason()})`;
+        status = sent ? 'OK' : 'ERROR';
       } else {
         resp = 'RPRT -1 (Invalid Frequency)';
         status = 'ERROR';
@@ -1577,8 +1998,9 @@ export class CatController {
         resp = 'RPRT -1 (set_mode needs a mode, e.g. M PKTUSB)';
         status = 'ERROR';
       } else {
-        this.setMode(arg);
-        resp = 'RPRT 0';
+        const sent = await this.setMode(arg);
+        resp = sent ? 'RPRT 0' : `RPRT -1 (mode not sent: ${this.catUnavailableReason()})`;
+        status = sent ? 'OK' : 'ERROR';
       }
     } else if (verb === 't' || long === '\\get_ptt') {
       resp = this.pttState ? '1' : '0';
@@ -1586,13 +2008,19 @@ export class CatController {
       const tx = arg === '1' || arg?.toLowerCase() === 'on';
       if (!tx) {
         // Unkeying is always allowed - refusing to stop transmitting is not a safety property.
-        void this.setPtt(
+        const released = await this.setPtt(
           false,
           txContext?.pttMethod ?? this.lastPttContext?.method ?? 'CAT',
           txContext?.pttPolarity ?? this.lastPttContext?.polarity ?? 'ACTIVE_HIGH',
           txContext?.pttOptions
         );
-        resp = 'RPRT 0';
+        // A release that the hardware refused is the one outcome an operator must not read as
+        // "RPRT 0"; the emergency path is the answer to it, not a green reply.
+        if (!released) this.releasePttEmergency();
+        resp = released
+          ? 'RPRT 0'
+          : `RPRT -1 (release refused: ${this.getLastPttFailure()} - an emergency release was issued across every keying path)`;
+        status = released ? 'OK' : 'ERROR';
       } else if (!txContext) {
         // Fail closed: a console with no gate wired to it does not get to key a transmitter.
         resp = 'RPRT -1 (PTT refused: no transmit gate is wired to this console)';
@@ -1601,8 +2029,9 @@ export class CatController {
         resp = 'RPRT -1 (PTT refused by the transmit gate - see the blocked-transmit banner)';
         status = 'ERROR';
       } else {
-        void this.setPtt(true, txContext.pttMethod, txContext.pttPolarity, txContext.pttOptions);
-        resp = 'RPRT 0';
+        const keyed = await this.setPtt(true, txContext.pttMethod, txContext.pttPolarity, txContext.pttOptions);
+        resp = keyed ? 'RPRT 0' : `RPRT -1 (PTT not keyed: ${this.getLastPttFailure()})`;
+        status = keyed ? 'OK' : 'ERROR';
       }
     } else if (verb === 'v' || long === '\\get_vfo') {
       resp = 'VFOA';

@@ -111,9 +111,23 @@ export function getServerStatus(): Promise<LocalApiResult<ServerStatus>> {
   return call<ServerStatus>('/api/status');
 }
 
-/** Keys or unkeys the server's single configured GPIO PTT pin. */
-export function setGpioPin(pin: number, value: boolean): Promise<LocalApiResult> {
-  return call('/api/gpio', { method: 'POST', body: { pin, value }, timeoutMs: 2000 });
+/**
+ * Keys or unkeys the server's single configured GPIO PTT pin.
+ *
+ * `keyed` is the INTENT, and `activeLow` describes the wiring; the server derives the
+ * electrical level from the two and records the keyed state correctly for either polarity.
+ * This used to send the level alone, which the server then took to BE the keyed state - so an
+ * active-low station registered no dead-man countdown when it keyed, and registered one when
+ * it stopped. `value` is still sent for a server older than this change, which reads it with
+ * active-high semantics.
+ */
+export function setGpioPin(pin: number, keyed: boolean, activeLow = false): Promise<LocalApiResult> {
+  const level = activeLow ? !keyed : keyed;
+  return call('/api/gpio', {
+    method: 'POST',
+    body: { pin, keyed, active_low: activeLow, value: level },
+    timeoutMs: 2000,
+  });
 }
 
 /**

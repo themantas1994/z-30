@@ -170,6 +170,9 @@ class GpioBridge:
     def __init__(self, allowed_pin: int = DEFAULT_GPIO_PTT_PIN) -> None:
         self.allowed_pin = allowed_pin
         self._devices: Dict[int, Any] = {}
+        # PTT polarity per claimed pin, as the browser reported it. Held so that the watchdog
+        # and the shutdown handlers drive the RELEASED level rather than a hardcoded low.
+        self._pin_active_low: Dict[int, bool] = {}
         self._lock = threading.RLock()
         self._keyed_pins: Dict[int, Dict[str, float]] = {}
         self._import_error: Optional[str] = None
@@ -202,7 +205,45 @@ class GpioBridge:
 
     # -- pin access --------------------------------------------------------
 
-    def _write_pin(self, bcm_pin: int, active: bool) -> Dict[str, Any]:
+    def _device_for(self, bcm_pin: int, active_low: bool) -> Any:
+        """
+        Returns the output device for a pin, built for this station's PTT polarity.
+
+        gpiozero's `active_high` carries the polarity, so `device.on()` means KEYED and
+        `device.off()` means RELEASED whichever way the interface is wired, and every caller
+        below - including the watchdog and the shutdown handlers - can speak in keyed/released
+        terms without having to remember which level that is. `initial_value=False` means
+        claiming the pin releases it rather than keying it.
+        """
+        existing = self._devices.get(bcm_pin)
+        if existing is not None and self._pin_active_low.get(bcm_pin) == active_low:
+            return existing
+        if existing is not None:
+            # Polarity changed (the operator edited it in Station Settings). Rebuild the device
+            # rather than driving the old one at the new meaning.
+            try:
+                existing.off()
+                existing.close()
+            except Exception:
+                pass
+            self._devices.pop(bcm_pin, None)
+        device = self._DigitalOutputDevice(bcm_pin, active_high=not active_low, initial_value=False)
+        self._devices[bcm_pin] = device
+        self._pin_active_low[bcm_pin] = active_low
+        return device
+
+    def _write_pin(self, bcm_pin: int, keyed: bool, active_low: Optional[bool] = None) -> Dict[str, Any]:
+        """
+        Drives the PTT line to `keyed` and keeps the dead-man bookkeeping in step with it.
+
+        `keyed` is the transmitter's state, NOT the pin's voltage. It used to be the voltage,
+        which the countdown logic then recorded as the keyed state: an active-low station
+        registered no countdown when it keyed (so its own keepalives were rejected and the
+        browser force-unkeyed it half a second into every frame) and registered one when it
+        released - after which this watchdog "released" the line by driving it low, which on
+        active-low wiring keys the transmitter. The layer that exists to prevent a stuck
+        transmitter was creating one.
+        """
         with self._lock:
             if self._DigitalOutputDevice is None:
                 return {
@@ -210,11 +251,11 @@ class GpioBridge:
                     "error": f"gpiozero is not available ({self._import_error}). Install it with "
                              "'pip install gpiozero' on the Raspberry Pi / SBC running this server.",
                 }
+            if active_low is None:
+                active_low = self._pin_active_low.get(bcm_pin, False)
             try:
-                if bcm_pin not in self._devices:
-                    self._devices[bcm_pin] = self._DigitalOutputDevice(bcm_pin)
-                device = self._devices[bcm_pin]
-                if active:
+                device = self._device_for(bcm_pin, active_low)
+                if keyed:
                     device.on()
                 else:
                     device.off()
@@ -223,7 +264,7 @@ class GpioBridge:
                 return {"success": False, "error": f"GPIO write to BCM pin {bcm_pin} failed: {exc}"}
 
             now = time.monotonic()
-            if active:
+            if keyed:
                 state = self._keyed_pins.get(bcm_pin)
                 if state is None:
                     self._keyed_pins[bcm_pin] = {"keyed_at": now, "last_keepalive": now}
@@ -231,9 +272,16 @@ class GpioBridge:
                     state["last_keepalive"] = now
             else:
                 self._keyed_pins.pop(bcm_pin, None)
-            return {"success": True, "pin": bcm_pin, "value": active}
+            return {
+                "success": True,
+                "pin": bcm_pin,
+                "keyed": keyed,
+                "active_low": active_low,
+                # The electrical level, for a UI or a log that wants to show the pin itself.
+                "value": (not keyed) if active_low else keyed,
+            }
 
-    def set_pin(self, bcm_pin: int, active: bool) -> Dict[str, Any]:
+    def set_pin(self, bcm_pin: int, keyed: bool, active_low: bool = False) -> Dict[str, Any]:
         """Keys or unkeys the configured PTT pin, refreshing the dead-man countdown."""
         if bcm_pin != self.allowed_pin:
             return {
@@ -241,7 +289,7 @@ class GpioBridge:
                 "error": f"BCM pin {bcm_pin} is not the configured PTT pin. This server only drives "
                          f"pin {self.allowed_pin}; start it with '--gpio-pin=<n>' to change that.",
             }
-        result = self._write_pin(bcm_pin, active)
+        result = self._write_pin(bcm_pin, keyed, active_low)
         if result.get("success"):
             result["keepalive_timeout_sec"] = GPIO_KEEPALIVE_TIMEOUT_SEC
             result["max_keyed_sec"] = GPIO_MAX_KEYED_SEC
@@ -285,6 +333,8 @@ class GpioBridge:
         with self._lock:
             for pin, device in self._devices.items():
                 try:
+                    # off() is the RELEASED state for either polarity, because the device was
+                    # built with active_high set from the station's wiring.
                     device.off()
                 except Exception:
                     pass
@@ -294,6 +344,7 @@ class GpioBridge:
                     pass
                 logger.info(f"Released GPIO BCM pin {pin} on shutdown.")
             self._devices.clear()
+            self._pin_active_low.clear()
             self._keyed_pins.clear()
 
     def shutdown(self) -> None:
@@ -723,7 +774,14 @@ class SpaRequestHandler(SimpleHTTPRequestHandler):
 
     def _handle_gpio(self, payload: Any) -> None:
         """
-        Keys or unkeys the configured PTT pin. Body: {"pin": <BCM pin>, "value": <bool>}.
+        Keys or unkeys the configured PTT pin. Body:
+        {"pin": <BCM pin>, "keyed": <bool>, "active_low": <bool>}.
+
+        `keyed` is the transmitter's intended state and `active_low` is the wiring; the bridge
+        derives the pin level from the two. A body carrying only the older {"value": <level>}
+        is still accepted and read with active-high semantics, so a stale cached bundle keeps
+        working rather than keying at random.
+
         Called from catController.ts's setRpiGpio(). While keyed, the UI must keep calling
         /api/gpio/keepalive or the watchdog in GpioBridge drops the line.
         """
@@ -732,16 +790,21 @@ class SpaRequestHandler(SimpleHTTPRequestHandler):
             return
         try:
             pin = int(payload["pin"])
-            value = bool(payload["value"])
+            active_low = bool(payload.get("active_low", False))
+            if "keyed" in payload:
+                keyed = bool(payload["keyed"])
+            else:
+                keyed = bool(payload["value"])
+                active_low = False
         except (TypeError, KeyError, ValueError) as exc:
             self._send_json(400, {"success": False, "error": f"Invalid request body: {exc}"})
             return
         if pin != self.gpio_bridge.allowed_pin:
             # A rejected pin is a bad request, not a hardware outage - say so with 400 so the
             # UI can tell a misconfiguration from a Pi that simply has no gpiozero installed.
-            self._send_json(400, self.gpio_bridge.set_pin(pin, value))
+            self._send_json(400, self.gpio_bridge.set_pin(pin, keyed, active_low))
             return
-        result = self.gpio_bridge.set_pin(pin, value)
+        result = self.gpio_bridge.set_pin(pin, keyed, active_low)
         self._send_json(200 if result.get("success") else 503, result)
 
     def _handle_gpio_keepalive(self, payload: Any) -> None:

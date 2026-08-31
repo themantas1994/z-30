@@ -102,6 +102,9 @@ export default function App() {
   // right real hardware protocol whenever the operator changes rigs.
   useEffect(() => {
     rigctl.configureRig(config.rigModel);
+    // Opening a serial port must leave the keying line RELEASED for this station's wiring,
+    // which depends on the polarity - see deassertKeyingLines().
+    rigctl.configureKeying(config.pttPolarity || 'ACTIVE_HIGH');
     // Hamlib network mode routes frequency/mode/PTT through the native server's rigctld TCP
     // relay, which is the only way a browser can reach the daemon at all.
     rigctl.configureHamlibEndpoint(
@@ -109,7 +112,7 @@ export default function App() {
       config.hamlibPort,
       config.catEnabled && config.catMethod === 'Hamlib'
     );
-  }, [config.rigModel, config.hamlibHost, config.hamlibPort, config.catEnabled, config.catMethod]);
+  }, [config.rigModel, config.hamlibHost, config.hamlibPort, config.catEnabled, config.catMethod, config.pttPolarity]);
 
   // Auto-connect audio receiver if system permission was already granted
   useEffect(() => {
@@ -199,8 +202,11 @@ export default function App() {
       const targetHz = config.customBands?.[bandName] || band.dialFreqHz;
       setCurrentBandIdx(bandIdx);
       setDialFreqHz(targetHz);
-      rigctl.setFreqHz(targetHz);
-      rigctl.setBandByName(bandName);
+      // One command, carrying the operator's dial for this band. Calling setFreqHz() and then
+      // setBandByName() sent the custom dial and then the stock one a moment later, so the
+      // radio ended up on a frequency the app - and the transmit gate's band-plan check - did
+      // not think it was on.
+      void rigctl.setBandByName(bandName, targetHz);
     }
   };
 
@@ -287,7 +293,14 @@ export default function App() {
   );
 
   // Helper to start the 24.0s 16-MFSK physical transmission
-  const startActiveTransmission = useCallback(() => {
+  //
+  // Keying is AWAITED and its result checked before any audio is generated. Both halves of
+  // that matter on real hardware: the result, because setPtt() reports whether the radio
+  // actually keyed and this used to transmit a full frame into a rig sitting in receive
+  // whenever it had not; and the await, because on the Hamlib path keying is an HTTP round
+  // trip to rigctld that will not have finished inside the 20 ms of lead-in silence, so the
+  // first symbols went out while the rig was still switching.
+  const startActiveTransmission = useCallback(async () => {
     if (isTransmitting) return;
     if (!assertCanTransmit(qsoEngine.getState().txFreqHz)) return;
     if (isTuning) {
@@ -302,19 +315,30 @@ export default function App() {
     const packed = packZ30Message(txText);
 
     setIsTransmitting(true);
-    rigctl.setPtt(true, config.pttMethod, config.pttPolarity, pttOptions);
+    const keyed = await rigctl.setPtt(true, config.pttMethod, config.pttPolarity, pttOptions);
+    if (!keyed) {
+      setIsTransmitting(false);
+      setFwdWatts(0);
+      qsoEngine.setTxEnabled(false);
+      setQsoState(qsoEngine.getState());
+      setTxBlockReasons([
+        `PTT (${config.pttMethod}) did not key the transmitter: ${rigctl.getLastPttFailure()}. ` +
+          'Nothing was transmitted. Fix the keying path, then re-arm TX.',
+      ]);
+      return;
+    }
     setFwdWatts(config.txPowerWatts);
 
     // Register active signal into local audio frame history with isLocalTx = true (for waterfall display only, not for decoder)
     audioEngine.registerActiveSignal(currentState.txFreqHz, txText, packed.symbols, 6, true);
 
-    audioEngine.play16MfskSequence(
+    const started = audioEngine.play16MfskSequence(
       currentState.txFreqHz,
       packed.symbols,
       undefined,
       () => {
         setIsTransmitting(false);
-        rigctl.setPtt(false, config.pttMethod, config.pttPolarity, pttOptions);
+        void rigctl.setPtt(false, config.pttMethod, config.pttPolarity, pttOptions);
         setFwdWatts(0);
           },
       {
@@ -324,6 +348,19 @@ export default function App() {
         hangTimeMs: config.pttHangTimeMs || 30,
       }
     );
+
+    if (!started) {
+      // The frame never began, so the completion callback that unkeys will never run. Without
+      // this the transmitter stayed keyed until the 40 s watchdog and isTransmitting stayed
+      // true, which silently blocked every following cycle.
+      setIsTransmitting(false);
+      setFwdWatts(0);
+      void rigctl.setPtt(false, config.pttMethod, config.pttPolarity, pttOptions);
+      setTxBlockReasons([
+        'The transmit audio could not be generated, so PTT was released immediately and nothing was ' +
+          'transmitted. Check the audio output device in Station Settings.',
+      ]);
+    }
   }, [config, isTransmitting, isTuning, assertCanTransmit, pttOptions]);
 
   // Main Synchronous 30-Second Cycle Clock Engine
@@ -345,7 +382,7 @@ export default function App() {
         (currentState.txSlot === 'ODD' && !isEvenCycle);
 
       if (currentState.txEnabled && slotMatches && cycleSec < 0.5 && !isTransmitting && !isTuning) {
-        startActiveTransmission();
+        void startActiveTransmission();
       }
 
       // 2. Decode Window Trigger (At 24.0s when Tx finishes and Rx window ends)
@@ -409,7 +446,7 @@ export default function App() {
     const slotInfo = evaluateSlotTiming(updatedState.txSlot, new Date());
 
     if (slotInfo.canTransmitImmediately) {
-      startActiveTransmission();
+      void startActiveTransmission();
     }
   };
 
@@ -422,7 +459,7 @@ export default function App() {
     }
     setIsTransmitting(false);
     setIsTuning(false);
-    rigctl.setPtt(false, config.pttMethod, config.pttPolarity, pttOptions);
+    void rigctl.setPtt(false, config.pttMethod, config.pttPolarity, pttOptions);
     setFwdWatts(0);
     qsoEngine.setTxEnabled(false);
     setQsoState(qsoEngine.getState());
@@ -440,19 +477,35 @@ export default function App() {
   };
 
   // Tune Tone (CW Carrier for antenna matching with 15s auto-safety cutoff)
-  const handleStartTune = () => {
+  const handleStartTune = async () => {
     if (!assertCanTransmit(qsoState.txFreqHz)) return;
     if (isTransmitting) {
       audioEngine.stopTransmission();
       setIsTransmitting(false);
     }
     setIsTuning(true);
-    rigctl.setPtt(true, config.pttMethod, config.pttPolarity, pttOptions);
+    // Same rule as the frame path: no carrier unless the radio actually keyed.
+    const keyed = await rigctl.setPtt(true, config.pttMethod, config.pttPolarity, pttOptions);
+    if (!keyed) {
+      setIsTuning(false);
+      setFwdWatts(0);
+      setTxBlockReasons([
+        `Tune refused: PTT (${config.pttMethod}) did not key the transmitter - ${rigctl.getLastPttFailure()}.`,
+      ]);
+      return;
+    }
     setFwdWatts(config.txPowerWatts);
-    audioEngine.startTuneTone(qsoState.txFreqHz, {
+    const toneStarted = audioEngine.startTuneTone(qsoState.txFreqHz, {
       enableRightTone: config.pttMethod === 'AUDIO_TONE_RIGHT',
       toneFreqHz: config.pttToneFreqHz || 1000,
     });
+    if (!toneStarted) {
+      setIsTuning(false);
+      setFwdWatts(0);
+      void rigctl.setPtt(false, config.pttMethod, config.pttPolarity, pttOptions);
+      setTxBlockReasons(['The tune carrier could not be generated, so PTT was released immediately.']);
+      return;
+    }
 
     if (tuneTimeoutRef.current) clearTimeout(tuneTimeoutRef.current);
     tuneTimeoutRef.current = window.setTimeout(() => {
@@ -466,7 +519,7 @@ export default function App() {
       tuneTimeoutRef.current = null;
     }
     setIsTuning(false);
-    rigctl.setPtt(false, config.pttMethod, config.pttPolarity, pttOptions);
+    void rigctl.setPtt(false, config.pttMethod, config.pttPolarity, pttOptions);
     setFwdWatts(0);
     audioEngine.stopTransmission();
   };
@@ -668,7 +721,7 @@ export default function App() {
                   onBandChange={handleBandChange}
                   onFreqChange={(hz) => {
                     setDialFreqHz(hz);
-                    rigctl.setFreqHz(hz);
+                    void rigctl.setFreqHz(hz);
                   }}
                   isTransmitting={isTransmitting}
                   isTuning={isTuning}
