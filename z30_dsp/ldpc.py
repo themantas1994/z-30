@@ -39,12 +39,15 @@ Mathematical Specification & Design Rationale:
 
 5. Vectorized Normalized Min-Sum Belief Propagation Decoder:
    - Check Node Update: L_{c->v} = alpha * prod(sign(L_{v'->c})) * min_{v' != v}(|L_{v'->c}|)
-     where alpha = 0.75 is the empirical normalization factor mitigating check node overestimation.
+     where alpha is the schedule's own empirical normalization factor mitigating check node
+     overestimation - see DECODE_SCHEDULES; there is no single alpha for the decoder.
    - Variable Node Update: L_{v->c} = L_{ch, v} + sum_{c' != c} L_{c'->v}
    - Early stopping condition: syndrome s = H * c^T == 0 (mod 2) and CRC valid.
 """
 
-from typing import Tuple, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
+import math
+
 import numpy as np
 
 Z30_CHECK_TO_INFO: List[List[int]] = [
@@ -78,25 +81,109 @@ Z30_CHECK_TO_INFO: List[List[int]] = [
   [39,50,54,76,18],[47,63,64,75,12],[52,58,73,1,36],[59,74,16,26,39],
 ]
 
+#: The four decode schedules `decode_min_sum` runs, in order, stopping at the first that
+#: produces a codeword whose syndrome is zero and whose CRC-14 matches.
+#:
+#: There is deliberately no single "the decoder's alpha". One used to be documented in wiki/04,
+#: accepted as a constructor argument here, exported as `Z30_LDPC_PARAMS.alphaMinSum` in
+#: TypeScript and rendered in the Specs modal as 0.75 - a value none of these four schedules
+#: has ever used. The table is the specification; anything that wants to describe the decoder
+#: reads it rather than retyping a number beside it.
+#:
+#: The twin of `Z30_DECODE_SCHEDULES` in src/dsp/ldpcCodec.ts, asserted equal by
+#: tests/test_cross_language_parity.py.
+DECODE_SCHEDULES: Tuple[Dict[str, Any], ...] = (
+    {'mode': 'NMS', 'alpha': 0.82, 'beta': 0.08, 'damping': 0.88, 'reverse': False, 'iters': 45},
+    {'mode': 'SPA', 'alpha': 0.95, 'beta': 0.00, 'damping': 0.85, 'reverse': False, 'iters': 40},
+    {'mode': 'NMS', 'alpha': 0.74, 'beta': 0.04, 'damping': 0.90, 'reverse': True, 'iters': 35},
+    {'mode': 'DITHER', 'alpha': 0.80, 'beta': 0.06, 'damping': 0.85, 'reverse': False, 'iters': 30},
+)
+
+#: Peak-to-peak amplitude of the LLR perturbation applied by decode schedule 4 ("DITHER").
+#: Shared with src/dsp/ldpcCodec.ts and pinned by tests/test_cross_language_parity.py.
+DITHER_AMPLITUDE: float = 0.45
+
+_FNV32_OFFSET_BASIS = 0x811C9DC5
+_FNV32_PRIME = 0x01000193
+_UINT32_MASK = 0xFFFFFFFF
+
+
+def dither_seed_from_llrs(llr_channel: "np.ndarray | List[float]") -> int:
+    """
+    Derives a 32-bit seed from the channel LLRs themselves (FNV-1a over 1/64-LLR quanta).
+
+    Schedule 4 perturbs the channel LLRs to break the symmetric trapping sets a deterministic
+    schedule stalls on. That perturbation used to come from `np.random.rand()` - the unseeded
+    global generator - so the decoder was not a function of its input: two seeded benchmark
+    runs of the identical configuration could decode a different set of frames, precisely
+    among the near-threshold frames the benchmark exists to characterise. AGENTS.md's
+    determinism invariant says unseeded RNG does not belong in that path.
+
+    Threading a seeded generator in from the benchmark would fix the benchmark and nothing
+    else: `decode_min_sum` is also called by the SIC decoder and by the live receive path,
+    where there is no seed to thread, and a frame captured off the air still has to decode the
+    same way twice. Deriving the seed from the input instead makes the decoder a pure function
+    everywhere - the same LLRs always give the same answer, in isolation, in any caller, in
+    either language. The perturbation only has to be uncorrelated with the code's structure,
+    not unpredictable, so nothing is lost by making it reproducible.
+
+    Quantising to 1/64 before hashing keeps the derivation on integers, so Python and
+    TypeScript agree bit for bit; `math.floor(x * 64 + 0.5)` rather than `round()` because
+    Python rounds halves to even and JavaScript rounds them up.
+    """
+    h = _FNV32_OFFSET_BASIS
+    for value in llr_channel:
+        quantum = math.floor(float(value) * 64.0 + 0.5) & _UINT32_MASK
+        for shift in (0, 8, 16, 24):
+            h ^= (quantum >> shift) & 0xFF
+            h = (h * _FNV32_PRIME) & _UINT32_MASK
+    return h
+
+
+def dither_vector(llr_channel: "np.ndarray | List[float]", length: int) -> "np.ndarray":
+    """
+    The schedule-4 LLR perturbation for `llr_channel`: `length` values in +/-DITHER_AMPLITUDE/2.
+
+    mulberry32, the same generator as src/dsp/seededRandom.ts, reproduced here in unsigned
+    32-bit arithmetic so that both languages emit an identical sequence.
+    """
+    state = dither_seed_from_llrs(llr_channel) or 0x9E3779B9
+    out = np.zeros(length, dtype=np.float64)
+    for i in range(length):
+        state = (state + 0x6D2B79F5) & _UINT32_MASK
+        t = state
+        t = ((t ^ (t >> 15)) * (t | 1)) & _UINT32_MASK
+        t = (t ^ (t + ((t ^ (t >> 7)) * (t | 61)))) & _UINT32_MASK
+        unit = ((t ^ (t >> 14)) & _UINT32_MASK) / 4294967296.0
+        out[i] = (unit - 0.5) * DITHER_AMPLITUDE
+    return out
+
+
 class Z30LdpcCodec:
     """
     Production-grade Systematic (216, 77) LDPC Codec.
     Implements IRA forward-substitution encoding and normalized Min-Sum belief propagation.
     """
 
-    def __init__(self, max_iterations: int = 45, alpha: float = 0.75) -> None:
+    def __init__(self, max_iterations: int = 45) -> None:
         """
         Initializes the (216, 77) LDPC Codec.
 
         Args:
-            max_iterations (int): Maximum belief propagation iterations (default: 45).
-            alpha (float): Normalized Min-Sum scaling factor (default: 0.75).
+            max_iterations (int): Maximum belief propagation iterations (default: 45). This is
+                schedule 1's cap; the four schedules of `decode_min_sum` carry their own.
+
+        There is deliberately no `alpha` argument. One used to be accepted here, defaulting to
+        0.75, stored as `self.alpha` - and never read by the decoder, which has always applied
+        the four per-schedule alphas in `decode_min_sum` instead. Constructing the codec with
+        `alpha=0.5` changed nothing, while the number was quoted in wiki/04 and rendered in the
+        Specs modal as though it were live. A parameter that cannot affect the result is worse
+        than no parameter: it invites tuning that silently does nothing.
         """
         self.k: int = 77   # Information block length (63 payload + 14 CRC)
         self.n: int = 216  # Total coded codeword length
         self.m: int = 139  # Parity check equations (216 - 77)
         self.max_iterations: int = max_iterations
-        self.alpha: float = alpha
 
         # Pre-construct Parity Check Matrix H and sparse adjacency lists
         self.H = self._build_parity_check_matrix()
@@ -249,10 +336,8 @@ class Z30LdpcCodec:
 
         # Multi-schedule decoding passes
         schedules = [
-            {'mode': 'NMS', 'alpha': 0.82, 'beta': 0.08, 'damping': 0.88, 'reverse': False, 'iters': min(45, self.max_iterations)},
-            {'mode': 'SPA', 'alpha': 0.95, 'beta': 0.00, 'damping': 0.85, 'reverse': False, 'iters': min(40, self.max_iterations)},
-            {'mode': 'NMS', 'alpha': 0.74, 'beta': 0.04, 'damping': 0.90, 'reverse': True,  'iters': min(35, self.max_iterations)},
-            {'mode': 'DITHER', 'alpha': 0.80, 'beta': 0.06, 'damping': 0.85, 'reverse': False, 'iters': min(30, self.max_iterations)},
+            dict(sched, iters=min(sched['iters'], self.max_iterations))
+            for sched in DECODE_SCHEDULES
         ]
 
         best_codeword = np.zeros(self.n, dtype=np.uint8)
@@ -263,7 +348,9 @@ class Z30LdpcCodec:
         for sched in schedules:
             total_llrs = np.copy(input_llr)
             if sched['mode'] == 'DITHER':
-                total_llrs += (np.random.rand(self.n) - 0.5) * 0.45
+                # Derived from the channel LLRs, not from the unseeded global RNG - see
+                # dither_vector(). This is what keeps a seeded benchmark reproducible.
+                total_llrs += dither_vector(input_llr, self.n)
 
             # Check-to-variable message buffers
             c_to_v = [np.zeros(len(self.check_to_vars[c]), dtype=np.float32) for c in range(self.m)]
