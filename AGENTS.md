@@ -193,15 +193,41 @@ the code and the wiki on purpose. Follow the same standard:
   (`src/dsp/monteCarloEngine.ts`, Station Settings -> 5. Experimental Testing) runs the same two
   modes and defaults to `realistic` too, but it is a bench instrument: it agrees closely on the
   bound and reads about **1.8 dB more optimistic** on the threshold, because it searches a
-  narrower timing window and runs a different LDPC schedule. Use it to see which way a change
-  moved the curve; confirm with a seeded Python run before any number reaches documentation.
-  [`wiki/16`](wiki/16-Benchmarking-Testing-&-CI.md) has the side-by-side table.
+  narrower timing window. (Both languages run the identical four-schedule LDPC decoder cascade —
+  a prior version of this line and of `wiki/16` claimed otherwise; that was wrong and is
+  corrected below.) Use it to see which way a change moved the curve; confirm with a seeded
+  Python run before any number reaches documentation. [`wiki/16`](wiki/16-Benchmarking-Testing-&-CI.md)
+  has the side-by-side table.
 - **The word "threshold" is reserved for `realistic`.** No UI string, comment or document may
   call an `ideal`-mode result a threshold, and nothing may compute a z-30-vs-other-mode delta
   from one. A "Gain vs FT8" tile that subtracted a bound from FT8's on-air figure is how the
   withdrawn "+4.0 dB advantage" claim came back into the app after the wiki had retracted it.
 - If a DSP change moves the threshold, update every place it appears: `wiki/16`, `wiki/03`,
   `wiki/11`, the PR checklist in `wiki/02`, `wiki/Home.md`, and the README's at-a-glance table.
+
+**Benchmarks and test suites are the only challengers of the wiki.**
+
+- A benchmark or test result is allowed to overturn a wiki claim — that is what they are for.
+  `wiki/16` used to state that the Python decoder ran a single min-sum schedule while the browser
+  ran three; a seeded, paired benchmark showed both languages have always run the same
+  four-schedule cascade, and that the cascade decodes strictly more frames than the
+  single-schedule design the wiki described. The wiki was wrong and got fixed — see
+  [`wiki/16`](wiki/16-Benchmarking-Testing-&-CI.md#-a-worked-example-a-benchmark-challenging-the-wiki)
+  for the worked example. But a result only earns that authority once it clears **greater than
+  95% confidence that it is comparable to a real-world application** — a controlled, paired
+  comparison at a realistic operating point (an SNR the mode actually has to work at, a
+  configuration a station would actually run), not a single anecdotal pass or a synthetic case
+  that flatters one side. Quote the method, the seed and the sample size next to the confidence
+  figure, the same way section 5 already requires for a sensitivity number.
+- Nothing may alter a benchmark or a test suite to manufacture a result. No moving a threshold,
+  seed, sample size, SNR range, iteration cap, or exit condition to make an outcome come out a
+  particular way, and no cherry-picking a favourable run and discarding the rest. Because
+  benchmarks and test suites are the *only* sanctioned way to challenge the wiki, gaming one is
+  equivalent to forging the project's own source of truth. Any benchmark or test-suite result
+  used to justify changing the wiki, the code, or a published figure must clear **99% or greater
+  confidence that it is comparable to real-world behaviour** before anyone treats it as settled —
+  state that confidence figure (an exact p-value, a confidence interval — something a reader can
+  check, not an adjective) alongside the result.
 
 Do not add marketing superlatives to documentation. This project's comments and docs explain
 *why* something is the way it is, usually by naming the failure it prevents — match that voice.

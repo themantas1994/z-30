@@ -57,7 +57,7 @@ The matrix $H = [H_d \mid H_p]$ consists of a sparse information matrix $H_d$ ($
 
 ---
 
-## 🧠 Normalized Min-Sum Belief Propagation Decoder
+## 🧠 Multi-Schedule Min-Sum / Sum-Product Belief Propagation Decoder
 
 The receiver performs iterative message passing between Variable Nodes ($V_n$) and Check Nodes ($C_m$) on the bipartite Tanner graph:
 
@@ -70,14 +70,67 @@ The receiver performs iterative message passing between Variable Nodes ($V_n$) a
    [ V_215 ] ──────┴───────────── [ C_138 ]
 ```
 
-### Algorithm Steps:
-1. **Initialization**: Initialize variable-to-check messages $L_{n \to m} = \text{LLR}_n$.
-2. **Check Node Update (Normalized Min-Sum)**:
-   $$L_{m \to n} = \alpha \cdot \left( \prod_{n' \in N(m) \setminus \{n\}} \text{sgn}(L_{n' \to m}) \right) \cdot \min_{n' \in N(m) \setminus \{n\}} |L_{n' \to m}|$$
-   Where $\alpha = 0.75$ is the empirical attenuation factor compensating for magnitude overestimation in the Min-Sum approximation.
+> **Correction (2026-08-31):** every earlier revision of this page described a single normalized
+> min-sum schedule with a fixed $\alpha = 0.75$. That was never what either implementation ran.
+> `z30_dsp/ldpc.py::decode_min_sum` and `src/dsp/ldpcCodec.ts::decodeMinSum` have always run the
+> four-schedule cascade documented below, identically in both languages. A paired benchmark
+> (240 frames across SNR −24/−25/−26 dB, same frame and channel noise decoded by both the real
+> cascade and a from-scratch reimplementation of the single-schedule description this page used
+> to carry) found the cascade decodes strictly more frames at every point tested — 23 of 23
+> disagreements went to the cascade, 0 to the single schedule (exact McNemar test, p ≈ 4×10⁻⁷,
+> i.e. **>99.9999% confidence**). Per the benchmark-integrity rule in `AGENTS.md` §5, that clears
+> the bar to correct the documentation rather than the code. See
+> [16. Benchmarking, Testing & CI](16-Benchmarking-Testing-&-CI.md) for the method.
+
+### The four decode schedules
+
+A candidate is tried against up to four schedules in order, stopping the instant any of them
+produces a hard-decision codeword whose syndrome is zero **and** whose 14-bit CRC matches:
+
+| # | Mode | $\alpha$ | $\beta$ | Damping | Check order | Iteration cap |
+| :-- | :-- | :-- | :-- | :-- | :-- | :-- |
+| 1 | Normalized min-sum (layered) | 0.82 | 0.08 | 0.88 | forward | 45 |
+| 2 | Log-domain sum-product (exact box-plus, Jacobian-corrected) | 0.95 | — | 0.85 | forward | 40 |
+| 3 | Normalized min-sum (layered) | 0.74 | 0.04 | 0.90 | **reverse** | 35 |
+| 4 | Dithered normalized min-sum (random LLR perturbation before decoding) | 0.80 | 0.06 | 0.85 | forward | 30 |
+
+That is a maximum of 150 total iterations across all four schedules for one candidate, though a
+typical clean frame converges within the first schedule in single digits of iterations. Schedule
+3's reverse check-node order and schedule 4's random perturbation exist to escape the trapping
+sets / pseudocodewords a single deterministic schedule can stall on near the decode threshold —
+the mechanism the paired benchmark above measured. `LDPC_MAX_ITERATIONS` (TypeScript) and the
+`max_iterations` constructor argument (Python) both refer to schedule 1's cap (45); it is what
+`SpecsModal` quotes, since it is also the number a well-formed frame converges within almost
+always.
+
+There is no single $\alpha$ for "the decoder" any more than there is a single schedule — the
+$0.75$ figure this page carried for years was nominal, never live. Each schedule's own
+$\alpha$/$\beta$/damping triple above is what is actually applied at every check-node update:
+
+$$L_{m \to n} = \left( \prod_{n' \in N(m) \setminus \{n\}} \text{sgn}(L_{n' \to m}) \right) \cdot \max\!\big(0,\ \alpha \cdot \min_{n' \in N(m) \setminus \{n\}} |L_{n' \to m}| - \beta\big)$$
+
+for the three normalized-min-sum schedules, or the box-plus (Jacobian-corrected) combination for
+schedule 2's sum-product pass. Every check-node update is damped: the applied message is a
+weighted blend of the freshly computed value and the previous iteration's message,
+`(1 − damping) × old + damping × new`. A damping of 0.85–0.90 still moves most of the way to the
+new value each iteration, just not all the way, which is what keeps the reverse-order and
+dithered passes from oscillating.
+
+### Algorithm steps (per schedule)
+
+1. **Initialization**: Initialize variable-to-check messages $L_{n \to m} = \text{LLR}_n$ (schedule 4 additionally adds a small uniform random perturbation to every channel LLR first).
+2. **Check Node Update**: per the table above, in the schedule's check order (forward, or reversed for schedule 3).
 3. **Variable Node Update**:
    $$L_{n \to m} = \text{LLR}_n + \sum_{m' \in M(n) \setminus \{m\}} L_{m' \to n}$$
 4. **Hard Decision & CRC Parity Check**:
    $$\hat{c}_n = \begin{cases} 0 & \text{if } \text{LLR}_n + \sum_{m \in M(n)} L_{m \to n} \ge 0 \\ 1 & \text{if } \text{LLR}_n + \sum_{m \in M(n)} L_{m \to n} < 0 \end{cases}$$
-   If $H \cdot \hat{\mathbf{c}}^T = \mathbf{0} \pmod 2$ and the 14-bit CRC polynomial matches, decoding terminates with **SUCCESS** immediately (often in 3 to 12 iterations).
-5. **Iteration Limit**: If CRC fails after 50 iterations, the candidate is flagged for subsequent SIC processing or marked unresolvable.
+   If $H \cdot \hat{\mathbf{c}}^T = \mathbf{0} \pmod 2$ and the 14-bit CRC matches, decoding terminates with **SUCCESS** immediately (often in single digits of iterations for a clean frame).
+5. **Trellis-IRA re-check**: independently of the syndrome, whenever a candidate's *payload* CRC
+   already matches its received CRC, the 139 parity bits are re-derived from those 77 information
+   bits directly (the same forward-substitution the encoder uses) and checked against the
+   syndrome — this catches a codeword whose information bits are already correct but whose noisy
+   parity bits haven't converged, without spending more iterations on them.
+6. **Escalation**: if a schedule's iteration cap is reached without success, the next schedule in
+   the table runs on a fresh copy of the channel LLRs. If schedule 4 also fails to produce a
+   CRC-valid codeword, the frame is flagged for SIC processing (see
+   [05. Successive Interference Cancellation](05-Successive-Interference-Cancellation-(SIC).md)) or marked unresolvable.
