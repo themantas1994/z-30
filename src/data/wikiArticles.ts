@@ -1895,10 +1895,23 @@ picks one according to the configured rule:
 
 - Bidirectional serial communication over Hamlib \`rigctld\` (default port \`4532\`) or native
   serial ports (\`COM1..COM32\`, \`/dev/ttyUSB*\`, \`/dev/ttyACM*\`).
-- Reads VFO dial frequency, operating mode (\`USB\` / \`PKTUSB\`) and live hardware S-meter power
-  in dBm.
-- A live CAT terminal for raw Hamlib commands (\`\\get_freq\`, \`\\set_freq\`, \`\\get_mode\`,
-  \`\\set_ptt\`, \`\\get_level\`).
+- Reads and sets the VFO dial frequency (band selector, direct MHz entry, and +/-100 Hz /
+  +/-1 kHz nudge buttons), and reads the operating mode (\`USB\` / \`PKTUSB\`) and passband live
+  from the controller rather than displaying a fixed label.
+- Keys the tune carrier and opens the band manager.
+- **The S-meter readout is rendered in the waterfall header**, not in this panel, because that
+  is where an operator watches the band; the reading itself comes from
+  \`catController.getSmeterInfo()\`. The panel shows the rigctld endpoint, baud rate and the
+  configured PTT method.
+- A live CAT terminal for raw Hamlib commands. **Case is significant, as in real rigctl**:
+  lower-case short verbs read, upper-case short verbs set — \`f\` / \`F <hz>\`, \`m\` / \`M <mode>\`,
+  \`t\` / \`T <0|1>\` — alongside the long forms \`\\get_freq\`, \`\\set_freq\`, \`\\get_mode\`,
+  \`\\set_mode\`, \`\\get_ptt\`, \`\\set_ptt\`, \`\\get_vfo\`, \`\\get_level\`, \`\\version\`,
+  \`dump_state\` and \`help\`. An unrecognised verb returns a non-zero \`RPRT\`, not success.
+- **\`T 1\` / \`\\set_ptt 1\` runs the same transmit gate as every other transmit path** and is
+  refused, with the reason, if the station is not clear to transmit. It keys through the
+  operator's configured PTT method and polarity, not a CAT default. See
+  [13. Operating Safety, Compliance & Security](13-Operating-Safety-Compliance-&-Security.md).
 - Synchronous PTT keying via CAT commands, RTS/DTR serial pins, or audio tones.
 
 Full wiring, daemon invocation and per-rig notes live in
@@ -1969,8 +1982,23 @@ custom preset outside your privileges is refused at transmit time rather than si
 
 - Tabular logbook recording date, UTC time, callsign, band, dial frequency, mode (\`Z-30\`),
   sent/received reports, Maidenhead grid, distance (km/mi) and operator notes.
-- One-click export to **ADIF 3.1.4 (\`.adi\`)**, **Cabrillo**, **JSON** and **CSV**.
-- Search and filter by callsign, band or date range.
+- One-click export to five formats:
+  - **ADIF 3.1.4 (\`.adi\`)** — for LoTW, eQSL, Club Log and contest loggers. \`MODE\` is \`MFSK\`
+    with \`SUBMODE\` \`Z30\`, because ADIF's \`MODE\` is a closed enumeration and \`z-30\` is not in
+    it; a record with an unlisted \`MODE\` gets rejected or mis-filed.
+  - **Cabrillo v3.0 (\`.cbr\`)** — the contest submission format. The header fields the log
+    cannot know (\`CONTEST\`, \`OPERATORS\`, \`NAME\`, \`ADDRESS\`, \`CLAIMED-SCORE\`) are emitted empty
+    for you to complete: a submission with invented values is worse than a visibly incomplete
+    one.
+  - **JSON (\`.json\`)** — the only lossless format. ADIF flattens the SIC pass and LDPC
+    iteration count into a comment, CSV loses types, and Cabrillo keeps only what a contest
+    robot scores; this round-trips every field a QSO record carries.
+  - **CSV (\`.csv\`)** — RFC 4180, for spreadsheets.
+  - **SQLite dump (\`.sql\`)** — schema plus inserts, for anyone who would rather query their log
+    than read it.
+- Search and filter by callsign, grid or notes; by band; and by **UTC date range** (from/to,
+  with a Clear button). Every export writes the **filtered** set, so the date range doubles as
+  the contest-period selector for a Cabrillo submission.
 - The authoritative copy is the file on disk (\`~/.z30/logbook.json\` plus an ADIF export beside
   it); the browser store is a cache. See
   [13. Operating Safety, Compliance & Local Security](13-Operating-Safety-Compliance-&-Security.md).
@@ -2199,6 +2227,46 @@ columns rather than being hidden inside the frame error rate.
 
 ---
 
+## 🖥️ The in-app benchmark, and why its numbers are not the published ones
+
+**Station Settings → 5. Experimental Testing → Launch Benchmark Suite** runs the same two modes
+in the browser, over \`src/dsp/monteCarloEngine.ts\`. It has a **Measurement mode** selector, and
+it defaults to \`realistic\` for the same reason the Python benchmark does.
+
+In realistic mode the browser engine gives every frame a random carrier offset (±5 Hz) and
+timing offset (±0.5 s), searches for the frame using only the 21 Costas symbols
+(\`acquireFrame\`), estimates the noise floor from the audio itself (\`estimateNoiseSigma\`), and
+counts a frame it cannot find as a failure. The \`Acq Fail\`, \`Timing RMS\` and \`Freq RMS\` columns
+of the results table are the same diagnostics the Python table carries.
+
+**It is a bench instrument, not the reference.** Use it to watch how a change moves the curve
+without leaving the app; quote the Python benchmark when you publish a number. Measured at seed
+\`20260830\`, 40 frames per point:
+
+| | Python (\`z30_dsp/benchmark.py\`) | Browser (\`monteCarloEngine.ts\`) |
+| :--- | :--- | :--- |
+| Genie-aided bound, 50% | -24.6 dB | ≈ -24.2 dB |
+| AWGN blind acquisition, 50% | **-21.1 dB** | ≈ -22.9 dB |
+
+The two agree closely on the bound and differ by roughly 1.8 dB on the threshold, for two
+reasons worth knowing rather than papering over:
+
+1. **The timing search is narrower.** The browser searches ±0.55 s around the slot boundary,
+   which is what a slot-synchronised receiver actually has to do; \`acquire_frame\` defaults to
+   searching the whole stream. A narrower search mis-locks less often.
+2. **The decoders are not the same.** The browser runs a three-schedule min-sum cascade
+   (\`ldpcCodec.ts\`); the Python decoder runs a single normalised min-sum schedule.
+
+So: **the figures in this page and in the wiki come from the Python benchmark.** If you change
+the DSP, the browser engine will tell you quickly which way the curve moved; confirm the number
+with a seeded Python run before it goes anywhere near documentation.
+
+One thing the browser engine is *not* free to differ on: \`ideal\` and \`realistic\` mean exactly
+what they mean here. A browser run in \`ideal\` mode is a bound, is labelled a bound in the UI,
+and the FT8 overlay is off by default and marked not-comparable when switched on.
+
+---
+
 ## 🧪 The test suite
 
 \`\`\`bash
@@ -2206,7 +2274,8 @@ columns rather than being hidden inside the frame error rate.
 pip install -r requirements.txt pytest
 python -m pytest tests -v
 
-# TypeScript: typecheck (strict mode is on) plus the codec and DSP module tests
+# TypeScript: typecheck (strict mode is on, with noUnusedLocals AND noUnusedParameters) plus
+# the codec, DSP module and transmit-path tests
 npm ci
 npm run lint
 npm run test:ts
@@ -2225,7 +2294,9 @@ What the suite covers, and why each test is there:
 | \`tests/test_cross_language_parity.py\` and \`tests/crc14.test.mjs\` | The Python and TypeScript codecs silently drifting apart — each half keeps working perfectly on its own while losing the ability to decode the other. Shared known-answer vectors live in \`tests/vectors/crc14_vectors.json\` |
 | \`tests/test_web_server_api.py\` | The local API losing its token, \`Origin\` or \`Host\` checks; the GPIO pin whitelist; the PTT dead-man switch actually releasing |
 | \`tests/test_time_sync_guards.py\` | The system clock becoming settable by default, or an unbounded step from a spoofed time signal |
-| \`tests/frontend.test.mjs\` | The transmit gate admitting an out-of-band frequency, an unseeded benchmark PRNG, an amplitude-gated waveform, and unvalidated station config |
+| \`tests/frontend.test.mjs\` | The transmit gate admitting an out-of-band frequency, an unseeded benchmark PRNG, an amplitude-gated waveform, unvalidated station config, Maidenhead decoding, and the browser benchmark's acquisition stage (that it finds a displaced frame, estimates its own noise floor, refuses to "find" one in pure noise, and reproduces its offsets from the seed) |
+| \`tests/transmitPath.test.mjs\` | The three defects that only appear with a radio attached: a PTT release that drops a different pin than the key drove, a "Test PTT" that reports success without addressing the hardware, and the raw rigctl console keying without the transmit gate. Also the rigctl verb table, where case is significant |
+| \`tests/test_config_wizard.py\` and \`tests/frontend.test.mjs\` | The Python setup wizard and the browser transmit gate disagreeing about which callsigns are valid — a wizard that blesses a callsign the gate will refuse at slot start. Shared vectors in \`tests/vectors/callsign_vectors.json\` |
 
 ---
 

@@ -18,6 +18,12 @@ import { createSeededRandom, DEFAULT_MONTE_CARLO_SEED } from '../src/dsp/seededR
 import { synthesizeFrameSamples, instantaneousFrequency, Z30_GFSK_BT } from '../src/dsp/z30Waveform.ts';
 import { validateStationConfig } from '../src/dsp/stationConfigStore.ts';
 import { Z30_SPECS } from '../src/dsp/z30Constants.ts';
+import {
+  MonteCarloSimulationEngine,
+  DEFAULT_MONTE_CARLO_CONFIG,
+} from '../src/dsp/monteCarloEngine.ts';
+import { isValidGrid, maidenheadToLatLon } from '../src/dsp/gridSquare.ts';
+import { readFileSync } from 'node:fs';
 
 let failures = 0;
 let section = '';
@@ -123,6 +129,44 @@ for (const call of ['', '   ', 'HELLO', '12345', 'CALLSIGN', '!!!']) {
   check(`rejects ${JSON.stringify(call)}`, !isValidCallsign(call));
 }
 
+// The shared vectors, so the UI, the transmit gate and the Python wizard cannot drift apart
+// again. tests/test_config_wizard.py asserts the same file from the other side.
+group('Callsign validation (shared vectors, cross-language)');
+{
+  const vectors = JSON.parse(readFileSync(new URL('./vectors/callsign_vectors.json', import.meta.url), 'utf8'));
+  for (const { call, why } of vectors.valid) {
+    check(`accepts ${JSON.stringify(call)} - ${why}`, isValidCallsign(call));
+  }
+  for (const { call, why } of vectors.invalid) {
+    check(`rejects ${JSON.stringify(call)} - ${why}`, !isValidCallsign(call));
+  }
+}
+
+// ------------------------------------------------------------ grid squares
+
+group('Maidenhead grid locators');
+{
+  for (const grid of ['FN31', 'FN31PR', 'fn31pr', 'JO65', 'AA00', 'RR99']) {
+    check(`accepts ${grid}`, isValidGrid(grid));
+  }
+  for (const grid of ['', 'FN', 'FN3', 'FN311', 'SS31', 'FN31ZZ', '1N31', 'FN31PRAA']) {
+    check(`rejects ${JSON.stringify(grid)}`, !isValidGrid(grid));
+  }
+
+  const fn31 = maidenheadToLatLon('FN31');
+  check('FN31 decodes to its square centre 41.5N 73W', fn31 !== null && Math.abs(fn31.lat - 41.5) < 0.01 && Math.abs(fn31.lon - -73.0) < 0.01,
+    JSON.stringify(fn31));
+  const jo65 = maidenheadToLatLon('JO65');
+  check('JO65 decodes into the northern/eastern hemisphere', jo65 !== null && jo65.lat > 0 && jo65.lon > 0, JSON.stringify(jo65));
+  check('a 6-character locator stays inside its 4-character square', (() => {
+    const four = maidenheadToLatLon('FN31');
+    const six = maidenheadToLatLon('FN31PR');
+    return four !== null && six !== null && Math.abs(six.lat - four.lat) < 0.5 && Math.abs(six.lon - four.lon) < 1.0;
+  })());
+  check('out-of-range subsquare letters are rejected rather than plotted', maidenheadToLatLon('FN31ZZ') === null);
+  check('a too-short locator returns null', maidenheadToLatLon('FN3') === null);
+}
+
 // ------------------------------------------------------------ seeded PRNG
 
 group('Seeded PRNG reproducibility');
@@ -219,6 +263,76 @@ group('Station config validation');
   check('a null config falls back to defaults', typeof validateStationConfig(null).config.myCall === 'string');
   check('an array config falls back to defaults', validateStationConfig([1, 2, 3]).rejectedFields.includes('<root>'));
   check('NaN is not accepted as a number', validateStationConfig({ hamlibPort: NaN }).rejectedFields.includes('hamlibPort'));
+}
+
+// --------------------------------------------------- Monte Carlo measurement modes
+
+group('Monte Carlo measurement modes');
+{
+  const cfg = { ...DEFAULT_MONTE_CARLO_CONFIG };
+  check(
+    'the default measurement mode is realistic, matching the Python benchmark default',
+    cfg.measurementMode === 'realistic',
+    cfg.measurementMode
+  );
+  check('the default run is seeded', typeof cfg.seed === 'number' && Number.isFinite(cfg.seed));
+  check(
+    'realistic mode applies a non-zero carrier and timing offset',
+    (cfg.carrierOffsetHz ?? 0) > 0 && (cfg.timingOffsetSec ?? 0) > 0
+  );
+
+  const engine = new MonteCarloSimulationEngine();
+
+  // Acquisition must actually find a frame that is there, at an offset it was not told about.
+  const payload = engine.generateRandomPayload();
+  const { fullSymbols75 } = engine.assembleFrameSymbols(payload);
+  const strong = engine.synthesizeReceivedStream(fullSymbols75, -10, cfg);
+  const acq = engine.acquireFrame(strong.stream, cfg);
+  check('a strong frame is acquired', acq.found, `syncScoreDb=${acq.syncScoreDb}`);
+  check(
+    'acquired timing lands within half a symbol of the truth',
+    Math.abs(acq.startSample - strong.trueStartSample) < (cfg.sampleRateHz * 0.320) / 2,
+    `off by ${acq.startSample - strong.trueStartSample} samples`
+  );
+  check(
+    'acquired carrier lands within half a tone spacing of the truth',
+    Math.abs(acq.centreFreqHz - strong.trueCentreFreqHz) < 1.5625,
+    `off by ${(acq.centreFreqHz - strong.trueCentreFreqHz).toFixed(2)} Hz`
+  );
+  check(
+    'the frame really was displaced, so the search was not trivially correct',
+    strong.trueStartSample !== 0 && Math.abs(strong.trueCentreFreqHz - cfg.audioCenterFreqHz) > 0.05
+  );
+
+  // The receiver must estimate its own noise floor rather than being handed one.
+  const estimated = engine.estimateNoiseSigma(strong.stream, cfg.sampleRateHz, acq.centreFreqHz);
+  check(
+    'the blind noise estimate is within 20% of the true sigma',
+    Math.abs(estimated - strong.sigma) / strong.sigma < 0.2,
+    `est=${estimated.toExponential(3)} true=${strong.sigma.toExponential(3)}`
+  );
+
+  // Pure noise must NOT produce a confident acquisition - a receiver that always finds a frame
+  // reports a threshold that is really an artefact.
+  const noiseOnly = engine.synthesizeReceivedStream(fullSymbols75, -60, cfg);
+  const noiseAcq = engine.acquireFrame(noiseOnly.stream, cfg);
+  check(
+    'a frame buried far below the noise is NOT confidently acquired',
+    !noiseAcq.found,
+    `syncScoreDb=${noiseAcq.syncScoreDb.toFixed(1)}`
+  );
+
+  // Determinism: the realistic path draws its offsets from the seeded PRNG too.
+  const runA = new MonteCarloSimulationEngine();
+  const runB = new MonteCarloSimulationEngine();
+  const seededCfg = { ...cfg, seed: 20260830 };
+  const a1 = runA.synthesizeReceivedStream(fullSymbols75, -20, seededCfg);
+  const b1 = runB.synthesizeReceivedStream(fullSymbols75, -20, seededCfg);
+  check(
+    'the same seed reproduces the same carrier and timing offsets',
+    a1.trueStartSample === b1.trueStartSample && a1.trueCentreFreqHz === b1.trueCentreFreqHz
+  );
+  check('the same seed reproduces the same noise', a1.stream[5000] === b1.stream[5000]);
 }
 
 if (failures > 0) {

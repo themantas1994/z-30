@@ -468,12 +468,15 @@ export function unpackZ30Message(infoBits: number[]): {
  * @param myCall - Local operator callsign (e.g. "W1AW")
  * @param myGrid - Local Maidenhead grid locator (e.g. "FN31pr")
  * @param dxCall - Target DX station callsign
- * @param dxGrid - Target DX station grid locator
  * @param rptSent - SNR report to send (e.g. "-12")
- * @param rptRcvd - SNR report received from target
  * @returns Object with macro text templates for Tx1 through Tx6
+ *
+ * NOTE: this used to also take `dxGrid` and `rptRcvd`. Neither appeared in any of the six
+ * templates - the standard exchange sends the DX callsign and your own grid, never theirs -
+ * so both were dead weight that made the call sites look like they carried more state than
+ * they did. Removed rather than underscored, because nothing here would ever use them.
  */
-export function buildQsoMacros(myCall: string, myGrid: string, dxCall: string, dxGrid: string, rptSent: string, rptRcvd: string) {
+export function buildQsoMacros(myCall: string, myGrid: string, dxCall: string, rptSent: string) {
   const cleanDx = dxCall.trim().toUpperCase() || 'DX';
   const cleanMy = myCall.trim().toUpperCase() || 'W1AW';
   const cleanMyGrid = myGrid.trim().toUpperCase() || 'FN31';

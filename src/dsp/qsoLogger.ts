@@ -444,6 +444,116 @@ Generated on: ${new Date().toUTCString()}
   }
 
   /**
+   * Serialises the log as a Cabrillo v3.0 contest submission.
+   *
+   * wiki/14 titles this section "ADIF 3.1.4 Logbook & Contest Export" and promises ADIF,
+   * Cabrillo, JSON and CSV. Cabrillo is *the* contest format - it is what every contest robot
+   * accepts - so its absence was a real gap in the documented feature rather than a doc typo.
+   *
+   * Cabrillo QSO lines are column-oriented and the fields are positional, so they are padded
+   * rather than joined: a robot parsing this reads by offset. Frequency is in kHz for HF, as
+   * the specification requires. The header fields a submission needs but the log cannot know
+   * (contest name, category, club, operator name and address) are emitted as empty tags for
+   * the operator to complete - a submission with invented values is worse than one that is
+   * visibly incomplete.
+   *
+   * @param entriesToExport - Optional array of entries to serialize
+   * @param options - Station identity and contest metadata for the header
+   * @returns Cabrillo v3.0 text
+   */
+  public exportToCabrillo(
+    entriesToExport?: LogEntry[],
+    options?: { myCall?: string; myGrid?: string; contestName?: string; category?: string }
+  ): string {
+    const data = entriesToExport || this.entries;
+    const myCall = (options?.myCall || data[0]?.myCall || 'W1AW').toUpperCase();
+    const myGrid = (options?.myGrid || data[0]?.myGrid || '').toUpperCase();
+
+    const lines: string[] = [];
+    lines.push('START-OF-LOG: 3.0');
+    lines.push('CREATED-BY: z-30 DSP Transceiver Suite 1.0.0');
+    lines.push(`CONTEST: ${options?.contestName || ''}`);
+    lines.push(`CALLSIGN: ${myCall}`);
+    lines.push(`CATEGORY-OPERATOR: ${options?.category || 'SINGLE-OP'}`);
+    lines.push('CATEGORY-BAND: ALL');
+    lines.push('CATEGORY-MODE: DIGI');
+    lines.push('CATEGORY-POWER: LOW');
+    lines.push('CATEGORY-STATION: FIXED');
+    lines.push('CATEGORY-TRANSMITTER: ONE');
+    lines.push(`GRID-LOCATOR: ${myGrid}`);
+    lines.push('CLAIMED-SCORE: ');
+    lines.push('OPERATORS: ');
+    lines.push('NAME: ');
+    lines.push('ADDRESS: ');
+    lines.push('SOAPBOX: Worked with z-30, a 16-MFSK LDPC weak-signal mode (24 s frame, 50 Hz).');
+
+    for (const e of data) {
+      const dateIso = Z30QsoLogger.normaliseIsoDate(e.utcDate);
+      const time = (e.utcTime || '').replace(/[^0-9]/g, '').padEnd(6, '0').substring(0, 4);
+      // Cabrillo wants kHz for HF/MF and MHz above 50 MHz; z-30's bands are HF, so kHz.
+      const freqKhz = String(Math.round((e.freqMhz || 0) * 1000));
+      lines.push(
+        'QSO: ' +
+          freqKhz.padStart(5, ' ') + ' ' +
+          'DG ' +
+          dateIso + ' ' +
+          time + ' ' +
+          myCall.padEnd(13, ' ') + ' ' +
+          (e.rstSent || '-15').padEnd(6, ' ') + ' ' +
+          (e.myGrid || myGrid).toUpperCase().padEnd(6, ' ') + ' ' +
+          (e.callsign || '').toUpperCase().padEnd(13, ' ') + ' ' +
+          (e.rstRcvd || '-15').padEnd(6, ' ') + ' ' +
+          (e.grid || '').toUpperCase().padEnd(6, ' ')
+      );
+    }
+
+    lines.push('END-OF-LOG:');
+    return lines.join('\n') + '\n';
+  }
+
+  /**
+   * Serialises the log as JSON.
+   *
+   * The other three formats are all lossy in their own way - ADIF flattens z-30's SIC pass and
+   * LDPC iteration count into a comment, CSV loses types, Cabrillo keeps only what a contest
+   * robot scores. This one round-trips every field a LogEntry carries, which is what makes it
+   * the useful format for anyone processing their own log.
+   *
+   * @param entriesToExport - Optional array of entries to serialize
+   * @returns Pretty-printed JSON with a small provenance header
+   */
+  public exportToJson(entriesToExport?: LogEntry[]): string {
+    const data = entriesToExport || this.entries;
+    return JSON.stringify(
+      {
+        format: 'z30-logbook',
+        formatVersion: 1,
+        generatedUtc: new Date().toISOString(),
+        programId: 'z-30',
+        programVersion: '1.0.0',
+        qsoCount: data.length,
+        qsos: data,
+      },
+      null,
+      2
+    ) + '\n';
+  }
+
+  /**
+   * Normalises a stored date to Cabrillo/ISO `YYYY-MM-DD`.
+   *
+   * LogEntry.utcDate is documented as "YYYY-MM-DD or YYYYMMDD", and both shapes really do
+   * occur in stored logs, so every consumer has to handle both.
+   */
+  private static normaliseIsoDate(raw: string): string {
+    const digits = (raw || '').replace(/[^0-9]/g, '');
+    if (digits.length >= 8) {
+      return `${digits.substring(0, 4)}-${digits.substring(4, 6)}-${digits.substring(6, 8)}`;
+    }
+    return raw || '';
+  }
+
+  /**
    * Generates standard RFC 4180 CSV string.
    * 
    * @param entriesToExport - Optional array of entries to serialize

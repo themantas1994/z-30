@@ -43,37 +43,18 @@ import {
   getRigByName,
 } from '../dsp/hamlibCatalog';
 import { catController, DiscoveredSerialPort } from '../dsp/catController';
+// The transmit gate's own callsign validator and the one grid decoder, imported rather than
+// re-implemented. Both modals used to carry a looser CALLSIGN_REGEX than canTransmit() does,
+// so the wizard showed "Valid ITU Callsign" for calls the gate refuses at slot start (W1, K1A2)
+// and "Invalid" for ones it permits (DL/W1AW).
+import { isValidCallsign } from '../dsp/bandPlan';
+import { isValidGrid, maidenheadToLatLon } from '../dsp/gridSquare';
 
 interface SetupWizardModalProps {
   isOpen: boolean;
   onClose: () => void;
   config: StationConfig;
   onSaveConfig: (cfg: StationConfig) => void;
-}
-
-// ITU Callsign regex
-const CALLSIGN_REGEX = /^[A-Z0-9]{1,3}[0-9][A-Z0-9]{0,4}(\/[A-Z0-9]{1,4})?$/i;
-// Maidenhead regex
-const GRID_REGEX = /^[A-R]{2}[0-9]{2}([A-X]{2})?$/i;
-
-// Helper to calculate lat/lon from Maidenhead grid
-function maidenheadToLatLon(grid: string): { lat: number; lon: number } | null {
-  const g = grid.trim().toUpperCase();
-  if (g.length < 4) return null;
-  try {
-    let lon = (g.charCodeAt(0) - 65) * 20 - 180 + parseInt(g[2], 10) * 2;
-    let lat = (g.charCodeAt(1) - 65) * 10 - 90 + parseInt(g[3], 10) * 1;
-    if (g.length >= 6) {
-      lon += (g.charCodeAt(4) - 65 + 0.5) * (5.0 / 60.0);
-      lat += (g.charCodeAt(5) - 65 + 0.5) * (2.5 / 60.0);
-    } else {
-      lon += 1.0;
-      lat += 0.5;
-    }
-    return { lat, lon };
-  } catch {
-    return null;
-  }
 }
 
 // Re-export full Hamlib rig catalog as RIG_CATALOG for backward compatibility
@@ -213,8 +194,11 @@ export const SetupWizardModal: React.FC<SetupWizardModalProps> = ({
   const validateCall = (call: string): { ok: boolean; msg: string } => {
     const c = call.trim().toUpperCase();
     if (!c) return { ok: false, msg: 'Callsign cannot be blank' };
-    if (c.length < 3 || c.length > 12) return { ok: false, msg: 'Length must be 3-12 characters' };
-    if (!CALLSIGN_REGEX.test(c)) return { ok: false, msg: 'Invalid ITU callsign format' };
+    // 17 = the widest string isValidCallsign() can accept (3-char portable prefix + base +
+    // 4-char suffix). A tighter bound here would reject callsigns the transmit gate permits,
+    // which is the disagreement this whole change exists to remove.
+    if (c.length < 3 || c.length > 17) return { ok: false, msg: 'Length must be 3-17 characters' };
+    if (!isValidCallsign(c)) return { ok: false, msg: 'Invalid ITU callsign format' };
     return { ok: true, msg: 'Valid ITU format' };
   };
 
@@ -222,7 +206,7 @@ export const SetupWizardModal: React.FC<SetupWizardModalProps> = ({
     const g = grid.trim();
     if (!g) return { ok: false, msg: 'Grid cannot be blank' };
     if (g.length !== 4 && g.length !== 6) return { ok: false, msg: 'Must be 4 or 6 characters (e.g. FN31pr)' };
-    if (!GRID_REGEX.test(g)) return { ok: false, msg: 'Invalid Maidenhead locator square' };
+    if (!isValidGrid(g)) return { ok: false, msg: 'Invalid Maidenhead locator square' };
     return { ok: true, msg: 'Valid Maidenhead' };
   };
 

@@ -37,7 +37,6 @@ interface WaterfallDisplayProps {
   onSetTxFreq: (freqHz: number) => void;
   onDoubleClickSignal?: (signal: DecodedSignal) => void;
   onArmTxAtFreq?: (freqHz: number) => void;
-  activeTxSymbols?: number[];
   isTransmitting?: boolean;
   isTuning?: boolean;
   decodes?: DecodedSignal[];
@@ -234,9 +233,12 @@ export const WaterfallDisplay: React.FC<WaterfallDisplayProps> = ({
   const handleSetFreqPreset = (preset: FreqRangePreset) => {
     setFreqRangePreset(preset);
     if (preset === 'STD_0_3000') {
-      setCustomMinFreq(0);
+      // 200 Hz, not 0: below that there is nothing but mains hum and soundcard DC offset, and
+      // wiki/14 specifies the standard passband as 200-3000 Hz. The other four presets already
+      // matched the wiki exactly; this one did not.
+      setCustomMinFreq(200);
       setCustomMaxFreq(3000);
-      setCenterFreqHz(1500);
+      setCenterFreqHz(1600);
     } else if (preset === 'NARROW_500_2000') {
       setCustomMinFreq(500);
       setCustomMaxFreq(2000);
@@ -829,7 +831,7 @@ export const WaterfallDisplay: React.FC<WaterfallDisplayProps> = ({
               className="bg-[#1A1A1A] text-cyan-400 border border-[#333] px-2 py-0.5 text-xs font-bold focus:outline-none focus:border-cyan-400"
               title="Set Waterfall Audio Frequency Passband Range"
             >
-              <option value="STD_0_3000">0 - 3000 Hz (Std)</option>
+              <option value="STD_0_3000">200 - 3000 Hz (Std)</option>
               <option value="NARROW_500_2000">500 - 2000 Hz (Narrow)</option>
               <option value="DIGI_800_1800">800 - 1800 Hz (Digi)</option>
               <option value="WIDE_100_3500">100 - 3500 Hz (Wide)</option>

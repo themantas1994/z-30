@@ -17,7 +17,10 @@ import {
   MonteCarloProgress,
   ChannelModelType,
   SimulationModeType,
+  REALISTIC_SWEEP_DEFAULTS,
+  IDEAL_SWEEP_DEFAULTS,
 } from '../dsp/monteCarloEngine';
+import { DEFAULT_MONTE_CARLO_SEED } from '../dsp/seededRandom';
 import {
   X,
   Play,
@@ -73,7 +76,10 @@ export const MonteCarloBenchmarkModal: React.FC<MonteCarloBenchmarkModalProps> =
   const [activeTab, setActiveTab] = useState<'CURVES' | 'FER' | 'BER' | 'WAVEFORM' | 'TABLE'>('CURVES');
   const [showConfigDrawer, setShowConfigDrawer] = useState<boolean>(false);
   const [copied, setCopied] = useState<boolean>(false);
-  const [includeFt8Comparison, setIncludeFt8Comparison] = useState<boolean>(true);
+  // Off by default. An FT8 reference line drawn beside an ideal-mode curve invites exactly
+  // the comparison wiki/11 records as withdrawn; even beside a realistic curve it is a
+  // modelled logistic, not a measurement, so the operator opts in.
+  const [includeFt8Comparison, setIncludeFt8Comparison] = useState<boolean>(false);
   const [includeShannonLimit, setIncludeShannonLimit] = useState<boolean>(true);
 
   // Subscribe to engine progress
@@ -119,7 +125,7 @@ export const MonteCarloBenchmarkModal: React.FC<MonteCarloBenchmarkModalProps> =
     // Standard FT4 reference model (centered at -17.5 dB SNR in 2500 Hz BW)
     const ft4Prob = Number((100.0 / (1.0 + Math.exp(-1.4 * (r.snrDb - -17.5)))).toFixed(1));
     // Shannon theoretical capacity limit for 50 Hz bandwidth with 30s integration
-    const shannonProb = r.snrDb >= -31.2 ? 100 : Number(Math.max(0, 100 * Math.exp(1.8 * (r.snrDb - -31.2))).toFixed(1));
+    const shannonProb = r.snrDb >= -30.51 ? 100 : Number(Math.max(0, 100 * Math.exp(1.8 * (r.snrDb - -30.51))).toFixed(1));
 
     return {
       snrDb: r.snrDb,
@@ -141,18 +147,37 @@ export const MonteCarloBenchmarkModal: React.FC<MonteCarloBenchmarkModalProps> =
     };
   });
 
-  // Calculate 50% and 90% empirical decode thresholds from live measured data
-  let snr50Threshold: number | null = null;
-  let snr90Threshold: number | null = null;
-  for (let i = 0; i < progress.currentResults.length; i++) {
-    const r = progress.currentResults[i];
-    if (r.decodeSuccessRate >= 50 && snr50Threshold === null) {
-      snr50Threshold = r.snrDb;
+  /**
+   * Linear interpolation of the SNR at which the decode rate crosses `targetPct`.
+   *
+   * This used to report the first grid point already at or above the target, which quantises
+   * the answer to snrStepDb - a full 1.0 dB by default - and makes it incomparable with the
+   * Python benchmark, whose worked example in wiki/16 interpolates ("50% crossing interpolates
+   * to -21.1 dB"). Returns null when the sweep never crosses, rather than reporting an
+   * endpoint as if it were a crossing.
+   */
+  const interpolateCrossing = (targetPct: number): number | null => {
+    const pts = progress.currentResults;
+    for (let i = 1; i < pts.length; i++) {
+      const lo = pts[i - 1];
+      const hi = pts[i];
+      if (lo.decodeSuccessRate < targetPct && hi.decodeSuccessRate >= targetPct) {
+        const span = hi.decodeSuccessRate - lo.decodeSuccessRate;
+        if (span <= 0) return hi.snrDb;
+        const frac = (targetPct - lo.decodeSuccessRate) / span;
+        return Number((lo.snrDb + frac * (hi.snrDb - lo.snrDb)).toFixed(2));
+      }
     }
-    if (r.decodeSuccessRate >= 90 && snr90Threshold === null) {
-      snr90Threshold = r.snrDb;
-    }
-  }
+    // The very first point may already be above the target - then the crossing is off the
+    // bottom of the sweep and we do not know where it is.
+    return null;
+  };
+
+  const snr50Threshold = interpolateCrossing(50);
+  const snr90Threshold = interpolateCrossing(90);
+  const isRealistic = config.measurementMode === 'realistic';
+  /** What this run is entitled to be called. wiki/16 reserves "threshold" for realistic mode. */
+  const resultNoun = isRealistic ? 'Decode Threshold' : 'Genie-Aided Bound';
 
   const exportCsv = () => {
     if (progress.currentResults.length === 0) return;
@@ -169,6 +194,9 @@ export const MonteCarloBenchmarkModal: React.FC<MonteCarloBenchmarkModalProps> =
       'CI95_Lower_Pct',
       'CI95_Upper_Pct',
       'Elapsed_ms',
+      'Acquisition_Failures',
+      'Timing_RMS_ms',
+      'Freq_RMS_Hz',
     ];
     const rows = progress.currentResults.map((r) => [
       r.snrDb,
@@ -183,6 +211,9 @@ export const MonteCarloBenchmarkModal: React.FC<MonteCarloBenchmarkModalProps> =
       r.confidenceInterval95[0],
       r.confidenceInterval95[1],
       r.elapsedMs,
+      r.acquisitionFailures,
+      r.timingRmsMs,
+      r.freqRmsHz,
     ]);
 
     const csvContent =
@@ -199,10 +230,22 @@ export const MonteCarloBenchmarkModal: React.FC<MonteCarloBenchmarkModalProps> =
 
   const copyResultsText = () => {
     if (progress.currentResults.length === 0) return;
-    let txt = 'z-30 Empirical Monte Carlo Physical Waveform & LDPC Decoder Benchmark Results\n';
+    let txt = 'z-30 Monte Carlo Physical Waveform & LDPC Decoder Benchmark Results\n';
     txt += '==============================================================================\n';
-    txt += `Mode: ${config.simulationMode} | Channel: ${config.channelModel} | Frames/Pt: ${config.framesPerPoint}\n`;
-    txt += `FEC: Systematic (216, 77) LDPC | Max Iters: ${config.maxLdpcIterations} | Alpha: ${config.alphaMinSum}\n`;
+    // Seed, frame count and mode travel with the numbers or the numbers are unreproducible -
+    // AGENTS.md §5. The seed used to be missing from this block entirely, despite
+    // MonteCarloConfig.seed's own doc comment asking for it.
+    txt += `Measurement mode: ${config.measurementMode.toUpperCase()} (${
+      isRealistic
+        ? 'random carrier + timing offsets, blind Costas acquisition, receiver-estimated noise floor'
+        : 'GENIE-AIDED: exact sigma, carrier and timing handed to the demodulator'
+    })\n`;
+    txt += `Seed: ${config.seed ?? '(unseeded)'} | Frames/point: ${config.framesPerPoint} | Channel: ${config.channelModel}\n`;
+    txt += `Sim path: ${config.simulationMode} | Sample rate: ${config.sampleRateHz} Hz | Ref BW: 2500 Hz\n`;
+    txt += `FEC: Systematic IRA (216, 77) LDPC | Max Iters: ${config.maxLdpcIterations} | Alpha: ${config.alphaMinSum}\n`;
+    if (isRealistic) {
+      txt += `Carrier offset: +/-${(config.carrierOffsetHz ?? 5).toFixed(1)} Hz | Timing offset: +/-${(config.timingOffsetSec ?? 0.5).toFixed(2)} s\n`;
+    }
     txt += '------------------------------------------------------------------------------\n';
     txt += 'SNR (dB) | Frames | Success | Failed | FER     | Decode % | Raw BER  | Avg Iters\n';
     txt += '------------------------------------------------------------------------------\n';
@@ -210,8 +253,12 @@ export const MonteCarloBenchmarkModal: React.FC<MonteCarloBenchmarkModalProps> =
       txt += `${(r.snrDb >= 0 ? '+' : '') + r.snrDb.toFixed(1).padEnd(8)} | ${String(r.totalFrames).padEnd(6)} | ${String(r.successCount).padEnd(7)} | ${String(r.failureCount).padEnd(6)} | ${r.frameErrorRate.toFixed(4).padEnd(7)} | ${(r.decodeSuccessRate.toFixed(1) + '%').padEnd(8)} | ${(r.rawChannelBer * 100).toFixed(1)}%     | ${r.avgLdpcIterations.toFixed(1)}\n`;
     }
     txt += '==============================================================================\n';
-    if (snr50Threshold !== null) txt += `Empirical 50% Decode Threshold: ${snr50Threshold >= 0 ? '+' : ''}${snr50Threshold.toFixed(1)} dB SNR (2500 Hz BW)\n`;
-    if (snr90Threshold !== null) txt += `Empirical 90% Waterfall Threshold: ${snr90Threshold >= 0 ? '+' : ''}${snr90Threshold.toFixed(1)} dB SNR (2500 Hz BW)\n`;
+    if (snr50Threshold !== null) txt += `50% ${resultNoun} (interpolated): ${snr50Threshold.toFixed(2)} dB SNR (2500 Hz BW)\n`;
+    if (snr90Threshold !== null) txt += `90% ${resultNoun} (interpolated): ${snr90Threshold.toFixed(2)} dB SNR (2500 Hz BW)\n`;
+    if (!isRealistic) {
+      txt += 'NOTE: an ideal-mode figure is a genie-aided BOUND, roughly 3.5 dB optimistic.\n';
+      txt += '      Never quote it against another mode\'s published on-air threshold.\n';
+    }
 
     navigator.clipboard.writeText(txt).then(() => {
       setCopied(true);
@@ -234,7 +281,7 @@ export const MonteCarloBenchmarkModal: React.FC<MonteCarloBenchmarkModalProps> =
             <div>
               <div className="flex items-center space-x-2">
                 <span className="text-xs sm:text-sm font-bold text-[#00FF41] tracking-wider uppercase">
-                  z-30 Empirical Monte Carlo Benchmark Suite
+                  z-30 Monte Carlo Benchmark Suite
                 </span>
                 <span className="text-[9px] px-1.5 py-0.2 bg-purple-950/80 text-purple-300 border border-purple-800 uppercase font-bold">
                   Scientific Rigor • Zero Pre-Baked Data
@@ -271,7 +318,55 @@ export const MonteCarloBenchmarkModal: React.FC<MonteCarloBenchmarkModalProps> =
 
         {/* Configuration Drawer (When toggled open) */}
         {showConfigDrawer && (
-          <div className="bg-[#121212] border-b border-[#333] p-3 text-xs grid grid-cols-2 sm:grid-cols-4 gap-3 animate-fadeIn">
+          <div className="bg-[#121212] border-b border-[#333] p-3 text-xs animate-fadeIn space-y-3">
+            {/* The measurement mode comes first because it decides what the run MEANS, not
+                just how long it takes. Switching it also moves the sweep range: the two curves
+                sit about 3.5 dB apart, so one range cannot bracket both. */}
+            <div className="bg-[#0A0A0A] border border-[#333] p-2 space-y-2">
+              <div className="flex flex-wrap items-center gap-3">
+                <span className="text-[10px] text-[#888] uppercase">Measurement mode:</span>
+                {(['realistic', 'ideal'] as const).map((m) => (
+                  <label key={m} className="flex items-center space-x-1.5 cursor-pointer">
+                    <input
+                      type="radio"
+                      name="measurement-mode"
+                      checked={config.measurementMode === m}
+                      disabled={progress.isRunning}
+                      onChange={() => {
+                        const range = m === 'realistic' ? REALISTIC_SWEEP_DEFAULTS : IDEAL_SWEEP_DEFAULTS;
+                        setConfig({ ...config, measurementMode: m, ...range });
+                      }}
+                      className="accent-[#00FF41]"
+                    />
+                    <span className={`text-[11px] font-bold ${config.measurementMode === m ? 'text-[#00FF41]' : 'text-[#888]'}`}>
+                      {m === 'realistic' ? 'Realistic — decode threshold' : 'Ideal — genie-aided bound'}
+                    </span>
+                  </label>
+                ))}
+              </div>
+              <p className="text-[10px] text-[#888] leading-relaxed">
+                {isRealistic ? (
+                  <>
+                    Every frame gets a random carrier offset (&plusmn;{(config.carrierOffsetHz ?? 5).toFixed(1)} Hz)
+                    and timing offset (&plusmn;{(config.timingOffsetSec ?? 0.5).toFixed(2)} s). The receiver is
+                    handed nothing but audio: it locates the frame from the 21 Costas symbols and estimates
+                    its own noise floor, and a frame it cannot find counts as a failure. This is the only
+                    mode whose result may be called a threshold or set beside another mode's published figure.
+                    It runs the full physical chain, so it is substantially slower than ideal mode.
+                  </>
+                ) : (
+                  <>
+                    The demodulator is handed the exact noise sigma, the exact carrier and perfect symbol
+                    timing. The result is a <strong className="text-yellow-300">bound</strong>, roughly 3.5 dB
+                    optimistic, and is <strong className="text-yellow-300">not</strong> comparable with any
+                    other mode's on-air number. Quoting one against FT8's -21.0 dB is the error wiki/11 §1.1
+                    records as withdrawn.
+                  </>
+                )}
+              </p>
+            </div>
+
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
             <div>
               <label className="text-[10px] text-[#888] uppercase block mb-1">Min SNR (dB):</label>
               <input
@@ -373,6 +468,21 @@ export const MonteCarloBenchmarkModal: React.FC<MonteCarloBenchmarkModalProps> =
                 className="w-full bg-[#080808] border border-[#333] px-2 py-1 text-zinc-300 text-xs font-bold focus:outline-none"
               />
             </div>
+            <div>
+              {/* Editable, and shown, because AGENTS.md §5 requires the seed to be quoted with
+                  any figure - and because being able to re-run someone else's seed is the
+                  whole point of seeding the run. */}
+              <label className="text-[10px] text-[#888] uppercase block mb-1">PRNG Seed:</label>
+              <input
+                type="number"
+                value={config.seed ?? DEFAULT_MONTE_CARLO_SEED}
+                onChange={(e) => setConfig({ ...config, seed: parseInt(e.target.value, 10) || DEFAULT_MONTE_CARLO_SEED })}
+                disabled={progress.isRunning}
+                title="Same seed + same settings = same curve, every time. Quote it with any figure you publish."
+                className="w-full bg-[#080808] border border-[#333] px-2 py-1 text-zinc-300 text-xs font-bold focus:outline-none"
+              />
+            </div>
+            </div>
           </div>
         )}
 
@@ -413,26 +523,50 @@ export const MonteCarloBenchmarkModal: React.FC<MonteCarloBenchmarkModalProps> =
 
             {/* Presets */}
             <div className="flex items-center space-x-1 border border-[#333] p-0.5 bg-[#0A0A0A]">
+              {/* Ranges follow the active mode: the realistic curve and the genie-aided bound
+                  sit about 3.5 dB apart, and the old hardcoded -30..-22 range brackets only the
+                  bound - in realistic mode it would sit almost entirely below the point where
+                  the sync pattern is findable at all, and report an all-zero sweep.
+                  Realistic mode runs the full physical chain per frame, so its frame counts are
+                  lower for the same wall-clock. */}
               <button
-                onClick={() => handleStartSimulation({ minSnrDb: -30.0, maxSnrDb: -22.0, snrStepDb: 1.0, framesPerPoint: 25 })}
+                onClick={() =>
+                  handleStartSimulation({
+                    ...(isRealistic ? REALISTIC_SWEEP_DEFAULTS : IDEAL_SWEEP_DEFAULTS),
+                    snrStepDb: 1.0,
+                    framesPerPoint: isRealistic ? 10 : 25,
+                  })
+                }
                 disabled={progress.isRunning}
                 className="px-2 py-1 bg-[#181818] hover:bg-[#252525] disabled:opacity-40 text-cyan-400 text-[10px] font-bold uppercase"
               >
-                Quick (25 f/pt)
+                Quick ({isRealistic ? 10 : 25} f/pt)
               </button>
               <button
-                onClick={() => handleStartSimulation({ minSnrDb: -32.0, maxSnrDb: -22.0, snrStepDb: 1.0, framesPerPoint: 100 })}
+                onClick={() =>
+                  handleStartSimulation({
+                    ...(isRealistic ? REALISTIC_SWEEP_DEFAULTS : IDEAL_SWEEP_DEFAULTS),
+                    snrStepDb: 1.0,
+                    framesPerPoint: isRealistic ? 40 : 100,
+                  })
+                }
                 disabled={progress.isRunning}
                 className="px-2 py-1 bg-[#181818] hover:bg-[#252525] disabled:opacity-40 text-[#00FF41] text-[10px] font-bold uppercase"
               >
-                Standard (100 f/pt)
+                Standard ({isRealistic ? 40 : 100} f/pt)
               </button>
               <button
-                onClick={() => handleStartSimulation({ minSnrDb: -33.0, maxSnrDb: -22.0, snrStepDb: 0.5, framesPerPoint: 300 })}
+                onClick={() =>
+                  handleStartSimulation({
+                    ...(isRealistic ? REALISTIC_SWEEP_DEFAULTS : IDEAL_SWEEP_DEFAULTS),
+                    snrStepDb: 0.5,
+                    framesPerPoint: isRealistic ? 100 : 300,
+                  })
+                }
                 disabled={progress.isRunning}
                 className="px-2 py-1 bg-[#181818] hover:bg-[#252525] disabled:opacity-40 text-purple-400 text-[10px] font-bold uppercase"
               >
-                Deep (300 f/pt)
+                Deep ({isRealistic ? 100 : 300} f/pt)
               </button>
             </div>
 
@@ -513,7 +647,7 @@ export const MonteCarloBenchmarkModal: React.FC<MonteCarloBenchmarkModalProps> =
             <div className="flex items-center space-x-4">
               {snr50Threshold !== null && (
                 <span className="text-purple-300 font-bold">
-                  Empirical 50% Threshold: {snr50Threshold >= 0 ? '+' : ''}{snr50Threshold.toFixed(1)} dB
+                  50% {resultNoun}: {snr50Threshold.toFixed(2)} dB
                 </span>
               )}
               <span className="text-[#00FF41] font-bold">{progress.overallProgressPercent}%</span>
@@ -598,19 +732,27 @@ export const MonteCarloBenchmarkModal: React.FC<MonteCarloBenchmarkModalProps> =
               {/* Metrics Header Bento */}
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
                 <div className="bg-[#121212] p-2 border border-[#282828]">
-                  <span className="text-[9px] text-[#888] uppercase block">50% Empirical Threshold</span>
-                  <span className="text-sm sm:text-base font-bold text-[#00FF41]">
-                    {snr50Threshold !== null ? `${snr50Threshold >= 0 ? '+' : ''}${snr50Threshold.toFixed(1)} dB` : '— (Pending Run)'}
-                  </span>
-                  <span className="text-[9px] text-[#666] block">2500 Hz reference BW</span>
-                </div>
-                <div className="bg-[#121212] p-2 border border-[#282828]">
-                  <span className="text-[9px] text-[#888] uppercase block">Gain vs FT8 (-21.0 dB)</span>
-                  <span className="text-sm sm:text-base font-bold text-purple-400">
-                    {snr50Threshold !== null ? `+${(-21.0 - snr50Threshold).toFixed(1)} dB` : '—'}
+                  <span className="text-[9px] text-[#888] uppercase block">50% {resultNoun}</span>
+                  <span className={`text-sm sm:text-base font-bold ${isRealistic ? 'text-[#00FF41]' : 'text-purple-400'}`}>
+                    {snr50Threshold !== null ? `${snr50Threshold.toFixed(2)} dB` : '— (Pending Run)'}
                   </span>
                   <span className="text-[9px] text-[#666] block">
-                    {snr50Threshold !== null ? `${Math.pow(10, (-21.0 - snr50Threshold) / 10).toFixed(1)}x Power Multiplier` : 'Measured after run'}
+                    {isRealistic ? 'Interpolated, 2500 Hz ref BW' : 'Bound — not an on-air figure'}
+                  </span>
+                </div>
+                {/* This tile used to read "Gain vs FT8 (-21.0 dB)" and print a dB delta and a
+                    power multiplier: FT8's measured on-air figure minus a genie-aided bound,
+                    presented as gain. That is the class of claim wiki/11 §1.1 records as
+                    WITHDRAWN ("a '+4.0 dB advantage'; that claim was withdrawn"), reconstructed
+                    in the UI. It is replaced by the 90% crossing, which is a measurement of
+                    this mode and nothing else. */}
+                <div className="bg-[#121212] p-2 border border-[#282828]">
+                  <span className="text-[9px] text-[#888] uppercase block">90% {resultNoun}</span>
+                  <span className={`text-sm sm:text-base font-bold ${isRealistic ? 'text-[#00FF41]' : 'text-purple-400'}`}>
+                    {snr90Threshold !== null ? `${snr90Threshold.toFixed(2)} dB` : '—'}
+                  </span>
+                  <span className="text-[9px] text-[#666] block">
+                    {snr90Threshold !== null ? 'Interpolated crossing' : 'Sweep did not reach 90%'}
                   </span>
                 </div>
                 <div className="bg-[#121212] p-2 border border-[#282828]">
@@ -632,6 +774,11 @@ export const MonteCarloBenchmarkModal: React.FC<MonteCarloBenchmarkModalProps> =
               {/* Chart Controls Checkboxes */}
               <div className="flex items-center justify-between text-xs bg-[#121212] px-3 py-1.5 border border-[#222]">
                 <span className="text-[#888] text-[11px]">Reference Comparison Overlays:</span>
+                {includeFt8Comparison && !isRealistic && (
+                  <span className="text-[10px] text-yellow-300 bg-[#0D0B05] border border-yellow-800/60 px-1.5 py-0.5">
+                    Not comparable: this run is a genie-aided bound, the FT8 line is an on-air figure.
+                  </span>
+                )}
                 <div className="flex items-center space-x-4">
                   <label className="flex items-center space-x-1.5 cursor-pointer">
                     <input
@@ -640,7 +787,12 @@ export const MonteCarloBenchmarkModal: React.FC<MonteCarloBenchmarkModalProps> =
                       onChange={(e) => setIncludeFt8Comparison(e.target.checked)}
                       className="accent-[#00FF41]"
                     />
-                    <span className="text-red-400 text-[11px]">FT8 Reference Model (-21.0 dB)</span>
+                    <span
+                      className="text-red-400 text-[11px]"
+                      title="FT8's published ON-AIR threshold, drawn as a modelled logistic. It is only a like-for-like comparison against a REALISTIC-mode run; an ideal-mode curve is a genie-aided bound roughly 3.5 dB optimistic, and comparing the two is the error wiki/11 §1.1 records as withdrawn."
+                    >
+                      FT8 on-air reference (-21.0 dB)
+                    </span>
                   </label>
                   <label className="flex items-center space-x-1.5 cursor-pointer">
                     <input
@@ -649,7 +801,7 @@ export const MonteCarloBenchmarkModal: React.FC<MonteCarloBenchmarkModalProps> =
                       onChange={(e) => setIncludeShannonLimit(e.target.checked)}
                       className="accent-[#00FF41]"
                     />
-                    <span className="text-yellow-400 text-[11px]">Shannon Bound (-31.2 dB)</span>
+                    <span className="text-yellow-400 text-[11px]">Shannon Bound (-30.51 dB)</span>
                   </label>
                 </div>
               </div>
@@ -703,7 +855,7 @@ export const MonteCarloBenchmarkModal: React.FC<MonteCarloBenchmarkModalProps> =
                       <Tooltip
                         contentStyle={{ backgroundColor: '#141414', borderColor: '#333', fontSize: 11, color: '#D4D4D4' }}
                         formatter={(val: any, name?: string | number) => {
-                          if (name === 'z30DecodePct') return [`${val}%`, 'z-30 Empirical Measured Decodes'];
+                          if (name === 'z30DecodePct') return [`${val}%`, isRealistic ? 'z-30 measured (blind acquisition)' : 'z-30 measured (genie-aided)'];
                           if (name === 'ft8DecodePct') return [`${val}%`, 'FT8 Reference Model'];
                           if (name === 'ft4DecodePct') return [`${val}%`, 'FT4 Reference Model'];
                           if (name === 'shannonLimit') return [`${val}%`, 'Shannon Bound'];
@@ -716,19 +868,19 @@ export const MonteCarloBenchmarkModal: React.FC<MonteCarloBenchmarkModalProps> =
                         height={36}
                         formatter={(value) => {
                           if (value === 'z30DecodePct') return <span className="text-[#00FF41] font-bold">z-30 Live Measured LDPC Decode %</span>;
-                          if (value === 'ft8DecodePct') return <span className="text-red-400">FT8 Reference (-21 dB)</span>;
+                          if (value === 'ft8DecodePct') return <span className="text-red-400">FT8 on-air ref (-21 dB)</span>;
                           if (value === 'shannonLimit') return <span className="text-yellow-400">Shannon Capacity Limit</span>;
                           return value;
                         }}
                       />
-                      <ReferenceLine y={50} stroke="#666" strokeDasharray="3 3" label={{ value: '50% Threshold', fill: '#888', fontSize: 10 }} />
+                      <ReferenceLine y={50} stroke="#666" strokeDasharray="3 3" label={{ value: '50% decode', fill: '#888', fontSize: 10 }} />
                       <ReferenceLine y={90} stroke="#444" strokeDasharray="3 3" label={{ value: '90% Waterfall', fill: '#666', fontSize: 10 }} />
                       {snr50Threshold !== null && (
                         <ReferenceLine
                           x={snr50Threshold}
                           stroke="#00FF41"
                           strokeDasharray="4 4"
-                          label={{ value: `Measured 50% (${snr50Threshold.toFixed(1)}dB)`, fill: '#00FF41', fontSize: 10 }}
+                          label={{ value: `50% ${isRealistic ? 'threshold' : 'bound'} (${snr50Threshold.toFixed(2)}dB)`, fill: '#00FF41', fontSize: 10 }}
                         />
                       )}
                       {includeFt8Comparison && (
@@ -1023,6 +1175,14 @@ export const MonteCarloBenchmarkModal: React.FC<MonteCarloBenchmarkModalProps> =
                       <th className="p-2">Raw BER</th>
                       <th className="p-2">Post BER</th>
                       <th className="p-2">Avg Iters</th>
+                      {/* The Python benchmark's Acq fail / Timing RMS / Freq RMS columns. They
+                          are how the acquisition stage's own error stays visible instead of
+                          being absorbed into the frame error rate: below about -24 dB the
+                          Costas pattern stops being findable at all, and that belongs in its
+                          own column. Meaningless in ideal mode, where acquisition is a gift. */}
+                      {isRealistic && <th className="p-2 text-orange-400">Acq Fail</th>}
+                      {isRealistic && <th className="p-2 text-orange-400">Timing RMS</th>}
+                      {isRealistic && <th className="p-2 text-orange-400">Freq RMS</th>}
                       <th className="p-2">Time</th>
                     </tr>
                   </thead>
@@ -1043,12 +1203,19 @@ export const MonteCarloBenchmarkModal: React.FC<MonteCarloBenchmarkModalProps> =
                         <td className="p-2 text-[#AAA]">{(r.rawChannelBer * 100).toFixed(1)}%</td>
                         <td className="p-2 text-[#AAA]">{(r.postLdpcBer * 100).toFixed(2)}%</td>
                         <td className="p-2 text-[#D4D4D4]">{r.avgLdpcIterations.toFixed(1)}</td>
+                        {isRealistic && (
+                          <td className={`p-2 font-bold ${r.acquisitionFailures > 0 ? 'text-orange-400' : 'text-[#666]'}`}>
+                            {r.acquisitionFailures}
+                          </td>
+                        )}
+                        {isRealistic && <td className="p-2 text-[#AAA]">{r.timingRmsMs.toFixed(1)} ms</td>}
+                        {isRealistic && <td className="p-2 text-[#AAA]">{r.freqRmsHz.toFixed(2)} Hz</td>}
                         <td className="p-2 text-[#666]">{r.elapsedMs}ms</td>
                       </tr>
                     ))}
                     {progress.currentResults.length === 0 && (
                       <tr>
-                        <td colSpan={11} className="p-6 text-center text-[#666]">
+                        <td colSpan={isRealistic ? 14 : 11} className="p-6 text-center text-[#666]">
                           No simulation data yet. Click "Run Monte Carlo" above to execute real physical decodes.
                         </td>
                       </tr>
@@ -1058,6 +1225,22 @@ export const MonteCarloBenchmarkModal: React.FC<MonteCarloBenchmarkModalProps> =
               </div>
             </div>
           )}
+        </div>
+
+        {/* This engine is NOT the reference instrument, and saying so is the whole point.
+            Its ideal mode lands within a few tenths of a dB of the published bound, but its
+            realistic mode reads about 1.8 dB more optimistic than z30_dsp/benchmark.py at the
+            same seed: it searches a narrower timing window (a slot-synchronised receiver knows
+            roughly where the frame is) and its LDPC decoder runs a different multi-schedule
+            cascade. Publishing a browser figure as if it were the project's threshold is how a
+            retracted claim gets made a second time. */}
+        <div className="px-4 py-2 bg-[#0D0B05] border-t border-yellow-900/60 text-[10px] text-yellow-200/80 leading-relaxed">
+          <strong className="text-yellow-300">This is a bench instrument, not the reference benchmark.</strong>{' '}
+          The project's published figures come from <code className="text-yellow-300">python -m z30_dsp.benchmark</code>{' '}
+          (see wiki/16). This engine agrees with it closely in ideal mode, but its realistic mode
+          reads roughly 1.8 dB more optimistic at the same seed, because it searches a narrower
+          timing window and runs a different decoder schedule. Use it to see how a change moves
+          the curve; quote the Python benchmark for a number.
         </div>
 
         {/* Footer info bar */}
@@ -1070,6 +1253,8 @@ export const MonteCarloBenchmarkModal: React.FC<MonteCarloBenchmarkModalProps> =
             <span>CRC: <strong>CRC-14 (0x2443)</strong></span>
             <span>•</span>
             <span>Integration: <strong>30.0s UTC cycle</strong></span>
+            <span>•</span>
+            <span>Seed: <strong className="text-[#D4D4D4]">{config.seed ?? '(unseeded)'}</strong></span>
           </div>
           <div>
             <span>z-30 Experimental Digital Mode DSP Engine</span>

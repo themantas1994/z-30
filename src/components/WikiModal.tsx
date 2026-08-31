@@ -424,7 +424,7 @@ const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({ content, onNavigate
     if (line.trim().startsWith('- ') || line.trim().startsWith('* ')) {
       elements.push(
         <li key={key} className="ml-4 list-disc text-[#DDD] leading-relaxed my-0.5">
-          {formatInlineMarkdown(line.trim().substring(2))}
+          {formatInlineMarkdown(line.trim().substring(2), onNavigateSlug)}
         </li>
       );
       return;
@@ -436,7 +436,7 @@ const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({ content, onNavigate
       if (match) {
         elements.push(
           <li key={key} className="ml-4 list-decimal text-[#DDD] leading-relaxed my-0.5">
-            {formatInlineMarkdown(match[2])}
+            {formatInlineMarkdown(match[2], onNavigateSlug)}
           </li>
         );
         return;
@@ -447,7 +447,7 @@ const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({ content, onNavigate
     if (line.trim().length > 0) {
       elements.push(
         <p key={key} className="text-[#CCC] leading-relaxed my-1.5">
-          {formatInlineMarkdown(line)}
+          {formatInlineMarkdown(line, onNavigateSlug)}
         </p>
       );
     }
@@ -460,9 +460,14 @@ const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({ content, onNavigate
 };
 
 /**
- * Parses bold, code chips, and links inside text lines
+ * Parses bold, code chips, and links inside text lines.
+ *
+ * Links used to render as cyan underlined text that did nothing: the target was matched and
+ * then thrown away, so every cross-reference in the wiki - and the wiki is this project's
+ * source of truth, densely cross-linked - looked clickable and was not. `onNavigateSlug` was
+ * already being passed down from the modal for this; it just was not used.
  */
-function formatInlineMarkdown(text: string): React.ReactNode {
+function formatInlineMarkdown(text: string, onNavigateSlug?: (slug: string) => void): React.ReactNode {
   // Regex to split by bold (**...**), code (`...`), and links ([label](url))
   const parts: React.ReactNode[] = [];
   let remaining = text;
@@ -497,11 +502,46 @@ function formatInlineMarkdown(text: string): React.ReactNode {
     const linkMatch = remaining.match(/^\[([^\]]+)\]\(([^)]+)\)/);
     if (linkMatch) {
       const label = linkMatch[1];
-      parts.push(
-        <span key={keyIdx++} className="text-cyan-400 underline decoration-cyan-700 mx-0.5">
-          {label}
-        </span>
-      );
+      const target = linkMatch[2].trim();
+      const isExternal = /^https?:\/\//i.test(target);
+      // A wiki-internal link is a sibling markdown filename; the slug is that name without
+      // the extension, which is exactly how scripts/generate_wiki_articles.mjs assigns slugs.
+      const internalSlug = !isExternal && target.toLowerCase().endsWith('.md')
+        ? decodeURIComponent(target.replace(/^\.\//, '').replace(/\.md$/i, '').split('#')[0])
+        : null;
+
+      if (isExternal) {
+        parts.push(
+          <a
+            key={keyIdx++}
+            href={target}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-cyan-400 underline decoration-cyan-700 mx-0.5 hover:text-cyan-300"
+          >
+            {label}
+          </a>
+        );
+      } else if (internalSlug && onNavigateSlug) {
+        parts.push(
+          <button
+            key={keyIdx++}
+            type="button"
+            onClick={() => onNavigateSlug(internalSlug)}
+            className="text-cyan-400 underline decoration-cyan-700 mx-0.5 hover:text-cyan-300 font-inherit"
+          >
+            {label}
+          </button>
+        );
+      } else {
+        // A relative link to something that is not a wiki page (a source file, an anchor).
+        // Render it as text with the target visible rather than as a link that goes nowhere.
+        parts.push(
+          <span key={keyIdx++} className="text-cyan-400/80 mx-0.5" title={target}>
+            {label}
+          </span>
+        );
+      }
       remaining = remaining.substring(linkMatch[0].length);
       continue;
     }

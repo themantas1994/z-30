@@ -15,6 +15,7 @@
 
 import { DecodedSignal, LogEntry, QsoStage, StationConfig, TxSlot } from '../types/z30';
 import { buildQsoMacros } from './z30Codec';
+import { maidenheadToLatLon } from './gridSquare';
 
 /**
  * Transient state of the active QSO exchange and transceiver sequencing.
@@ -64,8 +65,8 @@ export function calculateMaidenheadDistanceAndAzimuth(
   grid1: string,
   grid2: string
 ): { distanceKm: number; azimuthDeg: number } {
-  const g1 = parseGrid(grid1);
-  const g2 = parseGrid(grid2);
+  const g1 = maidenheadToLatLon(grid1);
+  const g2 = maidenheadToLatLon(grid2);
 
   if (!g1 || !g2) {
     return { distanceKm: 0, azimuthDeg: 0 };
@@ -92,33 +93,6 @@ export function calculateMaidenheadDistanceAndAzimuth(
   let azimuthDeg = Math.round(((Math.atan2(y, x) * 180) / Math.PI + 360) % 360);
 
   return { distanceKm, azimuthDeg };
-}
-
-function parseGrid(grid: string): { lat: number; lon: number } | null {
-  if (!grid || grid.length < 4) return null;
-  const clean = grid.trim().toUpperCase();
-  const fLon = clean.charCodeAt(0) - 65; // A-R (0-17)
-  const fLat = clean.charCodeAt(1) - 65; // A-R (0-17)
-  const dLon = clean.charCodeAt(2) - 48; // 0-9
-  const dLat = clean.charCodeAt(3) - 48; // 0-9
-
-  if (fLon < 0 || fLon > 17 || fLat < 0 || fLat > 17 || dLon < 0 || dLon > 9 || dLat < 0 || dLat > 9) {
-    return null;
-  }
-
-  let lon = fLon * 20 - 180 + dLon * 2 + 1;
-  let lat = fLat * 10 - 90 + dLat * 1 + 0.5;
-
-  if (clean.length >= 6) {
-    const sLon = clean.charCodeAt(4) - 65;
-    const sLat = clean.charCodeAt(5) - 65;
-    if (sLon >= 0 && sLon <= 23 && sLat >= 0 && sLat <= 23) {
-      lon += (sLon * 5) / 60 + 2.5 / 60 - 1;
-      lat += (sLat * 2.5) / 60 + 1.25 / 60 - 0.5;
-    }
-  }
-
-  return { lat, lon };
 }
 
 export class Z30QsoEngine {
@@ -385,9 +359,7 @@ export class Z30QsoEngine {
       config.myCall,
       config.myGrid,
       this.state.targetDxCall || 'DX',
-      this.state.targetDxGrid || 'FN31',
-      this.state.mySentReport,
-      this.state.myRcvdReport
+      this.state.mySentReport
     );
 
     return macros[this.state.currentTxMacro] || macros.tx1;

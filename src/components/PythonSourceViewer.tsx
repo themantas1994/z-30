@@ -1,17 +1,28 @@
 /**
- * Python 3.10+ Source Code Inspector, Interactive Benchmark & Exporter
+ * Python DSP source inspector and exporter.
+ *
+ * Renders `src/data/pythonSource.ts`, which `npm run generate:python-source` produces from the
+ * real `z30_dsp/*.py` files and CI's `check:generated` gate keeps in step with them. The
+ * browser cannot read the repository, so the strings are the only way to show an operator the
+ * DSP they are running.
+ *
+ * Two things were wrong with this file. It had **zero references anywhere in src/** - nothing
+ * rendered it - so the repository was regenerating and CI-guarding a ~3,000-line artifact that
+ * no component displayed, while AGENTS.md documented the viewer as a live feature. And it
+ * carried a SECOND benchmark runner on its own MonteCarloSimulationEngine instance, with its
+ * own output format: two benchmark UIs over one engine, one of them unreachable. The viewer is
+ * now reachable from Station Settings, and the benchmark lives in exactly one place -
+ * MonteCarloBenchmarkModal - which is also the only one that can measure a decode threshold
+ * rather than a bound.
  */
 
 import React, { useState } from 'react';
 import { PYTHON_SOURCE_FILES, PythonFile } from '../data/pythonSource';
-import { Code2, Copy, Check, Download, Play, Terminal, FileCode } from 'lucide-react';
-import { MonteCarloSimulationEngine } from '../dsp/monteCarloEngine';
+import { Code2, Copy, Check, Download, FileCode } from 'lucide-react';
 
 export const PythonSourceViewer: React.FC = () => {
   const [selectedFileIdx, setSelectedFileIdx] = useState<number>(0);
   const [copied, setCopied] = useState<boolean>(false);
-  const [benchmarkOutput, setBenchmarkOutput] = useState<string | null>(null);
-  const [isRunningBenchmark, setIsRunningBenchmark] = useState<boolean>(false);
 
   const activeFile: PythonFile = PYTHON_SOURCE_FILES[selectedFileIdx] || PYTHON_SOURCE_FILES[0];
 
@@ -46,65 +57,6 @@ export const PythonSourceViewer: React.FC = () => {
     URL.revokeObjectURL(url);
   };
 
-  const runBenchmarkAnalysis = async () => {
-    setIsRunningBenchmark(true);
-    setBenchmarkOutput('Initializing Monte Carlo testbench: synthesizing continuous-phase 16-MFSK frames...\nInjecting calibrated AWGN across SNR grid and running Normalized Min-Sum LDPC (216, 77) decoding...\n\n');
-
-    try {
-      const engine = new MonteCarloSimulationEngine();
-      const snrPoints = [-30.0, -28.0, -26.0, -25.0, -24.0, -23.0, -22.0, -20.0];
-      const framesPerPoint = 20;
-
-      let out = `=========================================================================\n`;
-      out += `   z-30 EMPIRICAL MONTE CARLO DSP & LDPC BENCHMARK (LIVE EXECUTION)      \n`;
-      out += `=========================================================================\n`;
-      out += `Channel: AWGN (2500 Hz Ref BW) | FEC: Systematic (216, 77) IRA LDPC\n`;
-      out += `Frames per SNR point: ${framesPerPoint} | Decoder: Normalized Min-Sum BP (alpha=0.75)\n`;
-      out += `-------------------------------------------------------------------------\n`;
-      out += `SNR (dB)    | Tested | Success | FER      | Decode % | Raw BER  | Avg Iters\n`;
-      out += `-------------------------------------------------------------------------\n`;
-
-      for (const snr of snrPoints) {
-        setBenchmarkOutput((prev) => prev + `Testing SNR: ${snr >= 0 ? '+' : ''}${snr.toFixed(1)} dB (running ${framesPerPoint} physical frames)...\n`);
-        
-        const ptResults = await engine.runSimulation({
-          minSnrDb: snr,
-          maxSnrDb: snr,
-          snrStepDb: 1.0,
-          framesPerPoint: framesPerPoint,
-          sampleRateHz: 6000,
-          audioCenterFreqHz: 1250,
-          channelModel: 'AWGN',
-          simulationMode: 'MATCHED_FILTER_CORRELATOR_BANK',
-          maxLdpcIterations: 45,
-          alphaMinSum: 0.75,
-        });
-
-        if (ptResults.length > 0) {
-          const r = ptResults[0];
-          const snrStr = `${r.snrDb >= 0 ? '+' : ''}${r.snrDb.toFixed(1)} dB`.padEnd(11);
-          const framesStr = `${r.totalFrames}`.padStart(6);
-          const succStr = `${r.successCount}`.padStart(7);
-          const ferStr = `${r.frameErrorRate.toFixed(4)}`.padStart(8);
-          const decStr = `${r.decodeSuccessRate.toFixed(1)}%`.padStart(8);
-          const berStr = `${(r.rawChannelBer * 100).toFixed(1)}%`.padStart(8);
-          const iterStr = `${r.avgLdpcIterations.toFixed(1)}`.padStart(9);
-          out += `${snrStr} | ${framesStr} | ${succStr} | ${ferStr} | ${decStr} | ${berStr} | ${iterStr}\n`;
-        }
-      }
-
-      out += `=========================================================================\n`;
-      out += `[COMPLETED] Empirical Monte Carlo benchmark finished.\n`;
-      out += `All results above are derived from live, real-time LDPC decodes and calibrated noise.\n`;
-
-      setBenchmarkOutput(out);
-    } catch (err) {
-      setBenchmarkOutput((prev) => prev + `\n[ERROR] Benchmark execution failed: ${err}\n`);
-    } finally {
-      setIsRunningBenchmark(false);
-    }
-  };
-
   return (
     <div className="flex flex-col h-full bg-[#141414] border border-[#333] overflow-hidden font-mono" id="python-source-card">
       {/* Header */}
@@ -117,16 +69,6 @@ export const PythonSourceViewer: React.FC = () => {
         </div>
 
         <div className="flex items-center space-x-1.5">
-          <button
-            id="run-benchmark-btn"
-            onClick={runBenchmarkAnalysis}
-            disabled={isRunningBenchmark}
-            className="flex items-center space-x-1 px-2 py-0.5 bg-purple-600 hover:bg-purple-500 disabled:opacity-50 text-white text-xs font-bold uppercase"
-          >
-            <Play className="w-3 h-3 fill-current" />
-            <span>{isRunningBenchmark ? 'Calculating...' : 'BER Performance Specs'}</span>
-          </button>
-
           <button
             id="copy-python-btn"
             onClick={handleCopyCode}
@@ -183,24 +125,8 @@ export const PythonSourceViewer: React.FC = () => {
         <span className="text-[#666] truncate max-w-md">{activeFile.description}</span>
       </div>
 
-      {/* Code Viewer & Benchmark Panel */}
+      {/* Code Viewer */}
       <div className="flex-1 overflow-y-auto bg-[#050505] p-3 text-xs text-[#D4D4D4] select-text leading-relaxed">
-        {benchmarkOutput && (
-          <div className="mb-4 bg-[#0F0F0F] border border-purple-800 p-3 text-purple-200 text-[11px] relative">
-            <button
-              onClick={() => setBenchmarkOutput(null)}
-              className="absolute top-2 right-2 text-[#888] hover:text-[#D4D4D4] text-xs px-1.5 py-0.5 bg-[#1A1A1A] border border-[#333]"
-            >
-              ✕ Close
-            </button>
-            <div className="flex items-center space-x-2 text-purple-400 font-bold mb-1 uppercase">
-              <Terminal className="w-3.5 h-3.5" />
-              <span>Monte Carlo BER Benchmark Execution Result</span>
-            </div>
-            <pre className="whitespace-pre overflow-x-auto text-[10px] leading-snug text-[#00FF41] bg-[#050505] p-2 border border-[#222]">{benchmarkOutput}</pre>
-          </div>
-        )}
-
         {/* Code Content */}
         <pre className="text-[11px] text-[#D4D4D4] whitespace-pre overflow-x-auto">
           <code>{activeFile.code}</code>

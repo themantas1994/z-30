@@ -38,7 +38,14 @@ z30_dsp/                   Native Python 3 DSP package (NumPy/SciPy).
   channel.py               AWGN and Watterson fading channel models (seeded).
   sic_decoder.py           3-pass successive interference cancellation.
   benchmark.py             Monte Carlo decode-threshold sweeps. Every number comes from here.
-  rf_time_sync.py          FIR matched-filter time-station receiver (WWV/CHU/DCF77/MSF/JJY).
+  rf_time_sync.py          FIR matched-filter time-station receiver (WWV/WWVH/WWVB/CHU/DCF77/
+                           MSF/JJY). Six stations, not five - wiki/07 and both implementations
+                           include WWVB.
+  station_settings.py      StationConfig + SettingsManager: the config schema, the callsign and
+                           grid validation rules, and JSON persistence. Split out of
+                           config_wizard.py, which imports Tk at module scope and so cannot be
+                           imported at all on a headless box - which put the rules the setup
+                           wizard enforces beyond the reach of the test suite.
   web_server.py            Loopback HTTP server: token-authed hardware API, rigctld relay, GPIO.
   paths.py                 Per-user data dir resolution ($Z30_HOME, XDG, ~/.z30).
   auto_logger.py           ADIF 3.1.4 logbook.
@@ -57,11 +64,21 @@ src/                       Web transceiver (React 19 + TypeScript + Vite + Tailw
     audioEngine.ts, qsoEngine.ts, qsoLogger.ts, rfTimeSyncEngine.ts, stationConfigStore.ts,
     seededRandom.ts, z30Constants.ts, hamlibCatalog.ts, timeUtils.ts, monteCarloEngine.ts,
     realReceiver.ts, updateEngine.ts, ratProtocols.ts
+    gridSquare.ts          Maidenhead validation and lat/lon decoding. THE one implementation -
+                           there were four, and only the bounds-checked one survived.
+    monteCarloEngine.ts    Browser Monte Carlo. Two measurement modes, mirroring the Python
+                           benchmark's --mode; see section 5.
   components/              UI. WaterfallDisplay.tsx is the 60 FPS canvas; the rest are panels
                            and modals. Keep DSP out of these files.
   data/                    GENERATED — see section 3.
 
 tests/                     pytest + node (tsx) suites. See wiki/16.
+  transmitPath.test.mjs    Regression guards for defects that are invisible without a radio
+                           attached: a PTT release that drops a different pin than the key
+                           drove, a "Test PTT" that reports success without addressing the
+                           hardware, and the raw rigctl console keying without the gate.
+  test_config_wizard.py    The Python wizard's callsign/grid rules, driven by the same vectors
+                           the TypeScript side asserts (tests/vectors/callsign_vectors.json).
 scripts/                   Build-time generators for src/data/.
 public/                    PWA assets copied verbatim (sw.js, manifest, icons).
 ```
@@ -94,8 +111,19 @@ the test to match. Full rationale: [`wiki/13`](wiki/13-Operating-Safety-Complian
 
 **Transmit safety**
 - `canTransmit()` in `src/dsp/catController.ts` is the single gate in front of every transmit
-  path (sequencer, manual TX, tune). It **fails closed** and returns every violation. Never add
-  a transmit path that bypasses it; never make it return `allowed: true` on a partial check.
+  path (sequencer, manual TX, tune, **and the raw rigctl console's `T 1` / `\set_ptt 1`**). It
+  **fails closed** and returns every violation. Never add a transmit path that bypasses it;
+  never make it return `allowed: true` on a partial check. The console reaches the gate through
+  `RawConsoleTransmitContext`, which the caller supplies; with no context supplied it refuses to
+  key at all rather than defaulting to permitting.
+- **One keying implementation.** `setPtt()` is it. It returns whether the hardware actually
+  accepted the command, and `testPttKey()` is a thin wrapper around it rather than a second
+  implementation - four of nine methods in the old parallel implementation only wrote to the
+  command log and returned "verified" for hardware they never addressed.
+- **A release must drive what the key drove.** `setPtt(false, ...)` with no options falls back
+  to the keying context, not to the hardcoded pin/host defaults. Releasing GPIO 3 on a station
+  keyed on GPIO 4 leaves it transmitting, and CM108 and TCI have no server-side dead-man switch
+  behind them to catch it. `tests/transmitPath.test.mjs` is the guard.
 - It validates: a real, non-placeholder callsign; a configured regulatory region *and* licence
   class; and **dial frequency + audio offset** inside a permitted data segment. The audio offset
   is not optional — the radiated frequency is not the dial frequency.
@@ -127,7 +155,18 @@ the test to match. Full rationale: [`wiki/13`](wiki/13-Operating-Safety-Complian
 **Determinism**
 - Benchmarks and channel models run off seeded PRNGs (`seededRandom.ts`,
   `z30_dsp/channel.py`). CI runs the same seeded sweep twice and asserts identical results.
-  `Math.random()` and unseeded `np.random` do not belong anywhere in that path.
+  `Math.random()` and unseeded `np.random` do not belong anywhere in that path. This includes
+  the browser engine's random carrier and timing offsets.
+
+**One source of truth per rule**
+- `isValidCallsign()` in `src/dsp/bandPlan.ts` is the only callsign validator in TypeScript, and
+  `z30_dsp/station_settings.py` carries the same pattern. Shared cases live in
+  `tests/vectors/callsign_vectors.json` and are asserted from both languages. Three looser
+  copies used to disagree with the gate, so the setup wizard blessed callsigns that could not
+  transmit. Same story for `src/dsp/gridSquare.ts` and Maidenhead decoding.
+- UI prose quotes constants, it does not retype them - `LDPC_MAX_ITERATIONS`, `Z30_LDPC_PARAMS`,
+  `Z30_SPECS`. SpecsModal said "up to 50 iterations" for years while both codecs stopped at 45,
+  and Settings printed FT8's `(174, 91)` as z-30's code.
 
 **Cross-language parity**
 - `z30_dsp/*.py` and `src/dsp/*.ts` implement one specification twice. A change to the codec,
@@ -150,6 +189,17 @@ the code and the wiki on purpose. Follow the same standard:
   a **genie-aided bound**: -24.6 dB. Never compare it with another mode's on-air figure. The
   3.5 dB gap is acquisition loss.
 - Quote the seed, the frame count and the mode with any figure. Default seed: `20260830`.
+- **`z30_dsp/benchmark.py` is the reference instrument.** The in-app benchmark
+  (`src/dsp/monteCarloEngine.ts`, Station Settings -> 5. Experimental Testing) runs the same two
+  modes and defaults to `realistic` too, but it is a bench instrument: it agrees closely on the
+  bound and reads about **1.8 dB more optimistic** on the threshold, because it searches a
+  narrower timing window and runs a different LDPC schedule. Use it to see which way a change
+  moved the curve; confirm with a seeded Python run before any number reaches documentation.
+  [`wiki/16`](wiki/16-Benchmarking-Testing-&-CI.md) has the side-by-side table.
+- **The word "threshold" is reserved for `realistic`.** No UI string, comment or document may
+  call an `ideal`-mode result a threshold, and nothing may compute a z-30-vs-other-mode delta
+  from one. A "Gain vs FT8" tile that subtracted a bound from FT8's on-air figure is how the
+  withdrawn "+4.0 dB advantage" claim came back into the app after the wiki had retracted it.
 - If a DSP change moves the threshold, update every place it appears: `wiki/16`, `wiki/03`,
   `wiki/11`, the PR checklist in `wiki/02`, `wiki/Home.md`, and the README's at-a-glance table.
 
@@ -193,8 +243,12 @@ artifacts or bytecode, exactly one lockfile).
   `dict[str, int]` builtins in annotations without `from __future__ import annotations`.
   Runtime dependencies are NumPy, SciPy, sounddevice, pyserial, cffi, requests — adding one is a
   decision, not a convenience.
-- **TypeScript is strict**, with `noUnusedLocals`. Keep DSP logic in `src/dsp/` (no DOM), UI in
-  `src/components/`.
+- **TypeScript is strict**, with `noUnusedLocals` **and `noUnusedParameters`**. Keep DSP logic in
+  `src/dsp/` (no DOM), UI in `src/components/`. Note that tsc does **not** flag a prop that is
+  declared and never destructured, so an interface can accumulate callbacks that cannot possibly
+  fire - `RigControlPanel` rendered a read-only faceplate for months with five working handlers
+  wired to it from `App.tsx`, and `QsoController` carried seven. If you add a prop, destructure
+  it and use it in the same commit.
 - **Comments explain why, not what.** The existing ones frequently name the bug they prevent;
   when you fix something subtle, leave that kind of note behind.
 - **Conventional commits**: `feat(dsp):`, `fix(cat):`, `docs(wiki):`. Branches:
@@ -220,4 +274,6 @@ artifacts or bytecode, exactly one lockfile).
 | Local server or hardware API | `z30_dsp/web_server.py`, `src/dsp/localServerApi.ts`, [`wiki/13`](wiki/13-Operating-Safety-Compliance-&-Security.md) |
 | UI behaviour | `src/App.tsx`, `src/components/`, [`wiki/14`](wiki/14-User-Interface-&-Operation-Reference.md) |
 | Packaging or installers | `pyproject.toml`, `PKGBUILD`, `install_*.sh`, [`wiki/09`](wiki/09-Cross-Platform-Build-&-Packaging.md) |
-| Benchmarks, tests, CI | `z30_dsp/benchmark.py`, `tests/`, [`wiki/16`](wiki/16-Benchmarking-Testing-&-CI.md) |
+| Benchmarks, tests, CI | `z30_dsp/benchmark.py`, `src/dsp/monteCarloEngine.ts`, `tests/`, [`wiki/16`](wiki/16-Benchmarking-Testing-&-CI.md) |
+| Callsign / grid validation | `src/dsp/bandPlan.ts`, `src/dsp/gridSquare.ts`, `z30_dsp/station_settings.py`, `tests/vectors/callsign_vectors.json` |
+| Logbook and exports | `src/dsp/qsoLogger.ts`, `src/components/LogbookModal.tsx`, [`wiki/14`](wiki/14-User-Interface-&-Operation-Reference.md) |

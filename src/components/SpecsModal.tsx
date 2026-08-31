@@ -4,6 +4,9 @@
 
 import React from 'react';
 import { X, ShieldCheck, Zap, Radio, Layers } from 'lucide-react';
+// Quoted from the codec itself rather than retyped: the prose here used to say 50 iterations
+// while both implementations stopped at 45.
+import { Z30_LDPC_PARAMS, LDPC_MAX_ITERATIONS } from '../dsp/ldpcCodec';
 
 interface SpecsModalProps {
   isOpen: boolean;
@@ -53,9 +56,18 @@ export const SpecsModal: React.FC<SpecsModalProps> = ({ isOpen, onClose }) => {
               <span className="text-[9px] text-[#888] block uppercase">UTC TIME SLOT</span>
               <span className="font-bold text-yellow-400 text-xs">30.0 Seconds</span>
             </div>
+            {/* The tile used to print "-24.6 dB (bound)" under the word THRESHOLD - the two
+                words contradict each other, and the bound is the one that must never be read
+                as an on-air figure. The headline is now the blind-acquisition threshold, which
+                is what "threshold" means in wiki/16, with the bound in the tooltip. */}
             <div className="bg-[#050505] p-2.5 border border-[#333]">
-              <span className="text-[9px] text-[#888] block uppercase">AWGN 50% THRESHOLD</span>
-              <span className="font-bold text-purple-400 text-xs" title="Idealised AWGN bound with perfect synchronisation - not an on-air decode threshold">-24.6 dB SNR (bound)</span>
+              <span className="text-[9px] text-[#888] block uppercase">AWGN 50% (BLIND ACQ.)</span>
+              <span
+                className="font-bold text-purple-400 text-xs"
+                title="Measured with random carrier and timing offsets through blind Costas acquisition, with the receiver estimating its own noise floor - the figure comparable with other modes' published on-air numbers. The genie-aided bound, with exact sigma, carrier and timing handed to the demodulator, is -24.6 dB; the 3.5 dB gap is acquisition loss."
+              >
+                -21.1 dB SNR
+              </span>
             </div>
           </div>
 
@@ -73,7 +85,8 @@ export const SpecsModal: React.FC<SpecsModalProps> = ({ isOpen, onClose }) => {
               <li><strong>Active Transmission:</strong> 75 symbols * 0.320s = 24.0 seconds.</li>
               <li><strong>Guard & Decode Window:</strong> 6.0 seconds for FFT framing, multi-stage SIC, and LDPC decoding.</li>
               <li><strong>Synchronization:</strong> 21 Costas array sync symbols interleaved throughout the frame for sub-Hz frequency tracking and symbol time offset (DT) estimation.</li>
-              <li><strong>Sensitivity (idealised AWGN bound, seeded Monte Carlo):</strong> 50% decode near -24.6 dB SNR; 90% near -23.6 dB. Measured with the exact noise level, carrier frequency and symbol timing handed to the demodulator, so this bounds what the code and demodulator can do under ideal detection. It is <em>not</em> an over-the-air threshold and is not comparable with FT8's published -21.0 dB, which includes the acquisition losses this excludes.</li>
+              <li><strong>Sensitivity (AWGN, blind acquisition, seeded Monte Carlo):</strong> 50% decode at <strong>-21.1 dB</strong> SNR; 90% at <strong>-18.0 dB</strong>. Each frame gets a random carrier offset (&plusmn;5 Hz) and timing offset (&plusmn;0.5 s), and the receiver is handed nothing but audio: it finds the frame from the 21 Costas symbols and estimates the noise floor itself. This is the figure comparable with other modes' published on-air numbers, and it puts z-30 <em>level with FT8, not ahead of it</em>.</li>
+              <li><strong>Idealised bound (genie-aided, not a threshold):</strong> 50% at -24.6 dB, 90% at -23.4 dB, measured with the exact noise level, carrier frequency and symbol timing handed to the demodulator. It bounds what the code can do under ideal detection and nothing more. The 3.5 dB gap between the two is what it costs to <em>find</em> a 3.125 Hz-spaced signal rather than be told where it is. Never compare it with another mode's on-air figure.</li>
             </ul>
           </div>
 
@@ -87,7 +100,7 @@ export const SpecsModal: React.FC<SpecsModalProps> = ({ isOpen, onClose }) => {
               <li><strong>Code Rate:</strong> Systematic (216, 77) Irregular Repeat-Accumulate (IRA) LDPC code (R ~ 0.356).</li>
               <li><strong>Information Payload:</strong> 77 bits total (28-bit Call 1, 28-bit Call 2, 7-bit Grid/Report, 14-bit CRC parity check).</li>
               <li><strong>Channel Bits:</strong> 54 data symbols * 4 bits/symbol = 216 coded bits.</li>
-              <li><strong>Decoder:</strong> Vectorized Normalized Min-Sum Belief Propagation decoder with attenuation factor alpha = 0.75 and up to 50 iterations.</li>
+              <li><strong>Decoder:</strong> Vectorized Normalized Min-Sum Belief Propagation decoder with attenuation factor alpha = {Z30_LDPC_PARAMS.alphaMinSum} and up to {LDPC_MAX_ITERATIONS} iterations.</li>
             </ul>
           </div>
 
@@ -127,13 +140,13 @@ export const SpecsModal: React.FC<SpecsModalProps> = ({ isOpen, onClose }) => {
                   <td className="p-1.5">16-MFSK</td>
                   <td className="p-1.5">50 Hz</td>
                   <td className="p-1.5">30 sec</td>
-                  <td className="p-1.5 text-purple-300">-24.6 dB (50%) / -23.6 dB (90%) &mdash; idealised bound</td>
+                  <td className="p-1.5 text-purple-300">-21.1 dB (50%) / -18.0 dB (90%)</td>
                   <td className="p-1.5 text-[#00FF41]">Yes (3-Pass SIC)</td>
                 </tr>
                 <tr className="text-[#888]">
                   <td className="p-1.5 text-[#D4D4D4]">FT8</td>
                   <td className="p-1.5">8-FSK</td>
-                  <td className="p-1.5">50 Hz</td>
+                  <td className="p-1.5">47.0 Hz</td>
                   <td className="p-1.5">15 sec</td>
                   <td className="p-1.5">-21.0 dB</td>
                   <td className="p-1.5 text-[#666]">No</td>
@@ -141,7 +154,7 @@ export const SpecsModal: React.FC<SpecsModalProps> = ({ isOpen, onClose }) => {
                 <tr className="text-[#888]">
                   <td className="p-1.5 text-[#D4D4D4]">FT4</td>
                   <td className="p-1.5">4-FSK</td>
-                  <td className="p-1.5">80 Hz</td>
+                  <td className="p-1.5">83.0 Hz</td>
                   <td className="p-1.5">7.5 sec</td>
                   <td className="p-1.5">-17.5 dB</td>
                   <td className="p-1.5 text-[#666]">No</td>
@@ -149,13 +162,26 @@ export const SpecsModal: React.FC<SpecsModalProps> = ({ isOpen, onClose }) => {
                 <tr className="text-[#888]">
                   <td className="p-1.5 text-[#D4D4D4]">WSPR</td>
                   <td className="p-1.5">4-FSK</td>
-                  <td className="p-1.5">6 Hz</td>
+                  <td className="p-1.5">5.9 Hz</td>
                   <td className="p-1.5">120 sec</td>
                   <td className="p-1.5">-28.0 dB</td>
                   <td className="p-1.5 text-[#666]">No (Beacon only)</td>
                 </tr>
               </tbody>
             </table>
+            {/* Every figure in the Threshold column is now an on-air / blind-acquisition
+                number, so the column compares like with like. It used to carry z-30's
+                genie-aided bound beside the other modes' measured on-air figures, which reads
+                as a 3.5 dB advantage that does not exist - the same error wiki/11 §1.1 records
+                as withdrawn. */}
+            <p className="text-[10px] text-[#888] leading-relaxed pt-1">
+              All thresholds in this column are like-for-like: z-30's is its own blind-acquisition
+              measurement, the others are published over-the-air figures, and both include the same
+              acquisition, AFC and timing losses. z-30's genie-aided bound (-24.6 dB) is deliberately
+              <strong className="text-purple-300"> not</strong> in this table &mdash; it is roughly 3.5 dB
+              optimistic and belongs beside no other mode's on-air number.
+              <strong className="text-[#D4D4D4]"> z-30 is level with FT8 on AWGN, not ahead of it.</strong>
+            </p>
           </div>
 
           {/* The Monte Carlo benchmark now has a single home: Station Settings ->
