@@ -1600,10 +1600,11 @@ decode threshold. The demodulator is handed things a real receiver has to work o
 Every one of those is a real loss in a real contact, and none of them is present in \`ideal\`.
 Quoting that figure beside a mode's published over-the-air threshold - FT8's -21 dB, say,
 which is WSJT-X's measured number and *includes* all of those losses - compares two different
-quantities and flatters this one. Measured on this code, the gap between the two modes is
-about 3.7 dB on AWGN, and about 7 dB once moderate fading is present: the bound is -24.7 dB
-while the blind-acquisition threshold is -21.0 dB on AWGN and -17.6 dB on a CCIR-moderate
-path. The README states the comparison in exactly these terms.
+quantities and flatters this one. Measured on this code at seed DEFAULT_BENCHMARK_SEED, 40
+frames per point: the bound is -24.6 dB, while the blind-acquisition threshold is -23.1 dB on
+AWGN. The gap between them - 1.5 dB - is the acquisition loss, what it costs to *find* a
+3.125 Hz-spaced signal rather than be told where it is. wiki/16 carries the full set,
+including the two fading presets, and the README states the comparison in the same terms.
 
 Reproducibility: every run is seeded (\`--seed\`, default DEFAULT_BENCHMARK_SEED). Record the
 seed alongside any published curve; an unseeded number cannot be reproduced, bisected, or

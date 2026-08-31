@@ -1846,7 +1846,7 @@ export const StationSettingsModal: React.FC<StationSettingsModalProps> = ({
                     floor - that is a <strong>decode threshold</strong>, and the only figure
                     comparable with another mode's published number.{' '}
                     <strong>Ideal</strong> hands the demodulator the exact noise sigma, carrier
-                    and timing - a <strong>genie-aided bound</strong>, roughly 3.5 dB
+                    and timing - a <strong>genie-aided bound</strong>, roughly 1.5 dB
                     optimistic, and never to be quoted against another mode. See
                     <span className="text-yellow-300"> wiki/16 Benchmarking, Testing &amp; CI</span>.
                   </div>

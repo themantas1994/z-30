@@ -50,17 +50,31 @@ jobs:
         # measurement - it catches an exception or a non-deterministic result in the
         # channel/acquisition path, which would otherwise only surface when someone tried to
         # reproduce a published curve.
+        #
+        # The sweep deliberately straddles the decode threshold. It used to run at -18 to
+        # -16 dB, where every frame converges in the first decode schedule - so it never
+        # reached the fourth ("DITHER") schedule, which perturbed the LLRs from the unseeded
+        # global RNG. The check passed for years over a genuinely non-deterministic decoder
+        # because its sample never executed the non-deterministic line. Frames below threshold
+        # run all four schedules.
         run: |
           python - <<'PY'
           from z30_dsp.benchmark import run_monte_carlo_snr_sweep
           for mode in ("ideal", "realistic"):
-              a = run_monte_carlo_snr_sweep(min_snr_db=-18, max_snr_db=-16, step_snr_db=2,
-                                            frames_per_snr=3, mode=mode, fading="none", seed=1)
-              b = run_monte_carlo_snr_sweep(min_snr_db=-18, max_snr_db=-16, step_snr_db=2,
-                                            frames_per_snr=3, mode=mode, fading="none", seed=1)
-              assert [r["successes"] for r in a] == [r["successes"] for r in b], \
-                  f"{mode} mode is not reproducible with a fixed seed"
-              print(f"{mode} mode reproducible")
+              for lo, hi in ((-18, -16), (-27, -25)):
+                  kwargs = dict(min_snr_db=lo, max_snr_db=hi, step_snr_db=2,
+                                frames_per_snr=3, mode=mode, fading="none", seed=1)
+                  a = run_monte_carlo_snr_sweep(**kwargs)
+                  b = run_monte_carlo_snr_sweep(**kwargs)
+                  assert [r["successes"] for r in a] == [r["successes"] for r in b], \
+                      f"{mode} mode is not reproducible with a fixed seed at {lo}..{hi} dB"
+                  # Below threshold every frame should exhaust the whole four-schedule
+                  # cascade; if it stops converging early this check silently stops
+                  # covering the dithered pass again.
+                  if (lo, hi) == (-27, -25):
+                      assert a[0]["avg_iters"] > 100, \
+                          f"{mode} sweep at {lo} dB is not reaching the later schedules"
+                  print(f"{mode} mode reproducible at {lo}..{hi} dB")
           PY
 
   frontend:

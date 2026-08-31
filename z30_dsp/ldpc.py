@@ -10,7 +10,7 @@ Mathematical Specification & Design Rationale:
    - Parity check equations (m = n - k): 139 checks.
    - Code rate (R): R = 77 / 216 ≈ 0.3564. Against an idealised AWGN channel with perfect
      synchronisation, the seeded benchmark crosses 50% decode near -24.6 dB SNR and 90% near
-     -23.6 dB (2500 Hz reference bandwidth). That is a bound on the code under ideal detection,
+     -23.4 dB (2500 Hz reference bandwidth). That is a bound on the code under ideal detection,
      not an over-the-air threshold - see the docstring of z30_dsp/benchmark.py.
    - Modulation Symbol Mapping: 216 coded bits / (4 bits/symbol) = 54 data symbols in 16-MFSK.
      Coupled with 21 Costas synchronization symbols, total frame = 75 symbols (24.0s duration at Ts=320ms).

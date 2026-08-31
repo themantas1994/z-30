@@ -154,7 +154,7 @@ export const MonteCarloBenchmarkModal: React.FC<MonteCarloBenchmarkModalProps> =
    * This used to report the first grid point already at or above the target, which quantises
    * the answer to snrStepDb - a full 1.0 dB by default - and makes it incomparable with the
    * Python benchmark, whose worked example in wiki/16 interpolates ("50% crossing interpolates
-   * to -21.1 dB"). Returns null when the sweep never crosses, rather than reporting an
+   * to -23.1 dB"). Returns null when the sweep never crosses, rather than reporting an
    * endpoint as if it were a crossing.
    */
   const interpolateCrossing = (targetPct: number): number | null => {
@@ -257,7 +257,7 @@ export const MonteCarloBenchmarkModal: React.FC<MonteCarloBenchmarkModalProps> =
     if (snr50Threshold !== null) txt += `50% ${resultNoun} (interpolated): ${snr50Threshold.toFixed(2)} dB SNR (2500 Hz BW)\n`;
     if (snr90Threshold !== null) txt += `90% ${resultNoun} (interpolated): ${snr90Threshold.toFixed(2)} dB SNR (2500 Hz BW)\n`;
     if (!isRealistic) {
-      txt += 'NOTE: an ideal-mode figure is a genie-aided BOUND, roughly 3.5 dB optimistic.\n';
+      txt += 'NOTE: an ideal-mode figure is a genie-aided BOUND, roughly 1.5 dB optimistic.\n';
       txt += '      Never quote it against another mode\'s published on-air threshold.\n';
     }
 
@@ -322,7 +322,7 @@ export const MonteCarloBenchmarkModal: React.FC<MonteCarloBenchmarkModalProps> =
           <div className="bg-[#121212] border-b border-[#333] p-3 text-xs animate-fadeIn space-y-3">
             {/* The measurement mode comes first because it decides what the run MEANS, not
                 just how long it takes. Switching it also moves the sweep range: the two curves
-                sit about 3.5 dB apart, so one range cannot bracket both. */}
+                sit about 1.5 dB apart, so one range cannot bracket both. */}
             <div className="bg-[#0A0A0A] border border-[#333] p-2 space-y-2">
               <div className="flex flex-wrap items-center gap-3">
                 <span className="text-[10px] text-[#888] uppercase">Measurement mode:</span>
@@ -358,7 +358,7 @@ export const MonteCarloBenchmarkModal: React.FC<MonteCarloBenchmarkModalProps> =
                 ) : (
                   <>
                     The demodulator is handed the exact noise sigma, the exact carrier and perfect symbol
-                    timing. The result is a <strong className="text-yellow-300">bound</strong>, roughly 3.5 dB
+                    timing. The result is a <strong className="text-yellow-300">bound</strong>, roughly 1.5 dB
                     optimistic, and is <strong className="text-yellow-300">not</strong> comparable with any
                     other mode's on-air number. Quoting one against FT8's -21.0 dB is the error wiki/11 §1.1
                     records as withdrawn.
@@ -525,7 +525,7 @@ export const MonteCarloBenchmarkModal: React.FC<MonteCarloBenchmarkModalProps> =
             {/* Presets */}
             <div className="flex items-center space-x-1 border border-[#333] p-0.5 bg-[#0A0A0A]">
               {/* Ranges follow the active mode: the realistic curve and the genie-aided bound
-                  sit about 3.5 dB apart, and the old hardcoded -30..-22 range brackets only the
+                  sit about 1.5 dB apart, and the old hardcoded -30..-22 range brackets only the
                   bound - in realistic mode it would sit almost entirely below the point where
                   the sync pattern is findable at all, and report an all-zero sweep.
                   Realistic mode runs the full physical chain per frame, so its frame counts are
@@ -790,7 +790,7 @@ export const MonteCarloBenchmarkModal: React.FC<MonteCarloBenchmarkModalProps> =
                     />
                     <span
                       className="text-red-400 text-[11px]"
-                      title="FT8's published ON-AIR threshold, drawn as a modelled logistic. It is only a like-for-like comparison against a REALISTIC-mode run; an ideal-mode curve is a genie-aided bound roughly 3.5 dB optimistic, and comparing the two is the error wiki/11 §1.1 records as withdrawn."
+                      title="FT8's published ON-AIR threshold, drawn as a modelled logistic. It is only a like-for-like comparison against a REALISTIC-mode run; an ideal-mode curve is a genie-aided bound roughly 1.5 dB optimistic, and comparing the two is the error wiki/11 §1.1 records as withdrawn."
                     >
                       FT8 on-air reference (-21.0 dB)
                     </span>
@@ -1229,19 +1229,24 @@ export const MonteCarloBenchmarkModal: React.FC<MonteCarloBenchmarkModalProps> =
         </div>
 
         {/* This engine is NOT the reference instrument, and saying so is the whole point.
-            Its ideal mode lands within a few tenths of a dB of the published bound, but its
-            realistic mode reads about 1.8 dB more optimistic than z30_dsp/benchmark.py at the
-            same seed: it searches a narrower timing window (a slot-synchronised receiver knows
-            roughly where the frame is) and its LDPC decoder runs a different multi-schedule
-            cascade. Publishing a browser figure as if it were the project's threshold is how a
-            retracted claim gets made a second time. */}
+            It now lands 0.1 dB from z30_dsp/benchmark.py on the AWGN threshold at the same
+            seed - the two share SLOT_SEARCH_MARGIN_SEC and REALISTIC_PILOT_COHERENCE, so they
+            model the same receiver - but agreement is not authority: the Python benchmark is
+            what CI runs and what the published tables are copied from.
+
+            This notice used to say the two differed by 1.8 dB because the browser "searches a
+            narrower timing window and runs a different decoder schedule". Both halves were
+            false. The decoders have always been the same four-schedule cascade (wiki/16
+            retracted that claim; this string was missed). The timing window was measured paired
+            over 200 frames and accounted for none of the gap. The whole of it was the Python
+            side applying a semi-coherent demodulator term that z-30's receiver does not
+            specify and that costs performance under real timing error. */}
         <div className="px-4 py-2 bg-[#0D0B05] border-t border-yellow-900/60 text-[10px] text-yellow-200/80 leading-relaxed">
           <strong className="text-yellow-300">This is a bench instrument, not the reference benchmark.</strong>{' '}
           The project's published figures come from <code className="text-yellow-300">python -m z30_dsp.benchmark</code>{' '}
-          (see wiki/16). This engine agrees with it closely in ideal mode, but its realistic mode
-          reads roughly 1.8 dB more optimistic at the same seed, because it searches a narrower
-          timing window and runs a different decoder schedule. Use it to see how a change moves
-          the curve; quote the Python benchmark for a number.
+          (see wiki/16). Both run the same receiver model and agree to about 0.1 dB on the AWGN
+          threshold at the same seed, but a number only reaches documentation after a seeded
+          Python run. Use this to see which way a change moved the curve.
         </div>
 
         {/* Footer info bar */}

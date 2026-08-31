@@ -64,9 +64,9 @@ export const SpecsModal: React.FC<SpecsModalProps> = ({ isOpen, onClose }) => {
               <span className="text-[9px] text-[#888] block uppercase">AWGN 50% (BLIND ACQ.)</span>
               <span
                 className="font-bold text-purple-400 text-xs"
-                title="Measured with random carrier and timing offsets through blind Costas acquisition, with the receiver estimating its own noise floor - the figure comparable with other modes' published on-air numbers. The genie-aided bound, with exact sigma, carrier and timing handed to the demodulator, is -24.6 dB; the 3.5 dB gap is acquisition loss."
+                title="Measured with random carrier and timing offsets through blind Costas acquisition, with the receiver estimating its own noise floor and demodulating non-coherently - the figure comparable with other modes' published on-air numbers. The genie-aided bound, with exact sigma, carrier and timing handed to the demodulator, is -24.6 dB; the 1.5 dB gap is acquisition loss."
               >
-                -21.1 dB SNR
+                -23.1 dB SNR
               </span>
             </div>
           </div>
@@ -85,8 +85,8 @@ export const SpecsModal: React.FC<SpecsModalProps> = ({ isOpen, onClose }) => {
               <li><strong>Active Transmission:</strong> 75 symbols * 0.320s = 24.0 seconds.</li>
               <li><strong>Guard & Decode Window:</strong> 6.0 seconds for FFT framing, multi-stage SIC, and LDPC decoding.</li>
               <li><strong>Synchronization:</strong> 21 Costas array sync symbols interleaved throughout the frame for sub-Hz frequency tracking and symbol time offset (DT) estimation.</li>
-              <li><strong>Sensitivity (AWGN, blind acquisition, seeded Monte Carlo):</strong> 50% decode at <strong>-21.1 dB</strong> SNR; 90% at <strong>-18.0 dB</strong>. Each frame gets a random carrier offset (&plusmn;5 Hz) and timing offset (&plusmn;0.5 s), and the receiver is handed nothing but audio: it finds the frame from the 21 Costas symbols and estimates the noise floor itself. This is the figure comparable with other modes' published on-air numbers, and it puts z-30 <em>level with FT8, not ahead of it</em>.</li>
-              <li><strong>Idealised bound (genie-aided, not a threshold):</strong> 50% at -24.6 dB, 90% at -23.4 dB, measured with the exact noise level, carrier frequency and symbol timing handed to the demodulator. It bounds what the code can do under ideal detection and nothing more. The 3.5 dB gap between the two is what it costs to <em>find</em> a 3.125 Hz-spaced signal rather than be told where it is. Never compare it with another mode's on-air figure.</li>
+              <li><strong>Sensitivity (AWGN, blind acquisition, seeded Monte Carlo):</strong> 50% decode at <strong>-23.1 dB</strong> SNR; 90% at <strong>-21.7 dB</strong>. Each frame gets a random carrier offset (&plusmn;5 Hz) and timing offset (&plusmn;0.5 s), and the receiver is handed nothing but audio: it finds the frame from the 21 Costas symbols, estimates the noise floor itself, and demodulates non-coherently. This is the figure comparable with other modes' published on-air numbers &mdash; 2.1 dB deeper than FT8's -21.0 dB, bought with 1.9&times; the airtime.</li>
+              <li><strong>Idealised bound (genie-aided, not a threshold):</strong> 50% at -24.6 dB, 90% at -23.4 dB, measured with the exact noise level, carrier frequency and symbol timing handed to the demodulator. It bounds what the code can do under ideal detection and nothing more. The 1.5 dB gap between the two is what it costs to <em>find</em> a 3.125 Hz-spaced signal rather than be told where it is. Never compare it with another mode's on-air figure.</li>
             </ul>
           </div>
 
@@ -153,7 +153,7 @@ export const SpecsModal: React.FC<SpecsModalProps> = ({ isOpen, onClose }) => {
                   <td className="p-1.5">16-MFSK</td>
                   <td className="p-1.5">50 Hz</td>
                   <td className="p-1.5">30 sec</td>
-                  <td className="p-1.5 text-purple-300">-21.1 dB (50%) / -18.0 dB (90%)</td>
+                  <td className="p-1.5 text-purple-300">-23.1 dB (50%) / -21.7 dB (90%)</td>
                   <td className="p-1.5 text-[#00FF41]">Yes (3-Pass SIC)</td>
                 </tr>
                 <tr className="text-[#888]">
@@ -182,18 +182,25 @@ export const SpecsModal: React.FC<SpecsModalProps> = ({ isOpen, onClose }) => {
                 </tr>
               </tbody>
             </table>
-            {/* Every figure in the Threshold column is now an on-air / blind-acquisition
-                number, so the column compares like with like. It used to carry z-30's
-                genie-aided bound beside the other modes' measured on-air figures, which reads
-                as a 3.5 dB advantage that does not exist - the same error wiki/11 §1.1 records
-                as withdrawn. */}
+            {/* Every figure in the Threshold column is an on-air / blind-acquisition number,
+                so the column compares like with like. It used to carry z-30's genie-aided
+                bound beside the other modes' measured on-air figures, which reads as an
+                advantage that does not exist - the error wiki/11 §1.1 records as withdrawn.
+
+                The 2.1 dB z-30 now shows over FT8 is a real like-for-like difference, and it
+                is also less than the airtime it costs: 24.0 s against 12.64 s is 2.8 dB more
+                energy per message, for 14 fewer payload bits. Per second on the air, z-30 is
+                slightly behind FT8, and the text below says so rather than quoting the
+                headline number on its own. */}
             <p className="text-[10px] text-[#888] leading-relaxed pt-1">
               All thresholds in this column are like-for-like: z-30's is its own blind-acquisition
               measurement, the others are published over-the-air figures, and both include the same
               acquisition, AFC and timing losses. z-30's genie-aided bound (-24.6 dB) is deliberately
-              <strong className="text-purple-300"> not</strong> in this table &mdash; it is roughly 3.5 dB
+              <strong className="text-purple-300"> not</strong> in this table &mdash; it is 1.5 dB
               optimistic and belongs beside no other mode's on-air number.
-              <strong className="text-[#D4D4D4]"> z-30 is level with FT8 on AWGN, not ahead of it.</strong>
+              <strong className="text-[#D4D4D4]"> z-30 decodes 2.1 dB deeper than FT8 while transmitting
+              for 1.9&times; as long (2.8 dB more energy) and carrying 14 fewer payload bits &mdash; so
+              it buys depth with airtime, and is marginally behind FT8 per second on the air.</strong>
             </p>
           </div>
 

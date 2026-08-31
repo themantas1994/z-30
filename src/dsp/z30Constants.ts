@@ -13,10 +13,11 @@
  * - Channel Coding: Systematic Irregular Repeat Accumulate (IRA) Low-Density Parity-Check code: (N=216, K=77), rate R = 77/216 ~ 0.356.
  * - Payload: 63 user information bits + a 14-bit CRC, g(x) = x^14 + x^13 + x^10 + x^6 + x + 1
  *   (register constant 0x2443 with x^14 implicit, init 0x2757, MSB-first).
- * - Sensitivity: the seeded AWGN benchmark with perfect synchronisation crosses 50% decode
- *   near -24.6 dB SNR in a 2500 Hz reference bandwidth. That is an idealised bound, not an
- *   over-the-air threshold, and is not comparable with FT8's published -21.0 dB, which
- *   includes the acquisition and AFC losses the bound excludes.
+ * - Sensitivity: the seeded AWGN benchmark crosses 50% decode near -23.1 dB SNR in a 2500 Hz
+ *   reference bandwidth through blind acquisition - the figure comparable with FT8's published
+ *   -21.0 dB, because both include the acquisition, AFC and timing losses. With perfect
+ *   synchronisation handed to the demodulator it crosses near -24.6 dB; that is an idealised
+ *   bound, not an over-the-air threshold, and must never be quoted beside another mode's.
  */
 
 import { BandDef, TxSlot } from '../types/z30';
@@ -87,14 +88,31 @@ export const Z30_SPECS = {
   // ---------------------------------------------------------------------------
   // Empirical Performance & Sensitivity Benchmarks
   // ---------------------------------------------------------------------------
-  /** 50% Packet Error Rate (PER) decode sensitivity in AWGN channel (referenced to standard 2500 Hz noise BW) */
-  SNR_THRESHOLD_AWGN: -25.0,
-  /** 90% Packet Error Rate (PER) decode sensitivity in AWGN channel */
-  SNR_THRESHOLD_90_AWGN: -24.0,
-  /** Decode threshold under severe CCIR 520 / ITU-R F.1487 Rayleigh ionospheric multipath fading (0.5 Hz Doppler) */
-  SNR_THRESHOLD_RAYLEIGH: -22.5,
-  /** Net link margin improvement over standard FT8 (-21.0 dB threshold), equivalent to a 2.5x transmitter ERP multiplier */
-  FT8_COMPARISON_GAIN_DB: 4.0,
+  // The measured decode thresholds, seed 20260830, referenced to a 2500 Hz noise bandwidth.
+  // Copied from wiki/16, which is the source of truth: if a DSP change moves the curve, the
+  // wiki table and these move together or one of them is lying. They held -25.0 / -24.0 / -22.5
+  // for years - values from no run anyone can identify, contradicting every other figure in
+  // the project - which they could, because nothing reads them.
+  /** 50% decode, AWGN, blind acquisition. The figure comparable with other modes' on-air numbers. */
+  SNR_THRESHOLD_AWGN: -23.1,
+  /** 90% decode, AWGN, blind acquisition. */
+  SNR_THRESHOLD_90_AWGN: -21.7,
+  /** 50% decode under CCIR 520 / ITU-R F.1487 moderate fading (1.0 ms delay / 0.5 Hz Doppler). */
+  SNR_THRESHOLD_RAYLEIGH: -21.3,
+  /**
+   * 50% decode with exact noise sigma, carrier and timing handed to the demodulator.
+   * A genie-aided BOUND, never an on-air threshold: never subtract another mode's published
+   * figure from this one. See AGENTS.md section 5.
+   */
+  SNR_IDEAL_BOUND_AWGN: -24.6,
+  // No FT8_COMPARISON_GAIN_DB. It held 4.0 - the retracted "+4.0 dB advantage over FT8", which
+  // was obtained by subtracting FT8's published on-air threshold from z-30's genie-aided bound,
+  // two different quantities. AGENTS.md section 5 names a "Gain vs FT8" tile computed that way
+  // as how the claim came back into the app after the wiki had already withdrawn it, and
+  // forbids computing any mode-to-mode delta from an ideal-mode figure. The constant was
+  // unreferenced, but leaving it here is leaving the claim loaded for whoever wires it up next.
+  // The like-for-like comparison lives in wiki/11, computed from realistic-mode measurements.
+
   
   // ---------------------------------------------------------------------------
   // Audio DSP & Baseband Sampling Specifications

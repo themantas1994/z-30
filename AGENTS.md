@@ -181,23 +181,27 @@ the test to match. Full rationale: [`wiki/13`](wiki/13-Operating-Safety-Complian
 The project has already had to retract a sensitivity claim, and the retraction is documented in
 the code and the wiki on purpose. Follow the same standard:
 
-- **`--mode realistic`** (random carrier and timing offsets, blind acquisition, receiver
-  estimates its own noise floor) produces a **decode threshold**: -21.1 dB at 50%, -18.0 dB at
-  90% on AWGN, 2500 Hz reference. This is the only figure comparable with other modes' published
-  numbers, and it puts z-30 **level with FT8, not ahead of it**.
+- **`--mode realistic`** (random carrier and timing offsets, blind acquisition, non-coherent
+  demodulation, receiver estimates its own noise floor) produces a **decode threshold**:
+  -23.1 dB at 50%, -21.7 dB at 90% on AWGN, 2500 Hz reference. This is the only figure
+  comparable with other modes' published numbers. It is **2.1 dB deeper than FT8's -21.0 dB,
+  bought with 2.8 dB more airtime (24.0 s against 12.64 s) and 14 fewer message bits** - quote
+  both halves or neither.
 - **`--mode ideal`** (exact noise sigma, carrier and timing handed to the demodulator) produces
   a **genie-aided bound**: -24.6 dB. Never compare it with another mode's on-air figure. The
-  3.5 dB gap is acquisition loss.
+  1.5 dB gap is acquisition loss.
 - Quote the seed, the frame count and the mode with any figure. Default seed: `20260830`.
 - **`z30_dsp/benchmark.py` is the reference instrument.** The in-app benchmark
   (`src/dsp/monteCarloEngine.ts`, Station Settings -> 5. Experimental Testing) runs the same two
-  modes and defaults to `realistic` too, but it is a bench instrument: it agrees closely on the
-  bound and reads about **1.8 dB more optimistic** on the threshold, because it searches a
-  narrower timing window. (Both languages run the identical four-schedule LDPC decoder cascade —
-  a prior version of this line and of `wiki/16` claimed otherwise; that was wrong and is
-  corrected below.) Use it to see which way a change moved the curve; confirm with a seeded
-  Python run before any number reaches documentation. [`wiki/16`](wiki/16-Benchmarking-Testing-&-CI.md)
-  has the side-by-side table.
+  modes, defaults to `realistic` too, and now models the same receiver: `SLOT_SEARCH_MARGIN_SEC`
+  and `REALISTIC_PILOT_COHERENCE` are shared constants, pinned across the two languages by
+  `tests/test_cross_language_parity.py`. The two land 0.1 dB apart on the AWGN threshold at the
+  same seed. It used to read 1.8 dB more optimistic, which `wiki/16` blamed on a narrower timing
+  window; measured paired, the timing window accounted for none of it and the Python side's
+  semi-coherent demodulator term accounted for all of it. Agreement is still not authority: use
+  the browser engine to see which way a change moved the curve, and confirm with a seeded Python
+  run before any number reaches documentation.
+  [`wiki/16`](wiki/16-Benchmarking-Testing-&-CI.md) has the side-by-side table.
 - **The word "threshold" is reserved for `realistic`.** No UI string, comment or document may
   call an `ideal`-mode result a threshold, and nothing may compute a z-30-vs-other-mode delta
   from one. A "Gain vs FT8" tile that subtracted a bound from FT8's on-air figure is how the

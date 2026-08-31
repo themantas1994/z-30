@@ -34,6 +34,28 @@ COARSE_FREQ_OVERSAMPLE = 8
 #: Spectrogram hops per symbol period.
 COARSE_TIME_OVERSAMPLE = 8
 
+#: Extra timing search either side of the station's own timing uncertainty, in seconds.
+#:
+#: z-30 is slot-synchronised: frames start on a 30-second UTC boundary, and a station whose
+#: clock is off by more than the slot guard cannot be worked at all. So a real receiver knows
+#: where the frame should begin to within its timing uncertainty, and searches a window around
+#: that - it does not search an arbitrary stream. The margin is what covers the receiver's own
+#: clock error on top of the transmitter's.
+#:
+#: Shared with src/dsp/monteCarloEngine.ts and pinned by tests/test_cross_language_parity.py:
+#: the two benchmark engines have to search the same window or they measure different things.
+SLOT_SEARCH_MARGIN_SEC = 0.05
+
+
+def slot_timing_search_sec(max_time_offset_sec: float) -> float:
+    """
+    Half-width of the timing search for a slot-synchronised receiver, in seconds.
+
+    `max_time_offset_sec` is the station timing uncertainty the run models (the benchmark's
+    --time-offset). The twin of the same expression in monteCarloEngine.ts's acquireFrame().
+    """
+    return float(max_time_offset_sec) + SLOT_SEARCH_MARGIN_SEC
+
 
 @dataclass(frozen=True)
 class Acquisition:
@@ -118,8 +140,12 @@ def acquire_frame(
         stream: real audio samples at `cfg.sample_rate_hz`, longer than one frame.
         nominal_base_freq_hz: where the frame is expected; the search spans +/- freq_search_hz.
         freq_search_hz: half-width of the carrier search, in Hz.
-        time_search_sec: half-width of the timing search. Defaults to searching the whole
-            stream, which is what a receiver with no prior timing knowledge must do.
+        time_search_sec: half-width of the timing search around the middle of the stream, where
+            a slot-synchronised receiver expects the frame. Pass `slot_timing_search_sec(...)`
+            for the model a real z-30 receiver runs. Defaults to searching the whole stream,
+            which is what a receiver with no prior timing knowledge would have to do - a
+            strictly harder problem than the one z-30 actually poses, and one that mis-locks on
+            noise more often simply because it is offered more chances to.
 
     Returns an `Acquisition`. `found` is False when nothing in the search space stands out
     from the noise floor, which is the honest answer at low SNR and is counted as a decode

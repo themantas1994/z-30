@@ -108,7 +108,9 @@ export interface MonteCarloConfig {
   qrmOffsetHz?: number; // e.g. +12.5 Hz co-channel interference
   qrmSirDb?: number; // Signal to Interference Ratio in dB
   maxLdpcIterations: number;
-  alphaMinSum: number;
+  // No alphaMinSum. It was a live input in the benchmark modal that fed a decoder which has
+  // never read it: the four schedules of Z30_DECODE_SCHEDULES carry their own alphas. Moving
+  // the slider changed the curve's label and nothing about the curve.
   /**
    * `realistic` (default) measures a decode threshold; `ideal` measures a genie-aided bound.
    * See MeasurementModeType. Mirrors the Python benchmark's `--mode` flag.
@@ -148,6 +150,42 @@ export interface MonteCarloConfig {
  */
 const ACQUISITION_SYNC_THRESHOLD_DB = 4.0;
 
+/**
+ * Extra timing search either side of the station's own timing uncertainty, in seconds.
+ *
+ * z-30 is slot-synchronised: frames start on a 30-second UTC boundary, so a real receiver
+ * knows where the frame should begin to within its timing uncertainty and searches a window
+ * around that rather than an arbitrary stream. The margin covers the receiver's own clock
+ * error on top of the transmitter's.
+ *
+ * The twin of `SLOT_SEARCH_MARGIN_SEC` in z30_dsp/acquisition.py, pinned by
+ * tests/test_cross_language_parity.py. The Python benchmark used to search its whole buffer
+ * instead, and wiki/16 named that difference as the reason the two engines' thresholds
+ * disagreed by 1.8 dB. It was not: measured paired over 200 frames from -26 to -22 dB, the two
+ * search widths produced zero discordant decodes. The engines now search the same window, and
+ * the real cause of the gap turned out to be the demodulator - see REALISTIC_PILOT_COHERENCE.
+ */
+export const SLOT_SEARCH_MARGIN_SEC = 0.05;
+
+/**
+ * Weight of the coherent term in the per-tone likelihood, in `realistic` mode.
+ *
+ * Zero: z-30's receiver is specified to demodulate non-coherently (AGENTS.md section 1), and
+ * under the timing error a blind acquisition actually leaves, the pilot-aided "coherent"
+ * contribution subtracts performance rather than adding it - a few milliseconds of timing
+ * error rotates each tone by 2*pi*f*dt, so the term is measured against the wrong phase
+ * reference and starts cancelling signal.
+ *
+ * The twin of `REALISTIC_PILOT_COHERENCE` in z30_dsp/benchmark.py, which carries the paired
+ * measurement that settled it: 59 discordant pairs across SNR -24/-23/-22/-21 dB at 40 frames
+ * per point, 55 won by the non-coherent receiver and 4 by the semi-coherent one, exact
+ * two-sided McNemar p = 1.7e-12.
+ *
+ * `ideal` mode keeps the pilot-distance-adaptive weight: it is handed perfect symbol timing,
+ * so the phase reference is exact and the coherent term is worth having.
+ */
+export const REALISTIC_PILOT_COHERENCE = 0.0;
+
 export const DEFAULT_MONTE_CARLO_CONFIG: MonteCarloConfig = {
   minSnrDb: -32.0,
   maxSnrDb: -22.0,
@@ -161,7 +199,6 @@ export const DEFAULT_MONTE_CARLO_CONFIG: MonteCarloConfig = {
   qrmOffsetHz: 15.0,
   qrmSirDb: -6.0,
   maxLdpcIterations: 45,
-  alphaMinSum: 0.75,
   // The honest default, matching `python -m z30_dsp.benchmark`'s own default. A benchmark
   // whose default mode produces a bound, presented in a modal that calls the result a
   // threshold, is how the retracted "+4 dB over FT8" claim happened the first time.
@@ -408,7 +445,7 @@ public synthesizePhysicalWaveform(
   /**
    * Builds the audio stream a receiver would actually be handed in realistic mode.
    *
-   * Three things the ideal path does not do, and which together cost about 3.5 dB:
+   * Three things the ideal path does not do, and which together cost about 1.5 dB:
    *   - the frame sits at a RANDOM carrier offset, not exactly on the nominal centre;
    *   - it starts at a RANDOM time, not at sample zero;
    *   - it is surrounded by noise-only audio, so the receiver has to find it.
@@ -529,7 +566,7 @@ public synthesizePhysicalWaveform(
   /**
    * Finds a z-30 frame in a stream using only the 21 Costas sync symbols.
    *
-   * The twin of z30_dsp/acquisition.py, and the reason a realistic run is worth about 3.5 dB
+   * The twin of z30_dsp/acquisition.py, and the reason a realistic run is worth about 1.5 dB
    * less than the genie-aided bound. Two stages, because a search fine enough to be useful is
    * too large to run directly:
    *   1. Coarse: a grid over start time (one fifth of a symbol) and carrier offset (1 Hz),
@@ -558,7 +595,9 @@ public synthesizePhysicalWaveform(
     const frameSamples = Z30_SPECS.TOTAL_SYMBOLS * nsps;
 
     const nominalStart = Math.round(((config.timingOffsetSec ?? 0.5) + 0.25) * sampleRateHz);
-    const timingSearch = Math.round(((config.timingOffsetSec ?? 0.5) + 0.05) * sampleRateHz);
+    const timingSearch = Math.round(
+      ((config.timingOffsetSec ?? 0.5) + SLOT_SEARCH_MARGIN_SEC) * sampleRateHz
+    );
     // Deliberately much wider than the offset actually applied: a receiver does not know how
     // far off the transmitter is, and a search that only just covers the true range flatters
     // the result. z30_dsp/acquisition.py searches +/-12 Hz by default; this matches it.
@@ -1182,13 +1221,9 @@ public synthesizePhysicalWaveform(
             acq.centreFreqHz,
             estimatedSigma,
             acq.startSample,
-            // Purely non-coherent, which is what z-30's receiver is specified to be
-            // (AGENTS.md §1) and what a receiver that has just acquired blind can actually
-            // support. Measured over 30 frames per point at the default seed, keeping the
-            // semi-coherent term costs 1-2 dB and caps the high-SNR end near 83% instead of
-            // 100%, because a few milliseconds of timing error rotates each tone by
-            // 2*pi*f*dt and the "coherent" contribution starts cancelling signal.
-            0
+            // See REALISTIC_PILOT_COHERENCE. z30_dsp/benchmark.py applies the same weight in
+            // realistic mode, which is what makes the two engines measure the same quantity.
+            REALISTIC_PILOT_COHERENCE
           );
           channelLlrs = demod.channelLlrs;
 

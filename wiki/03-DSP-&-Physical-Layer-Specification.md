@@ -19,8 +19,8 @@ This document provides the complete mathematical and signal processing specifica
 | **Guard / Processing Time** | $T_{\text{guard}}$ | **6.0 s** | FFT Framing + 3-Pass SIC + LDPC decode |
 | **Bits per Symbol** | $\log_2(M)$ | **4 bits/symbol** | $54 \times 4 = 216$ coded channel bits |
 | **FEC Code** | — | **IRA-LDPC (216, 77)** | Rate $R \approx 0.356$, dual-diagonal parity |
-| **AWGN Decode Threshold** | — | **-21.1 dB SNR (50%) / -18.0 dB SNR (90%)** | In a $2500\text{ Hz}$ noise bandwidth, through blind acquisition with random carrier ($\pm5$ Hz) and timing ($\pm0.5$ s) offsets. Comparable with the published on-air figures for FT8 and FT4. |
-| **Idealised AWGN Bound** | — | -24.6 dB SNR (50%) / -23.4 dB SNR (90%) | Exact noise sigma, exact carrier and perfect symbol timing given to the demodulator. A bound on the code, **not** an on-air threshold. The 3.5 dB gap is the acquisition loss. |
+| **AWGN Decode Threshold** | — | **-23.1 dB SNR (50%) / -21.7 dB SNR (90%)** | In a $2500\text{ Hz}$ noise bandwidth, through blind acquisition with random carrier ($\pm5$ Hz) and timing ($\pm0.5$ s) offsets, demodulated non-coherently. Comparable with the published on-air figures for FT8 and FT4. |
+| **Idealised AWGN Bound** | — | -24.6 dB SNR (50%) / -23.4 dB SNR (90%) | Exact noise sigma, exact carrier and perfect symbol timing given to the demodulator. A bound on the code, **not** an on-air threshold. The 1.5 dB gap is the acquisition loss. |
 
 ---
 

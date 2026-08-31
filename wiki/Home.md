@@ -33,14 +33,17 @@ Welcome to the technical documentation for **z-30**: an experimental open-source
 
 **z-30** is engineered for extreme HF, VHF, and microwave weak-signal amateur radio
 communications. It operates in synchronous **30.0-second UTC slots**, occupies **50.0 Hz**, and
-carries a 77-bit protected payload behind a rate-0.356 LDPC code.
+carries a 63-bit message plus a 14-bit CRC behind a rate-0.356 LDPC code.
 
 Its seeded benchmark — run through the real acquisition path, with random carrier and timing
-offsets and no knowledge of the noise level — crosses 50% decode at **-21.1 dB SNR** on AWGN
-and **-18.8 dB** on a CCIR-moderate fading path, in a 2500 Hz reference bandwidth. **That is
-level with FT8's published -21 dB, measured the same way.** The genie-aided bound, with exact
-carrier, timing and noise level handed to the demodulator, is 3.5 dB better at -24.6 dB; it is
-reported separately because no other mode's published figure is measured that way. See
+offsets, no knowledge of the noise level and non-coherent demodulation — crosses 50% decode at
+**-23.1 dB SNR** on AWGN and **-21.3 dB** on a CCIR-moderate fading path, in a 2500 Hz
+reference bandwidth. **That is 2.1 dB deeper than FT8's published -21 dB, measured the same
+way — and it costs 24.0 s of airtime against FT8's 12.64 s (2.8 dB more energy) for 14 fewer
+message bits, so z-30 buys depth with time rather than with a more efficient code.** The
+genie-aided bound, with exact carrier, timing and noise level handed to the demodulator, is
+1.5 dB better again at -24.6 dB; it is reported separately because no other mode's published
+figure is measured that way. See
 [16. Benchmarking, Testing & CI](16-Benchmarking-Testing-&-CI.md).
 
 ### Key technical innovations
