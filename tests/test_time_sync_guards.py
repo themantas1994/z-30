@@ -10,6 +10,8 @@ host move with it. So the default is that z-30 keeps the correction to itself.
 
 import json
 import os
+import pathlib
+import re
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -138,3 +140,67 @@ def test_every_user_file_lives_in_one_directory(isolated_home):
         paths.station_config_path(),
     ):
         assert os.path.dirname(path) == str(isolated_home)
+
+
+# -- the config writers, not just the path helpers --------------------------
+#
+# The helpers above were already correct while the two classes that actually write config.json
+# still carried their own bare "config.json" default and never called into paths.py at all. A
+# test that only exercises paths.default_config_path() cannot see that, which is how the fix
+# stayed half-applied: `z30 --wizard`, `z30 --tkinter` and `z30 --bands` went on writing into
+# whatever directory they were launched from.
+
+def test_settings_manager_writes_into_the_user_data_directory(isolated_home):
+    from z30_dsp.station_settings import SettingsManager
+
+    mgr = SettingsManager()
+    assert os.path.isabs(mgr.config_path)
+    assert os.path.dirname(mgr.config_path) == str(isolated_home)
+
+    assert mgr.save_config() is True
+    assert (isolated_home / "config.json").is_file()
+
+
+def test_band_manager_writes_the_same_file_as_the_settings_manager(isolated_home):
+    from z30_dsp.band_manager import BandManager
+    from z30_dsp.station_settings import SettingsManager
+
+    # Both classes persist into the operator's config.json. When they disagree about where it
+    # is, the setup wizard and the band manager silently edit two different files.
+    assert BandManager().config_path == SettingsManager().config_path
+    assert os.path.dirname(BandManager().config_path) == str(isolated_home)
+
+
+def test_no_config_writer_keeps_a_relative_default(isolated_home):
+    """
+    A bare "config.json" default anywhere is the bug paths.py was written to remove.
+
+    Checked by construction rather than by reading source, so a new writer that inherits the
+    default from somewhere else is caught too.
+    """
+    from z30_dsp.band_manager import BandManager
+    from z30_dsp.station_settings import SettingsManager
+
+    for path in (SettingsManager().config_path, BandManager().config_path):
+        assert os.path.isabs(path), f"{path} is relative to the launch directory"
+
+
+def test_the_tk_wizard_helper_does_not_default_to_a_relative_path():
+    """
+    `launch_config_wizard_if_needed` and `ConfigWizardDialog` both build a SettingsManager with
+    no path when the caller supplies none, which is how `z30 --wizard` reached the bare default.
+
+    config_wizard imports Tk at module scope, so on a headless box it cannot be imported at all
+    - which is exactly why its rules were split into station_settings.py. Read the signature
+    instead of importing it.
+    """
+    source = (
+        pathlib.Path(__file__).resolve().parents[1] / "z30_dsp" / "config_wizard.py"
+    ).read_text(encoding="utf-8")
+
+    signature = re.search(
+        r"def launch_config_wizard_if_needed\((.*?)\)\s*->", source, re.DOTALL
+    )
+    assert signature, "launch_config_wizard_if_needed not found"
+    assert 'config_path: str = "config.json"' not in signature.group(1)
+    assert "config_path: Optional[str] = None" in signature.group(1)

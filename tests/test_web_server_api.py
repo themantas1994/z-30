@@ -65,6 +65,7 @@ def server(tmp_path, monkeypatch, bridge):
         allowed_hosts = {f"127.0.0.1:{port}", f"localhost:{port}"}
 
     BoundHandler.gpio_bridge = bridge
+    BoundHandler.update_job = ws.UpdateJob()
     httpd = ws.ThreadedHTTPServer(sock, lambda *a, **k: BoundHandler(*a, directory=str(dist), **k))
     thread = threading.Thread(target=httpd.serve_forever, daemon=True)
     thread.start()
@@ -276,3 +277,61 @@ def test_bind_fails_loudly_rather_than_drifting_to_another_port():
         assert "--port" in str(excinfo.value)
     finally:
         first.close()
+
+
+# -- upstream update endpoints ---------------------------------------------
+#
+# The update endpoints fast-forward the operator's checkout of the software that keys their
+# transmitter, from a button in a browser. They sit behind the same token/Origin/Host triple
+# check as everything else here, and behind one guard of their own.
+
+def test_update_status_requires_the_token_like_every_other_endpoint(server):
+    status, _headers, body = request(server, "/api/update/status?fetch=0")
+    assert status == 403
+    assert "token" in json.loads(body)["error"].lower()
+
+
+def test_update_apply_requires_the_token(server):
+    status, _headers, body = request(
+        server, "/api/update/apply", {}, {"Content-Type": "text/plain"}
+    )
+    assert status == 403
+    assert "token" in json.loads(body)["error"].lower()
+
+
+def test_update_status_reports_the_checkout_without_touching_the_network(server):
+    status, _headers, body = request(server, "/api/update/status?fetch=0", None, authed())
+    assert status == 200
+    payload = json.loads(body)
+    assert payload["success"] is True
+    # Commits, not versions: there is no version field to compare and none is reported.
+    for key in ("behind", "ahead", "local_commit", "upstream_commit", "can_update", "pending"):
+        assert key in payload
+    assert "latest_version" not in payload
+
+
+def test_update_is_refused_while_the_transmitter_is_keyed(server, bridge):
+    """
+    Swapping the served bundle and the Python sources out from under a keyed transmitter is
+    not something to do to an operator who is on the air and not looking at the screen.
+    """
+    keyed = bridge.set_pin(17, True)
+    assert keyed["success"] is True
+    assert bridge.any_pin_keyed() is True
+
+    status, _headers, body = request(server, "/api/update/apply", {}, authed())
+    assert status == 409
+    assert "keyed" in json.loads(body)["error"].lower()
+
+    # And the refusal did not touch the transmitter on its way out.
+    assert bridge.any_pin_keyed() is True
+    bridge.set_pin(17, False)
+
+
+def test_update_progress_is_readable_before_any_update_has_run(server):
+    status, _headers, body = request(server, "/api/update/progress", None, authed())
+    assert status == 200
+    payload = json.loads(body)
+    assert payload["running"] is False
+    assert payload["log"] == []
+    assert payload["result"] is None

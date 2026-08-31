@@ -19,7 +19,7 @@ SEED = 20260830
 
 @pytest.fixture(scope="module")
 def codec() -> Z30LdpcCodec:
-    return Z30LdpcCodec(max_iterations=45, alpha=0.75)
+    return Z30LdpcCodec(max_iterations=45)
 
 
 def build_parity_check_matrix() -> np.ndarray:
