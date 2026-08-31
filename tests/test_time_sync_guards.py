@@ -8,6 +8,7 @@ clock arbitrarily, and TLS validity, log timestamps, cron and every other applic
 host move with it. So the default is that z-30 keeps the correction to itself.
 """
 
+import builtins
 import json
 import os
 import pathlib
@@ -17,7 +18,11 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 from z30_dsp import paths
-from z30_dsp.rf_time_sync import MAX_OS_CLOCK_STEP_SEC, TimeSyncSettingsManager
+from z30_dsp.rf_time_sync import (
+    MAX_OS_CLOCK_STEP_SEC,
+    AudioCaptureEngine,
+    TimeSyncSettingsManager,
+)
 
 
 @pytest.fixture(autouse=True)
@@ -112,6 +117,71 @@ def test_offset_round_trips_through_the_user_config(isolated_home):
 
 def test_offset_defaults_to_zero_when_no_config_exists():
     assert TimeSyncSettingsManager.get_app_time_offset() == 0.0
+
+
+# -- the audio backend probe -----------------------------------------------
+#
+# AudioCaptureEngine promises "seamless fallback to synthetic RF simulation when hardware is
+# unavailable". It only caught ImportError, so the one case the fallback exists for - a
+# sounddevice that is installed but whose PortAudio cannot be loaded, which is the normal state
+# under Termux on Android - propagated OSError out of the constructor instead. `z30 --sync` is
+# one of the three commands the Android installer says do work there.
+
+
+@pytest.fixture
+def refuse_audio_backends(monkeypatch):
+    """Makes `import sounddevice` / `import pyaudio` fail the way a missing PortAudio does."""
+
+    def make_import_raise(exc):
+        real_import = builtins.__import__
+
+        def guarded_import(name, *args, **kwargs):
+            if name in ("sounddevice", "pyaudio"):
+                raise exc
+            return real_import(name, *args, **kwargs)
+
+        monkeypatch.setattr(builtins, "__import__", guarded_import)
+
+    return make_import_raise
+
+
+@pytest.mark.parametrize(
+    "exc",
+    [
+        OSError("PortAudio library not found"),  # installed, but the C library will not load
+        ImportError("No module named 'sounddevice'"),  # not installed at all
+    ],
+    ids=["portaudio-will-not-load", "package-absent"],
+)
+def test_an_unusable_audio_backend_falls_back_to_the_simulator(refuse_audio_backends, exc):
+    refuse_audio_backends(exc)
+
+    engine = AudioCaptureEngine(sample_rate=8000)
+
+    assert engine.has_real_audio is False
+    samples = engine.capture_chunk(0.01)
+    assert len(samples) == 80
+    assert all(isinstance(s, float) for s in samples)
+
+
+def test_capture_survives_a_backend_that_fails_only_when_recording(monkeypatch):
+    """
+    has_real_audio can be True and the device still refuse to open - an empty device list is what
+    Termux reports. capture_chunk must return a synthetic block, not raise at the call site.
+    """
+    engine = AudioCaptureEngine(sample_rate=8000)
+    monkeypatch.setattr(engine, "has_real_audio", True)
+
+    real_import = builtins.__import__
+
+    def failing_sounddevice(name, *args, **kwargs):
+        if name == "sounddevice":
+            raise OSError("Error querying device -1")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", failing_sounddevice)
+
+    assert len(engine.capture_chunk(0.01)) == 80
 
 
 # -- user data paths -------------------------------------------------------

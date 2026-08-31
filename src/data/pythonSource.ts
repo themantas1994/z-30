@@ -5984,18 +5984,33 @@ class AudioCaptureEngine:
         self._check_audio_backend()
 
     def _check_audio_backend(self) -> None:
+        # Both probes catch broadly rather than \`except ImportError\`. An *installed* sounddevice
+        # whose PortAudio shared library is missing or unloadable raises OSError ("PortAudio
+        # library not found") out of cffi's dlopen at import time - not ImportError - and pyaudio
+        # fails the same way. That is the normal state under Termux on Android, where PortAudio
+        # binds neither OpenSL ES nor AAudio and the Termux build has ALSA and JACK compiled out,
+        # so pip installs sounddevice happily and importing it then throws. The ImportError-only
+        # guard therefore turned "seamless fallback to the simulator" into a crash on the one
+        # platform the fallback exists for. config_wizard.get_devices() already caught broadly;
+        # this path did not.
         try:
-            import sounddevice as sd
+            import sounddevice as sd  # noqa: F401
             self.has_real_audio = True
             logger.info("sounddevice backend detected for RF Time Sync.")
-        except ImportError:
-            try:
-                import pyaudio
-                self.has_real_audio = True
-                logger.info("PyAudio backend detected for RF Time Sync.")
-            except ImportError:
-                self.has_real_audio = False
-                logger.info("Using DSP Synthetic RF Simulator (zero external C-library dependencies).")
+            return
+        except Exception as ex:
+            logger.debug(f"sounddevice backend unavailable: {ex}")
+
+        try:
+            import pyaudio  # noqa: F401
+            self.has_real_audio = True
+            logger.info("PyAudio backend detected for RF Time Sync.")
+            return
+        except Exception as ex:
+            logger.debug(f"PyAudio backend unavailable: {ex}")
+
+        self.has_real_audio = False
+        logger.info("Using DSP Synthetic RF Simulator (zero external C-library dependencies).")
 
     def capture_chunk(self, duration_sec: float, target_station: Optional[TimeStationSpec] = None) -> List[float]:
         """Captures an audio block of specified duration in seconds."""
@@ -8732,6 +8747,7 @@ clock arbitrarily, and TLS validity, log timestamps, cron and every other applic
 host move with it. So the default is that z-30 keeps the correction to itself.
 """
 
+import builtins
 import json
 import os
 import pathlib
@@ -8741,7 +8757,11 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 from z30_dsp import paths
-from z30_dsp.rf_time_sync import MAX_OS_CLOCK_STEP_SEC, TimeSyncSettingsManager
+from z30_dsp.rf_time_sync import (
+    MAX_OS_CLOCK_STEP_SEC,
+    AudioCaptureEngine,
+    TimeSyncSettingsManager,
+)
 
 
 @pytest.fixture(autouse=True)
@@ -8836,6 +8856,71 @@ def test_offset_round_trips_through_the_user_config(isolated_home):
 
 def test_offset_defaults_to_zero_when_no_config_exists():
     assert TimeSyncSettingsManager.get_app_time_offset() == 0.0
+
+
+# -- the audio backend probe -----------------------------------------------
+#
+# AudioCaptureEngine promises "seamless fallback to synthetic RF simulation when hardware is
+# unavailable". It only caught ImportError, so the one case the fallback exists for - a
+# sounddevice that is installed but whose PortAudio cannot be loaded, which is the normal state
+# under Termux on Android - propagated OSError out of the constructor instead. \`z30 --sync\` is
+# one of the three commands the Android installer says do work there.
+
+
+@pytest.fixture
+def refuse_audio_backends(monkeypatch):
+    """Makes \`import sounddevice\` / \`import pyaudio\` fail the way a missing PortAudio does."""
+
+    def make_import_raise(exc):
+        real_import = builtins.__import__
+
+        def guarded_import(name, *args, **kwargs):
+            if name in ("sounddevice", "pyaudio"):
+                raise exc
+            return real_import(name, *args, **kwargs)
+
+        monkeypatch.setattr(builtins, "__import__", guarded_import)
+
+    return make_import_raise
+
+
+@pytest.mark.parametrize(
+    "exc",
+    [
+        OSError("PortAudio library not found"),  # installed, but the C library will not load
+        ImportError("No module named 'sounddevice'"),  # not installed at all
+    ],
+    ids=["portaudio-will-not-load", "package-absent"],
+)
+def test_an_unusable_audio_backend_falls_back_to_the_simulator(refuse_audio_backends, exc):
+    refuse_audio_backends(exc)
+
+    engine = AudioCaptureEngine(sample_rate=8000)
+
+    assert engine.has_real_audio is False
+    samples = engine.capture_chunk(0.01)
+    assert len(samples) == 80
+    assert all(isinstance(s, float) for s in samples)
+
+
+def test_capture_survives_a_backend_that_fails_only_when_recording(monkeypatch):
+    """
+    has_real_audio can be True and the device still refuse to open - an empty device list is what
+    Termux reports. capture_chunk must return a synthetic block, not raise at the call site.
+    """
+    engine = AudioCaptureEngine(sample_rate=8000)
+    monkeypatch.setattr(engine, "has_real_audio", True)
+
+    real_import = builtins.__import__
+
+    def failing_sounddevice(name, *args, **kwargs):
+        if name == "sounddevice":
+            raise OSError("Error querying device -1")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", failing_sounddevice)
+
+    assert len(engine.capture_chunk(0.01)) == 80
 
 
 # -- user data paths -------------------------------------------------------
@@ -9725,22 +9810,53 @@ fi
 
 echo "[1/4] Updating Termux repositories and installing packages..."
 pkg update -y
-# NOTE: the package is "libportaudio2" in the Termux repo, not "libportaudio" (which does not
-# exist there and would make this whole \`pkg install\` line fail).
-pkg install -y python python-numpy python-scipy clang fftw libportaudio2 termux-api nodejs git
+# These are hard requirements: z30_dsp/modem.py and z30_dsp/channel.py import numpy and scipy at
+# module scope, so failing here must stop the install rather than leave a half-working DSP.
+pkg install -y python python-numpy python-scipy clang fftw termux-api nodejs git
+
+# PortAudio is deliberately NOT on the line above, for two reasons.
+#
+# First, it is optional here - see the KNOWN LIMITATION below; it cannot carry audio on Android
+# either way. Second, which name resolves depends on the Termux repo the device is pointed at,
+# and this script cannot know that in advance. A name that does not resolve makes \`pkg install\`
+# exit non-zero, and under \`set -e\` that aborted the entire installation at step 1 over a library
+# the operator does not actually need. So each candidate is tried on its own and none of them can
+# take the install down with it.
+portaudio_pkg=""
+for candidate in portaudio libportaudio2 libportaudio; do
+  if pkg install -y "$candidate" >/dev/null 2>&1; then
+    portaudio_pkg="$candidate"
+    break
+  fi
+done
+if [ -n "$portaudio_pkg" ]; then
+  echo "[INFO] PortAudio installed from Termux package '$portaudio_pkg'."
+else
+  echo "[INFO] No PortAudio package resolved in this Termux repo - continuing without it."
+  echo "       Audio capture does not work under Termux regardless (see the notes below)."
+fi
+
 pip install --upgrade pip setuptools wheel
 # Pinned versions - see requirements.txt. numpy and scipy come from the Termux packages above
 # (building them from source under Termux is impractical), so they are excluded here.
 grep -vE '^(numpy|scipy)==' requirements.txt | pip install -r /dev/stdin
 
-# KNOWN LIMITATION (not something this script can fix): sounddevice/PortAudio have no reliable
-# access to Android's audio devices from inside Termux - device lists commonly come back empty
-# even with libportaudio2 installed and Termux:API microphone permission granted, because
-# Android does not expose raw ALSA/PortAudio-compatible hardware to Termux's Linux userspace.
-# Real-time RX/TX audio capture in the z-30 app is therefore not expected to work reliably on
-# Android; this script installs what it can, but treat Android as CLI/DSP-only (benchmark,
-# rf_time_sync, band_manager) rather than a full transceiver until Termux/Android gain proper
-# audio device access for third-party apps.
+# KNOWN LIMITATION (not something this script can fix): sounddevice/PortAudio have no access to
+# Android's audio devices from inside Termux. PortAudio binds neither of the host APIs Android
+# offers (OpenSL ES, AAudio), the Termux build has ALSA and JACK compiled out, and Android does
+# not expose raw ALSA-compatible hardware to Termux's Linux userspace in the first place - so
+# device lists come back empty no matter what is plugged into the USB OTG port and regardless of
+# whether Termux:API microphone permission was granted.
+#
+# Real-time RX/TX audio therefore does NOT work on Android under Termux, and neither does a USB
+# OTG audio interface such as a Digirig. This script installs what it can, but treat Android as
+# CLI/DSP-only (benchmark, rf_time_sync, band_manager) rather than a full transceiver until
+# Termux/Android gain proper audio device access for third-party apps. For on-air audio on
+# Android, use the PWA (wiki/09 section 4, Mode A) instead of Termux.
+#
+# Note that pip still installs sounddevice above (it is in requirements.txt). Importing it
+# without a loadable PortAudio raises OSError, not ImportError - z30_dsp/rf_time_sync.py catches
+# both, so \`z30 --sync\` falls back to its synthetic simulator here instead of crashing.
 
 echo "[2/4] Building React Web UI Bundle..."
 if command -v npm &> /dev/null; then

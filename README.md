@@ -94,8 +94,9 @@ z30
 **Windows 10 / 11** — install Python 3.9+ with *Add python.exe to PATH*, clone the repository,
 then double-click `run_windows.bat`.
 
-**Android** — install the PWA from the browser menu (*Install app*), or run
-`install_android_termux.sh` under Termux for USB-OTG audio and CAT in the field.
+**Android** — install the PWA from the browser menu (*Install app*), served over HTTPS or from
+`localhost`. `install_android_termux.sh` under Termux gives you the CLI and DSP tools only:
+Android exposes no audio devices to Termux, so it is not a transceiver there.
 
 **Any platform, from source**
 ```bash
