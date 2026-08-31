@@ -116,14 +116,23 @@ without leaving the app; quote the Python benchmark when you publish a number. M
 | Genie-aided bound, 50% | -24.6 dB | ≈ -24.2 dB |
 | AWGN blind acquisition, 50% | **-21.1 dB** | ≈ -22.9 dB |
 
-The two agree closely on the bound and differ by roughly 1.8 dB on the threshold, for two
-reasons worth knowing rather than papering over:
+The two agree closely on the bound and differ by roughly 1.8 dB on the threshold. One reason is
+real and worth knowing rather than papering over:
 
 1. **The timing search is narrower.** The browser searches ±0.55 s around the slot boundary,
    which is what a slot-synchronised receiver actually has to do; `acquire_frame` defaults to
    searching the whole stream. A narrower search mis-locks less often.
-2. **The decoders are not the same.** The browser runs a three-schedule min-sum cascade
-   (`ldpcCodec.ts`); the Python decoder runs a single normalised min-sum schedule.
+
+> **Correction (2026-08-31):** this page used to list a second reason - "the decoders are not the
+> same: the browser runs a three-schedule min-sum cascade; the Python decoder runs a single
+> normalised min-sum schedule." That was false in both directions. `z30_dsp/ldpc.py` and
+> `src/dsp/ldpcCodec.ts` have always run the identical **four**-schedule cascade described in
+> [04. Forward Error Correction & LDPC](04-Forward-Error-Correction-&-LDPC.md#the-four-decode-schedules).
+> A paired benchmark validated that the cascade design is genuinely better than the single-schedule
+> decoder this page mistakenly described (see "A worked example" below) - it just isn't the reason
+> the Python and browser thresholds disagree with each other, since both run the same one. What,
+> if anything beyond the timing-window difference above, accounts for the remaining gap has not
+> been measured; this page will not guess at a second reason again without a benchmark behind it.
 
 So: **the figures in this page and in the wiki come from the Python benchmark.** If you change
 the DSP, the browser engine will tell you quickly which way the curve moved; confirm the number
@@ -132,6 +141,48 @@ with a seeded Python run before it goes anywhere near documentation.
 One thing the browser engine is *not* free to differ on: `ideal` and `realistic` mean exactly
 what they mean here. A browser run in `ideal` mode is a bound, is labelled a bound in the UI,
 and the FT8 overlay is off by default and marked not-comparable when switched on.
+
+---
+
+## 🔬 A worked example: a benchmark challenging the wiki
+
+This is the case the rule in [`AGENTS.md` §5](../AGENTS.md#5-honest-numbers) ("benchmarks and
+test suites are the only challengers of the wiki") exists to generalise.
+
+While auditing the mismatch corrected above, the question was: which is actually the better
+decoder design - the single normalized min-sum schedule this page (wrongly) described, or the
+four-schedule cascade both codebases actually ship? That is answerable, and it was answered with
+a benchmark rather than an opinion:
+
+- A faithful, from-scratch reimplementation of the single-schedule design ($\alpha = 0.75$,
+  layered, forward-order, 45-iteration cap, no SPA/reverse/dither/Trellis-IRA step) was built
+  from this page's own prior text.
+- It was run **paired** against the real `Z30LdpcCodec.decode_min_sum` - the identical frame,
+  waveform and channel noise handed to both decoders in the same trial, seeded from
+  `DEFAULT_BENCHMARK_SEED` (`20260830`) - at SNR −24, −25 and −26 dB (2500 Hz reference, ideal
+  synchronisation), 80 frames per point.
+- Pairing turns every trial where the two decoders disagree into one vote for whichever design
+  decoded that frame. Across all three points: **23 disagreements, 23 of them won by the
+  cascade, 0 won by the single schedule.**
+
+| SNR | Frames | Cascade decode % | Single-schedule decode % | Cascade-only wins | Single-only wins |
+| :-- | --: | --: | --: | --: | --: |
+| −24 dB | 80 | 76.2% | 65.0% | 9 | 0 |
+| −25 dB | 80 | 27.5% | 15.0% | 10 | 0 |
+| −26 dB | 80 | 5.0% | 0.0% | 4 | 0 |
+
+An exact two-sided McNemar test on the pooled 23 discordant pairs (23 vs. 0) gives
+**p ≈ 4×10⁻⁷ — greater than 99.9999% confidence** that the cascade decodes more frames than the
+single schedule at these operating points, comfortably clearing the ≥99% bar `AGENTS.md` §5 sets
+for a result that changes the wiki. The trade-off side of that same result was recorded rather
+than left out: the cascade also costs 2-3× more iterations per frame near threshold (an average
+of 112.6 vs 40.5 iterations at −25 dB), which matters against the 4.5 s decode-plus-SIC budget in
+[03. DSP & Physical Layer Specification](03-DSP-&-Physical-Layer-Specification.md).
+
+The result: the wiki was corrected (this page and
+[04. Forward Error Correction & LDPC](04-Forward-Error-Correction-&-LDPC.md)), not the decoder.
+Nobody proposed reverting the code to match old documentation once the documentation was shown to
+describe the worse design.
 
 ---
 
