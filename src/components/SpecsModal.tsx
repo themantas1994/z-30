@@ -6,7 +6,7 @@ import React from 'react';
 import { X, ShieldCheck, Zap, Radio, Layers } from 'lucide-react';
 // Quoted from the codec itself rather than retyped: the prose here used to say 50 iterations
 // while both implementations stopped at 45.
-import { Z30_LDPC_PARAMS, LDPC_MAX_ITERATIONS } from '../dsp/ldpcCodec';
+import { LDPC_MAX_ITERATIONS, Z30_DECODE_SCHEDULES } from '../dsp/ldpcCodec';
 
 interface SpecsModalProps {
   isOpen: boolean;
@@ -100,7 +100,20 @@ export const SpecsModal: React.FC<SpecsModalProps> = ({ isOpen, onClose }) => {
               <li><strong>Code Rate:</strong> Systematic (216, 77) Irregular Repeat-Accumulate (IRA) LDPC code (R ~ 0.356).</li>
               <li><strong>Information Payload:</strong> 77 bits total (28-bit Call 1, 28-bit Call 2, 7-bit Grid/Report, 14-bit CRC parity check).</li>
               <li><strong>Channel Bits:</strong> 54 data symbols * 4 bits/symbol = 216 coded bits.</li>
-              <li><strong>Decoder:</strong> Vectorized Normalized Min-Sum Belief Propagation decoder with attenuation factor alpha = {Z30_LDPC_PARAMS.alphaMinSum} and up to {LDPC_MAX_ITERATIONS} iterations.</li>
+              <li>
+                <strong>Decoder:</strong> a cascade of {Z30_DECODE_SCHEDULES.length} belief-propagation schedules, tried in order and stopped
+                at the first whose hard decisions form a zero-syndrome codeword with a matching CRC-14. There is no single
+                attenuation factor: each schedule carries its own. Schedule 1's cap, {LDPC_MAX_ITERATIONS} iterations, is what a
+                well-formed frame converges within almost always.
+                <ul className="list-none pl-4 pt-1 space-y-0.5 text-[10px] text-[#9A9A9A]">
+                  {Z30_DECODE_SCHEDULES.map((sched, idx) => (
+                    <li key={idx}>
+                      {idx + 1}. {sched.mode === 'NMS' ? 'Normalized min-sum' : sched.mode === 'SPA' ? 'Log-domain sum-product (box-plus)' : 'Dithered normalized min-sum'}
+                      {sched.reverse ? ', reverse check order' : ''} &mdash; &alpha; = {sched.alpha}, &beta; = {sched.beta}, damping {sched.damping}, up to {sched.iters} iterations.
+                    </li>
+                  ))}
+                </ul>
+              </li>
             </ul>
           </div>
 

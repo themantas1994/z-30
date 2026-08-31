@@ -81,8 +81,8 @@ export const Z30_SPECS = {
   TOTAL_CODE_BITS: 54 * 4,
   /** Total information bit vector length including 63 payload bits and 14 CRC bits (K = 77 bits) */
   PAYLOAD_BITS: 77,
-  /** Systematic LDPC code rate representation string: Rate = 77/216 (~0.356) */
-  LDPC_CODE_RATE: '216/77',
+  /** Systematic LDPC code rate representation string: Rate = K/N = 77/216 (~0.356) */
+  LDPC_CODE_RATE: '77/216',
   
   // ---------------------------------------------------------------------------
   // Empirical Performance & Sensitivity Benchmarks

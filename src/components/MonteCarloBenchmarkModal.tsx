@@ -21,6 +21,7 @@ import {
   IDEAL_SWEEP_DEFAULTS,
 } from '../dsp/monteCarloEngine';
 import { DEFAULT_MONTE_CARLO_SEED } from '../dsp/seededRandom';
+import { Z30_DECODE_SCHEDULES } from '../dsp/ldpcCodec';
 import {
   X,
   Play,
@@ -242,7 +243,7 @@ export const MonteCarloBenchmarkModal: React.FC<MonteCarloBenchmarkModalProps> =
     })\n`;
     txt += `Seed: ${config.seed ?? '(unseeded)'} | Frames/point: ${config.framesPerPoint} | Channel: ${config.channelModel}\n`;
     txt += `Sim path: ${config.simulationMode} | Sample rate: ${config.sampleRateHz} Hz | Ref BW: 2500 Hz\n`;
-    txt += `FEC: Systematic IRA (216, 77) LDPC | Max Iters: ${config.maxLdpcIterations} | Alpha: ${config.alphaMinSum}\n`;
+    txt += `FEC: Systematic IRA (216, 77) LDPC | Max Iters: ${config.maxLdpcIterations} | Schedules: ${Z30_DECODE_SCHEDULES.map((s) => `${s.mode} a=${s.alpha}/${s.iters}it`).join(' -> ')}\n`;
     if (isRealistic) {
       txt += `Carrier offset: +/-${(config.carrierOffsetHz ?? 5).toFixed(1)} Hz | Timing offset: +/-${(config.timingOffsetSec ?? 0.5).toFixed(2)} s\n`;
     }
@@ -456,17 +457,17 @@ export const MonteCarloBenchmarkModal: React.FC<MonteCarloBenchmarkModalProps> =
               />
             </div>
             <div>
-              <label className="text-[10px] text-[#888] uppercase block mb-1">Min-Sum Alpha Scale:</label>
-              <input
-                type="number"
-                step="0.05"
-                min="0.5"
-                max="1.0"
-                value={config.alphaMinSum}
-                onChange={(e) => setConfig({ ...config, alphaMinSum: parseFloat(e.target.value) || 0.75 })}
-                disabled={progress.isRunning}
-                className="w-full bg-[#080808] border border-[#333] px-2 py-1 text-zinc-300 text-xs font-bold focus:outline-none"
-              />
+              {/* Not an input. There used to be a "Min-Sum Alpha Scale" box here, and nothing
+                  in the decoder read it - decodeMinSum() applies the four alphas below. An
+                  input that cannot move the curve is worse than no input. */}
+              <label className="text-[10px] text-[#888] uppercase block mb-1">Decode Schedules:</label>
+              <div className="w-full bg-[#080808] border border-[#333] px-2 py-1 text-zinc-400 text-[10px] leading-tight">
+                {Z30_DECODE_SCHEDULES.map((s, i) => (
+                  <div key={i}>
+                    {i + 1}. {s.mode} &alpha;={s.alpha} &le;{s.iters}it
+                  </div>
+                ))}
+              </div>
             </div>
             <div>
               {/* Editable, and shown, because AGENTS.md §5 requires the seed to be quoted with
