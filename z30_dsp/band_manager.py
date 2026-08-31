@@ -15,6 +15,8 @@ import logging
 from typing import Dict, Optional, Tuple, Callable, List
 from dataclasses import dataclass, asdict
 
+from z30_dsp.paths import default_config_path
+
 # Configure logging
 logging.basicConfig(level=logging.INFO, format="[%(asctime)s] %(levelname)s - %(message)s")
 logger = logging.getLogger("z30.BandManager")
@@ -152,8 +154,12 @@ class BandManager:
     and automatic transceiver frequency tuning via Hamlib CAT.
     """
 
-    def __init__(self, config_path: str = "config.json", hamlib_client: Optional[HamlibCatClient] = None):
-        self.config_path = config_path
+    def __init__(self, config_path: Optional[str] = None, hamlib_client: Optional[HamlibCatClient] = None):
+        # Resolved through z30_dsp.paths for the same reason SettingsManager is: this reads and
+        # writes the operator's config.json, the same file the setup wizard writes. A bare
+        # relative default here meant `z30 --bands` and `z30 --wizard` could edit two different
+        # files depending on which directory each was launched from.
+        self.config_path = config_path or default_config_path()
         self.hamlib = hamlib_client or HamlibCatClient()
         self.bands: Dict[str, int] = dict(DEFAULT_BANDS)
         self.active_band: str = "20m"
@@ -234,6 +240,9 @@ class BandManager:
         data["dial_frequency_hz"] = self.active_frequency_hz
 
         try:
+            parent = os.path.dirname(os.path.abspath(self.config_path))
+            if parent:
+                os.makedirs(parent, exist_ok=True)
             with open(self.config_path, "w", encoding="utf-8") as f:
                 json.dump(data, f, indent=2)
             logger.info(f"Saved band configuration to {self.config_path}")
@@ -576,7 +585,7 @@ except ImportError:
 
 def main():
     """Command-line interface for testing BandManager."""
-    bm = BandManager("config.json")
+    bm = BandManager()
 
     if len(sys.argv) > 1:
         cmd = sys.argv[1].lower()
