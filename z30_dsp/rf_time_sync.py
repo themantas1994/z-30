@@ -659,18 +659,33 @@ class AudioCaptureEngine:
         self._check_audio_backend()
 
     def _check_audio_backend(self) -> None:
+        # Both probes catch broadly rather than `except ImportError`. An *installed* sounddevice
+        # whose PortAudio shared library is missing or unloadable raises OSError ("PortAudio
+        # library not found") out of cffi's dlopen at import time - not ImportError - and pyaudio
+        # fails the same way. That is the normal state under Termux on Android, where PortAudio
+        # binds neither OpenSL ES nor AAudio and the Termux build has ALSA and JACK compiled out,
+        # so pip installs sounddevice happily and importing it then throws. The ImportError-only
+        # guard therefore turned "seamless fallback to the simulator" into a crash on the one
+        # platform the fallback exists for. config_wizard.get_devices() already caught broadly;
+        # this path did not.
         try:
-            import sounddevice as sd
+            import sounddevice as sd  # noqa: F401
             self.has_real_audio = True
             logger.info("sounddevice backend detected for RF Time Sync.")
-        except ImportError:
-            try:
-                import pyaudio
-                self.has_real_audio = True
-                logger.info("PyAudio backend detected for RF Time Sync.")
-            except ImportError:
-                self.has_real_audio = False
-                logger.info("Using DSP Synthetic RF Simulator (zero external C-library dependencies).")
+            return
+        except Exception as ex:
+            logger.debug(f"sounddevice backend unavailable: {ex}")
+
+        try:
+            import pyaudio  # noqa: F401
+            self.has_real_audio = True
+            logger.info("PyAudio backend detected for RF Time Sync.")
+            return
+        except Exception as ex:
+            logger.debug(f"PyAudio backend unavailable: {ex}")
+
+        self.has_real_audio = False
+        logger.info("Using DSP Synthetic RF Simulator (zero external C-library dependencies).")
 
     def capture_chunk(self, duration_sec: float, target_station: Optional[TimeStationSpec] = None) -> List[float]:
         """Captures an audio block of specified duration in seconds."""
