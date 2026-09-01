@@ -23,10 +23,10 @@
 
 numpy==2.2.6
 scipy==1.15.3
-sounddevice==0.5.2
-cffi==1.17.1
+sounddevice==0.5.6
+cffi==2.1.1
 pyserial==3.5
-requests==2.33.0
+requests==2.34.2
 
 # Optional: real GPIO PTT keying on a Raspberry Pi or similar SBC.
 # gpiozero==2.0.1
