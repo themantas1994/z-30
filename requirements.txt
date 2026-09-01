@@ -15,13 +15,18 @@
 #     pip install --require-hashes -r requirements.lock
 #
 # Bump these deliberately, together, and re-run the test suite afterwards.
+#
+# requests was moved 2.32.4 -> 2.33.0 on 2026-09-01 for PYSEC-2026-2275, which the new pip-audit
+# CI leg reported on its first run. That is the leg doing its job: pinning exact versions is
+# right for a DSP suite, and it also means nothing otherwise tells anyone when a pin picks up a
+# known vulnerability.
 
 numpy==2.2.6
 scipy==1.15.3
 sounddevice==0.5.2
 cffi==1.17.1
 pyserial==3.5
-requests==2.32.4
+requests==2.33.0
 
 # Optional: real GPIO PTT keying on a Raspberry Pi or similar SBC.
 # gpiozero==2.0.1

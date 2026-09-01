@@ -95,9 +95,23 @@ satisfy all three of:
 No wildcard `Access-Control-Allow-Origin` header is sent anywhere, only the single configured
 BCM pin can be driven, and the rigctld relay will only talk to loopback daemons.
 
-`tests/test_web_server_api.py` asserts every one of these. A change that makes any of them pass
-without the token, from a foreign `Origin`, or against an arbitrary GPIO pin is a regression,
-not a convenience.
+The listening socket is bound **exclusively**, and the option that achieves that differs by
+platform. `SO_REUSEADDR` on POSIX permits rebinding an address still in `TIME_WAIT`, which is
+what a restart needs. On Windows the same constant permits binding a port another socket is
+*actively listening on* — so a second instance bound the same port, both processes reported
+success, and the OS decided which one received a given connection. Since the server mints a
+bearer token per start, that decides which process the browser is actually talking to.
+`bind_listening_socket` therefore sets `SO_EXCLUSIVEADDRUSE` on Windows and `SO_REUSEADDR`
+elsewhere.
+
+> Found by the Windows CI leg added on 2026-09-01: the "fails loudly rather than drifting to
+> another port" test passed on Linux and failed on Windows, because the behaviour it asserts
+> genuinely was not there. Every job before that ran on `ubuntu-latest` only.
+
+`tests/test_web_server_api.py` asserts every one of these, including the per-platform socket
+option. A change that makes any of them pass without the token, from a foreign `Origin`, against
+an arbitrary GPIO pin, or that lets a second instance share the port is a regression, not a
+convenience.
 
 ---
 

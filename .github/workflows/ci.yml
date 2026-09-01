@@ -10,6 +10,15 @@ on:
   pull_request:
   workflow_dispatch:
 
+# Least privilege for GITHUB_TOKEN, set once at workflow level so every job inherits it.
+# Without this block the token is granted whatever the repository default is - historically
+# read/write on everything, including `contents`, which is push access to the branch that keys
+# operators' transmitters. Nothing here needs more than the ability to read the checkout; a job
+# that later needs more should ask for it in its own `permissions:`, not widen this one.
+# Reported by CodeQL (github/workflows/ci.yml, "Workflow does not contain permissions").
+permissions:
+  contents: read
+
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true

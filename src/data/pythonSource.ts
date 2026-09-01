@@ -2300,7 +2300,26 @@ def bind_listening_socket(port: int) -> Tuple[socket.socket, int]:
     behaviour; \`--port\` is there for the rare case where 3000 really must be avoided.
     """
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    # SO_REUSEADDR means opposite things on the two platforms, and only one of them is what this
+    # function wants.
+    #
+    # On POSIX it permits rebinding an address still in TIME_WAIT from a previous run - which is
+    # exactly right here, so a restart of z-30 does not have to wait out the old socket.
+    #
+    # On Windows it permits binding a port ANOTHER SOCKET IS ACTIVELY LISTENING ON. So a second
+    # instance bound the same port, both processes "succeeded", and which one received a given
+    # connection was up to the OS. That defeats the guarantee this whole function exists to give
+    # - and it is worse than the drift it replaced, because the loopback API hands out a bearer
+    # token per start: whichever process wins a connection is the one the browser talks to.
+    # Microsoft's documented answer is SO_EXCLUSIVEADDRUSE, which refuses the second bind.
+    #
+    # Found by the Windows CI leg: tests/test_web_server_api.py's "fails loudly rather than
+    # drifting" case passed on Linux and failed on Windows, because the behaviour it asserts
+    # genuinely was not there.
+    if sys.platform == "win32":
+        sock.setsockopt(socket.SOL_SOCKET, getattr(socket, "SO_EXCLUSIVEADDRUSE", 1), 1)
+    else:
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     try:
         sock.bind(("127.0.0.1", port))
     except OSError as exc:
@@ -8923,6 +8942,8 @@ dead-man switch that bounds a keyed transmitter.
 
 import json
 import os
+import socket
+import sys
 import threading
 import time
 import urllib.error
@@ -9292,6 +9313,38 @@ def test_bind_fails_loudly_rather_than_drifting_to_another_port():
         assert "--port" in str(excinfo.value)
     finally:
         first.close()
+
+
+def test_the_listening_socket_uses_the_right_exclusivity_option_for_this_platform():
+    """
+    SO_REUSEADDR means opposite things on POSIX and Windows, and only the POSIX meaning is the
+    one wanted here.
+
+    On POSIX it permits rebinding an address still in TIME_WAIT - what a restart needs. On
+    Windows it permits binding a port another socket is ACTIVELY listening on, so two instances
+    both bind, both "succeed", and the OS decides which one receives a given connection. On a
+    server that mints a bearer token per start, that decides which process the browser is
+    talking to. The test above could not see this on Linux; the Windows CI leg could.
+
+    Asserted from the socket the function actually returns, per platform, rather than by reading
+    the branch back out of the source.
+    """
+    sock, _port = ws.bind_listening_socket(0)
+    try:
+        if sys.platform == "win32":
+            exclusive = getattr(socket, "SO_EXCLUSIVEADDRUSE")
+            assert sock.getsockopt(socket.SOL_SOCKET, exclusive) != 0, (
+                "SO_EXCLUSIVEADDRUSE is not set, so a second instance can bind this same port"
+            )
+            assert sock.getsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR) == 0, (
+                "SO_REUSEADDR is set on Windows, where it permits hijacking an active port"
+            )
+        else:
+            assert sock.getsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR) != 0, (
+                "SO_REUSEADDR is not set, so a restart must wait out TIME_WAIT"
+            )
+    finally:
+        sock.close()
 
 
 # -- upstream update endpoints ---------------------------------------------

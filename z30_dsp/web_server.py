@@ -81,7 +81,26 @@ def bind_listening_socket(port: int) -> Tuple[socket.socket, int]:
     behaviour; `--port` is there for the rare case where 3000 really must be avoided.
     """
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    # SO_REUSEADDR means opposite things on the two platforms, and only one of them is what this
+    # function wants.
+    #
+    # On POSIX it permits rebinding an address still in TIME_WAIT from a previous run - which is
+    # exactly right here, so a restart of z-30 does not have to wait out the old socket.
+    #
+    # On Windows it permits binding a port ANOTHER SOCKET IS ACTIVELY LISTENING ON. So a second
+    # instance bound the same port, both processes "succeeded", and which one received a given
+    # connection was up to the OS. That defeats the guarantee this whole function exists to give
+    # - and it is worse than the drift it replaced, because the loopback API hands out a bearer
+    # token per start: whichever process wins a connection is the one the browser talks to.
+    # Microsoft's documented answer is SO_EXCLUSIVEADDRUSE, which refuses the second bind.
+    #
+    # Found by the Windows CI leg: tests/test_web_server_api.py's "fails loudly rather than
+    # drifting" case passed on Linux and failed on Windows, because the behaviour it asserts
+    # genuinely was not there.
+    if sys.platform == "win32":
+        sock.setsockopt(socket.SOL_SOCKET, getattr(socket, "SO_EXCLUSIVEADDRUSE", 1), 1)
+    else:
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     try:
         sock.bind(("127.0.0.1", port))
     except OSError as exc:
