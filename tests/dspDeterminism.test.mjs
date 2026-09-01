@@ -20,6 +20,8 @@ import {
   addCalibratedAwgn,
   awgnSeedFromWaveform,
   findCandidates,
+  measureNoiseFloorDb,
+  runSicMultiPass,
   SIC_MIN_PEAK_DB,
   SIC_MAX_CANDIDATES,
 } from '../src/dsp/realReceiver.ts';
@@ -203,6 +205,66 @@ group('the SIC candidate detector is deterministic and shares its constants (B2)
     spurious.length <= 3,
     `${spurious.length} candidates from noise alone`
   );
+}
+
+// ------------------------------------------- D4: the SIC residual floor is a real measurement
+
+group('the SIC residual floor is measured off the buffer, not invented (B3)');
+
+{
+  // The SIC pass diagnostics used to carry `-14.2 - (pass - 1) * 14.3` - an arithmetic
+  // progression shaped like a measurement. These checks derive their expectations from the
+  // arrays under test, so a constant (or any formula ignoring the buffer) cannot satisfy them.
+  const rng = createSeededRandom(0x51c);
+  const noise = new Float32Array(CLEAN.length);
+  for (let i = 0; i < noise.length; i += 1) noise[i] = rng.normal() * 0.05;
+
+  const floorDb = measureNoiseFloorDb(noise, SAMPLE_RATE);
+  check('a real buffer yields a finite measurement', Number.isFinite(floorDb), String(floorDb));
+
+  // Scaling every sample by k raises a genuine power measurement by exactly 20*log10(k) dB.
+  // The expectation comes from the scale factor applied to the data, not from a recorded value.
+  const scale = 2;
+  const louder = new Float32Array(noise.length);
+  for (let i = 0; i < noise.length; i += 1) louder[i] = noise[i] * scale;
+  const measuredShift = measureNoiseFloorDb(louder, SAMPLE_RATE) - floorDb;
+  const expectedShift = 20 * Math.log10(scale);
+  check(
+    'scaling the buffer moves the measurement by exactly that scaling in dB',
+    Math.abs(measuredShift - expectedShift) < 0.01,
+    `expected ${expectedShift.toFixed(4)} dB, measured ${measuredShift.toFixed(4)} dB`
+  );
+
+  const quieter = new Float32Array(noise.length);
+  for (let i = 0; i < noise.length; i += 1) quieter[i] = noise[i] * 0.25;
+  check('a quieter buffer measures a lower floor', measureNoiseFloorDb(quieter, SAMPLE_RATE) < floorDb);
+
+  check(
+    'a buffer too short to measure reports null rather than a number',
+    measureNoiseFloorDb(new Float32Array(16), SAMPLE_RATE) === null
+  );
+}
+
+{
+  // Nothing decodes out of pure noise, so pass 1 leaves the residual untouched - the floor it
+  // reports must therefore equal an independent measurement of the very buffer it scanned.
+  const rng = createSeededRandom(0xf100);
+  const noise = new Float32Array(CLEAN.length);
+  for (let i = 0; i < noise.length; i += 1) noise[i] = rng.normal() * 0.05;
+
+  const result = runSicMultiPass(noise, SAMPLE_RATE, 3, 200, 3000, 1.5);
+  check('the result reports the passes that ran', result.passes.length >= 1, JSON.stringify(result.passes));
+  check('no frame decodes out of pure noise', result.frames.length === 0, String(result.frames.length));
+  check(
+    'pass 1 reports the measured floor of the buffer it scanned',
+    result.passes[0].residualFloorDb === measureNoiseFloorDb(noise, SAMPLE_RATE),
+    `${result.passes[0].residualFloorDb} vs ${measureNoiseFloorDb(noise, SAMPLE_RATE)}`
+  );
+
+  const reproducesWithdrawn = result.passes.some(
+    (p, i) => p.residualFloorDb !== null && Math.abs(p.residualFloorDb - (-14.2 - i * 14.3)) < 1e-9
+  );
+  check('no pass reports the withdrawn hardcoded progression', !reproducesWithdrawn, JSON.stringify(result.passes));
 }
 
 if (failures > 0) {

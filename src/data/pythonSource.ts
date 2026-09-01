@@ -2238,8 +2238,10 @@ answered every /api/ request with \`Access-Control-Allow-Origin: *\` and no othe
 meant an advertisement in an unrelated tab could key the operator's transmitter.
 
 Every /api/ request must now satisfy all of:
-  * a bearer token (\`X-Z30-Token\`, or \`?token=\`) generated fresh at each server start and
-    injected only into the index.html this process serves;
+  * a bearer token in the \`X-Z30-Token\` header, generated fresh at each server start and
+    injected only into the index.html this process serves. Header only - the \`?token=\`
+    query-string form this docstring used to advertise is deliberately not accepted, because
+    a live credential in a URL leaks into browser history, \`Referer\` and request logs;
   * an \`Origin\` header that is either absent or exactly this server's own origin;
   * a \`Host\` header naming this server's own loopback address and port (blocks DNS rebinding).
 No wildcard CORS header is sent anywhere.
@@ -2570,17 +2572,25 @@ class GpioBridge:
         """Unkeys every claimed pin and releases it. Registered with atexit and the signal handlers."""
         with self._lock:
             for pin, device in self._devices.items():
+                unkeyed = True
                 try:
                     # off() is the RELEASED state for either polarity, because the device was
                     # built with active_high set from the station's wiring.
                     device.off()
-                except Exception:
-                    pass
+                except Exception as exc:
+                    # Report what actually happened. This used to log "Released ... on shutdown"
+                    # unconditionally, so a pin whose off() raised - and which may therefore still
+                    # be keying the transmitter - left a log line claiming it had been released.
+                    # This is the last of the three PTT-release layers; if it fails, the operator's
+                    # only warning is this line.
+                    unkeyed = False
+                    logger.error(f"FAILED to unkey GPIO BCM pin {pin} on shutdown: {exc}")
                 try:
                     device.close()
-                except Exception:
-                    pass
-                logger.info(f"Released GPIO BCM pin {pin} on shutdown.")
+                except Exception as exc:
+                    logger.warning(f"Could not close GPIO BCM pin {pin} on shutdown: {exc}")
+                if unkeyed:
+                    logger.info(f"Released GPIO BCM pin {pin} on shutdown.")
             self._devices.clear()
             self._pin_active_low.clear()
             self._keyed_pins.clear()

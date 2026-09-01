@@ -98,29 +98,31 @@ export function synthesizeReplica(symbols: number[], baseFreqHz: number, sampleR
 }
 
 /**
- * Real spectral peak detector over an arbitrary captured buffer: windowed FFT-equivalent
- * (Goertzel-free direct DFT magnitude via a real FFT is unnecessary at this resolution - a
- * plain O(N log N) FFT is used), noise floor from the median bin, local-maxima extraction at
- * least minPeakDb above it, deduplicated within one occupied bandwidth of each other.
+ * Averages the buffer's spectrum into tone-spacing-wide groups across [minFreqHz, maxFreqHz].
+ *
+ * A zero-padded FFT of a ~24s buffer yields a very fine bin spacing (a small fraction of a
+ * Hz) - far finer than needed (we only need to localize energy to within one 16-MFSK comb,
+ * i.e. ~toneSpacingHz resolution) and, with that many independent noise bins, a fixed
+ * "X dB over the median" threshold produces many spurious peaks by chance (order-statistics
+ * of a large sample size). Averaging fine bins into toneSpacingHz-wide groups (a standard
+ * periodogram-smoothing / Bartlett's-method step) both matches the resolution we actually
+ * need and makes the noise-floor and peak-detection statistics reliable again.
+ *
+ * Shared by findCandidates and measureNoiseFloorDb so the detector's own threshold and the
+ * SIC pass diagnostics report one measurement rather than two independent estimates of
+ * "the floor" that can drift apart.
+ *
+ * Returns null when the buffer is too short to measure at all, so a caller reports "not
+ * measured" rather than a plausible-looking number.
  */
-export function findCandidates(
+function spectralGroupsDb(
   buffer: Float32Array,
   sampleRateHz: number,
-  minFreqHz: number = 200,
-  maxFreqHz: number = 3000,
-  minPeakDb: number = SIC_MIN_PEAK_DB,
-  maxCandidates: number = SIC_MAX_CANDIDATES
-): Candidate[] {
-  const n = buffer.length;
-  if (n < 64) return [];
+  minFreqHz: number,
+  maxFreqHz: number
+): { groupDb: Float32Array; groupMinIdx: number; groupHz: number; numGroups: number } | null {
+  if (buffer.length < 64) return null;
 
-  // A zero-padded FFT of a ~24s buffer yields a very fine bin spacing (a small fraction of a
-  // Hz) - far finer than needed (we only need to localize energy to within one 16-MFSK comb,
-  // i.e. ~toneSpacingHz resolution) and, with that many independent noise bins, a fixed
-  // "X dB over the median" threshold produces many spurious peaks by chance (order-statistics
-  // of a large sample size). Averaging fine bins into toneSpacingHz-wide groups (a standard
-  // periodogram-smoothing / Bartlett's-method step) both matches the resolution we actually
-  // need and makes the noise-floor and peak-detection statistics reliable again.
   const { mags, fftSize } = realFftMagnitudes(buffer);
   const fineBinHz = sampleRateHz / fftSize;
   const groupHz = TONE_SPACING_HZ;
@@ -129,7 +131,7 @@ export function findCandidates(
   const groupMinIdx = Math.max(0, Math.floor(minFreqHz / groupHz));
   const groupMaxIdx = Math.floor(maxFreqHz / groupHz);
   const numGroups = groupMaxIdx - groupMinIdx + 1;
-  if (numGroups < 3) return [];
+  if (numGroups < 3) return null;
 
   const groupDb = new Float32Array(numGroups);
   for (let g = 0; g < numGroups; g++) {
@@ -144,8 +146,53 @@ export function findCandidates(
     groupDb[g] = count > 0 ? 10.0 * Math.log10(Math.max(powerSum / count, 1e-12)) : -999;
   }
 
-  const sortedGroups = Array.from(groupDb).sort((a, b) => a - b);
-  const noiseFloorDb = sortedGroups[Math.floor(sortedGroups.length / 2)];
+  return { groupDb, groupMinIdx, groupHz, numGroups };
+}
+
+/** Median group power in dB - the twin of `noise_floor_db` in z30_dsp/sic_decoder.py. */
+function medianGroupDb(groupDb: Float32Array): number {
+  const sorted = Array.from(groupDb).sort((a, b) => a - b);
+  return sorted[Math.floor(sorted.length / 2)];
+}
+
+/**
+ * Measures the noise/interference floor of a buffer, in dB, from the buffer's own samples.
+ *
+ * This is what the SIC pass diagnostics report after each cancellation. They used to carry a
+ * hardcoded arithmetic progression (`-14.2 - (pass - 1) * 14.3`) that looked like a measurement
+ * and was not one - the same class of invented figure as the collision decode rates AGENTS.md
+ * section 5 records as withdrawn. Returns null when the buffer is too short to measure, so an
+ * unmeasurable pass says so instead of showing a number.
+ */
+export function measureNoiseFloorDb(
+  buffer: Float32Array,
+  sampleRateHz: number,
+  minFreqHz: number = 200,
+  maxFreqHz: number = 3000
+): number | null {
+  const groups = spectralGroupsDb(buffer, sampleRateHz, minFreqHz, maxFreqHz);
+  return groups ? medianGroupDb(groups.groupDb) : null;
+}
+
+/**
+ * Real spectral peak detector over an arbitrary captured buffer: windowed FFT-equivalent
+ * (Goertzel-free direct DFT magnitude via a real FFT is unnecessary at this resolution - a
+ * plain O(N log N) FFT is used), noise floor from the median bin, local-maxima extraction at
+ * least minPeakDb above it, deduplicated within one occupied bandwidth of each other.
+ */
+export function findCandidates(
+  buffer: Float32Array,
+  sampleRateHz: number,
+  minFreqHz: number = 200,
+  maxFreqHz: number = 3000,
+  minPeakDb: number = SIC_MIN_PEAK_DB,
+  maxCandidates: number = SIC_MAX_CANDIDATES
+): Candidate[] {
+  const groups = spectralGroupsDb(buffer, sampleRateHz, minFreqHz, maxFreqHz);
+  if (!groups) return [];
+  const { groupDb, groupMinIdx, groupHz, numGroups } = groups;
+
+  const noiseFloorDb = medianGroupDb(groupDb);
   const thresholdDb = noiseFloorDb + minPeakDb;
   const minSpacingGroups = Math.max(1, Math.round(Z30_SPECS.TOTAL_BANDWIDTH_HZ / groupHz));
 
@@ -626,6 +673,24 @@ export interface RealDecodedFrame {
   ldpcIterations: number;
 }
 
+/** What one SIC pass actually did, measured rather than assumed. */
+export interface SicPassMeasurement {
+  passNumber: 1 | 2 | 3;
+  /**
+   * Noise/interference floor of the residual buffer after this pass's cancellations, measured
+   * by measureNoiseFloorDb. Null when the buffer was too short to measure.
+   */
+  residualFloorDb: number | null;
+  /** Frames that decoded during this pass. */
+  decodes: number;
+}
+
+export interface SicMultiPassResult {
+  frames: RealDecodedFrame[];
+  /** One entry per pass that ran, in order. */
+  passes: SicPassMeasurement[];
+}
+
 /**
  * Full multi-pass Successive Interference Cancellation pipeline on a real captured audio
  * buffer: real FFT candidate detection, joint timing+frequency acquisition, pilot-aided LLR
@@ -642,14 +707,14 @@ export function runSicMultiPass(
   minFreqHz: number = 200,
   maxFreqHz: number = 3000,
   maxDtSec: number = 1.5
-): RealDecodedFrame[] {
+): SicMultiPassResult {
   const residual = new Float32Array(paddedBuffer);
   const results: RealDecodedFrame[] = [];
+  const passes: SicPassMeasurement[] = [];
   const frameLength = TOTAL_SYMBOLS * samplesPerSymbolFor(sampleRateHz);
 
   for (let pass = 1; pass <= maxPasses; pass++) {
     const candidates = findCandidates(residual, sampleRateHz, minFreqHz, maxFreqHz);
-    if (candidates.length === 0) break;
 
     let newDecodes = 0;
     for (const cand of candidates) {
@@ -693,10 +758,18 @@ export function runSicMultiPass(
       }
     }
 
-    if (newDecodes === 0) break;
+    // Measured after this pass's cancellations, off the residual buffer as it now stands - so
+    // the reported floor moves because the subtraction moved it, not because a formula said so.
+    passes.push({
+      passNumber: pass as 1 | 2 | 3,
+      residualFloorDb: measureNoiseFloorDb(residual, sampleRateHz, minFreqHz, maxFreqHz),
+      decodes: newDecodes,
+    });
+
+    if (candidates.length === 0 || newDecodes === 0) break;
   }
 
-  return results;
+  return { frames: results, passes };
 }
 
 /**

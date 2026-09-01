@@ -35,6 +35,7 @@ import {
   demodulateReal,
   addCalibratedAwgn,
   RealDecodedFrame,
+  SicPassMeasurement,
 } from './realReceiver';
 
 /** Internal DSP processing rate for the real receiver pipeline (independent of the mic's hardware rate). */
@@ -50,8 +51,16 @@ export interface SicIterationStep {
   passNumber: 1 | 2 | 3;
   /** Human-readable explanation of actions taken during this pass */
   description: string;
-  /** Estimated residual noise/interference floor power in dB */
-  residualPowerDb: number;
+  /**
+   * Residual noise/interference floor after this pass's cancellations, in dB, measured off the
+   * residual buffer by measureNoiseFloorDb.
+   *
+   * Null means no measurement exists for this pass - the receiver was blanked, or no audio
+   * window was captured. It used to be a hardcoded arithmetic progression that produced a
+   * plausible-looking dB figure in exactly those cases, which is the shape of invented number
+   * AGENTS.md section 5 exists to keep out of this project.
+   */
+  residualPowerDb: number | null;
   /** List of signals resolved during this specific pass */
   signalsFound: DecodedSignal[];
   /** Identifier of dominant signal that was subtracted to enable this pass */
@@ -149,7 +158,8 @@ export class Z30SicDecoderEngine {
       steps.push({
         passNumber: 1,
         description: 'Pass 1 (Direct LDPC): Station actively transmitting on RF. Receiver front-end muted / self-decode inhibited.',
-        residualPowerDb: -40.0,
+        // Blanked receiver: there is no residual buffer to measure.
+        residualPowerDb: null,
         signalsFound: [],
       });
       this.lastIterationSteps = steps;
@@ -163,6 +173,7 @@ export class Z30SicDecoderEngine {
     // ==========================================================================
     let realFrames: RealDecodedFrame[] = [];
     let hadCaptureWindow = false;
+    let passMeasurements: SicPassMeasurement[] = [];
 
     if (audioEngine.isContinuousCaptureActive()) {
       const trueNowMs = Date.now() + timeOffsetMs;
@@ -177,7 +188,9 @@ export class Z30SicDecoderEngine {
       const capturedWindow = audioEngine.getCaptureWindow(windowStartLocalMs, windowDurationSec, DSP_SAMPLE_RATE_HZ);
       if (capturedWindow) {
         hadCaptureWindow = true;
-        realFrames = runSicMultiPass(capturedWindow, DSP_SAMPLE_RATE_HZ, 3, 200, 3000, MAX_DT_SEC);
+        const sicResult = runSicMultiPass(capturedWindow, DSP_SAMPLE_RATE_HZ, 3, 200, 3000, MAX_DT_SEC);
+        realFrames = sicResult.frames;
+        passMeasurements = sicResult.passes;
       }
     }
 
@@ -219,7 +232,8 @@ export class Z30SicDecoderEngine {
         description: hadCaptureWindow
           ? 'Pass 1 (Direct LDPC): Passband scanned (200 - 3000 Hz). No external carriers decoded.'
           : 'Pass 1 (Direct LDPC): No captured RX audio window available (microphone inactive or window not yet ready).',
-        residualPowerDb: -35.0,
+        // Measured off the scanned buffer when there was one; null when there was no audio to measure.
+        residualPowerDb: passMeasurements[0]?.residualFloorDb ?? null,
         signalsFound: [],
       });
       this.lastIterationSteps = steps;
@@ -248,7 +262,9 @@ export class Z30SicDecoderEngine {
       steps.push({
         passNumber,
         description: `${passDescriptions[passNumber]} (${signals.length} signal${signals.length === 1 ? '' : 's'}).`,
-        residualPowerDb: -14.2 - (passNumber - 1) * 14.3,
+        // Injected self-test frames never went through runSicMultiPass, so a pass made up
+        // entirely of those has no measured residual - it reports null rather than a stand-in.
+        residualPowerDb: passMeasurements.find((m) => m.passNumber === passNumber)?.residualFloorDb ?? null,
         signalsFound: [...signals],
         cancelledSignalId: passNumber > 1 ? byPass.get((passNumber - 1) as 1 | 2)?.[0]?.id : undefined,
       });
