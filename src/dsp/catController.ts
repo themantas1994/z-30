@@ -29,6 +29,13 @@ import {
   sendRigctlCommand,
   setGpioPin,
 } from './localServerApi';
+import {
+  RigStateTracker,
+  DEFAULT_POLL_INTERVAL_MS,
+  RigResolution,
+  RigStateSnapshot,
+  describeRigResolution,
+} from './rigStateTracker';
 import { StationConfig, PttMethodType } from '../types/z30';
 import { getRigByName, CURRENT_HAMLIB_VERSION } from './hamlibCatalog';
 import {
@@ -279,6 +286,28 @@ export class CatController {
   private commandHistory: RigctlLogItem[] = [];
   private currentBandIdx: number = 5; // 20m
 
+  /**
+   * What the RADIO says, as against what it was told - see `src/dsp/rigStateTracker.ts`.
+   *
+   * `currentFreqHz` above is, and remains, the dial this software commanded: it is assigned from
+   * the argument at the top of setFreqHz() before anything reaches the wire, and a refused or
+   * undelivered command does not move it back. That is fine as the app's own VFO, and it is not
+   * fine as the thing a band-plan check is run against, which is what canTransmit() was doing.
+   * This tracker holds the other half - the dial read back off the rig - so the gate can tell
+   * "the radio is on 14.076" apart from "we asked for 14.076".
+   */
+  private rigState = new RigStateTracker();
+  /** Repeating readback poll. Only ever runs on the Hamlib path; see startRigPolling(). */
+  private rigPollTimer: ReturnType<typeof setInterval> | null = null;
+  /** Guards against a slow poll being re-entered by the next tick and queueing relay requests. */
+  private rigPollInFlight: boolean = false;
+  /**
+   * The last mismatch written to the rig log, so a rig parked 5 kHz away does not add a line
+   * every second. WSJT-X compiles its poll tracing out by default (`TRACE_CAT_POLL`) for the
+   * same reason: a diagnostic surface that scrolls once a second is not one an operator reads.
+   */
+  private lastLoggedDialMismatchHz: number | null = null;
+
   // Hardware Web Serial Port handle
   private serialPort: WebSerialPortLike | null = null;
   private serialReader: ReadableStreamDefaultReader<Uint8Array> | null = null;
@@ -369,6 +398,15 @@ export class CatController {
     this.hamlibHost = host || '127.0.0.1';
     this.hamlibPort = port || 4532;
     this.hamlibRelayEnabled = enabled;
+    // Readback follows the transport, because the transport is what decides whether readback is
+    // possible at all. Restarting it here also discards state read from the previous endpoint:
+    // a dial verified against the rigctld the operator just switched away from is not evidence
+    // about the rig in front of them now.
+    // stop-then-start, in that order, so a switch of endpoint discards what the old one said.
+    this.stopRigPolling();
+    if (this.useHamlibRelay()) {
+      this.startRigPolling();
+    }
   }
 
   /**
@@ -462,6 +500,10 @@ export class CatController {
     if (bandIdx !== -1) {
       this.currentBandIdx = bandIdx;
     }
+    // Tell the tracker what was asked for BEFORE the write, so that a poll answering with the
+    // pre-QSY dial while this command is still in flight is spent as one of the settling
+    // retries rather than reported as the rig disobeying.
+    this.rigState.noteRequestedDial(this.currentFreqHz);
     const sent = await this.sendRigFrequency(this.currentFreqHz);
     // Logged from the outcome, not from the intent. A dial the radio never received used to
     // appear in the rig log as a successful set_freq, so an operator comparing the app's VFO
@@ -489,6 +531,7 @@ export class CatController {
     const targetHz = Math.round(dialFreqHz ?? band.dialFreqHz);
     this.currentFreqHz = targetHz;
     this.currentBandIdx = HAM_BANDS.indexOf(band);
+    this.rigState.noteRequestedDial(targetHz);
     const sent = await this.sendRigFrequency(targetHz);
     this.logCommand(
       `set_freq ${targetHz}`,
@@ -515,6 +558,7 @@ export class CatController {
 
   public async setMode(mode: string): Promise<boolean> {
     this.currentMode = mode.toUpperCase();
+    this.rigState.noteRequestedMode(this.currentMode);
     const sent = await this.sendRigMode(this.currentMode);
     this.logCommand(
       `set_mode ${mode}`,
@@ -531,6 +575,7 @@ export class CatController {
    * meaningful protocol to speak to a device that isn't there or isn't identified.
    */
   private async sendRigFrequency(hz: number): Promise<boolean> {
+    await this.awaitPttSettle();
     if (this.useHamlibRelay()) {
       return this.relayRigctl(`F ${Math.round(hz)}`);
     }
@@ -547,6 +592,7 @@ export class CatController {
   }
 
   private async sendRigMode(mode: string): Promise<boolean> {
+    await this.awaitPttSettle();
     if (this.useHamlibRelay()) {
       // rigctld takes a mode name plus a passband in Hz; 0 asks it to use the rig's default.
       return this.relayRigctl(`M ${mode} 0`);
@@ -561,6 +607,25 @@ export class CatController {
       return this.sendHardwareText(yaesuSetMode(mode));
     }
     return false;
+  }
+
+  /**
+   * Holds off CAT traffic for a moment after a PTT transition.
+   *
+   * WSJT-X sleeps 100 ms after every PTT change in `TransceiverBase::set`, with the comment
+   * "some rigs cannot process CAT commands while switching from Tx to Rx". A frequency or mode
+   * command written into that window can be dropped by the rig, or answered with an error that
+   * looks like a CAT fault; a readback poll taken in it answers with whichever side of the
+   * transition the rig happens to be on.
+   *
+   * It is applied here, in front of the commands that follow a transition, rather than inside
+   * setPtt() where WSJT-X puts it. Same protection, but keying returns as promptly as it did
+   * before: keying happens in the first moments of a 30 s slot and 100 ms of it is not free.
+   */
+  private async awaitPttSettle(): Promise<void> {
+    const remainingMs = this.rigState.pttSettleRemainingMs();
+    if (remainingMs <= 0) return;
+    await new Promise<void>((resolve) => setTimeout(resolve, remainingMs));
   }
 
   /**
@@ -640,7 +705,9 @@ export class CatController {
    * @param config - The current station configuration.
    * @param audioOffsetHz - Audio-passband offset of the transmitted signal, added to the dial
    *   frequency to obtain the frequency actually radiated.
-   * @param dialFreqHz - Dial frequency in Hz; defaults to the controller's tracked VFO.
+   * @param dialFreqHz - Dial frequency in Hz; defaults to the controller's tracked VFO. Where
+   *   the rig can be read back (Hamlib), this is additionally checked against the dial the
+   *   radio itself reports - see step 4.
    */
   public canTransmit(
     config: StationConfig,
@@ -712,6 +779,35 @@ export class CatController {
       }
     }
 
+    // 4. What the RADIO says, when there is a radio that can be asked.
+    //
+    //    Steps 1-3 all reason about the dial this software commanded. That is the one thing in
+    //    the gate that nothing had ever checked against the hardware: `currentFreqHz` is
+    //    assigned from the argument at the top of setFreqHz() before a byte reaches the wire and
+    //    is never revised, so a `set_freq` the daemon refused, a rig switched off mid-session,
+    //    or an operator who turned the VFO by hand all left steps 1-3 validating a band segment
+    //    the transmitter was not in, and then keying it. WSJT-X's answer is to poll the rig and
+    //    treat only the reading as knowledge (`Transceiver/PollingTransceiver.cpp`); this is
+    //    that reading, reaching the gate.
+    //
+    //    It refuses only on positive evidence of a mismatch. No reading at all - Direct Serial,
+    //    which has no response parser, or a VOX station with no CAT link, or a page with no
+    //    native server behind it - is "unverified", not "wrong", and must not be a refusal: a
+    //    gate that blocked every station that cannot read its rig back would be turned off by
+    //    the first operator who met it, and steps 1-3 still apply to all of them. Nor does it
+    //    refuse while a QSY is still settling, or over a difference the rig's own measured
+    //    tuning resolution accounts for. See rigStateTracker.ts for each of those.
+    const mismatch = this.rigState.dialDisagreement(dial);
+    if (mismatch) {
+      violations.push(
+        `The radio reports its dial at ${(mismatch.reportedHz / 1e6).toFixed(6)} MHz, but this ` +
+        `transmission was checked against ${(mismatch.commandedHz / 1e6).toFixed(6)} MHz ` +
+        `(${(mismatch.errorHz / 1000).toFixed(3)} kHz away). The band-plan check above is ` +
+        'therefore about a frequency the transmitter is not on. Re-send the frequency, or check ' +
+        'that rigctld still has the radio.'
+      );
+    }
+
     return {
       allowed: violations.length === 0,
       violations,
@@ -751,6 +847,9 @@ export class CatController {
     options?: PttHardwareOptions
   ): Promise<boolean> {
     this.pttState = tx;
+    // Opens the settle window as well as recording the request: awaitPttSettle() reads it, so
+    // any CAT command that follows this transition waits for the rig to finish switching.
+    this.rigState.noteRequestedPtt(tx);
 
     // The release path must drive the SAME pin/host the key path drove. Callers that unkey
     // without repeating the options object used to fall straight through to the hardcoded
@@ -983,6 +1082,256 @@ export class CatController {
     // Belt and braces: drop every other keying path too, in case the configured method was
     // not the one actually holding the line.
     this.releasePttEmergency();
+  }
+
+  /**
+   * Starts polling the rig for its real state.
+   *
+   * The readback half of WSJT-X's model (`PollingTransceiver`). Only the Hamlib path can do
+   * this: `rigctld` already carries a response parser for every rig it supports, whereas
+   * Direct Serial mode in this app writes bytes and never reads any - the serial reader handle
+   * is only ever cancelled, never assigned - so there is nothing to read a reply with. Rather
+   * than pretend otherwise, stations on Direct Serial simply have no verified state, and the
+   * gate treats that as "unverified", not as "wrong" (see canTransmit step 4).
+   *
+   * Polls are non-intrusive by construction, which is the requirement `Transceiver.hpp` states
+   * for its sync operation: `f` and `t` only read. Nothing here changes a VFO, so an operator
+   * tuning the dial is not fighting the software for it.
+   */
+  public startRigPolling(intervalMs: number = DEFAULT_POLL_INTERVAL_MS): void {
+    // Clears any existing timer WITHOUT resetting the tracker. Starting a poll must not throw
+    // away a tuning resolution that was just measured: testCatConnection() probes the rig and
+    // then starts polling, and a reset here silently returned the tolerance to a strict 1 Hz -
+    // which on any 10 Hz rig means a disagreement reported on every single poll, from hardware
+    // behaving exactly as designed. Discarding tracked state is stopRigPolling()'s job.
+    this.clearRigPollTimer();
+    if (!this.useHamlibRelay()) return;
+    this.rigPollTimer = setInterval(() => {
+      void this.pollRigOnce();
+    }, Math.max(200, Math.round(intervalMs)));
+    // Poll once immediately so the first transmit decision of a session is not made against a
+    // tracker that has never heard from the radio.
+    void this.pollRigOnce();
+  }
+
+  public stopRigPolling(): void {
+    this.clearRigPollTimer();
+    this.rigState.reset();
+    this.lastLoggedDialMismatchHz = null;
+  }
+
+  private clearRigPollTimer(): void {
+    if (this.rigPollTimer) {
+      clearInterval(this.rigPollTimer);
+      this.rigPollTimer = null;
+    }
+  }
+
+  /** True when the readback poll is running. */
+  public isRigPollingActive(): boolean {
+    return this.rigPollTimer !== null;
+  }
+
+  /** What the radio last reported, for the rig faceplate and the diagnostics panel. */
+  public getRigStateSnapshot(): RigStateSnapshot {
+    return this.rigState.snapshot();
+  }
+
+  /**
+   * The dial the radio itself reports, or null when nothing recent enough has been read back.
+   * Null means unverified, not zero.
+   */
+  public getVerifiedDialHz(): number | null {
+    return this.rigState.verifiedDialHz();
+  }
+
+  /**
+   * Reads the rig once and folds the answer into the tracker.
+   *
+   * Deliberately silent on the happy path. Every other command in this class writes a line to
+   * the rig control log, because every other command is something the operator did; a poll is
+   * something the software does once a second, and logging it would bury the operator's own
+   * commands under a thousand lines an hour. Only the transitions get logged - contact lost,
+   * contact regained, and a dial that disagrees - because those are the ones worth reading.
+   */
+  private async pollRigOnce(): Promise<void> {
+    if (this.rigPollInFlight) return;
+    if (!this.useHamlibRelay()) {
+      this.noteRigOffline('CAT is not routed through the rigctld relay');
+      return;
+    }
+    // Leave the rig alone while it is switching between transmit and receive.
+    if (this.rigState.inPttSettleWindow()) return;
+
+    this.rigPollInFlight = true;
+    try {
+      const freqReply = await sendRigctlCommand('f', this.hamlibHost, this.hamlibPort, 1.0);
+      if (!freqReply.success) {
+        this.noteRigOffline(freqReply.error || 'the rigctld relay did not answer');
+        return;
+      }
+      const raw = (freqReply.data?.response || '').trim();
+      const dialHz = Number.parseInt(raw.split(/\s+/)[0] || '', 10);
+      if (raw.startsWith('RPRT') || !Number.isFinite(dialHz) || dialHz <= 0) {
+        this.noteRigOffline(`rigctld could not read the VFO ("${raw || 'empty reply'}")`);
+        return;
+      }
+
+      // PTT readback is best-effort: a daemon started with "-P NONE" refuses `t`, which says
+      // nothing about whether the frequency reading is good. Losing the frequency is what takes
+      // the rig offline; losing PTT just leaves that field unreported.
+      let ptt: boolean | undefined;
+      const pttReply = await sendRigctlCommand('t', this.hamlibHost, this.hamlibPort, 1.0);
+      if (pttReply.success) {
+        const pttRaw = (pttReply.data?.response || '').trim().split(/\s+/)[0] || '';
+        if (pttRaw === '0' || pttRaw === '1') ptt = pttRaw === '1';
+      }
+
+      const wasOffline = !this.rigState.isOnline();
+      this.rigState.observe({ dialHz, ptt });
+      if (wasOffline) {
+        this.logCommand(
+          'f',
+          `rig readback established: VFO ${(dialHz / 1e6).toFixed(6)} MHz` +
+            (ptt === undefined ? '' : `, PTT ${ptt ? 'keyed' : 'released'}`),
+          'OK'
+        );
+      }
+      this.reportDialMismatch();
+    } finally {
+      this.rigPollInFlight = false;
+    }
+  }
+
+  /**
+   * Records that contact with the rig is lost, once.
+   *
+   * See RigStateTracker.goOffline for why this does not also drop PTT the way WSJT-X's
+   * `offline()` does: on this app the keying line is usually not on the CAT link at all, so a
+   * failed poll is not evidence about the transmitter, and unkeying on one would truncate a
+   * frame every time the relay hiccupped. What it does do - stop the last reading counting as
+   * verification - is the half that protects the band-plan check.
+   */
+  private noteRigOffline(reason: string): void {
+    if (!this.rigState.isOnline()) return;
+    this.rigState.goOffline(reason);
+    this.lastLoggedDialMismatchHz = null;
+    this.logCommand('f', `rig readback lost: ${reason}. The dial is unverified from here on.`, 'ERROR');
+  }
+
+  /** Logs a settled dial mismatch, once per distinct frequency the rig reports. */
+  private reportDialMismatch(): void {
+    const mismatch = this.rigState.dialDisagreement(this.currentFreqHz);
+    if (!mismatch) {
+      this.lastLoggedDialMismatchHz = null;
+      return;
+    }
+    if (this.lastLoggedDialMismatchHz === mismatch.reportedHz) return;
+    this.lastLoggedDialMismatchHz = mismatch.reportedHz;
+    this.logCommand(
+      'f',
+      `The radio reports ${(mismatch.reportedHz / 1e6).toFixed(6)} MHz but this app commanded ` +
+        `${(mismatch.commandedHz / 1e6).toFixed(6)} MHz (${(mismatch.errorHz / 1000).toFixed(3)} kHz out). ` +
+        'Transmit is blocked until they agree.',
+      'ERROR'
+    );
+  }
+
+  /**
+   * Measures how finely the rig actually tunes, and tells the tracker.
+   *
+   * A direct port of the probe in `HamlibTransceiver::do_start`: command a frequency ending in
+   * 55, read back what the rig made of it, and classify the difference. A rig that truncates to
+   * 100 Hz answers 55 Hz low, one that rounds to 10 Hz answers 5 Hz high, and so on.
+   *
+   * Without this the readback check is unusable on any rig coarser than 1 Hz: it would report a
+   * disagreement on every poll, on hardware behaving exactly as designed, and an operator would
+   * quite reasonably respond by turning the check off. Measuring beats assuming in both
+   * directions - assuming 100 Hz slack for everybody would hand a 1 Hz rig 99 Hz of unearned
+   * tolerance at a band edge.
+   *
+   * WSJT-X only probes when the current dial is already a multiple of 10 Hz; a rig sitting on an
+   * odd Hz has demonstrated 1 Hz resolution and needs no probing. It restores the original
+   * frequency afterwards, and so does this.
+   *
+   * Returns null when the probe could not be run (no relay, keyed, or the rig would not answer),
+   * which leaves the tracker on its strict 1 Hz default.
+   */
+  public async probeRigResolution(): Promise<RigResolution | null> {
+    if (!this.useHamlibRelay()) return null;
+    // Never while transmitting: this writes frequencies to the rig.
+    if (this.pttState) return null;
+
+    const readDial = async (): Promise<number | null> => {
+      const reply = await sendRigctlCommand('f', this.hamlibHost, this.hamlibPort, 2.0);
+      if (!reply.success) return null;
+      const raw = (reply.data?.response || '').trim();
+      if (raw.startsWith('RPRT')) return null;
+      const hz = Number.parseInt(raw.split(/\s+/)[0] || '', 10);
+      return Number.isFinite(hz) && hz > 0 ? Math.round(hz) : null;
+    };
+    const writeDial = async (hz: number): Promise<boolean> =>
+      this.relayRigctl(`F ${Math.round(hz)}`);
+
+    const original = await readDial();
+    if (original === null) return null;
+    if (original % 10 !== 0) {
+      // The rig is parked on a frequency a coarse rig could not produce.
+      this.rigState.setResolution(0);
+      this.logCommand('F', `rig tunes to 1 Hz (dial ${original} Hz is not a multiple of 10)`, 'OK');
+      return 0;
+    }
+
+    let resolution: RigResolution = 0;
+    try {
+      const testHz = original - (original % 100) + 55;
+      if (!(await writeDial(testHz))) return null;
+      const readback = await readDial();
+      if (readback === null) return null;
+      switch (readback - testHz) {
+        case -5:
+          resolution = -1; // 10 Hz truncated
+          break;
+        case 5:
+          resolution = 1; // 10 Hz rounded
+          break;
+        case -15:
+          resolution = -2; // 20 Hz truncated
+          break;
+        case -55:
+          resolution = -3; // 100 Hz truncated
+          break;
+        case 45:
+          resolution = 3; // 100 Hz rounded
+          break;
+        default:
+          resolution = 0; // landed where it was told
+          break;
+      }
+      if (resolution === 1) {
+        // 10 Hz rounded and 20 Hz rounded are indistinguishable from the first probe; WSJT-X
+        // disambiguates with a second one.
+        const testHz2 = original - (original % 100) + 51;
+        if (await writeDial(testHz2)) {
+          const readback2 = await readDial();
+          if (readback2 !== null && readback2 - testHz2 === 9) {
+            resolution = 2; // 20 Hz rounded
+          }
+        }
+      }
+    } finally {
+      // Put the rig back where the operator left it, whatever happened above.
+      await writeDial(original);
+      this.rigState.noteRequestedDial(original);
+    }
+
+    this.rigState.setResolution(resolution);
+    this.logCommand(
+      'F',
+      `rig tuning resolution measured: ${describeRigResolution(resolution)} (WSJT-X code ${resolution})`,
+      'OK'
+    );
+    return resolution;
   }
 
   public getSplit(): boolean {
@@ -1547,9 +1896,25 @@ export class CatController {
 
     this.currentFreqHz = reported;
     this.isConnected = true;
+    this.rigState.noteRequestedDial(reported);
+
+    // A verified link is the moment to do what WSJT-X does at `do_start`: find out how finely
+    // this rig actually tunes, then start reading it back. The probe moves the VFO by a few tens
+    // of Hz and puts it back, so it belongs here - behind a button the operator pressed - rather
+    // than on an automatic path that might fire mid-QSO.
+    const resolution = await this.probeRigResolution();
+    this.startRigPolling();
+
+    const resolutionNote =
+      resolution === null
+        ? ' Tuning resolution could not be measured, so the readback check assumes 1 Hz.'
+        : ` Tuning resolution measured at ${describeRigResolution(resolution)}; the dial is now polled and verified.`;
+
     return {
       success: true,
-      message: `✓ Hamlib rigctld Link Verified: ${rigName} at ${host}:${port} reported VFO ${(reported / 1e6).toFixed(6)} MHz.`,
+      message:
+        `✓ Hamlib rigctld Link Verified: ${rigName} at ${host}:${port} reported VFO ` +
+        `${(reported / 1e6).toFixed(6)} MHz.${resolutionNote}`,
       vfoHz: reported,
       mode: this.currentMode,
       rigName,

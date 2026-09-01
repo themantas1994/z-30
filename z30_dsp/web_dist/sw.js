@@ -15,7 +15,7 @@
  * in vite.config.ts). Every new build therefore gets a fresh cache and the activate handler
  * deletes every older one, so a deploy actually invalidates what came before it.
  */
-const BUILD_ID = 'mthn4b7t-avt5lx';
+const BUILD_ID = 'mthxture-2n04tf';
 const CACHE_NAME = `z30-pwa-${BUILD_ID}`;
 
 // App shell entries worth having available offline after the very first load.
