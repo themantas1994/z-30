@@ -42,6 +42,7 @@
     { "call": "", "why": "empty box" },
     { "call": "   ", "why": "whitespace only" },
     { "call": "NOCALL", "why": "placeholder with no digit" },
+    { "call": "NOCAL", "why": "the shipped placeholder callsign - deliberately not assignable, no digit" },
     { "call": "12345", "why": "a number typed into the callsign field" },
     { "call": "ABCDEF", "why": "no digit" },
     { "call": "W1AW/", "why": "trailing slash with no suffix" },

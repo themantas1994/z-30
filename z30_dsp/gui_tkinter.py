@@ -24,9 +24,11 @@ from typing import Dict, List
 try:
     from .auto_logger import AsyncQsoLogger, QsoLogRecord
     from .config_wizard import SettingsManager, StationConfig, launch_config_wizard_if_needed, ConfigWizardDialog
+    from .station_settings import PLACEHOLDER_CALLSIGN, UNCONFIGURED_CALLSIGNS
 except ImportError:
     from z30_dsp.auto_logger import AsyncQsoLogger, QsoLogRecord
     from z30_dsp.config_wizard import SettingsManager, StationConfig, launch_config_wizard_if_needed, ConfigWizardDialog
+    from z30_dsp.station_settings import PLACEHOLDER_CALLSIGN, UNCONFIGURED_CALLSIGNS
 
 
 # 10 Vectorized Color Lookups for Waterfall
@@ -93,7 +95,11 @@ class Z30TkinterApp:
 
         # Async QSO Logger initialization with configured callsign & grid
         self.logger = AsyncQsoLogger(
-            my_call=self.config.callsign if self.config.callsign != "N0CALL" else "W1AW",
+            my_call=(
+                PLACEHOLDER_CALLSIGN
+                if self.config.callsign.strip().upper() in UNCONFIGURED_CALLSIGNS
+                else self.config.callsign
+            ),
             my_grid=self.config.grid if self.config.grid != "AA00aa" else "FN31"
         )
 
@@ -214,11 +220,11 @@ class Z30TkinterApp:
         # TX Macro Selection
         self.tx_macro_var = tk.StringVar(value="tx1")
         macros = [
-            ("Tx 1: CQ W1AW FN31", "tx1"),
-            ("Tx 2: DXCALL W1AW FN31", "tx2"),
-            ("Tx 3: DXCALL W1AW -15", "tx3"),
-            ("Tx 4: DXCALL W1AW R-15", "tx4"),
-            ("Tx 5: DXCALL W1AW 73 (Auto-Log)", "tx5"),
+            ("Tx 1: CQ MYCALL FN31", "tx1"),
+            ("Tx 2: DXCALL MYCALL FN31", "tx2"),
+            ("Tx 3: DXCALL MYCALL -15", "tx3"),
+            ("Tx 4: DXCALL MYCALL R-15", "tx4"),
+            ("Tx 5: DXCALL MYCALL 73 (Auto-Log)", "tx5"),
         ]
         for text, val in macros:
             rb = tk.Radiobutton(qso_frame, text=text, variable=self.tx_macro_var, value=val, bg="#141414", fg="#D4D4D4", selectcolor="#050505")

@@ -3463,11 +3463,27 @@ from typing import Optional, Tuple
 from z30_dsp.paths import default_config_path
 
 
+# The callsign shipped before an operator enters their own. The twin of PLACEHOLDER_CALLSIGN in
+# src/dsp/z30Constants.ts, and deliberately not an assignable callsign: it carries no digit, so
+# validate_callsign() below rejects it and the browser transmit gate refuses it twice over. The
+# TypeScript default used to be W1AW - a real, active station licensed to a national amateur
+# radio society - which shipped somebody else's identity as the out-of-the-box one.
+PLACEHOLDER_CALLSIGN = "NOCAL"
+
+# "N0CALL" was this file's own unset marker before the two languages agreed on one placeholder.
+# It is still refused on load, because it is a syntactically valid callsign: dropping it from
+# this tuple would let a config that has never been through the wizard read as configured.
+LEGACY_PLACEHOLDER_CALLSIGNS = ("N0CALL",)
+
+#: Every callsign that means "this station has not been configured yet".
+UNCONFIGURED_CALLSIGNS = (PLACEHOLDER_CALLSIGN,) + LEGACY_PLACEHOLDER_CALLSIGNS
+
+
 @dataclass
 class StationConfig:
     """Complete persistent configuration schema for the z-30 transceiver."""
     # Operator Information
-    callsign: str = "N0CALL"
+    callsign: str = PLACEHOLDER_CALLSIGN
     grid: str = "AA00aa"
     operator_name: str = ""
     qth_description: str = ""
@@ -3613,7 +3629,8 @@ class SettingsManager:
                 data = json.load(f)
             call_ok, _ = self.validate_callsign(data.get("callsign", ""))
             grid_ok, _ = self.validate_grid(data.get("grid", ""))
-            return call_ok and grid_ok and data.get("callsign") != "N0CALL"
+            unconfigured = str(data.get("callsign", "")).strip().upper() in UNCONFIGURED_CALLSIGNS
+            return call_ok and grid_ok and not unconfigured
         except Exception:
             return False
 
@@ -3713,7 +3730,12 @@ from typing import Optional, List, Tuple, Any, Callable
 # StationConfig and SettingsManager now live in station_settings.py so that the validation
 # rules are importable without Tkinter (this module is not - it subclasses ttk.Frame below).
 # Re-exported here because callers and the wiki both refer to them by this module.
-from .station_settings import StationConfig, SettingsManager  # noqa: F401
+from .station_settings import (  # noqa: F401
+    StationConfig,
+    SettingsManager,
+    PLACEHOLDER_CALLSIGN,
+    UNCONFIGURED_CALLSIGNS,
+)
 
 
 # ============================================================================
@@ -3959,7 +3981,9 @@ class Step1OperatorPage(WizardBasePage):
 
         # Callsign Field
         ttk.Label(self, text="Callsign:*", font=("Fira Code", 10, "bold")).grid(row=1, column=0, sticky="w", padx=10, pady=6)
-        self.call_var = tk.StringVar(value=self.config.callsign if self.config.callsign != "N0CALL" else "")
+        self.call_var = tk.StringVar(
+            value="" if self.config.callsign.strip().upper() in UNCONFIGURED_CALLSIGNS else self.config.callsign
+        )
         self.call_entry = ttk.Entry(self, textvariable=self.call_var, width=18, font=("Fira Code", 11, "bold"))
         self.call_entry.grid(row=1, column=1, sticky="w", padx=6, pady=6)
         self.call_entry.bind("<KeyRelease>", self._on_call_change)
@@ -7378,6 +7402,11 @@ import sqlite3
 import threading
 from typing import Any, Optional, Tuple
 
+try:
+    from .station_settings import PLACEHOLDER_CALLSIGN
+except ImportError:  # pragma: no cover - direct script execution, not package import
+    from z30_dsp.station_settings import PLACEHOLDER_CALLSIGN
+
 @dataclass
 class QsoLogRecord:
     callsign: str
@@ -7434,7 +7463,7 @@ class AsyncQsoLogger:
 
     def __init__(
         self,
-        my_call: str = "W1AW",
+        my_call: str = PLACEHOLDER_CALLSIGN,
         my_grid: str = "FN31",
         db_path: str = "z30_logbook.db",
         adif_path: str = "z30_station.adi"
@@ -7604,9 +7633,11 @@ from typing import Dict, List
 try:
     from .auto_logger import AsyncQsoLogger, QsoLogRecord
     from .config_wizard import SettingsManager, StationConfig, launch_config_wizard_if_needed, ConfigWizardDialog
+    from .station_settings import PLACEHOLDER_CALLSIGN, UNCONFIGURED_CALLSIGNS
 except ImportError:
     from z30_dsp.auto_logger import AsyncQsoLogger, QsoLogRecord
     from z30_dsp.config_wizard import SettingsManager, StationConfig, launch_config_wizard_if_needed, ConfigWizardDialog
+    from z30_dsp.station_settings import PLACEHOLDER_CALLSIGN, UNCONFIGURED_CALLSIGNS
 
 
 # 10 Vectorized Color Lookups for Waterfall
@@ -7673,7 +7704,11 @@ class Z30TkinterApp:
 
         # Async QSO Logger initialization with configured callsign & grid
         self.logger = AsyncQsoLogger(
-            my_call=self.config.callsign if self.config.callsign != "N0CALL" else "W1AW",
+            my_call=(
+                PLACEHOLDER_CALLSIGN
+                if self.config.callsign.strip().upper() in UNCONFIGURED_CALLSIGNS
+                else self.config.callsign
+            ),
             my_grid=self.config.grid if self.config.grid != "AA00aa" else "FN31"
         )
 
@@ -7794,11 +7829,11 @@ class Z30TkinterApp:
         # TX Macro Selection
         self.tx_macro_var = tk.StringVar(value="tx1")
         macros = [
-            ("Tx 1: CQ W1AW FN31", "tx1"),
-            ("Tx 2: DXCALL W1AW FN31", "tx2"),
-            ("Tx 3: DXCALL W1AW -15", "tx3"),
-            ("Tx 4: DXCALL W1AW R-15", "tx4"),
-            ("Tx 5: DXCALL W1AW 73 (Auto-Log)", "tx5"),
+            ("Tx 1: CQ MYCALL FN31", "tx1"),
+            ("Tx 2: DXCALL MYCALL FN31", "tx2"),
+            ("Tx 3: DXCALL MYCALL -15", "tx3"),
+            ("Tx 4: DXCALL MYCALL R-15", "tx4"),
+            ("Tx 5: DXCALL MYCALL 73 (Auto-Log)", "tx5"),
         ]
         for text, val in macros:
             rb = tk.Radiobutton(qso_frame, text=text, variable=self.tx_macro_var, value=val, bg="#141414", fg="#D4D4D4", selectcolor="#050505")
@@ -9960,7 +9995,12 @@ import re
 
 import pytest
 
-from z30_dsp.station_settings import SettingsManager
+from z30_dsp.station_settings import (
+    PLACEHOLDER_CALLSIGN,
+    UNCONFIGURED_CALLSIGNS,
+    SettingsManager,
+    StationConfig,
+)
 
 VECTOR_PATH = os.path.join(os.path.dirname(__file__), "vectors", "callsign_vectors.json")
 
@@ -10035,6 +10075,45 @@ def test_grid_pattern_agrees_with_the_typescript_one():
         ts_ok = bool(ts_pattern.match(grid)) and len(grid) in (4, 6)
         py_ok, _msg = SettingsManager.validate_grid(grid)
         assert py_ok == ts_ok, f"{grid!r}: python={py_ok} typescript={ts_ok}"
+
+
+def test_the_shipped_placeholder_is_not_an_assignable_callsign():
+    """
+    The placeholder a station ships with must not be a callsign anybody could hold.
+
+    It used to be W1AW on the TypeScript side - a real, active station licensed to a national
+    amateur radio society. A placeholder that is somebody's licence is kept off the air only by
+    an exact equality check; one that cannot pass callsign validation at all is refused by the
+    validator too, so removing that check cannot put another station's identity on the air.
+    """
+    assert not _accepts(PLACEHOLDER_CALLSIGN), (
+        f"{PLACEHOLDER_CALLSIGN!r} validates as a real callsign, so the shipped default "
+        "is somebody's identity"
+    )
+    assert StationConfig().callsign == PLACEHOLDER_CALLSIGN
+
+
+def test_every_unconfigured_marker_keeps_a_config_file_from_reading_as_ready(tmp_path):
+    """
+    \`has_valid_config_file()\` decides whether the setup wizard is skipped. Both the current
+    placeholder and the legacy \`N0CALL\` marker must fail it - N0CALL is syntactically valid, so
+    dropping it from the tuple would let a config that never went through the wizard read as a
+    configured station.
+    """
+    path = str(tmp_path / "config.json")
+
+    for marker in UNCONFIGURED_CALLSIGNS:
+        with open(path, "w", encoding="utf-8") as handle:
+            json.dump({"callsign": marker, "grid": "FN31"}, handle)
+        assert not SettingsManager(config_path=path).has_valid_config_file(), (
+            f"{marker!r} read as a configured station"
+        )
+
+    with open(path, "w", encoding="utf-8") as handle:
+        json.dump({"callsign": "K1ABC", "grid": "FN31"}, handle)
+    assert SettingsManager(config_path=path).has_valid_config_file(), (
+        "a real callsign and grid must still count as configured"
+    )
 `,
   },
   {

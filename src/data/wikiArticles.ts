@@ -2210,7 +2210,7 @@ exact condition that failed:
 
 | Condition | Why |
 | :--- | :--- |
-| A syntactically valid callsign that is not the shipped \`W1AW\` placeholder | An unidentified transmission, or one under someone else's call, is a licence problem |
+| A syntactically valid callsign that is not the shipped \`NOCAL\` placeholder | An unidentified transmission, or one under someone else's call, is a licence problem |
 | A configured regulatory region and licence class | Band edges and sub-band privileges differ by country and by class; there is no safe way to guess either |
 | Dial frequency **plus audio offset** inside a data-mode segment your class holds | The radiated frequency is not the dial frequency, and this is what puts a station out of band |
 | No contradiction from the radio itself, where the radio can be read back | The three checks above all reason about the dial the *software commanded*; if \`rigctld\` reports the VFO somewhere else, they were about a frequency the transmitter is not on |
@@ -2219,6 +2219,20 @@ The band plan lives in \`src/dsp/bandPlan.ts\` and covers IARU Regions 1–3 plu
 sub-band structure, with the date each entry was last checked. National rules vary and change:
 the gate catches a mistuned VFO or a wrong band button, it does not replace knowing your own
 licence conditions.
+
+**The placeholder is \`NOCAL\`, and it is not an assignable callsign.** It carries no digit, so
+\`isValidCallsign()\` rejects it as well — the gate refuses the shipped default twice over, and
+would go on refusing it even if the placeholder rule above were ever removed. It used to be
+\`W1AW\`, a real and active station licensed to a national amateur radio society, which made the
+out-of-the-box identity somebody else's: every fallback that stands in for an unset operator
+callsign — an ADIF or Cabrillo export with no \`myCall\`, a QSO macro, an injected test frame —
+wrote that organisation's call into the field, and one equality check was all that stood between
+it and the air. The single definition is \`PLACEHOLDER_CALLSIGN\` in \`src/dsp/z30Constants.ts\`,
+with its twin in \`z30_dsp/station_settings.py\`; the Python side still refuses the older \`N0CALL\`
+marker on load, because that one *is* syntactically valid and would otherwise read as a
+configured station. The gate tests for the placeholder **before** it tests syntax, so an
+operator who has not set the station up is told that, rather than that their callsign is
+malformed — both branches refuse, so the order decides only which sentence they read.
 
 The console reaches the gate through a transmit context its caller supplies; with none supplied
 it refuses to key at all rather than defaulting to permitting. Unkeying is never gated — refusing

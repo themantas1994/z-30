@@ -20,7 +20,12 @@ import re
 
 import pytest
 
-from z30_dsp.station_settings import SettingsManager
+from z30_dsp.station_settings import (
+    PLACEHOLDER_CALLSIGN,
+    UNCONFIGURED_CALLSIGNS,
+    SettingsManager,
+    StationConfig,
+)
 
 VECTOR_PATH = os.path.join(os.path.dirname(__file__), "vectors", "callsign_vectors.json")
 
@@ -95,3 +100,42 @@ def test_grid_pattern_agrees_with_the_typescript_one():
         ts_ok = bool(ts_pattern.match(grid)) and len(grid) in (4, 6)
         py_ok, _msg = SettingsManager.validate_grid(grid)
         assert py_ok == ts_ok, f"{grid!r}: python={py_ok} typescript={ts_ok}"
+
+
+def test_the_shipped_placeholder_is_not_an_assignable_callsign():
+    """
+    The placeholder a station ships with must not be a callsign anybody could hold.
+
+    It used to be W1AW on the TypeScript side - a real, active station licensed to a national
+    amateur radio society. A placeholder that is somebody's licence is kept off the air only by
+    an exact equality check; one that cannot pass callsign validation at all is refused by the
+    validator too, so removing that check cannot put another station's identity on the air.
+    """
+    assert not _accepts(PLACEHOLDER_CALLSIGN), (
+        f"{PLACEHOLDER_CALLSIGN!r} validates as a real callsign, so the shipped default "
+        "is somebody's identity"
+    )
+    assert StationConfig().callsign == PLACEHOLDER_CALLSIGN
+
+
+def test_every_unconfigured_marker_keeps_a_config_file_from_reading_as_ready(tmp_path):
+    """
+    `has_valid_config_file()` decides whether the setup wizard is skipped. Both the current
+    placeholder and the legacy `N0CALL` marker must fail it - N0CALL is syntactically valid, so
+    dropping it from the tuple would let a config that never went through the wizard read as a
+    configured station.
+    """
+    path = str(tmp_path / "config.json")
+
+    for marker in UNCONFIGURED_CALLSIGNS:
+        with open(path, "w", encoding="utf-8") as handle:
+            json.dump({"callsign": marker, "grid": "FN31"}, handle)
+        assert not SettingsManager(config_path=path).has_valid_config_file(), (
+            f"{marker!r} read as a configured station"
+        )
+
+    with open(path, "w", encoding="utf-8") as handle:
+        json.dump({"callsign": "K1ABC", "grid": "FN31"}, handle)
+    assert SettingsManager(config_path=path).has_valid_config_file(), (
+        "a real callsign and grid must still count as configured"
+    )

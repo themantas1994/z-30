@@ -18,6 +18,11 @@ import sqlite3
 import threading
 from typing import Any, Optional, Tuple
 
+try:
+    from .station_settings import PLACEHOLDER_CALLSIGN
+except ImportError:  # pragma: no cover - direct script execution, not package import
+    from z30_dsp.station_settings import PLACEHOLDER_CALLSIGN
+
 @dataclass
 class QsoLogRecord:
     callsign: str
@@ -74,7 +79,7 @@ class AsyncQsoLogger:
 
     def __init__(
         self,
-        my_call: str = "W1AW",
+        my_call: str = PLACEHOLDER_CALLSIGN,
         my_grid: str = "FN31",
         db_path: str = "z30_logbook.db",
         adif_path: str = "z30_station.adi"

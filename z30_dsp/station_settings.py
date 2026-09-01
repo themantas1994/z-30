@@ -22,11 +22,27 @@ from typing import Optional, Tuple
 from z30_dsp.paths import default_config_path
 
 
+# The callsign shipped before an operator enters their own. The twin of PLACEHOLDER_CALLSIGN in
+# src/dsp/z30Constants.ts, and deliberately not an assignable callsign: it carries no digit, so
+# validate_callsign() below rejects it and the browser transmit gate refuses it twice over. The
+# TypeScript default used to be W1AW - a real, active station licensed to a national amateur
+# radio society - which shipped somebody else's identity as the out-of-the-box one.
+PLACEHOLDER_CALLSIGN = "NOCAL"
+
+# "N0CALL" was this file's own unset marker before the two languages agreed on one placeholder.
+# It is still refused on load, because it is a syntactically valid callsign: dropping it from
+# this tuple would let a config that has never been through the wizard read as configured.
+LEGACY_PLACEHOLDER_CALLSIGNS = ("N0CALL",)
+
+#: Every callsign that means "this station has not been configured yet".
+UNCONFIGURED_CALLSIGNS = (PLACEHOLDER_CALLSIGN,) + LEGACY_PLACEHOLDER_CALLSIGNS
+
+
 @dataclass
 class StationConfig:
     """Complete persistent configuration schema for the z-30 transceiver."""
     # Operator Information
-    callsign: str = "N0CALL"
+    callsign: str = PLACEHOLDER_CALLSIGN
     grid: str = "AA00aa"
     operator_name: str = ""
     qth_description: str = ""
@@ -172,7 +188,8 @@ class SettingsManager:
                 data = json.load(f)
             call_ok, _ = self.validate_callsign(data.get("callsign", ""))
             grid_ok, _ = self.validate_grid(data.get("grid", ""))
-            return call_ok and grid_ok and data.get("callsign") != "N0CALL"
+            unconfigured = str(data.get("callsign", "")).strip().upper() in UNCONFIGURED_CALLSIGNS
+            return call_ok and grid_ok and not unconfigured
         except Exception:
             return False
 
