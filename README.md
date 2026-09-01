@@ -133,7 +133,7 @@ in **[09. Cross-Platform Build & Packaging](wiki/09-Cross-Platform-Build-&-Packa
 ```bash
 git clone https://github.com/themantas1994/z-30.git && cd z-30
 chmod +x install_ubuntu.sh && ./install_ubuntu.sh
-z-30
+z30
 ```
 </details>
 
@@ -143,7 +143,7 @@ z-30
 ```bash
 git clone https://github.com/themantas1994/z-30.git && cd z-30
 chmod +x install_arch.sh && ./install_arch.sh     # or: makepkg -si
-z-30
+z30
 ```
 </details>
 
