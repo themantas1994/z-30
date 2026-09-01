@@ -10,9 +10,10 @@ because the failure it prevents is expensive on the air.
 
 ## 🚦 Before z-30 will transmit at all
 
-Every transmit entry point — the automatic QSO sequencer, the manual TX button, and the tune
-carrier — passes through a single gate (`canTransmit()` in `src/dsp/catController.ts`). It
-**fails closed**, and any refusal names the exact condition that failed:
+Every transmit entry point — the automatic QSO sequencer, the manual TX button, the tune
+carrier, and the raw rigctl console's `T 1` / `\set_ptt 1` — passes through a single gate
+(`canTransmit()` in `src/dsp/catController.ts`). It **fails closed**, and any refusal names the
+exact condition that failed:
 
 | Condition | Why |
 | :--- | :--- |
@@ -24,6 +25,17 @@ The band plan lives in `src/dsp/bandPlan.ts` and covers IARU Regions 1–3 plus 
 sub-band structure, with the date each entry was last checked. National rules vary and change:
 the gate catches a mistuned VFO or a wrong band button, it does not replace knowing your own
 licence conditions.
+
+The console reaches the gate through a transmit context its caller supplies; with none supplied
+it refuses to key at all rather than defaulting to permitting. Unkeying is never gated — refusing
+to stop transmitting is not a safety property.
+
+**The two wiring tests are the deliberate exception.** The browser's "PTT Key Test" and the
+`z30 --wizard` PTT test key the radio without running `canTransmit()`: they assert the line for a
+few seconds with no modulation, after an explicit confirmation, and release it in a `finally`.
+They exist to prove a cable before a callsign or a band plan has been configured, which is
+precisely when the gate would refuse. Point the rig at a dummy load or a frequency you hold
+before you run either — nothing else is checking.
 
 ---
 
