@@ -96,21 +96,6 @@ async function call<T = any>(
   }
 }
 
-export interface ServerStatus {
-  system: string;
-  version: string;
-  protocol: string;
-  status: string;
-  gpio_ptt_pin: number | null;
-  gpio_keepalive_timeout_sec: number;
-  gpio_max_keyed_sec: number;
-  time_utc: string;
-}
-
-export function getServerStatus(): Promise<LocalApiResult<ServerStatus>> {
-  return call<ServerStatus>('/api/status');
-}
-
 /**
  * Keys or unkeys the server's single configured GPIO PTT pin.
  *

@@ -626,14 +626,15 @@ export function refineTimingAndFreq(
       const frameView = paddedBuffer.subarray(frameStartSample, frameStartSample + frameLength);
 
       if (searchAllTones) {
-        for (let k = 0; k < NUM_TONES; k++) {
-          const candidateBase = freqCenter - k * TONE_SPACING_HZ;
-          const amp = pilotAmplitude(frameView, sampleRateHz, candidateBase);
-          if (amp > bestAmp) {
-            bestAmp = amp;
-            bestDtSec = dtSec;
-            bestFreq = candidateBase;
-          }
+        // Same 16-tone-offset search as refineBaseFreq, reused rather than duplicated: it
+        // returns the best-scoring candidate, and pilotAmplitude at that frequency is exactly
+        // the amp the inner loop version would have kept as its max.
+        const candidateFreq = refineBaseFreq(frameView, sampleRateHz, freqCenter);
+        const amp = pilotAmplitude(frameView, sampleRateHz, candidateFreq);
+        if (amp > bestAmp) {
+          bestAmp = amp;
+          bestDtSec = dtSec;
+          bestFreq = candidateFreq;
         }
       } else {
         const amp = pilotAmplitude(frameView, sampleRateHz, freqCenter);

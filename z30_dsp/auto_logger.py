@@ -19,9 +19,9 @@ import threading
 from typing import Any, Optional, Tuple
 
 try:
-    from .station_settings import PLACEHOLDER_CALLSIGN
+    from .station_settings import PLACEHOLDER_CALLSIGN, SettingsManager
 except ImportError:  # pragma: no cover - direct script execution, not package import
-    from z30_dsp.station_settings import PLACEHOLDER_CALLSIGN
+    from z30_dsp.station_settings import PLACEHOLDER_CALLSIGN, SettingsManager
 
 @dataclass
 class QsoLogRecord:
@@ -41,22 +41,22 @@ class QsoLogRecord:
     notes: str = "z-30 16-MFSK LDPC"
 
 def calculate_maidenhead_distance(grid1: str, grid2: str) -> Tuple[int, int]:
-    """Calculates Great-Circle distance in km and initial bearing in degrees."""
-    def parse_grid(g: str) -> Optional[Tuple[float, float]]:
-        g = g.strip().upper()
-        if len(g) < 4:
-            return None
-        lon = (ord(g[0]) - ord('A')) * 20 - 180 + int(g[2]) * 2 + 1
-        lat = (ord(g[1]) - ord('A')) * 10 - 90 + int(g[3]) * 1 + 0.5
-        return math.radians(lat), math.radians(lon)
+    """
+    Calculates Great-Circle distance in km and initial bearing in degrees.
 
-    p1 = parse_grid(grid1)
-    p2 = parse_grid(grid2)
+    Grid-to-lat/lon conversion is SettingsManager.maidenhead_to_latlon, not a second copy of the
+    same formula: this function used to carry its own parser that ignored a grid's 6-character
+    subsquare and always resolved to the center of the encompassing 4-character square, so a
+    logged QSO's distance/azimuth was coarser than the wizard's own grid preview even when both
+    stations reported 6-character grids.
+    """
+    p1 = SettingsManager.maidenhead_to_latlon(grid1)
+    p2 = SettingsManager.maidenhead_to_latlon(grid2)
     if not p1 or not p2:
         return 0, 0
 
-    lat1, lon1 = p1
-    lat2, lon2 = p2
+    lat1, lon1 = math.radians(p1[0]), math.radians(p1[1])
+    lat2, lon2 = math.radians(p2[0]), math.radians(p2[1])
     dlat = lat2 - lat1
     dlon = lon2 - lon1
 

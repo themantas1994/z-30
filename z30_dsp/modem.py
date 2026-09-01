@@ -72,6 +72,41 @@ class Z30Config:
         4, 8, 13, 0, 9, 3, 14, 6, 11
     )
 
+def codeword_to_symbols(codeword_216: Sequence[int], cfg: Z30Config) -> List[int]:
+    """
+    Packs a 216-bit LDPC codeword into 54 4-bit data tones and interleaves them with the 21
+    Costas sync tones at `cfg.sync_positions`, producing the full 75-symbol transmission
+    sequence. This was duplicated identically in `benchmark.generate_random_frame` and
+    `sic_decoder.Z30SicMultiSignalDecoder._recover_symbols` - one copy here so a change to the
+    interleave order or the sync-tone cycling can't drift between the encode path and the SIC
+    re-encode path used to peel off a decoded signal.
+    """
+    data_symbols: List[int] = []
+    for s in range(54):
+        idx = s * 4
+        tone = (
+            (int(codeword_216[idx]) << 3)
+            | (int(codeword_216[idx + 1]) << 2)
+            | (int(codeword_216[idx + 2]) << 1)
+            | int(codeword_216[idx + 3])
+        )
+        data_symbols.append(tone)
+
+    full_symbols = [0] * cfg.total_symbols
+    sync_pos_set = set(cfg.sync_positions)
+    sync_cnt = 0
+    data_cnt = 0
+    for i in range(cfg.total_symbols):
+        if i in sync_pos_set:
+            full_symbols[i] = cfg.sync_tones[sync_cnt % len(cfg.sync_tones)]
+            sync_cnt += 1
+        else:
+            full_symbols[i] = data_symbols[data_cnt]
+            data_cnt += 1
+
+    return full_symbols
+
+
 def gfsk_frequency_pulse(bt: float, samples_per_symbol: int) -> np.ndarray:
     """
     Gaussian-smoothed rectangular frequency pulse, three symbols long.

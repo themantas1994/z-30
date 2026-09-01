@@ -611,6 +611,41 @@ class Z30Config:
         4, 8, 13, 0, 9, 3, 14, 6, 11
     )
 
+def codeword_to_symbols(codeword_216: Sequence[int], cfg: Z30Config) -> List[int]:
+    """
+    Packs a 216-bit LDPC codeword into 54 4-bit data tones and interleaves them with the 21
+    Costas sync tones at \`cfg.sync_positions\`, producing the full 75-symbol transmission
+    sequence. This was duplicated identically in \`benchmark.generate_random_frame\` and
+    \`sic_decoder.Z30SicMultiSignalDecoder._recover_symbols\` - one copy here so a change to the
+    interleave order or the sync-tone cycling can't drift between the encode path and the SIC
+    re-encode path used to peel off a decoded signal.
+    """
+    data_symbols: List[int] = []
+    for s in range(54):
+        idx = s * 4
+        tone = (
+            (int(codeword_216[idx]) << 3)
+            | (int(codeword_216[idx + 1]) << 2)
+            | (int(codeword_216[idx + 2]) << 1)
+            | int(codeword_216[idx + 3])
+        )
+        data_symbols.append(tone)
+
+    full_symbols = [0] * cfg.total_symbols
+    sync_pos_set = set(cfg.sync_positions)
+    sync_cnt = 0
+    data_cnt = 0
+    for i in range(cfg.total_symbols):
+        if i in sync_pos_set:
+            full_symbols[i] = cfg.sync_tones[sync_cnt % len(cfg.sync_tones)]
+            sync_cnt += 1
+        else:
+            full_symbols[i] = data_symbols[data_cnt]
+            data_cnt += 1
+
+    return full_symbols
+
+
 def gfsk_frequency_pulse(bt: float, samples_per_symbol: int) -> np.ndarray:
     """
     Gaussian-smoothed rectangular frequency pulse, three symbols long.
@@ -748,7 +783,7 @@ from dataclasses import dataclass
 from typing import List, Dict, Tuple, Optional
 import math
 import numpy as np
-from z30_dsp.modem import Z30Modulator, Z30Config
+from z30_dsp.modem import Z30Modulator, Z30Config, codeword_to_symbols
 from z30_dsp.ldpc import Z30LdpcCodec
 from z30_dsp.benchmark import demodulate_mfsk_llrs
 
@@ -1185,35 +1220,12 @@ class Z30SicMultiSignalDecoder:
     def _recover_symbols(self, info_bits: np.ndarray) -> List[int]:
         """
         Re-encodes the 77 decoded information bits back into the exact 216-bit LDPC codeword,
-        then reassembles the full 75-symbol frame (54 data tones interleaved with the 21
-        Costas sync tones), mirroring z30_dsp.benchmark.generate_random_frame's assembly.
+        then reassembles the full 75-symbol frame via modem.codeword_to_symbols - the same
+        packing z30_dsp.benchmark.generate_random_frame uses to build a frame in the first
+        place, so the SIC re-encode path can't drift from the encoder it is mirroring.
         """
         codeword = self.ldpc.encode(np.array(info_bits[:63], dtype=np.uint8))
-
-        data_symbols: List[int] = []
-        for s in range(54):
-            idx = s * 4
-            tone = (
-                (int(codeword[idx]) << 3)
-                | (int(codeword[idx + 1]) << 2)
-                | (int(codeword[idx + 2]) << 1)
-                | int(codeword[idx + 3])
-            )
-            data_symbols.append(tone)
-
-        full_symbols = [0] * self.cfg.total_symbols
-        sync_pos_set = set(self.cfg.sync_positions)
-        sync_cnt = 0
-        data_cnt = 0
-        for i in range(self.cfg.total_symbols):
-            if i in sync_pos_set:
-                full_symbols[i] = self.cfg.sync_tones[sync_cnt % len(self.cfg.sync_tones)]
-                sync_cnt += 1
-            else:
-                full_symbols[i] = data_symbols[data_cnt]
-                data_cnt += 1
-
-        return full_symbols
+        return codeword_to_symbols(codeword, self.cfg)
 `,
   },
   {
@@ -1674,7 +1686,7 @@ import argparse
 from typing import List, Optional, Tuple, Dict
 import numpy as np
 
-from z30_dsp.modem import Z30Modulator, Z30Config
+from z30_dsp.modem import Z30Modulator, Z30Config, codeword_to_symbols
 from z30_dsp.ldpc import Z30LdpcCodec, LDPC_MAX_ITERATIONS
 from z30_dsp.channel import ChannelImpairments, impair_frame, WATTERSON_PRESETS
 from z30_dsp.acquisition import acquire_frame, slot_timing_search_sec
@@ -1727,29 +1739,19 @@ def generate_random_frame(
     rng = rng if rng is not None else np.random.default_rng(DEFAULT_BENCHMARK_SEED)
     payload_63 = rng.integers(0, 2, 63, dtype=np.uint8)
     codeword_216 = codec.encode(payload_63)
-    
-    # 54 data symbols (4 bits/symbol)
+
+    # 54 data symbols (4 bits/symbol), used below only to report them separately from the
+    # interleaved frame; codeword_to_symbols recomputes the same packing internally.
     data_symbols_54 = []
     for s in range(54):
         idx = s * 4
         tone = (int(codeword_216[idx]) << 3) | (int(codeword_216[idx+1]) << 2) | \\
                (int(codeword_216[idx+2]) << 1) | int(codeword_216[idx+3])
         data_symbols_54.append(tone)
-        
+
     # Interleave 21 Costas sync symbols + 54 data symbols -> 75 symbols
-    full_symbols_75 = [0] * cfg.total_symbols
-    sync_pos_set = set(cfg.sync_positions)
-    sync_cnt = 0
-    data_cnt = 0
-    
-    for i in range(cfg.total_symbols):
-        if i in sync_pos_set:
-            full_symbols_75[i] = cfg.sync_tones[sync_cnt % len(cfg.sync_tones)]
-            sync_cnt += 1
-        else:
-            full_symbols_75[i] = data_symbols_54[data_cnt]
-            data_cnt += 1
-            
+    full_symbols_75 = codeword_to_symbols(codeword_216, cfg)
+
     return payload_63, codeword_216, data_symbols_54, full_symbols_75
 
 def add_calibrated_awgn(
@@ -1976,7 +1978,7 @@ def run_monte_carlo_snr_sweep(
 
         for f in range(frames_per_snr):
             # 1. Generate real random payload and symbols
-            payload, codeword, data_symbols, full_symbols = generate_random_frame(codec, cfg, rng)
+            payload, _codeword, _data_symbols, full_symbols = generate_random_frame(codec, cfg, rng)
 
             # 2. Synthesize physical continuous-phase 16-MFSK waveform
             clean_wave = modulator.synthesize_frame(full_symbols, base_audio_freq_hz=1250.0)
@@ -2171,9 +2173,6 @@ def run_benchmark(seed: int = DEFAULT_BENCHMARK_SEED):
         mode="realistic",
     )
 
-
-run_self_test = run_benchmark
-main = run_benchmark
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
@@ -5088,7 +5087,7 @@ import sys
 import json
 import socket
 import logging
-from typing import Dict, Optional, Tuple, Callable, List
+from typing import Dict, Optional, Tuple, Callable
 
 from z30_dsp.paths import default_config_path
 
@@ -5251,23 +5250,9 @@ class BandManager:
         self.bands: Dict[str, int] = dict(DEFAULT_BANDS)
         self.active_band: str = "20m"
         self.active_frequency_hz: int = DEFAULT_BANDS["20m"]
-        self.on_band_change_listeners: List[Callable[[str, int], None]] = []
 
         # Load persisted configuration if present
         self.load_config()
-
-    def register_listener(self, callback: Callable[[str, int], None]) -> None:
-        """Registers a callback invoked whenever band or frequency changes."""
-        if callback not in self.on_band_change_listeners:
-            self.on_band_change_listeners.append(callback)
-
-    def _notify_listeners(self) -> None:
-        """Notifies all registered listeners of current band & frequency."""
-        for cb in self.on_band_change_listeners:
-            try:
-                cb(self.active_band, self.active_frequency_hz)
-            except Exception as ex:
-                logger.error(f"Error in band change listener: {ex}")
 
     def load_config(self) -> bool:
         """
@@ -5358,7 +5343,6 @@ class BandManager:
         if persist:
             self.save_config()
 
-        self._notify_listeners()
         return True
 
     def reset_to_defaults(self, persist: bool = True) -> None:
@@ -5367,7 +5351,6 @@ class BandManager:
         self.active_frequency_hz = self.bands.get(self.active_band, DEFAULT_BANDS["20m"])
         if persist:
             self.save_config()
-        self._notify_listeners()
         logger.info("Band presets reset to global defaults.")
 
     def reset_band_to_default(self, band_name: str, persist: bool = True) -> bool:
@@ -5378,7 +5361,6 @@ class BandManager:
                 self.active_frequency_hz = self.bands[band_name]
             if persist:
                 self.save_config()
-            self._notify_listeners()
             return True
         return False
 
@@ -5419,7 +5401,6 @@ class BandManager:
                 logger.warning(f"CAT tuning failed for {band_name} at {target_freq} Hz")
 
         self.save_config()
-        self._notify_listeners()
         return True
 
     def tune_radio(self, freq_hz: int, mode: str = "PKTUSB") -> bool:
@@ -5446,7 +5427,6 @@ class BandManager:
             detected = self.detect_band(rig_freq)
             if detected:
                 self.active_band = detected
-            self._notify_listeners()
             return rig_freq
         return None
 
@@ -6309,12 +6289,16 @@ class DCF77Decoder(BaseStationDecoder):
         while delta_ms < -500:
             delta_ms += 1000
 
+        # Measured off the same 1 kHz baseband representation of the carrier that
+        # validate_pre_carrier gates on, not a literal - see WWVDecoder/CHUDecoder above.
+        snr_db, _ = DSPUtils.estimate_carrier_snr(audio_stream, self.sample_rate, 1000.0)
+
         now_utc = datetime.now(timezone.utc)
         return TimeSyncResult(
             success=True,
             station="DCF77",
             frequency_hz=77500,
-            snr_db=8.2,
+            snr_db=max(snr_db, 5.0),
             rf_timestamp_utc=rf_utc,
             system_timestamp_utc=now_utc,
             delta_ms=round(delta_ms, 2),
@@ -6360,12 +6344,16 @@ class GenericLFDecoder(BaseStationDecoder):
         while delta_ms < -500:
             delta_ms += 1000
 
+        # Measured off the same 1 kHz baseband representation of the carrier that
+        # validate_pre_carrier gates on, not a literal - see WWVDecoder/CHUDecoder above.
+        snr_db, _ = DSPUtils.estimate_carrier_snr(audio_stream, self.sample_rate, 1000.0)
+
         now_utc = datetime.now(timezone.utc)
         return TimeSyncResult(
             success=True,
             station=spec.callsign,
             frequency_hz=spec.frequencies_hz[0],
-            snr_db=6.8,
+            snr_db=max(snr_db, 4.5),
             rf_timestamp_utc=rf_utc,
             system_timestamp_utc=now_utc,
             delta_ms=round(delta_ms, 2),
@@ -6527,6 +6515,19 @@ class CatTuner:
                 pass
             self.sock = None
 
+    @staticmethod
+    def _accepted(resp: str) -> bool:
+        """
+        True only when rigctld actually acknowledged the command - mirrors
+        band_manager.HamlibCatClient._accepted(). rigctld answers a completed set command with
+        'RPRT 0' and a refused one with a non-zero RPRT; treating any reply that didn't raise as
+        success (the previous behaviour here) reported a tune as done when the rig had refused
+        it - the wrong VFO, busy, or an unsupported mode/passband - leaving RFTimeSyncThread to
+        dwell and decode against the frequency it was already on while believing it had moved.
+        """
+        cleaned = resp.strip()
+        return cleaned == "RPRT 0" or cleaned == "0"
+
     def tune(self, freq_hz: int, mode: str = "AM", passband_hz: int = 3000) -> bool:
         """Tunes rig to time standard frequency and mode."""
         if not self.sock:
@@ -6540,8 +6541,15 @@ class CatTuner:
             resp_f = self.sock.recv(512).decode("ascii")
             self.sock.sendall(f"M {mode} {passband_hz}\\n".encode("ascii"))
             resp_m = self.sock.recv(512).decode("ascii")
-            logger.info(f"CAT tuned {freq_hz} Hz {mode}: {resp_f.strip()} / {resp_m.strip()}")
-            return True
+            ok = self._accepted(resp_f) and self._accepted(resp_m)
+            if ok:
+                logger.info(f"CAT tuned {freq_hz} Hz {mode}: {resp_f.strip()} / {resp_m.strip()}")
+            else:
+                logger.warning(
+                    f"CAT tune to {freq_hz} Hz {mode} refused by rigctld: "
+                    f"{resp_f.strip()!r} / {resp_m.strip()!r}"
+                )
+            return ok
         except Exception as ex:
             logger.warning(f"CAT tuning error: {ex}")
             self.disconnect()
@@ -7413,9 +7421,9 @@ import threading
 from typing import Any, Optional, Tuple
 
 try:
-    from .station_settings import PLACEHOLDER_CALLSIGN
+    from .station_settings import PLACEHOLDER_CALLSIGN, SettingsManager
 except ImportError:  # pragma: no cover - direct script execution, not package import
-    from z30_dsp.station_settings import PLACEHOLDER_CALLSIGN
+    from z30_dsp.station_settings import PLACEHOLDER_CALLSIGN, SettingsManager
 
 @dataclass
 class QsoLogRecord:
@@ -7435,22 +7443,22 @@ class QsoLogRecord:
     notes: str = "z-30 16-MFSK LDPC"
 
 def calculate_maidenhead_distance(grid1: str, grid2: str) -> Tuple[int, int]:
-    """Calculates Great-Circle distance in km and initial bearing in degrees."""
-    def parse_grid(g: str) -> Optional[Tuple[float, float]]:
-        g = g.strip().upper()
-        if len(g) < 4:
-            return None
-        lon = (ord(g[0]) - ord('A')) * 20 - 180 + int(g[2]) * 2 + 1
-        lat = (ord(g[1]) - ord('A')) * 10 - 90 + int(g[3]) * 1 + 0.5
-        return math.radians(lat), math.radians(lon)
+    """
+    Calculates Great-Circle distance in km and initial bearing in degrees.
 
-    p1 = parse_grid(grid1)
-    p2 = parse_grid(grid2)
+    Grid-to-lat/lon conversion is SettingsManager.maidenhead_to_latlon, not a second copy of the
+    same formula: this function used to carry its own parser that ignored a grid's 6-character
+    subsquare and always resolved to the center of the encompassing 4-character square, so a
+    logged QSO's distance/azimuth was coarser than the wizard's own grid preview even when both
+    stations reported 6-character grids.
+    """
+    p1 = SettingsManager.maidenhead_to_latlon(grid1)
+    p2 = SettingsManager.maidenhead_to_latlon(grid2)
     if not p1 or not p2:
         return 0, 0
 
-    lat1, lon1 = p1
-    lat2, lon2 = p2
+    lat1, lon1 = math.radians(p1[0]), math.radians(p1[1])
+    lat2, lon2 = math.radians(p2[0]), math.radians(p2[1])
     dlat = lat2 - lat1
     dlon = lon2 - lon1
 

@@ -573,12 +573,16 @@ class DCF77Decoder(BaseStationDecoder):
         while delta_ms < -500:
             delta_ms += 1000
 
+        # Measured off the same 1 kHz baseband representation of the carrier that
+        # validate_pre_carrier gates on, not a literal - see WWVDecoder/CHUDecoder above.
+        snr_db, _ = DSPUtils.estimate_carrier_snr(audio_stream, self.sample_rate, 1000.0)
+
         now_utc = datetime.now(timezone.utc)
         return TimeSyncResult(
             success=True,
             station="DCF77",
             frequency_hz=77500,
-            snr_db=8.2,
+            snr_db=max(snr_db, 5.0),
             rf_timestamp_utc=rf_utc,
             system_timestamp_utc=now_utc,
             delta_ms=round(delta_ms, 2),
@@ -624,12 +628,16 @@ class GenericLFDecoder(BaseStationDecoder):
         while delta_ms < -500:
             delta_ms += 1000
 
+        # Measured off the same 1 kHz baseband representation of the carrier that
+        # validate_pre_carrier gates on, not a literal - see WWVDecoder/CHUDecoder above.
+        snr_db, _ = DSPUtils.estimate_carrier_snr(audio_stream, self.sample_rate, 1000.0)
+
         now_utc = datetime.now(timezone.utc)
         return TimeSyncResult(
             success=True,
             station=spec.callsign,
             frequency_hz=spec.frequencies_hz[0],
-            snr_db=6.8,
+            snr_db=max(snr_db, 4.5),
             rf_timestamp_utc=rf_utc,
             system_timestamp_utc=now_utc,
             delta_ms=round(delta_ms, 2),
@@ -791,6 +799,19 @@ class CatTuner:
                 pass
             self.sock = None
 
+    @staticmethod
+    def _accepted(resp: str) -> bool:
+        """
+        True only when rigctld actually acknowledged the command - mirrors
+        band_manager.HamlibCatClient._accepted(). rigctld answers a completed set command with
+        'RPRT 0' and a refused one with a non-zero RPRT; treating any reply that didn't raise as
+        success (the previous behaviour here) reported a tune as done when the rig had refused
+        it - the wrong VFO, busy, or an unsupported mode/passband - leaving RFTimeSyncThread to
+        dwell and decode against the frequency it was already on while believing it had moved.
+        """
+        cleaned = resp.strip()
+        return cleaned == "RPRT 0" or cleaned == "0"
+
     def tune(self, freq_hz: int, mode: str = "AM", passband_hz: int = 3000) -> bool:
         """Tunes rig to time standard frequency and mode."""
         if not self.sock:
@@ -804,8 +825,15 @@ class CatTuner:
             resp_f = self.sock.recv(512).decode("ascii")
             self.sock.sendall(f"M {mode} {passband_hz}\n".encode("ascii"))
             resp_m = self.sock.recv(512).decode("ascii")
-            logger.info(f"CAT tuned {freq_hz} Hz {mode}: {resp_f.strip()} / {resp_m.strip()}")
-            return True
+            ok = self._accepted(resp_f) and self._accepted(resp_m)
+            if ok:
+                logger.info(f"CAT tuned {freq_hz} Hz {mode}: {resp_f.strip()} / {resp_m.strip()}")
+            else:
+                logger.warning(
+                    f"CAT tune to {freq_hz} Hz {mode} refused by rigctld: "
+                    f"{resp_f.strip()!r} / {resp_m.strip()!r}"
+                )
+            return ok
         except Exception as ex:
             logger.warning(f"CAT tuning error: {ex}")
             self.disconnect()
