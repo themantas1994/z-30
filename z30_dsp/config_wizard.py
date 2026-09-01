@@ -34,7 +34,12 @@ from typing import Optional, List, Tuple, Any, Callable
 # StationConfig and SettingsManager now live in station_settings.py so that the validation
 # rules are importable without Tkinter (this module is not - it subclasses ttk.Frame below).
 # Re-exported here because callers and the wiki both refer to them by this module.
-from .station_settings import StationConfig, SettingsManager  # noqa: F401
+from .station_settings import (  # noqa: F401
+    StationConfig,
+    SettingsManager,
+    PLACEHOLDER_CALLSIGN,
+    UNCONFIGURED_CALLSIGNS,
+)
 
 
 # ============================================================================
@@ -280,7 +285,9 @@ class Step1OperatorPage(WizardBasePage):
 
         # Callsign Field
         ttk.Label(self, text="Callsign:*", font=("Fira Code", 10, "bold")).grid(row=1, column=0, sticky="w", padx=10, pady=6)
-        self.call_var = tk.StringVar(value=self.config.callsign if self.config.callsign != "N0CALL" else "")
+        self.call_var = tk.StringVar(
+            value="" if self.config.callsign.strip().upper() in UNCONFIGURED_CALLSIGNS else self.config.callsign
+        )
         self.call_entry = ttk.Entry(self, textvariable=self.call_var, width=18, font=("Fira Code", 11, "bold"))
         self.call_entry.grid(row=1, column=1, sticky="w", padx=6, pady=6)
         self.call_entry.bind("<KeyRelease>", self._on_call_change)

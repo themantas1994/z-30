@@ -13,7 +13,7 @@
  * - Hamlib rigctl TCP daemon protocol (127.0.0.1:4532)
  */
 
-import { HAM_BANDS, DEFAULT_STATION_CONFIG, Z30_SPECS } from './z30Constants';
+import { HAM_BANDS, PLACEHOLDER_CALLSIGN, Z30_SPECS } from './z30Constants';
 import {
   BAND_PLANS,
   findPermittedSegment,
@@ -772,13 +772,18 @@ export class CatController {
     const call = (config.myCall || '').trim().toUpperCase();
     if (!call) {
       violations.push('No callsign is configured. Enter your callsign in Station Settings before transmitting.');
-    } else if (!isValidCallsign(call)) {
-      violations.push(`"${call}" is not a syntactically valid amateur callsign.`);
-    } else if (call === DEFAULT_STATION_CONFIG.myCall.toUpperCase()) {
+    } else if (call === PLACEHOLDER_CALLSIGN.toUpperCase()) {
+      // Checked BEFORE the syntax rule, not after it. The shipped placeholder is deliberately
+      // not an assignable callsign (no digit), so the syntax branch would otherwise swallow it
+      // and tell the operator their callsign is malformed - true, and useless: what they need
+      // to read is that they never entered one. Both branches refuse, so the order decides
+      // only which sentence they get, never whether the gate opens.
       violations.push(
         `The callsign is still the shipped placeholder "${call}". Set your own callsign in Station Settings - ` +
         'transmitting under another station\'s call is not yours to do.'
       );
+    } else if (!isValidCallsign(call)) {
+      violations.push(`"${call}" is not a syntactically valid amateur callsign.`);
     }
 
     // 2. Regulatory region and licence class must both be chosen. Guessing either one on the

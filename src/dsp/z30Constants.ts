@@ -171,13 +171,31 @@ export const HAM_BANDS: BandDef[] = [
 ];
 
 /**
+ * The callsign this software ships with, before an operator has entered their own.
+ *
+ * It is deliberately NOT an assignable callsign: `NOCAL` carries no digit, so
+ * `isValidCallsign()` in bandPlan.ts rejects it and the transmit gate refuses it on the
+ * syntax rule as well as on the placeholder rule. The shipped default used to be `W1AW`, a
+ * real and active station licensed to a national amateur radio society, which made the
+ * out-of-the-box identity somebody else's: every path that falls back to it - an ADIF or
+ * Cabrillo export with no `myCall`, a QSO macro, an injected test frame - wrote that
+ * organisation's call into the field, and only an exact equality check in `canTransmit()`
+ * stood between it and the air. A placeholder that cannot be a licence cannot be transmitted
+ * under even if that check is ever removed.
+ *
+ * Every fallback that stands in for an unset operator callsign uses this constant, so there is
+ * one place to change and nothing to keep in step by inspection.
+ */
+export const PLACEHOLDER_CALLSIGN = 'NOCAL';
+
+/**
  * Default station configuration for initializing the transceiver suite on first launch.
  */
 export const DEFAULT_STATION_CONFIG: import('../types/z30').StationConfig = {
-  myCall: 'W1AW',
+  myCall: PLACEHOLDER_CALLSIGN,
   myGrid: 'FN31pr',
-  operatorName: 'ARRL Maxim Memorial Station',
-  qthDescription: 'Newington, CT, USA',
+  operatorName: 'Unconfigured Operator',
+  qthDescription: 'Unconfigured QTH',
   txPowerWatts: 25,
   audioInputDevice: 'Default System Audio Device',
   audioOutputDevice: 'Default System Audio Device',

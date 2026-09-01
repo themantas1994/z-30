@@ -23,7 +23,7 @@
  */
 
 import { synthesizeFrameSamples, applyEdgeRamp } from './z30Waveform';
-import { Z30_SPECS } from './z30Constants';
+import { Z30_SPECS, PLACEHOLDER_CALLSIGN } from './z30Constants';
 import { resampleAudio } from './realReceiver';
 import { createSeededRandom } from './seededRandom';
 
@@ -960,7 +960,7 @@ class Z30AudioEngine {
       freqHz = 1500;
       snrDb = 16; // S9+10 dB (+16 dB SNR)
     } else if (presetOrMessage === 'WEAK_VK3XYZ') {
-      text = 'VK3XYZ W1AW -22';
+      text = `VK3XYZ ${PLACEHOLDER_CALLSIGN} -22`;
       freqHz = 1800;
       snrDb = -22; // Weak signal (-22 dB SNR / S3)
     } else if (presetOrMessage === 'SIC_COLLISION') {
@@ -973,7 +973,7 @@ class Z30AudioEngine {
         this.injectTestSignal('CQ OE3XYZ JN88', { freqHz: 1410, snrDb: -14, playAudio: false });
       }, 50);
     } else if (presetOrMessage === 'CUSTOM') {
-      text = options?.customText || 'CQ W1AW FN31';
+      text = options?.customText || `CQ ${PLACEHOLDER_CALLSIGN} FN31`;
       freqHz = options?.freqHz || 1250;
       snrDb = options?.snrDb ?? 6;
     } else if (typeof presetOrMessage === 'string' && presetOrMessage.length > 0) {

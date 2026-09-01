@@ -18,7 +18,7 @@
  * - Physical Framing: 54 data symbols + 21 Costas-like sync symbols = 75 total 16-MFSK symbols
  */
 
-import { Z30_SPECS, Z30_CHECK_TO_INFO } from './z30Constants';
+import { Z30_SPECS, Z30_CHECK_TO_INFO, PLACEHOLDER_CALLSIGN } from './z30Constants';
 
 /**
  * Structured container for fully packed, encoded, and modulated z-30 messages.
@@ -283,7 +283,7 @@ export function packZ30Message(text: string): PackedMessage {
       grid = tokens[3] || 'FN31';
     } else {
       callTo = 'CQ';
-      callFrom = tokens[1] || 'W1AW';
+      callFrom = tokens[1] || PLACEHOLDER_CALLSIGN;
       grid = tokens[2] || 'FN31';
     }
     extraCode = encodeGrid(grid);
@@ -328,7 +328,7 @@ export function packZ30Message(text: string): PackedMessage {
 
   // Pack fields into 63 raw info bits
   const numTo = callTo ? encodeCallsign28(callTo) : 0;
-  const numFrom = callFrom ? encodeCallsign28(callFrom) : encodeCallsign28('W1AW');
+  const numFrom = callFrom ? encodeCallsign28(callFrom) : encodeCallsign28(PLACEHOLDER_CALLSIGN);
 
   for (let i = 0; i < 28; i++) infoBits[i] = (numTo >> (27 - i)) & 1;
   for (let i = 0; i < 28; i++) infoBits[28 + i] = (numFrom >> (27 - i)) & 1;
@@ -478,7 +478,7 @@ export function unpackZ30Message(infoBits: number[]): {
  */
 export function buildQsoMacros(myCall: string, myGrid: string, dxCall: string, rptSent: string) {
   const cleanDx = dxCall.trim().toUpperCase() || 'DX';
-  const cleanMy = myCall.trim().toUpperCase() || 'W1AW';
+  const cleanMy = myCall.trim().toUpperCase() || PLACEHOLDER_CALLSIGN;
   const cleanMyGrid = myGrid.trim().toUpperCase() || 'FN31';
 
   return {

@@ -31,7 +31,7 @@ import {
   ShieldAlert,
   BarChart2,
 } from 'lucide-react';
-import { AUTO_REPLY_OPTIONS, PTT_METHODS_CATALOG } from '../dsp/z30Constants';
+import { AUTO_REPLY_OPTIONS, PTT_METHODS_CATALOG, PLACEHOLDER_CALLSIGN } from '../dsp/z30Constants';
 import { audioEngine, SystemAudioDevice, AudioSystemDiagnostics } from '../dsp/audioEngine';
 import { sicDecoderEngine } from '../dsp/sicDecoder';
 import {
@@ -95,7 +95,7 @@ export const StationSettingsModal: React.FC<StationSettingsModalProps> = ({
   const [isExperimentalUnlocked, setIsExperimentalUnlocked] = useState<boolean>(() => audioEngine.isExperimentalModeEnabled());
   const [riskAgreementChecked, setRiskAgreementChecked] = useState<boolean>(false);
   const [testPreset, setTestPreset] = useState<string>('S9_CQ_JA1ABC');
-  const [testCustomMsg, setTestCustomMsg] = useState<string>('CQ W1AW FN31');
+  const [testCustomMsg, setTestCustomMsg] = useState<string>(`CQ ${PLACEHOLDER_CALLSIGN} FN31`);
   const [testFreqHz, setTestFreqHz] = useState<number>(1250);
   const [testSnrDb, setTestSnrDb] = useState<number>(6);
   const [testPlayAudio, setTestPlayAudio] = useState<boolean>(true);
@@ -2043,7 +2043,7 @@ export const StationSettingsModal: React.FC<StationSettingsModalProps> = ({
                             maxLength={13}
                             value={testCustomMsg}
                             onChange={(e) => setTestCustomMsg(e.target.value.toUpperCase())}
-                            placeholder="e.g. CQ W1AW FN31"
+                            placeholder={`e.g. CQ ${PLACEHOLDER_CALLSIGN} FN31`}
                             className="w-full bg-[#141414] border border-[#333] px-2.5 py-1.5 text-xs text-[#00FF41] focus:outline-none focus:border-[#00FF41]"
                           />
                         </div>
@@ -2088,7 +2088,7 @@ export const StationSettingsModal: React.FC<StationSettingsModalProps> = ({
                           onClick={() => {
                             let textToUse: string | undefined = undefined;
                             if (testPreset === 'CUSTOM') {
-                              textToUse = testCustomMsg.trim().toUpperCase() || 'CQ W1AW FN31';
+                              textToUse = testCustomMsg.trim().toUpperCase() || `CQ ${PLACEHOLDER_CALLSIGN} FN31`;
                             }
                             const res = audioEngine.injectTestSignal(testPreset, {
                               freqHz: testFreqHz,

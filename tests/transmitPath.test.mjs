@@ -15,6 +15,8 @@
  */
 
 import { CatController, MAX_TX_SECONDS } from '../src/dsp/catController.ts';
+import { DEFAULT_STATION_CONFIG, PLACEHOLDER_CALLSIGN } from '../src/dsp/z30Constants.ts';
+import { isValidCallsign } from '../src/dsp/bandPlan.ts';
 
 let failures = 0;
 let section = '';
@@ -591,6 +593,73 @@ group('Layered unkey defences are still three separate layers');
   await rig.setPtt(true, 'CM108_GPIO', 'ACTIVE_HIGH', { cm108GpioPin: 4 });
   await rig.forceUnkey();
   check('forceUnkey leaves PTT de-asserted', rig.getPtt() === false);
+}
+
+// ------------------------------------------- the shipped identity is nobody's real station
+
+group('The shipped placeholder callsign cannot be transmitted under');
+
+{
+  // The default used to be W1AW - a real, active station licensed to a national amateur radio
+  // society. A placeholder that is somebody's licence is only ever kept off the air by an exact
+  // equality check, and every fallback that stands in for an unset operator callsign (ADIF and
+  // Cabrillo exports, QSO macros, injected test frames) reached for that same string. These
+  // checks are computed from the constant itself, so re-pointing PLACEHOLDER_CALLSIGN at a real
+  // callsign fails here rather than on the air.
+  const rig = new CatController();
+
+  check(
+    'the shipped default config uses the placeholder constant',
+    DEFAULT_STATION_CONFIG.myCall === PLACEHOLDER_CALLSIGN,
+    `${DEFAULT_STATION_CONFIG.myCall} !== ${PLACEHOLDER_CALLSIGN}`
+  );
+  check(
+    'the placeholder is not an assignable callsign in the first place',
+    isValidCallsign(PLACEHOLDER_CALLSIGN) === false,
+    `${PLACEHOLDER_CALLSIGN} passed isValidCallsign()`
+  );
+
+  // A station that is otherwise complete - region, licence class, a legal 20 m data frequency -
+  // so the only thing left for the gate to object to is the callsign.
+  const licensed = { regulatoryRegion: 'US', licenseClass: 'US_EXTRA' };
+  const shipped = rig.canTransmit({ ...DEFAULT_STATION_CONFIG, ...licensed }, 1500, 14_076_000);
+  check(
+    'the gate refuses the shipped default',
+    shipped.allowed === false,
+    JSON.stringify(shipped.violations)
+  );
+  check(
+    '...naming the placeholder, not just calling the callsign malformed',
+    shipped.violations.some((v) => v.includes('placeholder') && v.includes(PLACEHOLDER_CALLSIGN)),
+    JSON.stringify(shipped.violations)
+  );
+
+  // The placeholder rule runs before the syntax rule, and neither may cost a real station its
+  // transmit: an operator who has configured the radio is exactly as free as before.
+  const configured = rig.canTransmit(
+    { ...DEFAULT_STATION_CONFIG, ...licensed, myCall: 'K1ABC' },
+    1500,
+    14_076_000
+  );
+  check(
+    'a configured station on 20 m is still allowed',
+    configured.allowed === true,
+    JSON.stringify(configured.violations)
+  );
+
+  // ...and a callsign that is merely malformed still gets told so, rather than being mistaken
+  // for the placeholder.
+  const malformed = rig.canTransmit(
+    { ...DEFAULT_STATION_CONFIG, ...licensed, myCall: 'HELLO' },
+    1500,
+    14_076_000
+  );
+  check(
+    'a malformed callsign is refused on the syntax rule',
+    malformed.allowed === false &&
+      malformed.violations.some((v) => v.includes('syntactically valid')),
+    JSON.stringify(malformed.violations)
+  );
 }
 
 if (failures > 0) {

@@ -11,6 +11,7 @@
  */
 
 import { LogEntry, AutoLogConfig } from '../types/z30';
+import { PLACEHOLDER_CALLSIGN } from './z30Constants';
 import { isLocalServerAvailable, readServerLogbook, writeServerLogbook } from './localServerApi';
 
 const STORAGE_KEY = 'z30_qso_logbook_v1';
@@ -412,7 +413,7 @@ Generated on: ${new Date().toUTCString()}
       // top-level ADIF MODE entry.
       const mode = 'MFSK';
       const submode = 'Z30';
-      const myCall = (e.myCall || 'W1AW').toUpperCase();
+      const myCall = (e.myCall || PLACEHOLDER_CALLSIGN).toUpperCase();
       const myGrid = (e.myGrid || 'FN31').toUpperCase();
       const comment = e.notes || `z-30 16-MFSK LDPC / SIC Pass ${e.sicPass || 1}`;
 
@@ -466,7 +467,7 @@ Generated on: ${new Date().toUTCString()}
     options?: { myCall?: string; myGrid?: string; contestName?: string; category?: string }
   ): string {
     const data = entriesToExport || this.entries;
-    const myCall = (options?.myCall || data[0]?.myCall || 'W1AW').toUpperCase();
+    const myCall = (options?.myCall || data[0]?.myCall || PLACEHOLDER_CALLSIGN).toUpperCase();
     const myGrid = (options?.myGrid || data[0]?.myGrid || '').toUpperCase();
 
     const lines: string[] = [];
@@ -660,7 +661,7 @@ BEGIN TRANSACTION;
       const dist = e.distanceKm || 0;
       const az = e.azimuthDeg || 0;
       const pwr = e.txPowerWatts || 50;
-      const myCall = (e.myCall || 'W1AW').replace(/'/g, "''");
+      const myCall = (e.myCall || PLACEHOLDER_CALLSIGN).replace(/'/g, "''");
       const myGrid = (e.myGrid || 'FN31').replace(/'/g, "''");
       const sic = e.sicPass || 1;
       const iters = e.ldpcIterations || 0;
