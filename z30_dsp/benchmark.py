@@ -45,7 +45,7 @@ from typing import List, Optional, Tuple, Dict
 import numpy as np
 
 from z30_dsp.modem import Z30Modulator, Z30Config
-from z30_dsp.ldpc import Z30LdpcCodec
+from z30_dsp.ldpc import Z30LdpcCodec, LDPC_MAX_ITERATIONS
 from z30_dsp.channel import ChannelImpairments, impair_frame, WATTERSON_PRESETS
 from z30_dsp.acquisition import acquire_frame, slot_timing_search_sec
 
@@ -303,7 +303,11 @@ def run_monte_carlo_snr_sweep(
     )
     cfg = Z30Config(sample_rate_hz=sample_rate_hz)
     modulator = Z30Modulator(cfg)
-    codec = Z30LdpcCodec(max_iterations=45)
+    # From the codec's own default rather than a retyped literal. AGENTS.md's "UI prose quotes
+    # constants, it does not retype them" rule applies to the benchmark too: a 45 written here
+    # would go on reading correct after ldpc.py's cap changed, and the curve would silently stop
+    # describing the decoder that ships.
+    codec = Z30LdpcCodec(max_iterations=LDPC_MAX_ITERATIONS)
     
     snr_points = np.arange(min_snr_db, max_snr_db + 1e-4, step_snr_db)
     results = []

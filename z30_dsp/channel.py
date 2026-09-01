@@ -17,7 +17,7 @@ spread, separated by a fixed differential delay.
 """
 
 from dataclasses import dataclass
-from typing import Optional, Tuple
+from typing import Tuple
 
 import numpy as np
 from scipy.signal import hilbert

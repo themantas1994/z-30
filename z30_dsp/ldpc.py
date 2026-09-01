@@ -45,7 +45,7 @@ Mathematical Specification & Design Rationale:
    - Early stopping condition: syndrome s = H * c^T == 0 (mod 2) and CRC valid.
 """
 
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Tuple
 import math
 
 import numpy as np
@@ -159,13 +159,23 @@ def dither_vector(llr_channel: "np.ndarray | List[float]", length: int) -> "np.n
     return out
 
 
+#: Schedule 1's belief-propagation iteration cap, and the codec's default.
+#:
+#: The twin of `LDPC_MAX_ITERATIONS` in src/dsp/ldpcCodec.ts, pinned across the two languages by
+#: tests/test_cross_language_parity.py. Named rather than left as a literal so callers quote it
+#: instead of retyping it - benchmark.py carried its own `45`, which would have gone on reading
+#: correct after this one changed, leaving the published curve describing a decoder that no
+#: longer ships. Same rule AGENTS.md states for UI prose quoting constants.
+LDPC_MAX_ITERATIONS: int = 45
+
+
 class Z30LdpcCodec:
     """
     Production-grade Systematic (216, 77) LDPC Codec.
     Implements IRA forward-substitution encoding and normalized Min-Sum belief propagation.
     """
 
-    def __init__(self, max_iterations: int = 45) -> None:
+    def __init__(self, max_iterations: int = LDPC_MAX_ITERATIONS) -> None:
         """
         Initializes the (216, 77) LDPC Codec.
 

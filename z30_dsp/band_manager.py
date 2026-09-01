@@ -13,7 +13,6 @@ import json
 import socket
 import logging
 from typing import Dict, Optional, Tuple, Callable, List
-from dataclasses import dataclass, asdict
 
 from z30_dsp.paths import default_config_path
 
@@ -353,7 +352,12 @@ class BandManager:
         """
         freq_ok = self.hamlib.set_frequency(freq_hz)
         mode_ok = self.hamlib.set_mode(mode, 3000)
-        return freq_ok
+        # Both, not just the frequency. The mode result was computed and thrown away, so a rig
+        # that took the QSY but refused the mode change reported a fully successful tune - and
+        # the caller logged nothing, leaving the radio on the right frequency in the wrong mode.
+        # Same rule the CAT layer already follows: a command that cannot report failure is worse
+        # than no command.
+        return freq_ok and mode_ok
 
     def sync_from_radio(self) -> Optional[int]:
         """
@@ -382,7 +386,7 @@ class BandManager:
 
 try:
     import tkinter as tk
-    from tkinter import ttk, messagebox
+    from tkinter import messagebox
 
     class BandManagerDialog(tk.Toplevel):
         """

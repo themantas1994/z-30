@@ -250,6 +250,14 @@ What the suite covers, and why each test is there:
 | `tests/frontend.test.mjs` | The transmit gate admitting an out-of-band frequency, an unseeded benchmark PRNG, an amplitude-gated waveform, unvalidated station config, Maidenhead decoding, and the browser benchmark's acquisition stage (that it finds a displaced frame, estimates its own noise floor, refuses to "find" one in pure noise, and reproduces its offsets from the seed) |
 | `tests/transmitPath.test.mjs` | The three defects that only appear with a radio attached: a PTT release that drops a different pin than the key drove, a "Test PTT" that reports success without addressing the hardware, and the raw rigctl console keying without the transmit gate. Also the rigctl verb table, where case is significant |
 | `tests/test_config_wizard.py` and `tests/frontend.test.mjs` | The Python setup wizard and the browser transmit gate disagreeing about which callsigns are valid — a wizard that blesses a callsign the gate will refuse at slot start. Shared vectors in `tests/vectors/callsign_vectors.json` |
+| `tests/rigReadback.test.mjs` | `RigStateTracker`, the WSJT-X-ported closed-loop rig model that `AGENTS.md` §4 names explicitly. Guards both directions: that a settled rig reporting a different dial blocks transmit, and that an unverifiable rig, an unsettled QSY and a difference inside the rig's measured tuning resolution do **not** — a check that grounds correctly-working stations is one its operator switches off |
+| `tests/rigProbeAndWatchdog.test.mjs` | The CAT defects that only appear when two things happen at once, plus the timers nothing ever let run: the tuning-resolution classification table, a QSY landing mid-probe (which used to be undone on the wire while the tracker was told the pre-QSY dial), a poll reading the probe's throwaway test frequency as a fault, `pollRigOnce()` driven through the real controller rather than by poking the tracker, and the `MAX_TX_SECONDS` watchdog actually firing and unkeying the hardware |
+| `tests/dspDeterminism.test.mjs` | An unseeded generator anywhere the decode path can reach — the defect class that has now recurred twice, in the LDPC dither and again in `addCalibratedAwgn`. Asserts byte-identical output across two runs, and checks the noise is still *calibrated* noise by measuring its variance and Gaussian shape off the produced samples, so "deterministic" cannot be achieved by returning a constant |
+| `tests/test_sic_candidate_detection.py` | The SIC candidate detector inventing carriers out of noise, and the two languages' detectors diverging again. The raw-bin detector this replaced produced ~52 spurious candidates per frame from pure noise |
+| `tests/test_git_sync.py` | The updater doing anything other than a fast-forward — a self-update that could discard an operator's local changes or move the checkout to an unrelated history |
+| `tests/test_updater_cli.py` | The layer above that engine: `run_updater` turning a `SyncStatus` into the wrong exit code, so a startup script never notices the box is behind or reports failure forever on a current one — and an interrupted prompt or a closed stdin being read as consent to update |
+| `tests/test_band_manager.py` | Band-preset persistence, dial-to-band detection across every shipped preset, and `tune_radio()` reporting success when the rig took the QSY but refused the mode change |
+| `tests/test_legacy_logger_and_config.py` | The Python-side twins of jobs the web UI already does correctly, and which were therefore never covered: the Tk-path ADIF writer emitting a literal backslash-n instead of a newline, `<TAG:len>` prefixes counting characters instead of UTF-8 bytes, and a station-config save that could truncate `config.json` — which `load_config` then silently replaces with defaults, emptying the callsign the transmit gate needs |
 
 ---
 
@@ -257,7 +265,21 @@ What the suite covers, and why each test is there:
 
 `.github/workflows/ci.yml` runs on every push and pull request:
 
-- **Python DSP suite** on 3.10 and 3.12, plus a wheel build-and-import check.
+- **Python DSP suite** on 3.10, 3.12 and 3.13, plus a wheel build-and-import check. Dependencies
+  are installed from the pinned `requirements.txt`, not a bare `pip install numpy scipy`: CI that
+  resolves different versions from the ones operators install is not testing the software they
+  run, and this is a suite whose numerical behaviour depends on those versions.
+- **Ruff** over `z30_dsp/`, `tests/` and `scripts/`. Kept to the default rule set: a linter that
+  shouts about formatting is one contributors learn to ignore. It earned its place immediately —
+  the unused-variable rule found `band_manager.tune_radio()` discarding the CAT mode-set result.
+- **Dependency audit**: `pip-audit` against the pinned `requirements.txt` and `npm audit` at
+  high severity. Pinning exact versions is right for a DSP suite and it also means nothing
+  otherwise reports when a pin picks up a known vulnerability. `.github/dependabot.yml` opens
+  grouped monthly bump PRs for the same reason.
+- **Packaging smoke on Windows and macOS**: the suite plus a wheel build-and-import. Every other
+  job runs on `ubuntu-latest`, so a change that broke the package on the platform the project
+  ships a PyInstaller build for was found by whoever installed it. This does not build
+  installers — it catches path and platform-API mistakes, which is the cheap half.
 - **Benchmark smoke test**: a short seeded sweep in both modes, run twice, asserting identical
   results. This catches non-determinism in the channel/acquisition path, which would otherwise
   only surface when someone tried to reproduce a published curve.

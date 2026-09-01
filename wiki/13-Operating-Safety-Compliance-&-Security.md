@@ -83,7 +83,10 @@ boundary**: any page in any browser tab can `fetch()` a loopback URL, and a `tex
 is a CORS simple request that is sent with no preflight. Every `/api/` request must therefore
 satisfy all three of:
 
-- a bearer token (`X-Z30-Token`) minted fresh at each server start and injected only into the
+- a bearer token (**`X-Z30-Token` header only** — the server also used to accept it from a
+  `?token=` query parameter, which no shipped client ever sent and which put a live credential
+  everywhere a URL goes: browser history, the `Referer` on any outbound link, and any log that
+  records request lines) minted fresh at each server start and injected only into the
   `index.html` that this process serves;
 - an `Origin` header that is absent or exactly this server's own origin;
 - a `Host` header naming this server's own loopback address and port, which blocks DNS
@@ -109,11 +112,21 @@ Stepping the machine's clock from a decoded time station is therefore:
 
 - **opt-in** (`"allow_set_system_clock": true` in `~/.z30/config.json`, or
   `Z30_ALLOW_SET_SYSTEM_CLOCK=1`),
-- **confirmed** interactively,
-- **bounded to 5 minutes**, and
+- **confirmed per decode** wherever there is somebody to ask. The Tk sync dialog now supplies a
+  confirmation callback, so each successful decode asks again rather than treating the one-time
+  opt-in as standing consent for every decode that follows. On the headless service path
+  (`Z30_ALLOW_SET_SYSTEM_CLOCK=1`, no UI) there is nobody to prompt and the explicit opt-in is
+  the consent; every other guard below still applies there,
+- **bounded to 5 minutes per step _and_ to 15 minutes of total movement in any 24-hour window**.
+  The per-step bound alone bounded nothing over time: each call measured its step against the
+  clock as it stood at that moment, so a series of individually-legal 5-minute steps could walk
+  the clock arbitrarily far in one direction and nothing counted them. Total absolute movement
+  is now tracked in `os_clock_steps` in the config and bounded too, so the walk terminates.
+  Absolute rather than signed, because a spoofer alternating +290 s and -290 s moves the clock
+  just as far as one that always pushes forward, and
 - **refused** when an NTP daemon already owns the clock.
 
-`tests/test_time_sync_guards.py` guards the default and the bound. See
+`tests/test_time_sync_guards.py` guards the default and the bounds. See
 [07. RF Time Synchronization Engine](07-RF-Time-Synchronization-Engine.md).
 
 ---

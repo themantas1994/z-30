@@ -150,17 +150,40 @@ the test to match. Full rationale: [`wiki/13`](wiki/13-Operating-Safety-Complian
 - `MAX_TX_SECONDS = 40` (a frame is 24 s). The browser timer, the server-side GPIO dead-man
   switch (~500 ms keepalive, ~2 s drop) and the `atexit`/`SIGTERM` pin release are three
   *independent* layers. Do not collapse them into one; each defends a different failure.
+- **rigctld traffic is serialised, and PTT deliberately is not.** `withCatLock()` in
+  `catController.ts` orders frequency/mode writes against readback polls and against
+  `probeRigResolution()`, which holds it for its whole run - otherwise a poll reads the probe's
+  throwaway test frequency and reports it as a settled disagreement. `sendRigPtt` bypasses the
+  queue on purpose: an unkey queued behind a slow read is a transmitter still radiating. Do not
+  "tidy" PTT into the queue.
+- **A long-running CAT operation may not clobber a QSY that lands under it.** `setFreqHz`,
+  `setBandByName` and the readback-adoption path bump `dialCommandEpoch`; `probeRigResolution`
+  captures it and skips its restore when it changed. Restoring unconditionally put the radio
+  back on the pre-QSY dial and told the tracker that dial was commanded, so the readback check
+  compared the old dial against a rig on the old dial, found agreement, and let the band-plan
+  check go on validating the new one - reopening the exact hole `RigStateTracker` was added to
+  close. `tests/rigProbeAndWatchdog.test.mjs` guards it.
 
 **Local API**
 - Every `/api/` request in `z30_dsp/web_server.py` requires all of: the per-start bearer token
-  (`X-Z30-Token`), an absent-or-exact `Origin`, and a `Host` naming this server's own loopback
-  address and port. Binding to loopback is not authentication.
+  (`X-Z30-Token`, **header only** - never re-add the `?token=` query fallback, which leaks a
+  live credential into browser history, `Referer` and request logs), an absent-or-exact
+  `Origin`, and a `Host` naming this server's own loopback address and port. Binding to
+  loopback is not authentication.
 - No wildcard `Access-Control-Allow-Origin`, ever. Only the single configured BCM pin is
   drivable. The rigctld relay talks only to loopback daemons.
 
 **System clock**
-- Stepping the host clock stays opt-in, confirmed, bounded to 5 minutes, and refused when NTP
-  owns the clock. The default is to keep the correction internally as `app_time_offset_ms`.
+- Stepping the host clock stays opt-in, confirmed, bounded, and refused when NTP owns the clock.
+  The default is to keep the correction internally as `app_time_offset_ms`.
+- **Two bounds, not one**: 5 minutes per step *and* `MAX_OS_CLOCK_CUMULATIVE_SEC` (15 min) of
+  total absolute movement per 24 h window, ledgered in `os_clock_steps`. The per-step bound is
+  measured against the clock as it stands at that moment, so on its own it bounds nothing over
+  time - repeated compliant steps walk the clock as far as an attacker likes. Removing the
+  cumulative bound restores that.
+- Confirmation is **per decode wherever a caller can ask**. A callback-less caller is the
+  headless service path, where the explicit opt-in is the consent; do not make that the default
+  for a caller that has a UI.
 
 **Signal integrity**
 - The waveform is continuous-phase with a **constant envelope**; the only amplitude shaping is
@@ -177,6 +200,15 @@ the test to match. Full rationale: [`wiki/13`](wiki/13-Operating-Safety-Complian
   `z30_dsp/channel.py`). CI runs the same seeded sweep twice and asserts identical results.
   `Math.random()` and unseeded `np.random` do not belong anywhere in that path. This includes
   the browser engine's random carrier and timing offsets.
+- This has now been broken twice in the same shape - the LDPC dither, then `addCalibratedAwgn`,
+  which fed unseeded noise into the Experimental Testing self-test and from there into the real
+  `demodulateReal` -> `decodeMinSum` chain. The fix both times was to make the function a pure
+  function of its input by deriving the seed from that input (`ditherSeedFromLlrs`,
+  `awgnSeedFromWaveform`), because threading a seed only fixes the caller that has one. Prefer
+  that pattern over adding a seed parameter and hoping every caller passes it.
+  `tests/dspDeterminism.test.mjs` asserts byte-identical output across runs *and* measures the
+  noise's variance and Gaussian shape off the samples, so "deterministic" cannot be satisfied
+  by returning a constant.
 
 **One source of truth per rule**
 - `isValidCallsign()` in `src/dsp/bandPlan.ts` is the only callsign validator in TypeScript, and
@@ -193,6 +225,11 @@ the test to match. Full rationale: [`wiki/13`](wiki/13-Operating-Safety-Complian
   the LDPC code, the waveform or the Costas pattern must land in **both**, in the same commit.
   `tests/test_cross_language_parity.py` and `tests/crc14.test.mjs` check them against shared
   vectors in `tests/vectors/crc14_vectors.json`.
+- That test now also pins the Costas pattern itself (`SYNC_POSITIONS`/`SYNC_TONES` - which
+  AGENTS.md calls protocol-breaking to change, and which previously agreed only because nobody
+  had edited one copy), the OSD-2/Chase acceptance thresholds, `LDPC_MAX_ITERATIONS`, and the
+  SIC candidate-detection constants. Agreement by inspection is not a guarantee; add the pin
+  when you add the constant.
 
 ---
 
@@ -222,6 +259,13 @@ the code and the wiki on purpose. Follow the same standard:
   the browser engine to see which way a change moved the curve, and confirm with a seeded Python
   run before any number reaches documentation.
   [`wiki/16`](wiki/16-Benchmarking-Testing-&-CI.md) has the side-by-side table.
+- **The SIC collision figures were withdrawn on 2026-09-01.** `wiki/05` carried a table of
+  decode rates (98.7 / 95.2 / 91.4 / 84.6 %) at four collision differentials, `wiki/11` claimed
+  recovery "down to -31.5 dB" and a residual decode floor of "-25.0 / -24.0 dB". None came from
+  any instrument here: `benchmark.py` has no collision or SIC mode at all. Restoring any of them
+  needs that mode built first, then a seeded sweep quoted with seed, frame count, channel model
+  and a checkable confidence figure. Until then the collision performance is **not measured** -
+  say that, rather than picking a plausible number.
 - **The word "threshold" is reserved for `realistic`.** No UI string, comment or document may
   call an `ideal`-mode result a threshold, and nothing may compute a z-30-vs-other-mode delta
   from one. A "Gain vs FT8" tile that subtracted a bound from FT8's on-air figure is how the

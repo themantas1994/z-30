@@ -15,7 +15,7 @@ from tkinter import ttk, messagebox
 import threading
 import time
 import numpy as np
-from typing import Dict, List, Tuple, Optional
+from typing import Dict, List
 # There is exactly one implementation of each of these modules, inside the z30_dsp package.
 # The relative form covers running as part of the package; the absolute form covers running
 # this file directly from a source checkout. Neither falls back to a top-level module: the
@@ -382,7 +382,6 @@ class Z30TkinterApp:
                 now = time.strftime("%H:%M:%S", time.gmtime())
                 sec = int(time.strftime("%S", time.gmtime()))
                 cycle_s = sec % 30
-                is_even = (sec // 30) % 2 == 0
                 
                 # The slot trigger that used to live here flipped is_transmitting at the top of
                 # every matching slot and relabelled the button "TRANSMITTING...", with no
@@ -396,7 +395,10 @@ class Z30TkinterApp:
 
 def main():
     root = tk.Tk()
-    app = Z30TkinterApp(root)
+    # Bound, not discarded: the app object owns the background threads and the Tk variables the
+    # widgets are wired to, and dropping the only reference invites the collector to take it
+    # while the main loop is still running.
+    app = Z30TkinterApp(root)  # noqa: F841
     root.mainloop()
 
 if __name__ == "__main__":

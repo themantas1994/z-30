@@ -25,23 +25,21 @@ Features:
 - Standalone interactive Tkinter UI dialog and CLI test harness with synthetic audio generator.
 """
 
-from dataclasses import dataclass, field, asdict
-from datetime import datetime, timezone, timedelta
+from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from enum import Enum
 import json
 import logging
 import math
 import os
-import queue
 import random
 import shutil
 import socket
-import struct
 import subprocess
 import sys
 import threading
 import time
-from typing import Optional, Dict, List, Tuple, Callable, Any, Sequence, Union
+from typing import Optional, Dict, List, Tuple, Callable, Any, Sequence
 
 try:
     from .paths import default_config_path
@@ -64,6 +62,13 @@ logger = logging.getLogger("z30.RFTimeSync")
 # ============================================================================
 # 1. STATION DEFINITIONS & MODULATION SPECIFICATIONS
 # ============================================================================
+
+#: Seed for the synthetic RF fallback generator in AudioCaptureEngine.
+#:
+#: The simulator stands in for a radio when no audio hardware is present, and its output runs
+#: through exactly the same decoders and SNR estimator as a real capture. Fixing the seed makes
+#: a simulated decode reproducible, so a failure seen once can be reproduced and bisected.
+SYNTHETIC_RF_SEED = 20260830
 
 class ModulationType(str, Enum):
     AM_BCD_100HZ = "AM_BCD_100HZ"      # WWV / WWVH 100 Hz subcarrier BCD
@@ -656,6 +661,14 @@ class AudioCaptureEngine:
         self.sample_rate = sample_rate
         self.device_index = device_index
         self.has_real_audio = False
+        # Own generator rather than the `random` module's shared one. The synthetic fallback
+        # feeds the same decoder and SNR estimate a real capture does, and that estimate is one
+        # input to a decision that can step the machine's clock - so "the simulator decoded at
+        # 8 dB" has to mean the same thing twice, and must not shift because unrelated code
+        # elsewhere in the process drew from the global RNG first. Seeded, not unseeded, for the
+        # reason AGENTS.md gives for the benchmark path: a result nobody can reproduce is an
+        # anecdote.
+        self._synthetic_rng = random.Random(SYNTHETIC_RF_SEED)
         self._check_audio_backend()
 
     def _check_audio_backend(self) -> None:
@@ -711,7 +724,7 @@ class AudioCaptureEngine:
 
         if not spec:
             for i in range(num_samples):
-                samples[i] = random.gauss(0, 0.05)
+                samples[i] = self._synthetic_rng.gauss(0, 0.05)
             return samples
 
         if spec.modulation == ModulationType.AM_BCD_100HZ:
@@ -720,7 +733,7 @@ class AudioCaptureEngine:
                 t = i * dt
                 carrier = 0.25 * math.sin(2.0 * math.pi * 100.0 * t)
                 beep = 0.4 * math.sin(2.0 * math.pi * 1000.0 * t) if i < tone_len else 0.0
-                noise = random.gauss(0, 0.03)
+                noise = self._synthetic_rng.gauss(0, 0.03)
                 samples[i] = carrier + beep + noise
 
         elif spec.modulation == ModulationType.USB_BELL103_AFSK:
@@ -728,7 +741,7 @@ class AudioCaptureEngine:
                 t = i * dt
                 f_tone = 2225.0 if math.sin(2.0 * math.pi * 150.0 * t) > 0 else 2025.0
                 tone = 0.3 * math.sin(2.0 * math.pi * f_tone * t)
-                noise = random.gauss(0, 0.03)
+                noise = self._synthetic_rng.gauss(0, 0.03)
                 samples[i] = tone + noise
 
         elif spec.modulation == ModulationType.AM_PWM_DCF77:
@@ -737,12 +750,12 @@ class AudioCaptureEngine:
                 s_frac = t - math.floor(t)
                 envelope = 0.25 if s_frac < 0.1 else 1.0
                 carrier = 0.3 * math.sin(2.0 * math.pi * 1000.0 * t)
-                noise = random.gauss(0, 0.03)
+                noise = self._synthetic_rng.gauss(0, 0.03)
                 samples[i] = carrier * envelope + noise
         else:
             for i in range(num_samples):
                 t = i * dt
-                samples[i] = 0.25 * math.sin(2.0 * math.pi * 1000.0 * t) + random.gauss(0, 0.03)
+                samples[i] = 0.25 * math.sin(2.0 * math.pi * 1000.0 * t) + self._synthetic_rng.gauss(0, 0.03)
 
         return samples
 
@@ -803,9 +816,24 @@ class CatTuner:
 # 7. TIME OFFSET PERSISTENCE & SETTINGS INTEGRATION
 # ============================================================================
 
-#: Largest jump z-30 will ever apply to the system clock, in seconds. A genuine drift
-#: correction is milliseconds to seconds; anything larger is a misdecode or a spoof.
+#: Largest jump z-30 will ever apply to the system clock in one step, in seconds. A genuine
+#: drift correction is milliseconds to seconds; anything larger is a misdecode or a spoof.
 MAX_OS_CLOCK_STEP_SEC: float = 300.0
+
+#: Largest *total* movement z-30 will apply across a rolling window, in seconds.
+#:
+#: The per-step bound alone is not the guarantee an operator reads it as. Each call measured its
+#: step against the clock as it stood at that moment, so N individually-compliant steps could
+#: walk the clock N x 300 s in one direction and nothing anywhere counted them. A station left
+#: syncing against a spoofed or misdecoded signal would drift arbitrarily far, one legal step at
+#: a time. Total movement inside the window is bounded too, so the walk terminates.
+MAX_OS_CLOCK_CUMULATIVE_SEC: float = 900.0
+
+#: The window over which cumulative movement is summed, in seconds (24 hours). Steps older than
+#: this are dropped: real drift genuinely does accumulate over days, and a bound that never
+#: forgot would eventually refuse a legitimate correction on a machine that has been up a long
+#: time - which is how a safety check ends up switched off by its operator.
+OS_CLOCK_CUMULATIVE_WINDOW_SEC: float = 86400.0
 
 
 class TimeSyncSettingsManager:
@@ -858,6 +886,68 @@ class TimeSyncSettingsManager:
             return float(data.get("app_time_offset_ms", 0.0))
         except Exception:
             return 0.0
+
+    @staticmethod
+    def _read_clock_step_ledger(config_path: str) -> List[Dict[str, Any]]:
+        """The recorded OS clock steps still inside the cumulative window, oldest first."""
+        if not os.path.exists(config_path):
+            return []
+        try:
+            with open(config_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+        except Exception:
+            return []
+        entries = data.get("os_clock_steps")
+        if not isinstance(entries, list):
+            return []
+        cutoff = datetime.now(timezone.utc).timestamp() - OS_CLOCK_CUMULATIVE_WINDOW_SEC
+        kept: List[Dict[str, Any]] = []
+        for entry in entries:
+            if not isinstance(entry, dict):
+                continue
+            try:
+                at = float(entry.get("at_epoch"))
+                delta = float(entry.get("delta_sec"))
+            except (TypeError, ValueError):
+                continue
+            if at >= cutoff:
+                kept.append({"at_epoch": at, "delta_sec": delta})
+        return kept
+
+    @staticmethod
+    def cumulative_clock_step_sec(config_path: Optional[str] = None) -> float:
+        """
+        Total absolute clock movement inside the rolling window.
+
+        Absolute, not signed: a spoofer that alternates +290 s and -290 s moves the clock just as
+        far as one that always pushes forward, and a signed total would score that as zero.
+        """
+        config_path = config_path or default_config_path()
+        return sum(
+            abs(e["delta_sec"]) for e in TimeSyncSettingsManager._read_clock_step_ledger(config_path)
+        )
+
+    @staticmethod
+    def record_clock_step(delta_sec: float, config_path: Optional[str] = None) -> None:
+        """Appends an applied step to the ledger, pruning entries outside the window."""
+        config_path = config_path or default_config_path()
+        data: Dict[str, Any] = {}
+        if os.path.exists(config_path):
+            try:
+                with open(config_path, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+            except Exception:
+                data = {}
+        entries = TimeSyncSettingsManager._read_clock_step_ledger(config_path)
+        entries.append(
+            {"at_epoch": datetime.now(timezone.utc).timestamp(), "delta_sec": float(delta_sec)}
+        )
+        data["os_clock_steps"] = entries
+        try:
+            with open(config_path, "w", encoding="utf-8") as f:
+                json.dump(data, f, indent=2)
+        except Exception as ex:
+            logger.error(f"Failed to record clock step in {config_path}: {ex}")
 
     # ------------------------------------------------------------------
     # OS clock setting - opt-in, bounded, and never the default
@@ -928,6 +1018,8 @@ class TimeSyncSettingsManager:
         allow: bool = False,
         confirmed: bool = False,
         max_step_sec: Optional[float] = None,
+        max_cumulative_sec: Optional[float] = None,
+        config_path: Optional[str] = None,
     ) -> Tuple[bool, str]:
         """
         Sets the OS clock to `target_utc`, if and only if every guard passes.
@@ -937,7 +1029,9 @@ class TimeSyncSettingsManager:
             allow: The feature is enabled for this station (see is_os_clock_setting_enabled).
             confirmed: This specific change was confirmed at the moment it fires. A UI passes
                 the operator's answer here; a headless service passes True deliberately.
-            max_step_sec: Override for MAX_OS_CLOCK_STEP_SEC.
+            max_step_sec: Override for MAX_OS_CLOCK_STEP_SEC (one step).
+            max_cumulative_sec: Override for MAX_OS_CLOCK_CUMULATIVE_SEC (total in the window).
+            config_path: Where the cumulative-step ledger lives; defaults to the user's config.
 
         Returns:
             (applied, human-readable reason). `applied` is False for every refusal, and the
@@ -961,6 +1055,24 @@ class TimeSyncSettingsManager:
         owner = TimeSyncSettingsManager.describe_clock_ownership()
         if owner:
             return False, f"Refused: {owner}."
+
+        # The per-step bound above is measured against the clock as it stands right now, so on
+        # its own it bounds nothing over time: repeated compliant steps in the same direction
+        # walk the clock as far as an attacker likes. Total movement in the window is bounded
+        # too, so the walk terminates.
+        cumulative_limit = (
+            MAX_OS_CLOCK_CUMULATIVE_SEC if max_cumulative_sec is None else max_cumulative_sec
+        )
+        already = TimeSyncSettingsManager.cumulative_clock_step_sec(config_path)
+        if already + abs(delta_sec) > cumulative_limit:
+            return False, (
+                f"Refused: this {delta_sec:+.1f}s step would take the total clock movement to "
+                f"{already + abs(delta_sec):.1f}s in the last "
+                f"{OS_CLOCK_CUMULATIVE_WINDOW_SEC / 3600.0:.0f} h, beyond the "
+                f"{cumulative_limit:.0f}s cumulative bound. Repeated small steps that all push "
+                f"one way are what a spoofed signal looks like; z-30 keeps the correction "
+                f"internally as app_time_offset_ms instead."
+            )
 
         target_epoch = target_utc.timestamp()
         try:
@@ -993,6 +1105,7 @@ class TimeSyncSettingsManager:
                 if not ctypes.windll.kernel32.SetSystemTime(ctypes.byref(st)):
                     err = ctypes.windll.kernel32.GetLastError()
                     return False, f"SetSystemTime failed (Windows error {err}); Administrator rights are required."
+                TimeSyncSettingsManager.record_clock_step(delta_sec, config_path)
                 return True, f"System clock set to {target_utc.isoformat()} ({delta_sec:+.3f}s step)."
 
             # POSIX: clock_settime takes a float and keeps sub-second precision. The old
@@ -1000,6 +1113,7 @@ class TimeSyncSettingsManager:
             # truncated to whole seconds - discarding the very precision that decoding a time
             # standard exists to obtain.
             time.clock_settime(time.CLOCK_REALTIME, target_epoch)
+            TimeSyncSettingsManager.record_clock_step(delta_sec, config_path)
             return True, f"System clock set to {target_utc.isoformat()} ({delta_sec:+.3f}s step)."
         except PermissionError:
             return False, "Permission denied setting the system clock; root privileges are required."
@@ -1134,16 +1248,25 @@ class RFTimeSyncThread(threading.Thread):
                 # uses, and for almost every operator it is the whole of the correction.
                 TimeSyncSettingsManager.update_app_time_offset(result.delta_ms, self.config_path)
 
-                # Touching the machine's system clock is opt-in and confirmed per decode; see
-                # TimeSyncSettingsManager.try_set_os_system_time for why. A refusal is logged
-                # rather than swallowed, so an operator who did enable it can see what stopped
-                # it instead of wondering whether it worked.
+                # Touching the machine's system clock is opt-in; see
+                # TimeSyncSettingsManager.try_set_os_system_time for why. Where a caller can ask
+                # a human - the Tk dialog does, via confirm_system_clock_callback - the step is
+                # confirmed per decode, so enabling the setting once is not standing consent for
+                # every later decode. With no callback the caller is headless (the
+                # Z30_ALLOW_SET_SYSTEM_CLOCK service path), where there is nobody to ask and the
+                # explicit opt-in is the consent; the per-step and cumulative bounds and the NTP
+                # check still apply there. A refusal is logged rather than swallowed, so an
+                # operator who did enable it can see what stopped it instead of wondering
+                # whether it worked.
                 if self.allow_set_system_clock:
                     confirmed = True
                     if self.confirm_system_clock_callback is not None:
                         confirmed = bool(self.confirm_system_clock_callback(result))
                     applied, reason = TimeSyncSettingsManager.try_set_os_system_time(
-                        result.rf_timestamp_utc, allow=True, confirmed=confirmed
+                        result.rf_timestamp_utc,
+                        allow=True,
+                        confirmed=confirmed,
+                        config_path=self.config_path,
                     )
                     (logger.info if applied else logger.warning)(f"OS clock: {reason}")
 
@@ -1303,6 +1426,47 @@ def launch_rf_time_sync_dialog(parent: Optional[Any] = None, config_path: Option
         btn_stop.config(state=tk.DISABLED)
         messagebox.showwarning("Time Sync Incomplete", err)
 
+    def confirm_clock_step(result: "TimeSyncResult") -> bool:
+        """
+        Asks the operator to confirm this specific clock step.
+
+        Runs on the worker thread, so the dialog is marshalled onto the Tk main loop and waited
+        on - calling into Tk from another thread is undefined behaviour, and an unanswered
+        prompt must read as "no" rather than as silence the caller treats as consent.
+        """
+        decision: List[bool] = []
+        done = threading.Event()
+
+        def ask() -> None:
+            try:
+                decision.append(
+                    bool(
+                        messagebox.askyesno(
+                            "Set System Clock?",
+                            f"{result.station} decoded at SNR {result.snr_db:.1f} dB.\n\n"
+                            f"Proposed system clock step: {result.delta_ms / 1000.0:+.3f} s\n\n"
+                            "This changes the machine's clock for every other program on it. "
+                            "z-30 does not need it - the correction is already applied "
+                            "internally.\n\nApply it to the system clock?",
+                            parent=root,
+                        )
+                    )
+                )
+            except Exception:
+                decision.append(False)
+            finally:
+                done.set()
+
+        try:
+            root.after(0, ask)
+        except Exception:
+            return False
+        # Bounded so a dismissed or unreachable dialog cannot leave the worker parked forever;
+        # a timeout is a refusal.
+        if not done.wait(timeout=120.0):
+            return False
+        return bool(decision and decision[0])
+
     def start_sync() -> None:
         region = region_var.get()
         station_queue = PRIORITY_REGIONS.get(region, PRIORITY_REGIONS["North America (Default)"])
@@ -1317,7 +1481,12 @@ def launch_rf_time_sync_dialog(parent: Optional[Any] = None, config_path: Option
             config_path=config_path,
             on_status_callback=on_status,
             on_complete_callback=on_complete,
-            on_error_callback=on_error
+            on_error_callback=on_error,
+            # Supplied so the "confirmed per decode" guarantee is real on this path. Without it
+            # the worker fell back to confirmed=True, so enabling the setting once meant every
+            # later decode stepped the clock with no further operator gesture - in a dialog with
+            # a human sitting in front of it.
+            confirm_system_clock_callback=confirm_clock_step,
         )
         active_thread[0] = worker
         worker.start()
@@ -1402,7 +1571,8 @@ def run_self_test() -> bool:
     # 1. Test DSP Filter
     print("[1/5] Testing FIR Bandpass & Envelope Detection...")
     dt = 1.0 / sr
-    test_sig = [math.sin(2.0 * math.pi * 100.0 * i * dt) + 0.5 * math.sin(2.0 * math.pi * 1000.0 * i * dt) + random.gauss(0, 0.02) for i in range(sr)]
+    harness_rng = random.Random(SYNTHETIC_RF_SEED)
+    test_sig = [math.sin(2.0 * math.pi * 100.0 * i * dt) + 0.5 * math.sin(2.0 * math.pi * 1000.0 * i * dt) + harness_rng.gauss(0, 0.02) for i in range(sr)]
     filtered = DSPUtils.bandpass_fir(test_sig, sr, 80.0, 120.0, num_taps=51)
     snr, _ = DSPUtils.estimate_carrier_snr(filtered, sr, 100.0)
     assert snr > 5.0, f"Expected SNR > 5dB, got {snr:.1f} dB"

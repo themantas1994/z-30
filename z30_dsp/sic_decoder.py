@@ -22,10 +22,22 @@ on the station clock discipline provided by rf_time_sync.py, not blind search.
 
 from dataclasses import dataclass
 from typing import List, Dict, Tuple, Optional
+import math
 import numpy as np
 from z30_dsp.modem import Z30Modulator, Z30Config
 from z30_dsp.ldpc import Z30LdpcCodec
 from z30_dsp.benchmark import demodulate_mfsk_llrs
+
+#: How far above the estimated noise floor a tone group must sit to be tried as a candidate.
+#:
+#: Shared with `findCandidates` in src/dsp/realReceiver.ts and pinned across the two languages by
+#: tests/test_cross_language_parity.py. The two sides ran different detectors at different
+#: thresholds (raw FFT bins at 8 dB here, Bartlett-averaged groups at 6 dB there) with no test
+#: over either, so each could drift without anything noticing.
+SIC_MIN_PEAK_DB: float = 6.0
+
+#: Most candidates one pass will try, strongest first. Bounds the work a noisy band can create.
+SIC_MAX_CANDIDATES: int = 16
 
 # ---------------------------------------------------------------------------
 # Message codec: Radix-37/27 callsign + 7-bit grid/report field.
@@ -234,44 +246,80 @@ class Z30SicMultiSignalDecoder:
         buffer: np.ndarray,
         min_freq_hz: float = 200.0,
         max_freq_hz: float = 3000.0,
-        min_peak_db: float = 8.0,
+        min_peak_db: float = SIC_MIN_PEAK_DB,
     ) -> List[Dict]:
         """
-        Real spectral peak detector: windowed FFT of the buffer, noise-floor estimation via
-        the median bin magnitude, and local-maxima extraction at least `min_peak_db` above
-        that floor, deduplicated within one occupied bandwidth (50 Hz) of each other.
+        Real spectral peak detector, the twin of `findCandidates` in src/dsp/realReceiver.ts.
+
+        Hann-windowed FFT, fine bins averaged into `tone_spacing_hz`-wide groups (Bartlett's
+        method), noise floor from the median group, and local maxima at least `min_peak_db`
+        above that floor, deduplicated within one occupied bandwidth of each other.
+
+        The averaging step is the part that matters and the part this side was missing. A ~24 s
+        buffer gives an FFT bin spacing far finer than the ~3.125 Hz the search actually needs to
+        localise a 16-MFSK comb, and with that many independent noise bins a fixed "X dB over the
+        median" test is an order-statistics problem: the largest of ~10^5 noise bins clears 8 dB
+        over the median routinely, so the detector produced spurious candidates from noise alone
+        and spent SIC passes on them. Grouping restores both the resolution actually wanted and
+        the statistics the threshold assumes.
+
+        The two languages had diverged into genuinely different algorithms here - raw bins at
+        8 dB in Python against grouped bins at 6 dB in TypeScript - with no parity test over
+        either. Both now run this one, off the shared constants pinned by
+        tests/test_cross_language_parity.py. Note that the published sensitivity figures are
+        unaffected: benchmark.py measures through acquisition.py and never calls this function.
         """
         n = len(buffer)
         if n < 64:
             return []
 
+        fft_size = 1
+        while fft_size < n:
+            fft_size *= 2
         window = np.hanning(n)
-        spectrum = np.fft.rfft(buffer * window)
-        mag_db = 20.0 * np.log10(np.maximum(np.abs(spectrum), 1e-12))
-        freqs = np.fft.rfftfreq(n, d=1.0 / self.cfg.sample_rate_hz)
+        padded = np.zeros(fft_size, dtype=np.float64)
+        padded[:n] = buffer * window
+        mags = np.abs(np.fft.rfft(padded))
 
-        band_idx = np.where((freqs >= min_freq_hz) & (freqs <= max_freq_hz))[0]
-        if len(band_idx) < 3:
+        fine_bin_hz = self.cfg.sample_rate_hz / fft_size
+        group_hz = self.cfg.tone_spacing_hz
+        fine_per_group = max(1, int(round(group_hz / fine_bin_hz)))
+
+        group_min_idx = max(0, int(math.floor(min_freq_hz / group_hz)))
+        group_max_idx = int(math.floor(max_freq_hz / group_hz))
+        num_groups = group_max_idx - group_min_idx + 1
+        if num_groups < 3:
             return []
 
-        noise_floor_db = float(np.median(mag_db[band_idx]))
+        group_db = np.full(num_groups, -999.0, dtype=np.float64)
+        for g in range(num_groups):
+            freq_hz = (group_min_idx + g) * group_hz
+            fine_start = int(round(freq_hz / fine_bin_hz))
+            fine_stop = min(len(mags), fine_start + fine_per_group)
+            if fine_start >= fine_stop:
+                continue
+            power = mags[fine_start:fine_stop] ** 2
+            group_db[g] = 10.0 * math.log10(max(float(np.mean(power)), 1e-12))
+
+        noise_floor_db = float(np.sort(group_db)[num_groups // 2])
         threshold_db = noise_floor_db + min_peak_db
-        min_spacing_hz = self.cfg.bandwidth_hz
+        min_spacing_groups = max(1, int(round(self.cfg.bandwidth_hz / group_hz)))
+        min_spacing_hz = min_spacing_groups * group_hz
 
         candidates: List[Dict] = []
-        for i in band_idx[1:-1]:
-            if mag_db[i] > threshold_db and mag_db[i] > mag_db[i - 1] and mag_db[i] > mag_db[i + 1]:
-                freq_hz = float(freqs[i])
+        for g in range(1, num_groups - 1):
+            if group_db[g] > threshold_db and group_db[g] > group_db[g - 1] and group_db[g] > group_db[g + 1]:
+                freq_hz = float((group_min_idx + g) * group_hz)
                 if any(abs(freq_hz - c["freq_hz"]) < min_spacing_hz for c in candidates):
                     continue
                 candidates.append({
                     "freq_hz": freq_hz,
-                    "peak_db": float(mag_db[i]),
+                    "peak_db": float(group_db[g]),
                     "noise_floor_db": noise_floor_db,
                 })
 
         candidates.sort(key=lambda c: c["peak_db"], reverse=True)
-        return candidates
+        return candidates[:SIC_MAX_CANDIDATES]
 
     def _pilot_amplitude(self, buffer: np.ndarray, base_freq_hz: float) -> float:
         """

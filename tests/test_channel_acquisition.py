@@ -13,7 +13,7 @@ against the whole point of the exercise being quietly undone again.
 import numpy as np
 import pytest
 
-from z30_dsp.acquisition import Acquisition, acquire_frame, estimate_noise_sigma
+from z30_dsp.acquisition import acquire_frame, estimate_noise_sigma
 from z30_dsp.benchmark import add_calibrated_awgn, generate_random_frame
 from z30_dsp.channel import (
     WATTERSON_PRESETS,

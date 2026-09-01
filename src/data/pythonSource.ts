@@ -72,7 +72,7 @@ Mathematical Specification & Design Rationale:
    - Early stopping condition: syndrome s = H * c^T == 0 (mod 2) and CRC valid.
 """
 
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Tuple
 import math
 
 import numpy as np
@@ -186,13 +186,23 @@ def dither_vector(llr_channel: "np.ndarray | List[float]", length: int) -> "np.n
     return out
 
 
+#: Schedule 1's belief-propagation iteration cap, and the codec's default.
+#:
+#: The twin of \`LDPC_MAX_ITERATIONS\` in src/dsp/ldpcCodec.ts, pinned across the two languages by
+#: tests/test_cross_language_parity.py. Named rather than left as a literal so callers quote it
+#: instead of retyping it - benchmark.py carried its own \`45\`, which would have gone on reading
+#: correct after this one changed, leaving the published curve describing a decoder that no
+#: longer ships. Same rule AGENTS.md states for UI prose quoting constants.
+LDPC_MAX_ITERATIONS: int = 45
+
+
 class Z30LdpcCodec:
     """
     Production-grade Systematic (216, 77) LDPC Codec.
     Implements IRA forward-substitution encoding and normalized Min-Sum belief propagation.
     """
 
-    def __init__(self, max_iterations: int = 45) -> None:
+    def __init__(self, max_iterations: int = LDPC_MAX_ITERATIONS) -> None:
         """
         Initializes the (216, 77) LDPC Codec.
 
@@ -736,10 +746,22 @@ on the station clock discipline provided by rf_time_sync.py, not blind search.
 
 from dataclasses import dataclass
 from typing import List, Dict, Tuple, Optional
+import math
 import numpy as np
 from z30_dsp.modem import Z30Modulator, Z30Config
 from z30_dsp.ldpc import Z30LdpcCodec
 from z30_dsp.benchmark import demodulate_mfsk_llrs
+
+#: How far above the estimated noise floor a tone group must sit to be tried as a candidate.
+#:
+#: Shared with \`findCandidates\` in src/dsp/realReceiver.ts and pinned across the two languages by
+#: tests/test_cross_language_parity.py. The two sides ran different detectors at different
+#: thresholds (raw FFT bins at 8 dB here, Bartlett-averaged groups at 6 dB there) with no test
+#: over either, so each could drift without anything noticing.
+SIC_MIN_PEAK_DB: float = 6.0
+
+#: Most candidates one pass will try, strongest first. Bounds the work a noisy band can create.
+SIC_MAX_CANDIDATES: int = 16
 
 # ---------------------------------------------------------------------------
 # Message codec: Radix-37/27 callsign + 7-bit grid/report field.
@@ -948,44 +970,80 @@ class Z30SicMultiSignalDecoder:
         buffer: np.ndarray,
         min_freq_hz: float = 200.0,
         max_freq_hz: float = 3000.0,
-        min_peak_db: float = 8.0,
+        min_peak_db: float = SIC_MIN_PEAK_DB,
     ) -> List[Dict]:
         """
-        Real spectral peak detector: windowed FFT of the buffer, noise-floor estimation via
-        the median bin magnitude, and local-maxima extraction at least \`min_peak_db\` above
-        that floor, deduplicated within one occupied bandwidth (50 Hz) of each other.
+        Real spectral peak detector, the twin of \`findCandidates\` in src/dsp/realReceiver.ts.
+
+        Hann-windowed FFT, fine bins averaged into \`tone_spacing_hz\`-wide groups (Bartlett's
+        method), noise floor from the median group, and local maxima at least \`min_peak_db\`
+        above that floor, deduplicated within one occupied bandwidth of each other.
+
+        The averaging step is the part that matters and the part this side was missing. A ~24 s
+        buffer gives an FFT bin spacing far finer than the ~3.125 Hz the search actually needs to
+        localise a 16-MFSK comb, and with that many independent noise bins a fixed "X dB over the
+        median" test is an order-statistics problem: the largest of ~10^5 noise bins clears 8 dB
+        over the median routinely, so the detector produced spurious candidates from noise alone
+        and spent SIC passes on them. Grouping restores both the resolution actually wanted and
+        the statistics the threshold assumes.
+
+        The two languages had diverged into genuinely different algorithms here - raw bins at
+        8 dB in Python against grouped bins at 6 dB in TypeScript - with no parity test over
+        either. Both now run this one, off the shared constants pinned by
+        tests/test_cross_language_parity.py. Note that the published sensitivity figures are
+        unaffected: benchmark.py measures through acquisition.py and never calls this function.
         """
         n = len(buffer)
         if n < 64:
             return []
 
+        fft_size = 1
+        while fft_size < n:
+            fft_size *= 2
         window = np.hanning(n)
-        spectrum = np.fft.rfft(buffer * window)
-        mag_db = 20.0 * np.log10(np.maximum(np.abs(spectrum), 1e-12))
-        freqs = np.fft.rfftfreq(n, d=1.0 / self.cfg.sample_rate_hz)
+        padded = np.zeros(fft_size, dtype=np.float64)
+        padded[:n] = buffer * window
+        mags = np.abs(np.fft.rfft(padded))
 
-        band_idx = np.where((freqs >= min_freq_hz) & (freqs <= max_freq_hz))[0]
-        if len(band_idx) < 3:
+        fine_bin_hz = self.cfg.sample_rate_hz / fft_size
+        group_hz = self.cfg.tone_spacing_hz
+        fine_per_group = max(1, int(round(group_hz / fine_bin_hz)))
+
+        group_min_idx = max(0, int(math.floor(min_freq_hz / group_hz)))
+        group_max_idx = int(math.floor(max_freq_hz / group_hz))
+        num_groups = group_max_idx - group_min_idx + 1
+        if num_groups < 3:
             return []
 
-        noise_floor_db = float(np.median(mag_db[band_idx]))
+        group_db = np.full(num_groups, -999.0, dtype=np.float64)
+        for g in range(num_groups):
+            freq_hz = (group_min_idx + g) * group_hz
+            fine_start = int(round(freq_hz / fine_bin_hz))
+            fine_stop = min(len(mags), fine_start + fine_per_group)
+            if fine_start >= fine_stop:
+                continue
+            power = mags[fine_start:fine_stop] ** 2
+            group_db[g] = 10.0 * math.log10(max(float(np.mean(power)), 1e-12))
+
+        noise_floor_db = float(np.sort(group_db)[num_groups // 2])
         threshold_db = noise_floor_db + min_peak_db
-        min_spacing_hz = self.cfg.bandwidth_hz
+        min_spacing_groups = max(1, int(round(self.cfg.bandwidth_hz / group_hz)))
+        min_spacing_hz = min_spacing_groups * group_hz
 
         candidates: List[Dict] = []
-        for i in band_idx[1:-1]:
-            if mag_db[i] > threshold_db and mag_db[i] > mag_db[i - 1] and mag_db[i] > mag_db[i + 1]:
-                freq_hz = float(freqs[i])
+        for g in range(1, num_groups - 1):
+            if group_db[g] > threshold_db and group_db[g] > group_db[g - 1] and group_db[g] > group_db[g + 1]:
+                freq_hz = float((group_min_idx + g) * group_hz)
                 if any(abs(freq_hz - c["freq_hz"]) < min_spacing_hz for c in candidates):
                     continue
                 candidates.append({
                     "freq_hz": freq_hz,
-                    "peak_db": float(mag_db[i]),
+                    "peak_db": float(group_db[g]),
                     "noise_floor_db": noise_floor_db,
                 })
 
         candidates.sort(key=lambda c: c["peak_db"], reverse=True)
-        return candidates
+        return candidates[:SIC_MAX_CANDIDATES]
 
     def _pilot_amplitude(self, buffer: np.ndarray, base_freq_hz: float) -> float:
         """
@@ -1181,7 +1239,7 @@ spread, separated by a fixed differential delay.
 """
 
 from dataclasses import dataclass
-from typing import Optional, Tuple
+from typing import Tuple
 
 import numpy as np
 from scipy.signal import hilbert
@@ -1617,7 +1675,7 @@ from typing import List, Optional, Tuple, Dict
 import numpy as np
 
 from z30_dsp.modem import Z30Modulator, Z30Config
-from z30_dsp.ldpc import Z30LdpcCodec
+from z30_dsp.ldpc import Z30LdpcCodec, LDPC_MAX_ITERATIONS
 from z30_dsp.channel import ChannelImpairments, impair_frame, WATTERSON_PRESETS
 from z30_dsp.acquisition import acquire_frame, slot_timing_search_sec
 
@@ -1875,7 +1933,11 @@ def run_monte_carlo_snr_sweep(
     )
     cfg = Z30Config(sample_rate_hz=sample_rate_hz)
     modulator = Z30Modulator(cfg)
-    codec = Z30LdpcCodec(max_iterations=45)
+    # From the codec's own default rather than a retyped literal. AGENTS.md's "UI prose quotes
+    # constants, it does not retype them" rule applies to the benchmark too: a 45 written here
+    # would go on reading correct after ldpc.py's cap changed, and the curve would silently stop
+    # describing the decoder that ships.
+    codec = Z30LdpcCodec(max_iterations=LDPC_MAX_ITERATIONS)
     
     snr_points = np.arange(min_snr_db, max_snr_db + 1e-4, step_snr_db)
     results = []
@@ -2792,10 +2854,12 @@ class SpaRequestHandler(SimpleHTTPRequestHandler):
         if origin and origin.lower() != self.allowed_origin.lower():
             return f"Origin '{origin}' is not permitted."
 
+        # Header only. The token used to be accepted from a \`?token=\` query parameter as well,
+        # which no shipped client ever used (localServerApi.ts always sends the header) and which
+        # put a live credential everywhere a URL goes: browser history, the Referer on any
+        # outbound link, and any log that records request lines. A bearer token belongs in a
+        # header precisely because headers do not travel like that.
         supplied = (self.headers.get("X-Z30-Token") or "").strip()
-        if not supplied:
-            query = parse_qs(urlparse(self.path).query)
-            supplied = (query.get("token") or [""])[0].strip()
         if not supplied or not secrets.compare_digest(supplied, self.api_token):
             return "Missing or invalid API token."
         return None
@@ -3156,7 +3220,8 @@ def run_web_app(
     BoundHandler.gpio_bridge = gpio_bridge
     BoundHandler.update_job = UpdateJob()
 
-    handler = lambda *args, **kwargs: BoundHandler(*args, directory=dist_dir, **kwargs)
+    def handler(*args, **kwargs):
+        return BoundHandler(*args, directory=dist_dir, **kwargs)
 
     try:
         httpd = ThreadedHTTPServer(listening_socket, handler)
@@ -3185,7 +3250,7 @@ def run_web_app(
     print(f"  * Web UI Engine:  {url}")
     print(f"  * Dist Bundle:    {dist_dir}")
     print(f"  * PTT GPIO Pin:   BCM {gpio_pin} (dead-man release after {GPIO_KEEPALIVE_TIMEOUT_SEC:.1f}s)")
-    print(f"  * Audio/CAT DSP:  16-MFSK @ 50 Hz, Hamlib rigctld relay via /api/rigctl")
+    print("  * Audio/CAT DSP:  16-MFSK @ 50 Hz, Hamlib rigctld relay via /api/rigctl")
     print("==================================================================")
     print("  Open the URL above in a browser on this machine. The local API is")
     print("  token-authenticated, and the token is issued only to that page.")
@@ -3369,7 +3434,7 @@ Nothing here touches a GUI or a radio. \`config_wizard\` re-exports both names, 
 imports keep working.
 """
 
-from dataclasses import dataclass, asdict, field
+from dataclasses import dataclass, asdict
 import json
 import os
 import sys
@@ -3552,19 +3617,40 @@ class SettingsManager:
         return self.current_config
 
     def save_config(self, config: Optional[StationConfig] = None) -> bool:
-        """Persists station configuration to JSON file."""
+        """
+        Persists station configuration to JSON, atomically.
+
+        Written to a temporary file in the same directory, flushed and fsynced, then moved into
+        place with os.replace - the pattern web_server.OperatorStore._write_json_atomic already
+        uses. Writing straight to config.json meant a crash or a full disk part-way through left
+        a truncated file, and load_config() falls back to defaults on a parse error rather than
+        reporting one: the operator's callsign, grid, licence class and region would silently
+        become empty, and an empty callsign is refused by canTransmit() at the next slot. Losing
+        a station's configuration should at least not be silent, and here it need not happen at
+        all.
+        """
         cfg_to_save = config or self.current_config
+        tmp_path = f"{self.config_path}.tmp"
         try:
             data = asdict(cfg_to_save)
             parent = os.path.dirname(os.path.abspath(self.config_path))
             if parent:
                 os.makedirs(parent, exist_ok=True)
-            with open(self.config_path, "w", encoding="utf-8") as f:
+            with open(tmp_path, "w", encoding="utf-8") as f:
                 json.dump(data, f, indent=4)
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(tmp_path, self.config_path)
             self.current_config = cfg_to_save
             return True
         except Exception as ex:
             print(f"[SettingsManager] Failed to write {self.config_path}: {ex}")
+            # Never leave the partial file behind to be mistaken for a real config later.
+            try:
+                if os.path.exists(tmp_path):
+                    os.remove(tmp_path)
+            except OSError:
+                pass
             return False
 `,
   },
@@ -3590,18 +3676,15 @@ Features:
 - Self-contained execution & seamless integration into the z-30 GUI pipeline.
 """
 
-from dataclasses import dataclass, asdict, field
-import json
 import math
 import os
-import re
 import socket
 import sys
 import threading
 import time
 import tkinter as tk
 from tkinter import ttk, messagebox
-from typing import Optional, Dict, List, Tuple, Any, Callable
+from typing import Optional, List, Tuple, Any, Callable
 
 
 # ============================================================================
@@ -4953,7 +5036,6 @@ import json
 import socket
 import logging
 from typing import Dict, Optional, Tuple, Callable, List
-from dataclasses import dataclass, asdict
 
 from z30_dsp.paths import default_config_path
 
@@ -5293,7 +5375,12 @@ class BandManager:
         """
         freq_ok = self.hamlib.set_frequency(freq_hz)
         mode_ok = self.hamlib.set_mode(mode, 3000)
-        return freq_ok
+        # Both, not just the frequency. The mode result was computed and thrown away, so a rig
+        # that took the QSY but refused the mode change reported a fully successful tune - and
+        # the caller logged nothing, leaving the radio on the right frequency in the wrong mode.
+        # Same rule the CAT layer already follows: a command that cannot report failure is worse
+        # than no command.
+        return freq_ok and mode_ok
 
     def sync_from_radio(self) -> Optional[int]:
         """
@@ -5322,7 +5409,7 @@ class BandManager:
 
 try:
     import tkinter as tk
-    from tkinter import ttk, messagebox
+    from tkinter import messagebox
 
     class BandManagerDialog(tk.Toplevel):
         """
@@ -5621,23 +5708,21 @@ Features:
 - Standalone interactive Tkinter UI dialog and CLI test harness with synthetic audio generator.
 """
 
-from dataclasses import dataclass, field, asdict
-from datetime import datetime, timezone, timedelta
+from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from enum import Enum
 import json
 import logging
 import math
 import os
-import queue
 import random
 import shutil
 import socket
-import struct
 import subprocess
 import sys
 import threading
 import time
-from typing import Optional, Dict, List, Tuple, Callable, Any, Sequence, Union
+from typing import Optional, Dict, List, Tuple, Callable, Any, Sequence
 
 try:
     from .paths import default_config_path
@@ -5660,6 +5745,13 @@ logger = logging.getLogger("z30.RFTimeSync")
 # ============================================================================
 # 1. STATION DEFINITIONS & MODULATION SPECIFICATIONS
 # ============================================================================
+
+#: Seed for the synthetic RF fallback generator in AudioCaptureEngine.
+#:
+#: The simulator stands in for a radio when no audio hardware is present, and its output runs
+#: through exactly the same decoders and SNR estimator as a real capture. Fixing the seed makes
+#: a simulated decode reproducible, so a failure seen once can be reproduced and bisected.
+SYNTHETIC_RF_SEED = 20260830
 
 class ModulationType(str, Enum):
     AM_BCD_100HZ = "AM_BCD_100HZ"      # WWV / WWVH 100 Hz subcarrier BCD
@@ -6252,6 +6344,14 @@ class AudioCaptureEngine:
         self.sample_rate = sample_rate
         self.device_index = device_index
         self.has_real_audio = False
+        # Own generator rather than the \`random\` module's shared one. The synthetic fallback
+        # feeds the same decoder and SNR estimate a real capture does, and that estimate is one
+        # input to a decision that can step the machine's clock - so "the simulator decoded at
+        # 8 dB" has to mean the same thing twice, and must not shift because unrelated code
+        # elsewhere in the process drew from the global RNG first. Seeded, not unseeded, for the
+        # reason AGENTS.md gives for the benchmark path: a result nobody can reproduce is an
+        # anecdote.
+        self._synthetic_rng = random.Random(SYNTHETIC_RF_SEED)
         self._check_audio_backend()
 
     def _check_audio_backend(self) -> None:
@@ -6307,7 +6407,7 @@ class AudioCaptureEngine:
 
         if not spec:
             for i in range(num_samples):
-                samples[i] = random.gauss(0, 0.05)
+                samples[i] = self._synthetic_rng.gauss(0, 0.05)
             return samples
 
         if spec.modulation == ModulationType.AM_BCD_100HZ:
@@ -6316,7 +6416,7 @@ class AudioCaptureEngine:
                 t = i * dt
                 carrier = 0.25 * math.sin(2.0 * math.pi * 100.0 * t)
                 beep = 0.4 * math.sin(2.0 * math.pi * 1000.0 * t) if i < tone_len else 0.0
-                noise = random.gauss(0, 0.03)
+                noise = self._synthetic_rng.gauss(0, 0.03)
                 samples[i] = carrier + beep + noise
 
         elif spec.modulation == ModulationType.USB_BELL103_AFSK:
@@ -6324,7 +6424,7 @@ class AudioCaptureEngine:
                 t = i * dt
                 f_tone = 2225.0 if math.sin(2.0 * math.pi * 150.0 * t) > 0 else 2025.0
                 tone = 0.3 * math.sin(2.0 * math.pi * f_tone * t)
-                noise = random.gauss(0, 0.03)
+                noise = self._synthetic_rng.gauss(0, 0.03)
                 samples[i] = tone + noise
 
         elif spec.modulation == ModulationType.AM_PWM_DCF77:
@@ -6333,12 +6433,12 @@ class AudioCaptureEngine:
                 s_frac = t - math.floor(t)
                 envelope = 0.25 if s_frac < 0.1 else 1.0
                 carrier = 0.3 * math.sin(2.0 * math.pi * 1000.0 * t)
-                noise = random.gauss(0, 0.03)
+                noise = self._synthetic_rng.gauss(0, 0.03)
                 samples[i] = carrier * envelope + noise
         else:
             for i in range(num_samples):
                 t = i * dt
-                samples[i] = 0.25 * math.sin(2.0 * math.pi * 1000.0 * t) + random.gauss(0, 0.03)
+                samples[i] = 0.25 * math.sin(2.0 * math.pi * 1000.0 * t) + self._synthetic_rng.gauss(0, 0.03)
 
         return samples
 
@@ -6399,9 +6499,24 @@ class CatTuner:
 # 7. TIME OFFSET PERSISTENCE & SETTINGS INTEGRATION
 # ============================================================================
 
-#: Largest jump z-30 will ever apply to the system clock, in seconds. A genuine drift
-#: correction is milliseconds to seconds; anything larger is a misdecode or a spoof.
+#: Largest jump z-30 will ever apply to the system clock in one step, in seconds. A genuine
+#: drift correction is milliseconds to seconds; anything larger is a misdecode or a spoof.
 MAX_OS_CLOCK_STEP_SEC: float = 300.0
+
+#: Largest *total* movement z-30 will apply across a rolling window, in seconds.
+#:
+#: The per-step bound alone is not the guarantee an operator reads it as. Each call measured its
+#: step against the clock as it stood at that moment, so N individually-compliant steps could
+#: walk the clock N x 300 s in one direction and nothing anywhere counted them. A station left
+#: syncing against a spoofed or misdecoded signal would drift arbitrarily far, one legal step at
+#: a time. Total movement inside the window is bounded too, so the walk terminates.
+MAX_OS_CLOCK_CUMULATIVE_SEC: float = 900.0
+
+#: The window over which cumulative movement is summed, in seconds (24 hours). Steps older than
+#: this are dropped: real drift genuinely does accumulate over days, and a bound that never
+#: forgot would eventually refuse a legitimate correction on a machine that has been up a long
+#: time - which is how a safety check ends up switched off by its operator.
+OS_CLOCK_CUMULATIVE_WINDOW_SEC: float = 86400.0
 
 
 class TimeSyncSettingsManager:
@@ -6454,6 +6569,68 @@ class TimeSyncSettingsManager:
             return float(data.get("app_time_offset_ms", 0.0))
         except Exception:
             return 0.0
+
+    @staticmethod
+    def _read_clock_step_ledger(config_path: str) -> List[Dict[str, Any]]:
+        """The recorded OS clock steps still inside the cumulative window, oldest first."""
+        if not os.path.exists(config_path):
+            return []
+        try:
+            with open(config_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+        except Exception:
+            return []
+        entries = data.get("os_clock_steps")
+        if not isinstance(entries, list):
+            return []
+        cutoff = datetime.now(timezone.utc).timestamp() - OS_CLOCK_CUMULATIVE_WINDOW_SEC
+        kept: List[Dict[str, Any]] = []
+        for entry in entries:
+            if not isinstance(entry, dict):
+                continue
+            try:
+                at = float(entry.get("at_epoch"))
+                delta = float(entry.get("delta_sec"))
+            except (TypeError, ValueError):
+                continue
+            if at >= cutoff:
+                kept.append({"at_epoch": at, "delta_sec": delta})
+        return kept
+
+    @staticmethod
+    def cumulative_clock_step_sec(config_path: Optional[str] = None) -> float:
+        """
+        Total absolute clock movement inside the rolling window.
+
+        Absolute, not signed: a spoofer that alternates +290 s and -290 s moves the clock just as
+        far as one that always pushes forward, and a signed total would score that as zero.
+        """
+        config_path = config_path or default_config_path()
+        return sum(
+            abs(e["delta_sec"]) for e in TimeSyncSettingsManager._read_clock_step_ledger(config_path)
+        )
+
+    @staticmethod
+    def record_clock_step(delta_sec: float, config_path: Optional[str] = None) -> None:
+        """Appends an applied step to the ledger, pruning entries outside the window."""
+        config_path = config_path or default_config_path()
+        data: Dict[str, Any] = {}
+        if os.path.exists(config_path):
+            try:
+                with open(config_path, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+            except Exception:
+                data = {}
+        entries = TimeSyncSettingsManager._read_clock_step_ledger(config_path)
+        entries.append(
+            {"at_epoch": datetime.now(timezone.utc).timestamp(), "delta_sec": float(delta_sec)}
+        )
+        data["os_clock_steps"] = entries
+        try:
+            with open(config_path, "w", encoding="utf-8") as f:
+                json.dump(data, f, indent=2)
+        except Exception as ex:
+            logger.error(f"Failed to record clock step in {config_path}: {ex}")
 
     # ------------------------------------------------------------------
     # OS clock setting - opt-in, bounded, and never the default
@@ -6524,6 +6701,8 @@ class TimeSyncSettingsManager:
         allow: bool = False,
         confirmed: bool = False,
         max_step_sec: Optional[float] = None,
+        max_cumulative_sec: Optional[float] = None,
+        config_path: Optional[str] = None,
     ) -> Tuple[bool, str]:
         """
         Sets the OS clock to \`target_utc\`, if and only if every guard passes.
@@ -6533,7 +6712,9 @@ class TimeSyncSettingsManager:
             allow: The feature is enabled for this station (see is_os_clock_setting_enabled).
             confirmed: This specific change was confirmed at the moment it fires. A UI passes
                 the operator's answer here; a headless service passes True deliberately.
-            max_step_sec: Override for MAX_OS_CLOCK_STEP_SEC.
+            max_step_sec: Override for MAX_OS_CLOCK_STEP_SEC (one step).
+            max_cumulative_sec: Override for MAX_OS_CLOCK_CUMULATIVE_SEC (total in the window).
+            config_path: Where the cumulative-step ledger lives; defaults to the user's config.
 
         Returns:
             (applied, human-readable reason). \`applied\` is False for every refusal, and the
@@ -6557,6 +6738,24 @@ class TimeSyncSettingsManager:
         owner = TimeSyncSettingsManager.describe_clock_ownership()
         if owner:
             return False, f"Refused: {owner}."
+
+        # The per-step bound above is measured against the clock as it stands right now, so on
+        # its own it bounds nothing over time: repeated compliant steps in the same direction
+        # walk the clock as far as an attacker likes. Total movement in the window is bounded
+        # too, so the walk terminates.
+        cumulative_limit = (
+            MAX_OS_CLOCK_CUMULATIVE_SEC if max_cumulative_sec is None else max_cumulative_sec
+        )
+        already = TimeSyncSettingsManager.cumulative_clock_step_sec(config_path)
+        if already + abs(delta_sec) > cumulative_limit:
+            return False, (
+                f"Refused: this {delta_sec:+.1f}s step would take the total clock movement to "
+                f"{already + abs(delta_sec):.1f}s in the last "
+                f"{OS_CLOCK_CUMULATIVE_WINDOW_SEC / 3600.0:.0f} h, beyond the "
+                f"{cumulative_limit:.0f}s cumulative bound. Repeated small steps that all push "
+                f"one way are what a spoofed signal looks like; z-30 keeps the correction "
+                f"internally as app_time_offset_ms instead."
+            )
 
         target_epoch = target_utc.timestamp()
         try:
@@ -6589,6 +6788,7 @@ class TimeSyncSettingsManager:
                 if not ctypes.windll.kernel32.SetSystemTime(ctypes.byref(st)):
                     err = ctypes.windll.kernel32.GetLastError()
                     return False, f"SetSystemTime failed (Windows error {err}); Administrator rights are required."
+                TimeSyncSettingsManager.record_clock_step(delta_sec, config_path)
                 return True, f"System clock set to {target_utc.isoformat()} ({delta_sec:+.3f}s step)."
 
             # POSIX: clock_settime takes a float and keeps sub-second precision. The old
@@ -6596,6 +6796,7 @@ class TimeSyncSettingsManager:
             # truncated to whole seconds - discarding the very precision that decoding a time
             # standard exists to obtain.
             time.clock_settime(time.CLOCK_REALTIME, target_epoch)
+            TimeSyncSettingsManager.record_clock_step(delta_sec, config_path)
             return True, f"System clock set to {target_utc.isoformat()} ({delta_sec:+.3f}s step)."
         except PermissionError:
             return False, "Permission denied setting the system clock; root privileges are required."
@@ -6730,16 +6931,25 @@ class RFTimeSyncThread(threading.Thread):
                 # uses, and for almost every operator it is the whole of the correction.
                 TimeSyncSettingsManager.update_app_time_offset(result.delta_ms, self.config_path)
 
-                # Touching the machine's system clock is opt-in and confirmed per decode; see
-                # TimeSyncSettingsManager.try_set_os_system_time for why. A refusal is logged
-                # rather than swallowed, so an operator who did enable it can see what stopped
-                # it instead of wondering whether it worked.
+                # Touching the machine's system clock is opt-in; see
+                # TimeSyncSettingsManager.try_set_os_system_time for why. Where a caller can ask
+                # a human - the Tk dialog does, via confirm_system_clock_callback - the step is
+                # confirmed per decode, so enabling the setting once is not standing consent for
+                # every later decode. With no callback the caller is headless (the
+                # Z30_ALLOW_SET_SYSTEM_CLOCK service path), where there is nobody to ask and the
+                # explicit opt-in is the consent; the per-step and cumulative bounds and the NTP
+                # check still apply there. A refusal is logged rather than swallowed, so an
+                # operator who did enable it can see what stopped it instead of wondering
+                # whether it worked.
                 if self.allow_set_system_clock:
                     confirmed = True
                     if self.confirm_system_clock_callback is not None:
                         confirmed = bool(self.confirm_system_clock_callback(result))
                     applied, reason = TimeSyncSettingsManager.try_set_os_system_time(
-                        result.rf_timestamp_utc, allow=True, confirmed=confirmed
+                        result.rf_timestamp_utc,
+                        allow=True,
+                        confirmed=confirmed,
+                        config_path=self.config_path,
                     )
                     (logger.info if applied else logger.warning)(f"OS clock: {reason}")
 
@@ -6899,6 +7109,47 @@ def launch_rf_time_sync_dialog(parent: Optional[Any] = None, config_path: Option
         btn_stop.config(state=tk.DISABLED)
         messagebox.showwarning("Time Sync Incomplete", err)
 
+    def confirm_clock_step(result: "TimeSyncResult") -> bool:
+        """
+        Asks the operator to confirm this specific clock step.
+
+        Runs on the worker thread, so the dialog is marshalled onto the Tk main loop and waited
+        on - calling into Tk from another thread is undefined behaviour, and an unanswered
+        prompt must read as "no" rather than as silence the caller treats as consent.
+        """
+        decision: List[bool] = []
+        done = threading.Event()
+
+        def ask() -> None:
+            try:
+                decision.append(
+                    bool(
+                        messagebox.askyesno(
+                            "Set System Clock?",
+                            f"{result.station} decoded at SNR {result.snr_db:.1f} dB.\\n\\n"
+                            f"Proposed system clock step: {result.delta_ms / 1000.0:+.3f} s\\n\\n"
+                            "This changes the machine's clock for every other program on it. "
+                            "z-30 does not need it - the correction is already applied "
+                            "internally.\\n\\nApply it to the system clock?",
+                            parent=root,
+                        )
+                    )
+                )
+            except Exception:
+                decision.append(False)
+            finally:
+                done.set()
+
+        try:
+            root.after(0, ask)
+        except Exception:
+            return False
+        # Bounded so a dismissed or unreachable dialog cannot leave the worker parked forever;
+        # a timeout is a refusal.
+        if not done.wait(timeout=120.0):
+            return False
+        return bool(decision and decision[0])
+
     def start_sync() -> None:
         region = region_var.get()
         station_queue = PRIORITY_REGIONS.get(region, PRIORITY_REGIONS["North America (Default)"])
@@ -6913,7 +7164,12 @@ def launch_rf_time_sync_dialog(parent: Optional[Any] = None, config_path: Option
             config_path=config_path,
             on_status_callback=on_status,
             on_complete_callback=on_complete,
-            on_error_callback=on_error
+            on_error_callback=on_error,
+            # Supplied so the "confirmed per decode" guarantee is real on this path. Without it
+            # the worker fell back to confirmed=True, so enabling the setting once meant every
+            # later decode stepped the clock with no further operator gesture - in a dialog with
+            # a human sitting in front of it.
+            confirm_system_clock_callback=confirm_clock_step,
         )
         active_thread[0] = worker
         worker.start()
@@ -6998,7 +7254,8 @@ def run_self_test() -> bool:
     # 1. Test DSP Filter
     print("[1/5] Testing FIR Bandpass & Envelope Detection...")
     dt = 1.0 / sr
-    test_sig = [math.sin(2.0 * math.pi * 100.0 * i * dt) + 0.5 * math.sin(2.0 * math.pi * 1000.0 * i * dt) + random.gauss(0, 0.02) for i in range(sr)]
+    harness_rng = random.Random(SYNTHETIC_RF_SEED)
+    test_sig = [math.sin(2.0 * math.pi * 100.0 * i * dt) + 0.5 * math.sin(2.0 * math.pi * 1000.0 * i * dt) + harness_rng.gauss(0, 0.02) for i in range(sr)]
     filtered = DSPUtils.bandpass_fir(test_sig, sr, 80.0, 120.0, num_taps=51)
     snr, _ = DSPUtils.estimate_carrier_snr(filtered, sr, 100.0)
     assert snr > 5.0, f"Expected SNR > 5dB, got {snr:.1f} dB"
@@ -7093,14 +7350,14 @@ Features:
 - Maidenhead Great-Circle distance (km) and bearing (deg) geometric calculation
 """
 
-from dataclasses import dataclass, asdict
+from dataclasses import dataclass
 from datetime import datetime, timezone
 import math
 import os
 import queue
 import sqlite3
 import threading
-from typing import Optional, List, Callable, Tuple
+from typing import Any, Optional, Tuple
 
 @dataclass
 class QsoLogRecord:
@@ -7253,32 +7510,49 @@ class AsyncQsoLogger:
             ))
             conn.commit()
 
+    @staticmethod
+    def _adif_field(tag: str, value: Any) -> str:
+        """
+        One ADIF \`<TAG:length>value\` field, with the length in **bytes**, not characters.
+
+        ADIF counts the octets of the field's data. Python's \`len()\` on a str counts code
+        points, so any non-ASCII character in a name, a QTH or a comment - an accented callsign
+        holder's name, a "über" in a note - declared a length shorter than the bytes that
+        followed it, and a strict parser resynchronised mid-field and lost the rest of the
+        record. \`qsoLogger.ts\` fixed exactly this on the web-UI side; the legacy Tk path kept
+        the bug because the two never shared code.
+        """
+        text = "" if value is None else str(value)
+        return f"<{tag}:{len(text.encode('utf-8'))}>{text}"
+
     def _append_adif(self, record: QsoLogRecord) -> None:
         """Appends record in standard ADIF 3.1.4 format."""
         file_exists = os.path.exists(self.adif_path)
         with open(self.adif_path, "a", encoding="utf-8") as f:
             if not file_exists:
-                f.write("ADIF Export from z-30 DSP Transceiver Suite\\\\n")
-                f.write("<ADIF_VER:5>3.1.4\\\\n<PROGRAMID:4>z-30\\\\n<EOH>\\\\n\\\\n")
+                # Real newlines. These were "\\\\n" inside ordinary (non-raw) f-strings, so every
+                # header line and every <EOR> wrote the two characters backslash-n and the whole
+                # log came out as one physical line - which ADIF readers reject outright.
+                f.write("ADIF Export from z-30 DSP Transceiver Suite\\n")
+                f.write("<ADIF_VER:5>3.1.4\\n<PROGRAMID:4>z-30\\n<EOH>\\n\\n")
 
-            line = (
-                f"<CALL:{len(record.callsign)}>{record.callsign} "
-                f"<QSO_DATE:{len(record.utc_date)}>{record.utc_date} "
-                f"<TIME_ON:{len(record.utc_time)}>{record.utc_time} "
-                f"<BAND:{len(record.band)}>{record.band} "
-                f"<FREQ:{len(str(record.freq_mhz))}>{record.freq_mhz} "
-                f"<MODE:{len(record.mode)}>{record.mode} "
-                f"<SUBMODE:{len(record.submode)}>{record.submode} "
-                f"<RST_SENT:{len(record.rst_sent)}>{record.rst_sent} "
-                f"<RST_RCVD:{len(record.rst_rcvd)}>{record.rst_rcvd} "
-                f"<GRIDSQUARE:{len(record.grid)}>{record.grid} "
-                f"<OPERATOR:{len(self.my_call)}>{self.my_call} "
-                f"<MY_GRIDSQUARE:{len(self.my_grid)}>{self.my_grid} "
-                f"<DISTANCE:{len(str(record.distance_km))}>{record.distance_km} "
-                f"<COMMENT:{len(record.notes)}>{record.notes} "
-                f"<EOR>\\\\n"
-            )
-            f.write(line)
+            fields = [
+                self._adif_field("CALL", record.callsign),
+                self._adif_field("QSO_DATE", record.utc_date),
+                self._adif_field("TIME_ON", record.utc_time),
+                self._adif_field("BAND", record.band),
+                self._adif_field("FREQ", record.freq_mhz),
+                self._adif_field("MODE", record.mode),
+                self._adif_field("SUBMODE", record.submode),
+                self._adif_field("RST_SENT", record.rst_sent),
+                self._adif_field("RST_RCVD", record.rst_rcvd),
+                self._adif_field("GRIDSQUARE", record.grid),
+                self._adif_field("OPERATOR", self.my_call),
+                self._adif_field("MY_GRIDSQUARE", self.my_grid),
+                self._adif_field("DISTANCE", record.distance_km),
+                self._adif_field("COMMENT", record.notes),
+            ]
+            f.write(" ".join(fields) + " <EOR>\\n")
 `,
   },
   {
@@ -7302,7 +7576,7 @@ from tkinter import ttk, messagebox
 import threading
 import time
 import numpy as np
-from typing import Dict, List, Tuple, Optional
+from typing import Dict, List
 # There is exactly one implementation of each of these modules, inside the z30_dsp package.
 # The relative form covers running as part of the package; the absolute form covers running
 # this file directly from a source checkout. Neither falls back to a top-level module: the
@@ -7669,7 +7943,6 @@ class Z30TkinterApp:
                 now = time.strftime("%H:%M:%S", time.gmtime())
                 sec = int(time.strftime("%S", time.gmtime()))
                 cycle_s = sec % 30
-                is_even = (sec // 30) % 2 == 0
                 
                 # The slot trigger that used to live here flipped is_transmitting at the top of
                 # every matching slot and relabelled the button "TRANSMITTING...", with no
@@ -7683,7 +7956,10 @@ class Z30TkinterApp:
 
 def main():
     root = tk.Tk()
-    app = Z30TkinterApp(root)
+    # Bound, not discarded: the app object owns the background threads and the Tk variables the
+    # widgets are wired to, and dropping the only reference invites the collector to take it
+    # while the main loop is still running.
+    app = Z30TkinterApp(root)  # noqa: F841
     root.mainloop()
 
 if __name__ == "__main__":
@@ -9377,7 +9653,7 @@ against the whole point of the exercise being quietly undone again.
 import numpy as np
 import pytest
 
-from z30_dsp.acquisition import Acquisition, acquire_frame, estimate_noise_sigma
+from z30_dsp.acquisition import acquire_frame, estimate_noise_sigma
 from z30_dsp.benchmark import add_calibrated_awgn, generate_random_frame
 from z30_dsp.channel import (
     WATTERSON_PRESETS,
@@ -9749,6 +10025,7 @@ classifiers = [
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
 ]
 
 [project.urls]

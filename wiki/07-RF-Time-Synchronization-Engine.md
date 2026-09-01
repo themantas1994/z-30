@@ -65,8 +65,11 @@ z30 --sync
 > `app_time_offset_ms`, which is all the decoder needs, and never steps the machine's clock
 > unless you explicitly opt in - by setting `"allow_set_system_clock": true` in
 > `~/.z30/config.json` or exporting `Z30_ALLOW_SET_SYSTEM_CLOCK=1`. Even then, a proposed step
-> of more than 5 minutes is refused as a misdecode or a spoof, and z-30 declines to fight an
-> NTP daemon that already owns the clock.
+> of more than 5 minutes is refused as a misdecode or a spoof, no more than 15 minutes of total
+> movement is allowed in any 24-hour window (so a run of individually-legal steps cannot walk
+> the clock somewhere arbitrary), each step is confirmed again wherever there is an operator to
+> ask rather than once at opt-in, and z-30 declines to fight an NTP daemon that already owns the
+> clock.
 
 Output example:
 ```

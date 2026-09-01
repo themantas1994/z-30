@@ -25,6 +25,7 @@
 import { synthesizeFrameSamples, applyEdgeRamp } from './z30Waveform';
 import { Z30_SPECS } from './z30Constants';
 import { resampleAudio } from './realReceiver';
+import { createSeededRandom } from './seededRandom';
 
 /**
  * Real-time audio signal level metering diagnostics.
@@ -677,6 +678,13 @@ class Z30AudioEngine {
     return this.currentInputLabel;
   }
 
+  /**
+   * Generator for the synthetic thermal noise floor used when no real capture is available.
+   * Seeded so a decode run against the fallback buffer reproduces; see AGENTS.md's determinism
+   * invariant and the note in seededRandom.ts.
+   */
+  private readonly noiseFloorRng = createSeededRandom();
+
   private liveFrames: {
     freqHz: number;
     text: string;
@@ -1267,9 +1275,11 @@ class Z30AudioEngine {
             resultBuffer[filled++] = tempChunk[i];
           }
         } else {
-          // Fill low-level thermal noise floor
+          // Fill low-level thermal noise floor. Seeded rather than Math.random(): this
+          // buffer is handed to the same SIC/LDPC decode chain a real capture is, and a
+          // decoder fed unseeded noise cannot be replayed when it does something odd.
           for (let i = 0; i < 256 && filled < totalSamplesNeeded; i++) {
-            resultBuffer[filled++] = (Math.random() - 0.5) * 0.01;
+            resultBuffer[filled++] = (this.noiseFloorRng.next() - 0.5) * 0.01;
           }
         }
 

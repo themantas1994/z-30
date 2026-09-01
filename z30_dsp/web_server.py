@@ -635,10 +635,12 @@ class SpaRequestHandler(SimpleHTTPRequestHandler):
         if origin and origin.lower() != self.allowed_origin.lower():
             return f"Origin '{origin}' is not permitted."
 
+        # Header only. The token used to be accepted from a `?token=` query parameter as well,
+        # which no shipped client ever used (localServerApi.ts always sends the header) and which
+        # put a live credential everywhere a URL goes: browser history, the Referer on any
+        # outbound link, and any log that records request lines. A bearer token belongs in a
+        # header precisely because headers do not travel like that.
         supplied = (self.headers.get("X-Z30-Token") or "").strip()
-        if not supplied:
-            query = parse_qs(urlparse(self.path).query)
-            supplied = (query.get("token") or [""])[0].strip()
         if not supplied or not secrets.compare_digest(supplied, self.api_token):
             return "Missing or invalid API token."
         return None
@@ -999,7 +1001,8 @@ def run_web_app(
     BoundHandler.gpio_bridge = gpio_bridge
     BoundHandler.update_job = UpdateJob()
 
-    handler = lambda *args, **kwargs: BoundHandler(*args, directory=dist_dir, **kwargs)
+    def handler(*args, **kwargs):
+        return BoundHandler(*args, directory=dist_dir, **kwargs)
 
     try:
         httpd = ThreadedHTTPServer(listening_socket, handler)
@@ -1028,7 +1031,7 @@ def run_web_app(
     print(f"  * Web UI Engine:  {url}")
     print(f"  * Dist Bundle:    {dist_dir}")
     print(f"  * PTT GPIO Pin:   BCM {gpio_pin} (dead-man release after {GPIO_KEEPALIVE_TIMEOUT_SEC:.1f}s)")
-    print(f"  * Audio/CAT DSP:  16-MFSK @ 50 Hz, Hamlib rigctld relay via /api/rigctl")
+    print("  * Audio/CAT DSP:  16-MFSK @ 50 Hz, Hamlib rigctld relay via /api/rigctl")
     print("==================================================================")
     print("  Open the URL above in a browser on this machine. The local API is")
     print("  token-authenticated, and the token is issued only to that page.")
