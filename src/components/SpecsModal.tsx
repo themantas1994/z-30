@@ -5,8 +5,10 @@
 import React from 'react';
 import { X, ShieldCheck, Zap, Radio, Layers } from 'lucide-react';
 // Quoted from the codec itself rather than retyped: the prose here used to say 50 iterations
-// while both implementations stopped at 45.
-import { LDPC_MAX_ITERATIONS, Z30_DECODE_SCHEDULES } from '../dsp/ldpcCodec';
+// while both implementations stopped at 45. The code geometry below is quoted the same way -
+// it was still typed out by hand as "(216, 77)" and "R ~ 0.356", correct but unpinned, which
+// is exactly how the iteration count drifted in the first place.
+import { LDPC_MAX_ITERATIONS, Z30_DECODE_SCHEDULES, Z30_LDPC_PARAMS } from '../dsp/ldpcCodec';
 
 interface SpecsModalProps {
   isOpen: boolean;
@@ -97,9 +99,9 @@ export const SpecsModal: React.FC<SpecsModalProps> = ({ isOpen, onClose }) => {
               <span>2. Low-Density Parity-Check (LDPC) Forward Error Correction</span>
             </h3>
             <ul className="list-disc list-inside space-y-1 text-[#D4D4D4] text-[11px]">
-              <li><strong>Code Rate:</strong> Systematic (216, 77) Irregular Repeat-Accumulate (IRA) LDPC code (R ~ 0.356).</li>
-              <li><strong>Information Payload:</strong> 77 bits total (28-bit Call 1, 28-bit Call 2, 7-bit Grid/Report, 14-bit CRC parity check).</li>
-              <li><strong>Channel Bits:</strong> 54 data symbols * 4 bits/symbol = 216 coded bits.</li>
+              <li><strong>Code Rate:</strong> Systematic ({Z30_LDPC_PARAMS.n}, {Z30_LDPC_PARAMS.k}) Irregular Repeat-Accumulate (IRA) LDPC code (R ~ {Z30_LDPC_PARAMS.rate.toFixed(3)}).</li>
+              <li><strong>Information Payload:</strong> {Z30_LDPC_PARAMS.k} bits total (28-bit Call 1, 28-bit Call 2, 7-bit Grid/Report, {Z30_LDPC_PARAMS.crcBits}-bit CRC parity check).</li>
+              <li><strong>Channel Bits:</strong> {Z30_LDPC_PARAMS.dataSymbols} data symbols * {Math.log2(Z30_LDPC_PARAMS.modulationAlphabet)} bits/symbol = {Z30_LDPC_PARAMS.n} coded bits.</li>
               <li>
                 <strong>Decoder:</strong> a cascade of {Z30_DECODE_SCHEDULES.length} belief-propagation schedules, tried in order and stopped
                 at the first whose hard decisions form a zero-syndrome codeword with a matching CRC-14. There is no single
@@ -129,8 +131,15 @@ export const SpecsModal: React.FC<SpecsModalProps> = ({ isOpen, onClose }) => {
             <ol className="list-decimal list-inside space-y-1 text-[#D4D4D4] text-[11px]">
               <li><strong>Pass 1 (Direct Decode):</strong> Detect and decode the highest-power station using LDPC belief propagation.</li>
               <li><strong>Waveform Synthesis & Cancellation:</strong> Reconstruct the continuous-phase 16-MFSK time-domain waveform, estimate amplitude/phase, and subtract from buffer.</li>
-              <li><strong>Pass 2 & 3 (Deep Unburying):</strong> Re-run matched filters on the residual signal to decode buried weak DX stations down to -31.5 dB SNR.</li>
+              <li><strong>Pass 2 & 3 (Deep Unburying):</strong> Re-run candidate detection and matched filters over the residual, decoding stations the cancelled carrier had masked in Pass 1.</li>
             </ol>
+            <p className="text-[10px] text-[#9A9A9A]">
+              Collision performance is <strong>not measured</strong>. A "down to -31.5 dB SNR" recovery figure stood
+              here until 2026-09-01 and is withdrawn: it came from no instrument in this project, and
+              z30_dsp/benchmark.py - the reference instrument - has no collision or SIC mode to produce it. The
+              mechanism above is implemented and tested; its decode rate under collision is not a number this
+              project currently has. See wiki/05.
+            </p>
           </div>
 
           {/* Comparison Table */}
