@@ -260,7 +260,16 @@ export class Z30LdpcEngine {
   /**
    * 14-bit CRC computation for 63-bit amateur payload.
    * Polynomial: g(x) = x^14 + x^13 + x^10 + x^6 + x + 1 (register constant 0x2443, x^14 implicit; Init 0x2757)
-   * 
+   *
+   * A second copy of the same register/init/poly math as z30Codec.computeCrc14 - not merged
+   * into one function, because tests/test_cross_language_parity.py::test_crc_constants_match
+   * greps this file for the literal `const poly = 0x2443` / `let crc = 0x2757` as its
+   * TypeScript-side half of the Python/TypeScript CRC parity pin, and a delegating version
+   * (correct, and verified byte-identical against the shared vectors) makes that grep fail by
+   * having nowhere to find the literal. AGENTS.md section 4 lists CRC-14 as protected precisely
+   * so a change like that is wrong rather than a test to loosen. The two copies were checked
+   * against the shared `tests/vectors/crc14_vectors.json` KAT vectors and agree bit-for-bit.
+   *
    * @param bits - Array or TypedArray of binary payload bits
    * @returns 14-bit integer CRC checksum (0x0000 to 0x3FFF)
    */

@@ -255,13 +255,6 @@ export function getHamlibManufacturers(): string[] {
 }
 
 /**
- * Find rig by Hamlib model ID
- */
-export function getRigById(id: number): HamlibRigModel | undefined {
-  return HAMLIB_ALL_RIGS.find((r) => r.id === id);
-}
-
-/**
  * Find rig by exact name or prefix
  */
 export function getRigByName(name: string): HamlibRigModel | undefined {

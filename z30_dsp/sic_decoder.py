@@ -24,7 +24,7 @@ from dataclasses import dataclass
 from typing import List, Dict, Tuple, Optional
 import math
 import numpy as np
-from z30_dsp.modem import Z30Modulator, Z30Config
+from z30_dsp.modem import Z30Modulator, Z30Config, codeword_to_symbols
 from z30_dsp.ldpc import Z30LdpcCodec
 from z30_dsp.benchmark import demodulate_mfsk_llrs
 
@@ -461,32 +461,9 @@ class Z30SicMultiSignalDecoder:
     def _recover_symbols(self, info_bits: np.ndarray) -> List[int]:
         """
         Re-encodes the 77 decoded information bits back into the exact 216-bit LDPC codeword,
-        then reassembles the full 75-symbol frame (54 data tones interleaved with the 21
-        Costas sync tones), mirroring z30_dsp.benchmark.generate_random_frame's assembly.
+        then reassembles the full 75-symbol frame via modem.codeword_to_symbols - the same
+        packing z30_dsp.benchmark.generate_random_frame uses to build a frame in the first
+        place, so the SIC re-encode path can't drift from the encoder it is mirroring.
         """
         codeword = self.ldpc.encode(np.array(info_bits[:63], dtype=np.uint8))
-
-        data_symbols: List[int] = []
-        for s in range(54):
-            idx = s * 4
-            tone = (
-                (int(codeword[idx]) << 3)
-                | (int(codeword[idx + 1]) << 2)
-                | (int(codeword[idx + 2]) << 1)
-                | int(codeword[idx + 3])
-            )
-            data_symbols.append(tone)
-
-        full_symbols = [0] * self.cfg.total_symbols
-        sync_pos_set = set(self.cfg.sync_positions)
-        sync_cnt = 0
-        data_cnt = 0
-        for i in range(self.cfg.total_symbols):
-            if i in sync_pos_set:
-                full_symbols[i] = self.cfg.sync_tones[sync_cnt % len(self.cfg.sync_tones)]
-                sync_cnt += 1
-            else:
-                full_symbols[i] = data_symbols[data_cnt]
-                data_cnt += 1
-
-        return full_symbols
+        return codeword_to_symbols(codeword, self.cfg)

@@ -12,7 +12,7 @@ import sys
 import json
 import socket
 import logging
-from typing import Dict, Optional, Tuple, Callable, List
+from typing import Dict, Optional, Tuple, Callable
 
 from z30_dsp.paths import default_config_path
 
@@ -175,23 +175,9 @@ class BandManager:
         self.bands: Dict[str, int] = dict(DEFAULT_BANDS)
         self.active_band: str = "20m"
         self.active_frequency_hz: int = DEFAULT_BANDS["20m"]
-        self.on_band_change_listeners: List[Callable[[str, int], None]] = []
 
         # Load persisted configuration if present
         self.load_config()
-
-    def register_listener(self, callback: Callable[[str, int], None]) -> None:
-        """Registers a callback invoked whenever band or frequency changes."""
-        if callback not in self.on_band_change_listeners:
-            self.on_band_change_listeners.append(callback)
-
-    def _notify_listeners(self) -> None:
-        """Notifies all registered listeners of current band & frequency."""
-        for cb in self.on_band_change_listeners:
-            try:
-                cb(self.active_band, self.active_frequency_hz)
-            except Exception as ex:
-                logger.error(f"Error in band change listener: {ex}")
 
     def load_config(self) -> bool:
         """
@@ -282,7 +268,6 @@ class BandManager:
         if persist:
             self.save_config()
 
-        self._notify_listeners()
         return True
 
     def reset_to_defaults(self, persist: bool = True) -> None:
@@ -291,7 +276,6 @@ class BandManager:
         self.active_frequency_hz = self.bands.get(self.active_band, DEFAULT_BANDS["20m"])
         if persist:
             self.save_config()
-        self._notify_listeners()
         logger.info("Band presets reset to global defaults.")
 
     def reset_band_to_default(self, band_name: str, persist: bool = True) -> bool:
@@ -302,7 +286,6 @@ class BandManager:
                 self.active_frequency_hz = self.bands[band_name]
             if persist:
                 self.save_config()
-            self._notify_listeners()
             return True
         return False
 
@@ -343,7 +326,6 @@ class BandManager:
                 logger.warning(f"CAT tuning failed for {band_name} at {target_freq} Hz")
 
         self.save_config()
-        self._notify_listeners()
         return True
 
     def tune_radio(self, freq_hz: int, mode: str = "PKTUSB") -> bool:
@@ -370,7 +352,6 @@ class BandManager:
             detected = self.detect_band(rig_freq)
             if detected:
                 self.active_band = detected
-            self._notify_listeners()
             return rig_freq
         return None
 

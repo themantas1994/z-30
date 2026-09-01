@@ -44,7 +44,7 @@ import argparse
 from typing import List, Optional, Tuple, Dict
 import numpy as np
 
-from z30_dsp.modem import Z30Modulator, Z30Config
+from z30_dsp.modem import Z30Modulator, Z30Config, codeword_to_symbols
 from z30_dsp.ldpc import Z30LdpcCodec, LDPC_MAX_ITERATIONS
 from z30_dsp.channel import ChannelImpairments, impair_frame, WATTERSON_PRESETS
 from z30_dsp.acquisition import acquire_frame, slot_timing_search_sec
@@ -97,29 +97,19 @@ def generate_random_frame(
     rng = rng if rng is not None else np.random.default_rng(DEFAULT_BENCHMARK_SEED)
     payload_63 = rng.integers(0, 2, 63, dtype=np.uint8)
     codeword_216 = codec.encode(payload_63)
-    
-    # 54 data symbols (4 bits/symbol)
+
+    # 54 data symbols (4 bits/symbol), used below only to report them separately from the
+    # interleaved frame; codeword_to_symbols recomputes the same packing internally.
     data_symbols_54 = []
     for s in range(54):
         idx = s * 4
         tone = (int(codeword_216[idx]) << 3) | (int(codeword_216[idx+1]) << 2) | \
                (int(codeword_216[idx+2]) << 1) | int(codeword_216[idx+3])
         data_symbols_54.append(tone)
-        
+
     # Interleave 21 Costas sync symbols + 54 data symbols -> 75 symbols
-    full_symbols_75 = [0] * cfg.total_symbols
-    sync_pos_set = set(cfg.sync_positions)
-    sync_cnt = 0
-    data_cnt = 0
-    
-    for i in range(cfg.total_symbols):
-        if i in sync_pos_set:
-            full_symbols_75[i] = cfg.sync_tones[sync_cnt % len(cfg.sync_tones)]
-            sync_cnt += 1
-        else:
-            full_symbols_75[i] = data_symbols_54[data_cnt]
-            data_cnt += 1
-            
+    full_symbols_75 = codeword_to_symbols(codeword_216, cfg)
+
     return payload_63, codeword_216, data_symbols_54, full_symbols_75
 
 def add_calibrated_awgn(
@@ -346,7 +336,7 @@ def run_monte_carlo_snr_sweep(
 
         for f in range(frames_per_snr):
             # 1. Generate real random payload and symbols
-            payload, codeword, data_symbols, full_symbols = generate_random_frame(codec, cfg, rng)
+            payload, _codeword, _data_symbols, full_symbols = generate_random_frame(codec, cfg, rng)
 
             # 2. Synthesize physical continuous-phase 16-MFSK waveform
             clean_wave = modulator.synthesize_frame(full_symbols, base_audio_freq_hz=1250.0)
@@ -541,9 +531,6 @@ def run_benchmark(seed: int = DEFAULT_BENCHMARK_SEED):
         mode="realistic",
     )
 
-
-run_self_test = run_benchmark
-main = run_benchmark
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
