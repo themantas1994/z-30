@@ -20,6 +20,7 @@ exact condition that failed:
 | A syntactically valid callsign that is not the shipped `W1AW` placeholder | An unidentified transmission, or one under someone else's call, is a licence problem |
 | A configured regulatory region and licence class | Band edges and sub-band privileges differ by country and by class; there is no safe way to guess either |
 | Dial frequency **plus audio offset** inside a data-mode segment your class holds | The radiated frequency is not the dial frequency, and this is what puts a station out of band |
+| No contradiction from the radio itself, where the radio can be read back | The three checks above all reason about the dial the *software commanded*; if `rigctld` reports the VFO somewhere else, they were about a frequency the transmitter is not on |
 
 The band plan lives in `src/dsp/bandPlan.ts` and covers IARU Regions 1–3 plus the FCC Part 97
 sub-band structure, with the date each entry was last checked. National rules vary and change:
@@ -29,6 +30,16 @@ licence conditions.
 The console reaches the gate through a transmit context its caller supplies; with none supplied
 it refuses to key at all rather than defaulting to permitting. Unkeying is never gated — refusing
 to stop transmitting is not a safety property.
+
+**The last row only ever adds refusals.** A station whose rig cannot be read back — `Direct
+Serial`, which has no response parser; a VOX-keyed station with no CAT link; a page opened
+without the native server — is *unverified*, not *wrong*, and transmits exactly as it did before.
+So is a station that has just lost contact with its relay. Nor does the check fire while a band
+change is still settling, or over a few tens of Hz that the rig's own measured tuning resolution
+accounts for. Each of those exclusions exists because the alternative is a safety check that
+grounds working stations, and a safety check that grounds working stations gets switched off.
+[wiki/06 → Reading the rig back](06-Transceiver-CAT-Control-&-PTT-Wiring.md#-reading-the-rig-back)
+has the full model and where it came from.
 
 **The two wiring tests are the deliberate exception.** The browser's "PTT Key Test" and the
 `z30 --wizard` PTT test key the radio without running `canTransmit()`: they assert the line for a

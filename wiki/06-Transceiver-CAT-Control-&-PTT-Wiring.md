@@ -72,7 +72,102 @@ loop in `catController.ts` — the reader handle is only ever cancelled, never a
 `Direct Serial` mode a passing "Test CAT Connection" means the bytes left the port, not that the
 rig understood them. Reading replies means a per-rig response parser for every family, which is
 what `rigctld` already is; Hamlib mode therefore verifies the rig's actual reply and Direct Serial
-mode does not. If you need a CAT link proven end to end, test it in Hamlib mode.
+mode does not. If you need a CAT link proven end to end, test it in Hamlib mode — and see
+[Reading the rig back](#-reading-the-rig-back) below for what that then buys you.
+
+---
+
+## 🔁 Reading the rig back
+
+Sending a command is not the same as knowing where the radio is, and for most of this project's
+life z-30 treated them as the same thing. `setFreqHz()` assigns the app's dial from its own
+argument *before* anything reaches the wire and never revises it, so the dial the transmit gate
+checked against the band plan was the dial the software had asked for — not the one the
+transmitter was on. Four ordinary situations broke that assumption:
+
+- a `set_freq` the daemon refused (`RPRT -1`) — logged as an error, but the app's dial had
+  already moved;
+- an operator who turned the VFO knob after the app last commanded it;
+- a rig that quantises the dial and sits tens of Hz from the frequency it was given;
+- `rigctld` still running while the radio behind it is switched off or unplugged.
+
+In each of those the band-plan check was being run against a fiction, and then the transmitter
+was keyed on it.
+
+**The model is WSJT-X's**, ported from `Transceiver/PollingTransceiver.cpp` and
+`Transceiver/TransceiverBase.cpp` into `src/dsp/rigStateTracker.ts`. WSJT-X keeps two states —
+what the software requested, and what the rig reported when last read — polls the rig on an
+interval, and lets only the reading be the truth. z-30 now keeps the same two, and the transmit
+gate consults both.
+
+| | Where it comes from | What it is for |
+| :--- | :--- | :--- |
+| **Commanded dial** | `setFreqHz()` / the band buttons | The app's own VFO, the UI, the band-plan check |
+| **Reported dial** | `f` polled through the `rigctld` relay, once a second | Contradicting the above when the radio disagrees |
+
+### What it refuses, and what it deliberately does not
+
+The check adds refusals and removes none. It fires only on **positive evidence** of a mismatch,
+and three cases that look like mismatches are not treated as any:
+
+- **No readback at all is "unverified", not "wrong".** `Direct Serial` has no response parser,
+  a VOX-keyed station has no CAT link, and a page opened without the native server has no relay.
+  All of them transmit exactly as before. A gate that grounded every station that cannot read its
+  rig back would be switched off by the first operator who met it.
+- **A QSY still settling is not a disagreement.** A poll that crossed with the frequency command
+  answers with the *old* dial. WSJT-X allows three polls for the rig to arrive
+  (`polls_to_stabilize`); so does z-30. Refusing on that reading would refuse the very slot the
+  band change was made for.
+- **A difference the rig's own tuning resolution explains is not a disagreement.** See below.
+
+Losing contact with the rig returns the station to *unverified* — it does not block it. A relay
+hiccup must not ground a station, and it does not unkey one either: `RigStateTracker.goOffline()`
+diverges from WSJT-X's `offline()` here on purpose. WSJT-X drops PTT on a rig it can no longer
+talk to, because on WSJT-X the CAT link *is* the keying line. On z-30 it usually is not — the
+line is on a CM108 GPIO, a Pi header pin, an RTS pin on a second cable, or a TCI socket — so a
+failed CAT poll is not evidence about the transmitter, and unkeying on one would truncate a good
+frame every time the local relay stuttered. Stuck-transmitter defence stays where it already is:
+the browser watchdog, the server-side dead-man switch, and the `atexit` pin release.
+
+### Your rig's tuning resolution is measured, not assumed
+
+Plenty of radios do not tune where they are told. Ask for 14 076 055 Hz and a rig that truncates
+to 100 Hz gives you 14 076 000 Hz — working exactly as designed, and 55 Hz from where the app
+thinks it is. Treating that as a fault would put every such rig permanently out of compliance
+with itself.
+
+So z-30 measures it, using the probe from WSJT-X's `HamlibTransceiver::do_start`: command a
+frequency ending in 55, read back what the rig made of it, and classify the difference.
+
+| Read-back offset | Rig resolution |
+| :--- | :--- |
+| 0 Hz | 1 Hz — tunes exactly where told |
+| −5 Hz | 10 Hz truncated |
+| +5 Hz | 10 Hz rounded (a second probe separates this from 20 Hz rounded) |
+| −15 Hz | 20 Hz truncated |
+| −55 Hz | 100 Hz truncated |
+| +45 Hz | 100 Hz rounded |
+
+The probe runs when you press **Test CAT Connection** in Hamlib mode — it moves the VFO by a few
+tens of Hz and puts it back, so it is behind a button you pressed rather than on an automatic
+path that could fire mid-QSO. It never runs while keyed. Until it has run, the tolerance stays at
+a strict 1 Hz; assuming 100 Hz for everybody would hand a 1 Hz rig 99 Hz of unearned slack at a
+band edge.
+
+Truncation is treated as one-sided: a rig that drops the remainder only ever lands *low*, so it
+is granted no slack upwards.
+
+### Polls are quiet and non-intrusive
+
+Only `f` and `t` are polled — both are reads. Nothing here moves a VFO, so tuning the dial by
+hand is not a fight with the software. Successful polls write **nothing** to the rig control log;
+only the transitions do — contact lost, contact regained, and a dial that disagrees. WSJT-X
+compiles its own poll tracing out by default (`TRACE_CAT_POLL`) for the same reason: a diagnostic
+log that scrolls once a second is not one anybody reads.
+
+Polling also stops for 100 ms either side of a PTT transition, and so does any frequency or mode
+command. That number is WSJT-X's, from the sleep in `TransceiverBase::set`, and so is the reason:
+*some rigs cannot process CAT commands while switching from Tx to Rx.*
 
 ---
 

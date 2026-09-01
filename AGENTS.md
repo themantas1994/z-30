@@ -61,6 +61,11 @@ src/                       Web transceiver (React 19 + TypeScript + Vite + Tailw
     catController.ts       Hamlib/serial CAT, PTT keying, and canTransmit() — the transmit gate.
     bandPlan.ts            IARU R1-R3 + FCC Part 97 segments and licence privileges.
     localServerApi.ts      Token-authenticated client for web_server.py.
+    rigStateTracker.ts     Closed-loop rig state: what was commanded vs what the radio reports.
+                           A port of WSJT-X's PollingTransceiver/TransceiverBase model, with its
+                           polls-to-stabilize rule and its measured tuning-resolution codes.
+                           Transport-free and DOM-free on purpose, so the rules are testable
+                           without a radio.
     audioEngine.ts, qsoEngine.ts, qsoLogger.ts, rfTimeSyncEngine.ts, stationConfigStore.ts,
     seededRandom.ts, z30Constants.ts, hamlibCatalog.ts, timeUtils.ts, monteCarloEngine.ts,
     realReceiver.ts, updateEngine.ts, ratProtocols.ts
@@ -79,6 +84,10 @@ tests/                     pytest + node (tsx) suites. See wiki/16.
                            hardware, and the raw rigctl console keying without the gate.
   test_config_wizard.py    The Python wizard's callsign/grid rules, driven by the same vectors
                            the TypeScript side asserts (tests/vectors/callsign_vectors.json).
+  rigReadback.test.mjs     The closed-loop rig state rules: that a settled rig reporting a
+                           different dial blocks transmit, and - just as important - that an
+                           unverifiable rig, an unsettled QSY and a rig's own tuning resolution
+                           do not.
 scripts/                   Build-time generators for src/data/.
 public/                    PWA assets copied verbatim (sw.js, manifest, icons).
 ```
@@ -127,6 +136,17 @@ the test to match. Full rationale: [`wiki/13`](wiki/13-Operating-Safety-Complian
 - It validates: a real, non-placeholder callsign; a configured regulatory region *and* licence
   class; and **dial frequency + audio offset** inside a permitted data segment. The audio offset
   is not optional — the radiated frequency is not the dial frequency.
+- **Where the radio can be read back, the gate checks its dial against the radio's.** Every
+  condition above reasons about the dial this software *commanded*: `currentFreqHz` is assigned
+  from `setFreqHz()`'s argument before a byte reaches the wire and is never revised, so a refused
+  `set_freq`, a hand-turned VFO or a radio switched off mid-session left the band-plan check
+  validating a frequency the transmitter was not on. `RigStateTracker` (a port of WSJT-X's
+  polling model) supplies the other half, and `canTransmit()` refuses a settled contradiction.
+  It must go on adding refusals only: **no readback is "unverified", not "wrong"**, and neither
+  an unsettled QSY (WSJT-X's `polls_to_stabilize`, three polls) nor a difference inside the rig's
+  measured tuning resolution is a refusal. Weakening any of those three exclusions grounds
+  stations that are working correctly, which is how a safety check ends up switched off by its
+  operator. `tests/rigReadback.test.mjs` guards both directions.
 - `MAX_TX_SECONDS = 40` (a frame is 24 s). The browser timer, the server-side GPIO dead-man
   switch (~500 ms keepalive, ~2 s drop) and the `atexit`/`SIGTERM` pin release are three
   *independent* layers. Do not collapse them into one; each defends a different failure.
