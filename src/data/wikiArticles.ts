@@ -2938,9 +2938,20 @@ What the suite covers, and why each test is there:
   are installed from the pinned \`requirements.txt\`, not a bare \`pip install numpy scipy\`: CI that
   resolves different versions from the ones operators install is not testing the software they
   run, and this is a suite whose numerical behaviour depends on those versions.
-- **Ruff** over \`z30_dsp/\`, \`tests/\` and \`scripts/\`. Kept to the default rule set: a linter that
-  shouts about formatting is one contributors learn to ignore. It earned its place immediately —
-  the unused-variable rule found \`band_manager.tune_radio()\` discarding the CAT mode-set result.
+- **Ruff** over \`z30_dsp/\`, \`tests/\` and \`scripts/\`, at a pinned version with a rule set pinned
+  in \`pyproject.toml\` (\`select = ["E4", "E7", "E9", "F"]\`, \`target-version = "py39"\`).
+  Conservative on purpose: a linter that shouts about formatting is one contributors learn to
+  ignore. It earned its place immediately — the unused-variable rule found
+  \`band_manager.tune_radio()\` discarding the CAT mode-set result.
+
+  Both pins matter, and the first CI run proved why: an unpinned \`pip install ruff\` fetched
+  0.16.5, whose default rule set is far wider than 0.15's, and reported 408 findings against a
+  tree that was clean locally. Worse, those defaults include \`UP006\`/\`UP035\` ("use \`dict\`
+  instead of \`Dict\`") — taking that advice would break the **Python 3.9 floor** in
+  \`AGENTS.md\` §7, since builtin generics in annotations are evaluated at runtime without
+  \`from __future__ import annotations\`. A tool whose meaning changes when it releases is not a
+  check, and one that pushes code past the project's stated support floor is worse than none.
+  Bump the version and the rule set deliberately, together, as with any other pin here.
 - **Dependency audit**: \`pip-audit\` against the pinned \`requirements.txt\` and \`npm audit\` at
   high severity. Pinning exact versions is right for a DSP suite and it also means nothing
   otherwise reports when a pin picks up a known vulnerability. \`.github/dependabot.yml\` opens

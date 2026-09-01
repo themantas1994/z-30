@@ -51,10 +51,16 @@ jobs:
         # Static checks the test suite structurally cannot make: an unused import is harmless,
         # but the same rule caught a real defect - band_manager.tune_radio() computed the CAT
         # mode-set result and discarded it, so a rig that refused the mode change reported a
-        # fully successful tune. Kept to the default rule set on purpose: a linter that shouts
-        # about formatting is one contributors learn to ignore.
+        # fully successful tune. Kept to a conservative rule set on purpose: a linter that
+        # shouts about formatting is one contributors learn to ignore.
+        #
+        # The version is pinned for the same reason requirements.txt pins NumPy: an unpinned
+        # `pip install ruff` installed 0.16.5 on the first CI run of this job and reported 408
+        # findings against a tree that was clean under 0.15, because 0.16 widened its default
+        # rule set. The rule set itself is pinned in pyproject.toml's [tool.ruff.lint]; bump
+        # both deliberately, together, as with any other pin here.
         run: |
-          python -m pip install ruff
+          python -m pip install 'ruff==0.16.5'
           ruff check z30_dsp tests scripts
 
       - name: Run the test suite
