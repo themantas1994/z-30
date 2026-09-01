@@ -308,6 +308,29 @@ export class CatController {
    */
   private lastLoggedDialMismatchHz: number | null = null;
 
+  /**
+   * Serialises rigctld traffic, so one exchange finishes before the next one starts.
+   *
+   * WSJT-X funnels all CAT through a single thread. Here every command opened its own TCP
+   * connection to the daemon with no application-level ordering, so a poll's `f` could be in
+   * flight while `probeRigResolution` had the dial parked on a throwaway test frequency, and
+   * the poll would read that as a settled disagreement. The probe is the case that made this
+   * matter, but any read racing any write has the same shape: the answer describes a state
+   * nothing asked about.
+   *
+   * Rejections are absorbed rather than propagated - a command that failed must not poison the
+   * chain for every command behind it - so callers still see their own result and only their
+   * own.
+   */
+  private catChain: Promise<unknown> = Promise.resolve();
+
+  /**
+   * Bumped by every command that moves the dial, so a long-running operation can tell whether
+   * the frequency it captured at entry is still the one the operator is on. See
+   * `probeRigResolution`, whose `finally` used to restore unconditionally.
+   */
+  private dialCommandEpoch: number = 0;
+
   // Hardware Web Serial Port handle
   private serialPort: WebSerialPortLike | null = null;
   private serialReader: ReadableStreamDefaultReader<Uint8Array> | null = null;
@@ -432,7 +455,32 @@ export class CatController {
    * in the rig log as OK while the transmitter stayed in receive. The rig log is the only
    * diagnostic surface an operator has here, so it has to be able to say no.
    */
+  /**
+   * Runs `fn` after every CAT exchange already queued, and before every one queued after it.
+   *
+   * Deliberately NOT used for PTT (see `sendRigPtt`): an unkey queued behind a slow read is a
+   * transmitter still radiating, which is a worse failure than a stale frequency reading, and
+   * the reason the dead-man switch exists is that nothing in this process should be able to
+   * delay a release.
+   */
+  private withCatLock<T>(fn: () => Promise<T>): Promise<T> {
+    const run = this.catChain.then(fn, fn);
+    this.catChain = run.then(
+      () => undefined,
+      () => undefined
+    );
+    return run;
+  }
+
   private async relayRigctl(command: string, timeoutSec = 2.0): Promise<boolean> {
+    return this.withCatLock(() => this.relayRigctlUnlocked(command, timeoutSec));
+  }
+
+  /**
+   * The body of `relayRigctl` without the queue. Only for callers that already hold the CAT
+   * lock (the probe) or that must never wait for it (PTT).
+   */
+  private async relayRigctlUnlocked(command: string, timeoutSec = 2.0): Promise<boolean> {
     const result = await sendRigctlCommand(command, this.hamlibHost, this.hamlibPort, timeoutSec);
     if (!result.success) {
       this.logCommand(command, result.error || 'rigctld relay failed', 'ERROR');
@@ -496,6 +544,7 @@ export class CatController {
 
   public async setFreqHz(hz: number): Promise<boolean> {
     this.currentFreqHz = Math.round(hz);
+    this.dialCommandEpoch++;
     const bandIdx = HAM_BANDS.findIndex(b => Math.abs(b.dialFreqHz - hz) < 500000);
     if (bandIdx !== -1) {
       this.currentBandIdx = bandIdx;
@@ -530,6 +579,7 @@ export class CatController {
     if (!band) return false;
     const targetHz = Math.round(dialFreqHz ?? band.dialFreqHz);
     this.currentFreqHz = targetHz;
+    this.dialCommandEpoch++;
     this.currentBandIdx = HAM_BANDS.indexOf(band);
     this.rigState.noteRequestedDial(targetHz);
     const sent = await this.sendRigFrequency(targetHz);
@@ -643,7 +693,9 @@ export class CatController {
       // this one: keying happens in the first half-second of the slot, and a frame is 24 s of a
       // 30 s slot. A daemon that has not answered a PTT command within a second is not going to
       // key the radio in time for this slot, and reporting that beats eating the slot's margin.
-      return this.relayRigctl(`T ${tx ? 1 : 0}`, 1.0);
+      // Bypasses the CAT queue on purpose - see withCatLock. A release must not wait behind a
+      // read that is already in flight.
+      return this.relayRigctlUnlocked(`T ${tx ? 1 : 0}`, 1.0);
     }
     if (this.activeProtocolFamily === 'CIV') {
       return this.sendHardwareBytes(civSetPtt(this.activeCivAddr, tx));
@@ -1165,27 +1217,38 @@ export class CatController {
 
     this.rigPollInFlight = true;
     try {
-      const freqReply = await sendRigctlCommand('f', this.hamlibHost, this.hamlibPort, 1.0);
-      if (!freqReply.success) {
-        this.noteRigOffline(freqReply.error || 'the rigctld relay did not answer');
-        return;
-      }
-      const raw = (freqReply.data?.response || '').trim();
-      const dialHz = Number.parseInt(raw.split(/\s+/)[0] || '', 10);
-      if (raw.startsWith('RPRT') || !Number.isFinite(dialHz) || dialHz <= 0) {
-        this.noteRigOffline(`rigctld could not read the VFO ("${raw || 'empty reply'}")`);
-        return;
-      }
+      // The frequency and PTT reads are taken as one unit under the CAT lock, so a write
+      // cannot land between them and leave the two halves of the reading describing different
+      // rig states - and so neither can be answered by a rig parked on the resolution probe's
+      // throwaway test frequency.
+      const reading = await this.withCatLock(async () => {
+        const freqReply = await sendRigctlCommand('f', this.hamlibHost, this.hamlibPort, 1.0);
+        if (!freqReply.success) {
+          return { ok: false as const, offline: freqReply.error || 'the rigctld relay did not answer' };
+        }
+        const raw = (freqReply.data?.response || '').trim();
+        const dialHz = Number.parseInt(raw.split(/\s+/)[0] || '', 10);
+        if (raw.startsWith('RPRT') || !Number.isFinite(dialHz) || dialHz <= 0) {
+          return { ok: false as const, offline: `rigctld could not read the VFO ("${raw || 'empty reply'}")` };
+        }
 
-      // PTT readback is best-effort: a daemon started with "-P NONE" refuses `t`, which says
-      // nothing about whether the frequency reading is good. Losing the frequency is what takes
-      // the rig offline; losing PTT just leaves that field unreported.
-      let ptt: boolean | undefined;
-      const pttReply = await sendRigctlCommand('t', this.hamlibHost, this.hamlibPort, 1.0);
-      if (pttReply.success) {
-        const pttRaw = (pttReply.data?.response || '').trim().split(/\s+/)[0] || '';
-        if (pttRaw === '0' || pttRaw === '1') ptt = pttRaw === '1';
+        // PTT readback is best-effort: a daemon started with "-P NONE" refuses `t`, which says
+        // nothing about whether the frequency reading is good. Losing the frequency is what takes
+        // the rig offline; losing PTT just leaves that field unreported.
+        let ptt: boolean | undefined;
+        const pttReply = await sendRigctlCommand('t', this.hamlibHost, this.hamlibPort, 1.0);
+        if (pttReply.success) {
+          const pttRaw = (pttReply.data?.response || '').trim().split(/\s+/)[0] || '';
+          if (pttRaw === '0' || pttRaw === '1') ptt = pttRaw === '1';
+        }
+        return { ok: true as const, dialHz, ptt };
+      });
+
+      if (!reading.ok) {
+        this.noteRigOffline(reading.offline);
+        return;
       }
+      const { dialHz, ptt } = reading;
 
       const wasOffline = !this.rigState.isOnline();
       this.rigState.observe({ dialHz, ptt });
@@ -1261,7 +1324,14 @@ export class CatController {
     if (!this.useHamlibRelay()) return null;
     // Never while transmitting: this writes frequencies to the rig.
     if (this.pttState) return null;
+    // Held for the whole probe, so no poll can read the throwaway test frequency and report it
+    // as a settled disagreement (the probe's writes are real writes; a reader that does not
+    // know a probe is running has no way to tell them from the operator's dial).
+    return this.withCatLock(() => this.runResolutionProbe());
+  }
 
+  /** The probe body. Assumes the CAT lock is held; only probeRigResolution() should call it. */
+  private async runResolutionProbe(): Promise<RigResolution | null> {
     const readDial = async (): Promise<number | null> => {
       const reply = await sendRigctlCommand('f', this.hamlibHost, this.hamlibPort, 2.0);
       if (!reply.success) return null;
@@ -1270,8 +1340,19 @@ export class CatController {
       const hz = Number.parseInt(raw.split(/\s+/)[0] || '', 10);
       return Number.isFinite(hz) && hz > 0 ? Math.round(hz) : null;
     };
-    const writeDial = async (hz: number): Promise<boolean> =>
-      this.relayRigctl(`F ${Math.round(hz)}`);
+    // Every probe write tells the tracker what it asked for, exactly as setFreqHz() does. The
+    // probe used to write behind the tracker's back, which left the tracker comparing the
+    // operator's dial against a readback of the test frequency and calling it a fault.
+    const writeDial = async (hz: number): Promise<boolean> => {
+      const target = Math.round(hz);
+      this.rigState.noteRequestedDial(target);
+      return this.relayRigctlUnlocked(`F ${target}`);
+    };
+
+    // A QSY that lands while the probe is running must win: the operator asked for it, and the
+    // rig is going there. See the finally block below.
+    const epochAtEntry = this.dialCommandEpoch;
+    const dialMovedUnderUs = (): boolean => this.dialCommandEpoch !== epochAtEntry;
 
     const original = await readDial();
     if (original === null) return null;
@@ -1288,6 +1369,10 @@ export class CatController {
       if (!(await writeDial(testHz))) return null;
       const readback = await readDial();
       if (readback === null) return null;
+      // Re-checked rather than trusted from entry: setPtt deliberately bypasses the CAT queue,
+      // so a slot can start keying part-way through a probe. Writing frequencies to a keyed
+      // transmitter is what the entry check exists to prevent.
+      if (this.pttState) return null;
       switch (readback - testHz) {
         case -5:
           resolution = -1; // 10 Hz truncated
@@ -1320,9 +1405,31 @@ export class CatController {
         }
       }
     } finally {
-      // Put the rig back where the operator left it, whatever happened above.
-      await writeDial(original);
-      this.rigState.noteRequestedDial(original);
+      // Put the rig back where the operator left it - unless the operator moved it while we
+      // were probing.
+      //
+      // This used to restore unconditionally. A QSY landing mid-probe was therefore undone on
+      // the wire, and the tracker was told the pre-QSY dial was the commanded one, so
+      // `dialDisagreement()` compared the old dial against a rig sitting on the old dial and
+      // found them in agreement - while `currentFreqHz`, and so the band-plan check in
+      // canTransmit() step 3, had already moved to the new one. That is the precise failure
+      // the readback model was added to close, reopened by the code measuring the rig for it.
+      // Restoring also reset pollsRemaining, so for up to POLLS_TO_STABILIZE polls
+      // `dialDisagreement()` returned null whatever the radio said.
+      //
+      // When the dial moved under us the right frequency is the one the operator asked for,
+      // and setFreqHz() has already both recorded it and queued its own write behind this
+      // probe - so the correct action here is to leave both the wire and the tracker alone.
+      if (dialMovedUnderUs()) {
+        this.logCommand(
+          'F',
+          `resolution probe abandoned its restore: the dial moved to ${(this.currentFreqHz / 1e6).toFixed(6)} MHz ` +
+            'while probing. The operator\'s frequency stands.',
+          'OK'
+        );
+      } else if (!this.pttState) {
+        await writeDial(original);
+      }
     }
 
     this.rigState.setResolution(resolution);
@@ -1895,6 +2002,7 @@ export class CatController {
     }
 
     this.currentFreqHz = reported;
+    this.dialCommandEpoch++;
     this.isConnected = true;
     this.rigState.noteRequestedDial(reported);
 

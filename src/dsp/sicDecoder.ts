@@ -58,6 +58,19 @@ export interface SicIterationStep {
   cancelledSignalId?: string;
 }
 
+/**
+ * Monotonic suffix that makes a DecodedSignal id unique within a millisecond.
+ *
+ * `Math.random()` was doing this job, which worked but left an unseeded generator sitting in a
+ * module the decode path runs through - the same shape as the defect that put unseeded noise in
+ * `addCalibratedAwgn`. A counter is what uniqueness actually needs here; randomness never was.
+ */
+let decodedSignalOrdinal = 0;
+function nextDecodedSignalOrdinal(): string {
+  decodedSignalOrdinal = (decodedSignalOrdinal + 1) % 0x10000;
+  return decodedSignalOrdinal.toString(36).padStart(4, '0');
+}
+
 function toDecodedSignal(
   frame: RealDecodedFrame,
   dialMhz: number,
@@ -69,7 +82,7 @@ function toDecodedSignal(
 ): DecodedSignal {
   const message = frame.unpacked.rawText;
   return {
-    id: `${idPrefix}-${nowMs}-${Math.random().toString(36).substring(2, 6)}`,
+    id: `${idPrefix}-${nowMs}-${nextDecodedSignalOrdinal()}`,
     timestamp: timeStr,
     utcSeconds: utcSec,
     receivedAtMs: nowMs,

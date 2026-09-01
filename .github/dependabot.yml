@@ -1,0 +1,41 @@
+# Dependency update automation.
+#
+# requirements.txt pins exact versions deliberately - "a DSP suite whose numerical behaviour
+# depends on its NumPy and SciPy versions is the last place" for unpinned installs - which is
+# right, and which also means nothing tells anyone when a pin goes stale or picks up a known
+# vulnerability. Pinning without a bump signal is how a project ends up two years behind on a
+# security fix it chose on purpose to control.
+#
+# Grouped and monthly rather than per-package and weekly: a DSP pin bump has to be reviewed
+# against the test suite and the seeded benchmark, so a stream of single-package PRs would be
+# ignored, which is worse than none.
+version: 2
+updates:
+  - package-ecosystem: "pip"
+    directory: "/"
+    schedule:
+      interval: "monthly"
+    open-pull-requests-limit: 3
+    groups:
+      python-runtime:
+        patterns: ["*"]
+    commit-message:
+      prefix: "chore(deps)"
+
+  - package-ecosystem: "npm"
+    directory: "/"
+    schedule:
+      interval: "monthly"
+    open-pull-requests-limit: 3
+    groups:
+      frontend:
+        patterns: ["*"]
+    commit-message:
+      prefix: "chore(deps)"
+
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "monthly"
+    commit-message:
+      prefix: "chore(ci)"

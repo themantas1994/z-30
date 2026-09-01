@@ -12,6 +12,8 @@
  * Computes exact clock offset: Delta t = T_RF - T_System down to millisecond precision.
  */
 
+import { createSeededRandom } from './seededRandom';
+
 export interface RfTimeStation {
   callsign: string;
   location: string;
@@ -394,6 +396,34 @@ export class RfDspUtils {
  * Authentic RF Standard Time Signal Generator (Test Beacon / Calibration Source)
  * Produces real modulated audio waveforms to calibrate the DSP demodulator.
  */
+/** FNV-1a over the generator's own arguments, so identical requests give identical audio. */
+function rfGeneratorSeed(
+  stationCall: string,
+  durationSec: number,
+  sampleRate: number,
+  snrDb: number,
+  driftSec: number,
+  baseSec: number
+): number {
+  let h = 0x811c9dc5;
+  const mixByte = (byte: number): void => {
+    h = (h ^ (byte & 0xff)) >>> 0;
+    h = Math.imul(h, 0x01000193) >>> 0;
+  };
+  const mixNumber = (value: number): void => {
+    // Quantised to 1/1024 so the hash is over integers and cannot turn on float formatting.
+    const quantum = Math.floor(value * 1024.0 + 0.5) >>> 0;
+    for (let shift = 0; shift < 32; shift += 8) mixByte(quantum >>> shift);
+  };
+  for (let i = 0; i < stationCall.length; i++) mixByte(stationCall.charCodeAt(i));
+  mixNumber(durationSec);
+  mixNumber(sampleRate);
+  mixNumber(snrDb);
+  mixNumber(driftSec);
+  mixNumber(baseSec);
+  return h >>> 0;
+}
+
 export class RfSignalGenerator {
   public static generateStationAudio(
     stationCall: string,
@@ -403,6 +433,8 @@ export class RfSignalGenerator {
       snrDb?: number;
       driftOffsetMs?: number;
       secondOffset?: number;
+      /** Explicit seed for the noise. Omitted, one is derived from the arguments above. */
+      seed?: number;
     } = {}
   ): Float32Array {
     const numSamples = Math.floor(durationSec * sampleRate);
@@ -416,6 +448,13 @@ export class RfSignalGenerator {
     // Linear signal amplitude vs noise
     const sigAmp = 0.35;
     const noiseAmp = sigAmp / Math.pow(10, snrDb / 20.0);
+
+    // Derived from the parameters that define this waveform, so the same request always
+    // produces the same audio and a caller that wants a different realisation asks for one by
+    // passing a seed - the pattern ldpcCodec.ts's ditherSeedFromLlrs already uses here.
+    const rng = createSeededRandom(
+      options.seed ?? rfGeneratorSeed(stationCall, durationSec, sampleRate, snrDb, driftSec, baseSec)
+    );
 
     const spec = RF_TIME_STATIONS[stationCall] || RF_TIME_STATIONS.WWV;
 
@@ -488,11 +527,12 @@ export class RfSignalGenerator {
         sig = 0.35 * dipFactor * Math.sin(2 * Math.PI * 1000 * trueTime);
       }
 
-      // Add Gaussian noise
-      const u1 = Math.max(1e-9, Math.random());
-      const u2 = Math.random();
-      const gauss = Math.sqrt(-2.0 * Math.log(u1)) * Math.cos(2.0 * Math.PI * u2);
-      const noise = gauss * noiseAmp;
+      // Add Gaussian noise from the seeded source, not Math.random(). This waveform is fed
+      // to the same matched filter, Goertzel analysis and pulse slicer a real capture is, and
+      // an SNR the estimator reports off it is one input to a decision that can step the
+      // machine's clock. Unseeded, "the generator at 14 dB decodes" was not a repeatable
+      // statement about the demodulator.
+      const noise = rng.normal() * noiseAmp;
 
       samples[i] = sig + noise;
     }

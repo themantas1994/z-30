@@ -20,7 +20,7 @@ An in-depth technical analysis for **advanced amateur radio operators, RF engine
 | **FEC Code** | Systematic LDPC (174, 91) | IRA LDPC (216, 77) | **Rate $R \approx 0.356$ vs $0.523$** ($+2.4\text{ dB}$ coding gain) |
 | **Parity Check Fraction** | 47.7% parity overhead | **64.4% parity overhead** | Significantly steeper waterfall BER curve |
 | **CRC Polynomial** | 14-bit ($P_{\text{false}} \approx 6 \times 10^{-5}$) | 14-bit CRC-14 ($P_{\text{false}} \approx 2^{-14} \approx 6.1 \times 10^{-5}$) | Same order of magnitude; neither mode is meaningfully ahead here |
-| **Co-Channel Collision Recovery** | None (collisions fail to decode) | **3-Pass Successive Interference Cancellation (SIC)** | Co-channel collision resolution down to $-31.5\text{ dB}$ |
+| **Co-Channel Collision Recovery** | None (collisions fail to decode) | **3-Pass Successive Interference Cancellation (SIC)** | Mechanism present; recovery depth **not measured** - see [05](05-Successive-Interference-Cancellation-(SIC).md#-benchmark-extraction-performance) |
 | **Clock Drift Tolerance** | $\pm 1.0\text{ s}$ (requires NTP/GPS) | $\pm 1.5\text{ s}$ + Built-in RF Time Sync | Zero-admin offline HF/LF time calibration |
 
 
@@ -221,9 +221,28 @@ Both FT8 and z-30 utilize Low-Density Parity-Check (LDPC) codes decoded via beli
 By operating at a significantly lower code rate ($R \approx 0.356$), z-30 provides **139 parity-check constraints** over 216 channel bits, compared to only 83 parity constraints in FT8.
 
 ### 4.2 Normalized Min-Sum Decoder Dynamics
-The z-30 check node update equation uses an optimized empirical attenuation factor $\alpha = 0.75$:
 
-$$L_{m \to n} = 0.75 \cdot \left(\prod_{n' \in N(m) \setminus \{n\}} \text{sgn}(L_{n' \to m})\right) \cdot \min_{n' \in N(m) \setminus \{n\}} |L_{n' \to m}|$$
+> **Correction (2026-09-01):** this section previously stated that the check-node update uses
+> "an optimized empirical attenuation factor $\alpha = 0.75$" and printed a single-schedule
+> formula built on it. That is the description
+> [04. Forward Error Correction & LDPC](04-Forward-Error-Correction-&-LDPC.md) retracted on
+> 2026-08-31: there is no single $\alpha$, and the $0.75$ figure was nominal, never live. Both
+> implementations have always run a four-schedule cascade. This page kept the withdrawn version
+> for a further revision, so the project's two source-of-truth pages contradicted each other on
+> the same fact - the failure mode `AGENTS.md` §5 exists to prevent.
+
+The decoder runs up to four schedules in order, stopping at the first that yields a zero
+syndrome with a matching CRC-14. Each carries its own $\alpha$, $\beta$ and damping; the
+per-schedule table is maintained in
+[04. Forward Error Correction & LDPC](04-Forward-Error-Correction-&-LDPC.md#the-four-decode-schedules)
+and is not duplicated here, so the two pages cannot drift apart again. The normalized min-sum
+schedules apply:
+
+$$L_{m \to n} = \left( \prod_{n' \in N(m) \setminus \{n\}} \text{sgn}(L_{n' \to m}) \right) \cdot \max\!\big(0,\ \alpha \cdot \min_{n' \in N(m) \setminus \{n\}} |L_{n' \to m}| - \beta\big)$$
+
+with schedule 2 instead using the exact box-plus (Jacobian-corrected) combination. Every update
+is damped. `z30_dsp/ldpc.py::DECODE_SCHEDULES` and `src/dsp/ldpcCodec.ts::Z30_DECODE_SCHEDULES`
+are the live values, pinned to each other by `tests/test_cross_language_parity.py`.
 
 Because of the higher parity redundancy ($64.4\%$ vs $47.7\%$), the Tanner graph possesses a larger girth ($g \ge 6$) and fewer short trapping sets, yielding:
 - **Steeper Waterfall Region**: The Frame Error Rate (FER) transition from $10^{-1}$ to $10^{-5}$ occurs across a narrower $\Delta \text{SNR}$ span ($0.8\text{ dB}$ vs $1.6\text{ dB}$ in FT8).
@@ -269,7 +288,19 @@ Because $-35.0\text{ dB} \ll -21.0\text{ dB}$, FT8 completely fails to decode ei
 
 $$x_{\text{residual}}(t) = x_{\text{rx}}(t) - \hat{A}(t) \cos\left(2\pi \hat{f}_0 (t - \hat{\Delta t}) + \theta_{\text{mod}}(t) + \hat{\phi}(t)\right)$$
 
-4. **Pass 2 & Pass 3**: The residual buffer $x_{\text{residual}}(t)$ is transformed through the STDFT filterbank. The unmasked DX signal at $-25\text{ dB SNR}$ is now isolated in an interference-free noise environment, at the same $-25.0\text{ dB}$ (50%) / $-24.0\text{ dB}$ (90%) AWGN decode floor the receiver already achieves on an uncontested channel, and decodes with the corresponding empirical success probability once the dominant interferer is cancelled.
+4. **Pass 2 & Pass 3**: The residual buffer $x_{\text{residual}}(t)$ is transformed through the STDFT filterbank, and the unmasked DX signal is re-decoded from it.
+
+> **Correction (2026-09-01):** this step previously claimed the unmasked signal decodes "at the
+> same $-25.0\text{ dB}$ (50%) / $-24.0\text{ dB}$ (90%) AWGN decode floor". Both numbers were
+> wrong twice over: the canonical AWGN threshold is $-23.1\text{ dB}$ (50%) / $-21.7\text{ dB}$
+> (90%), as measured by `z30_dsp/benchmark.py` and stated in
+> [03](03-DSP-&-Physical-Layer-Specification.md), [16](16-Benchmarking-Testing-&-CI.md) and
+> `Home.md`; and the claim that a *residual* buffer faces that same floor is a statement about
+> cancellation quality that nothing has measured. Perfect cancellation would leave the DX signal
+> at the uncontested floor; imperfect cancellation leaves residual interference that raises it.
+> How far short of perfect the implementation falls is exactly the quantity the retracted
+> collision table pretended to know. See
+> [05](05-Successive-Interference-Cancellation-(SIC).md#-benchmark-extraction-performance).
 
 ---
 

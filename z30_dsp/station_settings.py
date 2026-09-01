@@ -12,7 +12,7 @@ Nothing here touches a GUI or a radio. `config_wizard` re-exports both names, so
 imports keep working.
 """
 
-from dataclasses import dataclass, asdict, field
+from dataclasses import dataclass, asdict
 import json
 import os
 import sys
@@ -195,17 +195,38 @@ class SettingsManager:
         return self.current_config
 
     def save_config(self, config: Optional[StationConfig] = None) -> bool:
-        """Persists station configuration to JSON file."""
+        """
+        Persists station configuration to JSON, atomically.
+
+        Written to a temporary file in the same directory, flushed and fsynced, then moved into
+        place with os.replace - the pattern web_server.OperatorStore._write_json_atomic already
+        uses. Writing straight to config.json meant a crash or a full disk part-way through left
+        a truncated file, and load_config() falls back to defaults on a parse error rather than
+        reporting one: the operator's callsign, grid, licence class and region would silently
+        become empty, and an empty callsign is refused by canTransmit() at the next slot. Losing
+        a station's configuration should at least not be silent, and here it need not happen at
+        all.
+        """
         cfg_to_save = config or self.current_config
+        tmp_path = f"{self.config_path}.tmp"
         try:
             data = asdict(cfg_to_save)
             parent = os.path.dirname(os.path.abspath(self.config_path))
             if parent:
                 os.makedirs(parent, exist_ok=True)
-            with open(self.config_path, "w", encoding="utf-8") as f:
+            with open(tmp_path, "w", encoding="utf-8") as f:
                 json.dump(data, f, indent=4)
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(tmp_path, self.config_path)
             self.current_config = cfg_to_save
             return True
         except Exception as ex:
             print(f"[SettingsManager] Failed to write {self.config_path}: {ex}")
+            # Never leave the partial file behind to be mistaken for a real config later.
+            try:
+                if os.path.exists(tmp_path):
+                    os.remove(tmp_path)
+            except OSError:
+                pass
             return False

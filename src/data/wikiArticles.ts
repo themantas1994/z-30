@@ -311,7 +311,7 @@ Both environments implement the exact same physical-layer mathematical specifica
 ## 💻 Developer Prerequisites
 
 - **Node.js**: \`v18.0.0\` or higher (\`v20+\` recommended)
-- **Python**: \`3.9\` or higher (\`3.10+\` recommended)
+- **Python**: \`3.10\` or higher for the pinned \`requirements.txt\` development set (the package itself declares \`>=3.9\`; see the contribution rules below for why there are two floors)
 - **Audio Headers & Libraries**:
   - Debian/Ubuntu: \`libportaudio2 portaudio19-dev libasound2-dev libhamlib-dev\`
   - Arch Linux: \`portaudio hamlib\`
@@ -498,7 +498,16 @@ Please use Conventional Commits:
 ### Pull Request Checklist
 1. All TypeScript code must pass \`npm run lint\` without errors or warnings.
 2. Production bundle must build cleanly via \`npm run build\`.
-3. Python modifications must maintain compatibility with Python 3.9 through 3.13.
+3. Python modifications must stay syntax-compatible with **Python 3.9** - no \`match\`, no PEP 604
+   \`X | Y\` annotations evaluated at runtime, no builtin generics in annotations without
+   \`from __future__ import annotations\`. That is the floor \`pyproject.toml\` declares
+   (\`requires-python = ">=3.9"\`), and its loose dependency ranges do resolve there.
+
+   Note the second, higher floor: the **pinned** set in \`requirements.txt\` (numpy 2.2, scipy
+   1.15) requires **3.10+**, so that is what a developer or an operator following the documented
+   install path actually runs, and what CI installs. CI tests 3.10, 3.12 and 3.13 - the range the
+   pinned set covers. Claiming "3.9 through 3.13" without qualification was wrong in both
+   directions: 3.9 cannot install the pinned requirements, and 3.13 was never tested.
 4. If modifying DSP code, run \`python -m pytest tests\` (which includes the codec round trip, the occupied-bandwidth budget, and the acquisition tests) and \`python -m z30_dsp.benchmark --mode realistic --fading none --min-snr -28 --max-snr -17 --frames 40 --seed 20260830\` to check the decode threshold has not regressed below **-23.1 dB SNR (50%) / -21.7 dB SNR (90%)**. That is measured through the real acquisition path with random carrier and timing offsets. \`--mode ideal\` gives the genie-aided bound (-24.6 dB / -23.4 dB) for comparison; it is not an on-air threshold.
 5. Documentation changes go in \`wiki/\`, not the README, and the generated in-app copy is regenerated (\`npm run generate:wiki\`) and committed. See [Documentation: where things belong](#-documentation-where-things-belong).
 6. Any change to the transmit gate, the local API, the GPIO bridge or the time-sync guards keeps its tests passing unchanged, or explains in the pull request why the guarantee in [13. Operating Safety, Compliance & Local Security](13-Operating-Safety-Compliance-&-Security.md) is still met.
@@ -847,7 +856,7 @@ $$\\text{SINR}_{\\text{DX}} = \\frac{P_{\\text{DX}}}{P_{\\text{local}} + N_0} \\
          │
    [ Secondary Subtraction ]
          │
-    [ PASS 3 ] ──> Deep DX Signals Decoded (Down to -27.5 dB SNR)
+    [ PASS 3 ] ──> Deep DX Signals Decoded (unmasked from Pass 2)
 \`\`\`
 
 ---
@@ -876,16 +885,61 @@ $x_{\\text{residual}}^{(1)}(t)$ is transformed back through the STDFT filterbank
 
 ---
 
+## 🔍 Candidate detection: one algorithm, two languages
+
+Each pass starts by finding candidate carriers in the residual spectrum. Until 2026-09-01 the
+two implementations did this differently, and both were the shipped default on their own side:
+
+| | Before | Now |
+| :--- | :--- | :--- |
+| \`z30_dsp/sic_decoder.py\` | local maxima on **raw FFT bins**, 8 dB over the median | Bartlett-averaged tone groups, \`SIC_MIN_PEAK_DB\` |
+| \`src/dsp/realReceiver.ts\` | Bartlett-averaged tone groups, 6 dB over the median | unchanged |
+
+The averaging step is the part that matters. A ~24 s buffer gives an FFT bin spacing far finer
+than the ~3.125 Hz needed to localise a 16-MFSK comb, and with that many independent noise bins
+a fixed "X dB over the median" test becomes an order-statistics problem: the largest of ~10⁵
+noise bins clears the threshold routinely. Measured on this repository, over five independent
+noise seeds at the frame length the decoder actually uses, the raw-bin detector returned
+**52, 52, 52, 52 and 53 candidates from pure Gaussian noise** — carriers that do not exist, each
+costing a refinement and decode attempt. The grouped detector returned **0** on all five.
+
+Python now runs the grouped detector too. \`SIC_MIN_PEAK_DB\` and \`SIC_MAX_CANDIDATES\` are
+declared in both languages and pinned to each other by \`tests/test_cross_language_parity.py\`;
+\`tests/test_sic_candidate_detection.py\` covers the behaviour on real synthesised frames.
+
+> This does not move any published sensitivity figure. \`benchmark.py\` measures through
+> \`acquisition.py\` and never calls \`_find_candidates\`, so the −23.1 / −21.7 dB AWGN threshold is
+> untouched by this change.
+
+---
+
 ## 📊 Benchmark Extraction Performance
 
-Across Monte Carlo simulations on fading channels with co-channel collisions (0 Hz to 25 Hz frequency separation):
+> **Retraction (2026-09-01): the collision decode-rate table that stood here is withdrawn.**
+>
+> It reported four z-30 SIC decode rates (98.7% / 95.2% / 91.4% / 84.6% at 5/12/20/26 dB
+> collision differentials) against four FT8 rates, and the pipeline diagram above claimed Pass 3
+> reaches "-27.5 dB SNR". None of those eight numbers came from any instrument in this
+> repository. \`z30_dsp/benchmark.py\` - the reference instrument, and per \`AGENTS.md\` §5 the only
+> sanctioned source of a sensitivity figure - has no collision or SIC mode at all: it sweeps a
+> single frame against AWGN and Watterson fading. The figures appear nowhere in \`z30_dsp/\`,
+> \`src/\` or \`tests/\`, and no seed, frame count or method was ever recorded beside them.
+>
+> This is the same shape of claim as the withdrawn "+4.0 dB advantage", which \`AGENTS.md\` says
+> must never recur. Publishing an unmeasured decode rate for the collision case is worse than
+> publishing nothing: an operator plans an antenna or a band choice around it.
+>
+> **What would be needed to restore it:** a collision mode in \`benchmark.py\` that synthesises
+> two or more overlapping frames at a controlled power differential and frequency separation,
+> runs them through \`sic_decoder.py\`, and reports decode rate per pass - then a seeded sweep
+> quoted with its seed, frame count, channel model and a confidence figure a reader can check,
+> at the ≥95% bar \`AGENTS.md\` §5 sets for a documentation claim. Until that exists, the
+> collision performance of z-30's SIC pipeline **is not measured**.
 
-| Collision Differential ($\\Delta P$) | Traditional Non-SIC FT8 Decode Rate | z-30 3-Pass SIC Decode Rate |
-| :--- | :--- | :--- |
-| **5 dB** (Minor overlap) | 38.2% | **98.7%** |
-| **12 dB** (Moderate interference) | 9.4% | **95.2%** |
-| **20 dB** (Heavy local interference) | 0.8% | **91.4%** |
-| **26 dB** (Deep DX buried under local QRO) | 0.0% | **84.6%** |
+The mechanism described above is implemented and exercised - \`z30_dsp/sic_decoder.py\` and
+\`src/dsp/sicDecoder.ts\` run the three passes, and \`tests/test_sic_candidate_detection.py\` covers
+the candidate detector both languages now share. What is absent is a *quantitative* claim about
+how often it succeeds, not the pipeline itself.
 
 In the z-30 user interface, signals decoded via SIC are clearly indicated with a purple badge (**\`SIC 2\`** or **\`SIC 3\`**) in the Activity Log and Waterfall.
 `,
@@ -1218,8 +1272,11 @@ z30 --sync
 > \`app_time_offset_ms\`, which is all the decoder needs, and never steps the machine's clock
 > unless you explicitly opt in - by setting \`"allow_set_system_clock": true\` in
 > \`~/.z30/config.json\` or exporting \`Z30_ALLOW_SET_SYSTEM_CLOCK=1\`. Even then, a proposed step
-> of more than 5 minutes is refused as a misdecode or a spoof, and z-30 declines to fight an
-> NTP daemon that already owns the clock.
+> of more than 5 minutes is refused as a misdecode or a spoof, no more than 15 minutes of total
+> movement is allowed in any 24-hour window (so a run of individually-legal steps cannot walk
+> the clock somewhere arbitrary), each step is confirmed again wherever there is an operator to
+> ask rather than once at opt-in, and z-30 declines to fight an NTP daemon that already owns the
+> clock.
 
 Output example:
 \`\`\`
@@ -1558,7 +1615,7 @@ An in-depth technical analysis for **advanced amateur radio operators, RF engine
 | **FEC Code** | Systematic LDPC (174, 91) | IRA LDPC (216, 77) | **Rate $R \\approx 0.356$ vs $0.523$** ($+2.4\\text{ dB}$ coding gain) |
 | **Parity Check Fraction** | 47.7% parity overhead | **64.4% parity overhead** | Significantly steeper waterfall BER curve |
 | **CRC Polynomial** | 14-bit ($P_{\\text{false}} \\approx 6 \\times 10^{-5}$) | 14-bit CRC-14 ($P_{\\text{false}} \\approx 2^{-14} \\approx 6.1 \\times 10^{-5}$) | Same order of magnitude; neither mode is meaningfully ahead here |
-| **Co-Channel Collision Recovery** | None (collisions fail to decode) | **3-Pass Successive Interference Cancellation (SIC)** | Co-channel collision resolution down to $-31.5\\text{ dB}$ |
+| **Co-Channel Collision Recovery** | None (collisions fail to decode) | **3-Pass Successive Interference Cancellation (SIC)** | Mechanism present; recovery depth **not measured** - see [05](05-Successive-Interference-Cancellation-(SIC).md#-benchmark-extraction-performance) |
 | **Clock Drift Tolerance** | $\\pm 1.0\\text{ s}$ (requires NTP/GPS) | $\\pm 1.5\\text{ s}$ + Built-in RF Time Sync | Zero-admin offline HF/LF time calibration |
 
 
@@ -1759,9 +1816,28 @@ Both FT8 and z-30 utilize Low-Density Parity-Check (LDPC) codes decoded via beli
 By operating at a significantly lower code rate ($R \\approx 0.356$), z-30 provides **139 parity-check constraints** over 216 channel bits, compared to only 83 parity constraints in FT8.
 
 ### 4.2 Normalized Min-Sum Decoder Dynamics
-The z-30 check node update equation uses an optimized empirical attenuation factor $\\alpha = 0.75$:
 
-$$L_{m \\to n} = 0.75 \\cdot \\left(\\prod_{n' \\in N(m) \\setminus \\{n\\}} \\text{sgn}(L_{n' \\to m})\\right) \\cdot \\min_{n' \\in N(m) \\setminus \\{n\\}} |L_{n' \\to m}|$$
+> **Correction (2026-09-01):** this section previously stated that the check-node update uses
+> "an optimized empirical attenuation factor $\\alpha = 0.75$" and printed a single-schedule
+> formula built on it. That is the description
+> [04. Forward Error Correction & LDPC](04-Forward-Error-Correction-&-LDPC.md) retracted on
+> 2026-08-31: there is no single $\\alpha$, and the $0.75$ figure was nominal, never live. Both
+> implementations have always run a four-schedule cascade. This page kept the withdrawn version
+> for a further revision, so the project's two source-of-truth pages contradicted each other on
+> the same fact - the failure mode \`AGENTS.md\` §5 exists to prevent.
+
+The decoder runs up to four schedules in order, stopping at the first that yields a zero
+syndrome with a matching CRC-14. Each carries its own $\\alpha$, $\\beta$ and damping; the
+per-schedule table is maintained in
+[04. Forward Error Correction & LDPC](04-Forward-Error-Correction-&-LDPC.md#the-four-decode-schedules)
+and is not duplicated here, so the two pages cannot drift apart again. The normalized min-sum
+schedules apply:
+
+$$L_{m \\to n} = \\left( \\prod_{n' \\in N(m) \\setminus \\{n\\}} \\text{sgn}(L_{n' \\to m}) \\right) \\cdot \\max\\!\\big(0,\\ \\alpha \\cdot \\min_{n' \\in N(m) \\setminus \\{n\\}} |L_{n' \\to m}| - \\beta\\big)$$
+
+with schedule 2 instead using the exact box-plus (Jacobian-corrected) combination. Every update
+is damped. \`z30_dsp/ldpc.py::DECODE_SCHEDULES\` and \`src/dsp/ldpcCodec.ts::Z30_DECODE_SCHEDULES\`
+are the live values, pinned to each other by \`tests/test_cross_language_parity.py\`.
 
 Because of the higher parity redundancy ($64.4\\%$ vs $47.7\\%$), the Tanner graph possesses a larger girth ($g \\ge 6$) and fewer short trapping sets, yielding:
 - **Steeper Waterfall Region**: The Frame Error Rate (FER) transition from $10^{-1}$ to $10^{-5}$ occurs across a narrower $\\Delta \\text{SNR}$ span ($0.8\\text{ dB}$ vs $1.6\\text{ dB}$ in FT8).
@@ -1807,7 +1883,19 @@ Because $-35.0\\text{ dB} \\ll -21.0\\text{ dB}$, FT8 completely fails to decode
 
 $$x_{\\text{residual}}(t) = x_{\\text{rx}}(t) - \\hat{A}(t) \\cos\\left(2\\pi \\hat{f}_0 (t - \\hat{\\Delta t}) + \\theta_{\\text{mod}}(t) + \\hat{\\phi}(t)\\right)$$
 
-4. **Pass 2 & Pass 3**: The residual buffer $x_{\\text{residual}}(t)$ is transformed through the STDFT filterbank. The unmasked DX signal at $-25\\text{ dB SNR}$ is now isolated in an interference-free noise environment, at the same $-25.0\\text{ dB}$ (50%) / $-24.0\\text{ dB}$ (90%) AWGN decode floor the receiver already achieves on an uncontested channel, and decodes with the corresponding empirical success probability once the dominant interferer is cancelled.
+4. **Pass 2 & Pass 3**: The residual buffer $x_{\\text{residual}}(t)$ is transformed through the STDFT filterbank, and the unmasked DX signal is re-decoded from it.
+
+> **Correction (2026-09-01):** this step previously claimed the unmasked signal decodes "at the
+> same $-25.0\\text{ dB}$ (50%) / $-24.0\\text{ dB}$ (90%) AWGN decode floor". Both numbers were
+> wrong twice over: the canonical AWGN threshold is $-23.1\\text{ dB}$ (50%) / $-21.7\\text{ dB}$
+> (90%), as measured by \`z30_dsp/benchmark.py\` and stated in
+> [03](03-DSP-&-Physical-Layer-Specification.md), [16](16-Benchmarking-Testing-&-CI.md) and
+> \`Home.md\`; and the claim that a *residual* buffer faces that same floor is a statement about
+> cancellation quality that nothing has measured. Perfect cancellation would leave the DX signal
+> at the uncontested floor; imperfect cancellation leaves residual interference that raises it.
+> How far short of perfect the implementation falls is exactly the quantity the retracted
+> collision table pretended to know. See
+> [05](05-Successive-Interference-Cancellation-(SIC).md#-benchmark-extraction-performance).
 
 ---
 
@@ -2188,7 +2276,10 @@ boundary**: any page in any browser tab can \`fetch()\` a loopback URL, and a \`
 is a CORS simple request that is sent with no preflight. Every \`/api/\` request must therefore
 satisfy all three of:
 
-- a bearer token (\`X-Z30-Token\`) minted fresh at each server start and injected only into the
+- a bearer token (**\`X-Z30-Token\` header only** — the server also used to accept it from a
+  \`?token=\` query parameter, which no shipped client ever sent and which put a live credential
+  everywhere a URL goes: browser history, the \`Referer\` on any outbound link, and any log that
+  records request lines) minted fresh at each server start and injected only into the
   \`index.html\` that this process serves;
 - an \`Origin\` header that is absent or exactly this server's own origin;
 - a \`Host\` header naming this server's own loopback address and port, which blocks DNS
@@ -2197,9 +2288,23 @@ satisfy all three of:
 No wildcard \`Access-Control-Allow-Origin\` header is sent anywhere, only the single configured
 BCM pin can be driven, and the rigctld relay will only talk to loopback daemons.
 
-\`tests/test_web_server_api.py\` asserts every one of these. A change that makes any of them pass
-without the token, from a foreign \`Origin\`, or against an arbitrary GPIO pin is a regression,
-not a convenience.
+The listening socket is bound **exclusively**, and the option that achieves that differs by
+platform. \`SO_REUSEADDR\` on POSIX permits rebinding an address still in \`TIME_WAIT\`, which is
+what a restart needs. On Windows the same constant permits binding a port another socket is
+*actively listening on* — so a second instance bound the same port, both processes reported
+success, and the OS decided which one received a given connection. Since the server mints a
+bearer token per start, that decides which process the browser is actually talking to.
+\`bind_listening_socket\` therefore sets \`SO_EXCLUSIVEADDRUSE\` on Windows and \`SO_REUSEADDR\`
+elsewhere.
+
+> Found by the Windows CI leg added on 2026-09-01: the "fails loudly rather than drifting to
+> another port" test passed on Linux and failed on Windows, because the behaviour it asserts
+> genuinely was not there. Every job before that ran on \`ubuntu-latest\` only.
+
+\`tests/test_web_server_api.py\` asserts every one of these, including the per-platform socket
+option. A change that makes any of them pass without the token, from a foreign \`Origin\`, against
+an arbitrary GPIO pin, or that lets a second instance share the port is a regression, not a
+convenience.
 
 ---
 
@@ -2214,11 +2319,21 @@ Stepping the machine's clock from a decoded time station is therefore:
 
 - **opt-in** (\`"allow_set_system_clock": true\` in \`~/.z30/config.json\`, or
   \`Z30_ALLOW_SET_SYSTEM_CLOCK=1\`),
-- **confirmed** interactively,
-- **bounded to 5 minutes**, and
+- **confirmed per decode** wherever there is somebody to ask. The Tk sync dialog now supplies a
+  confirmation callback, so each successful decode asks again rather than treating the one-time
+  opt-in as standing consent for every decode that follows. On the headless service path
+  (\`Z30_ALLOW_SET_SYSTEM_CLOCK=1\`, no UI) there is nobody to prompt and the explicit opt-in is
+  the consent; every other guard below still applies there,
+- **bounded to 5 minutes per step _and_ to 15 minutes of total movement in any 24-hour window**.
+  The per-step bound alone bounded nothing over time: each call measured its step against the
+  clock as it stood at that moment, so a series of individually-legal 5-minute steps could walk
+  the clock arbitrarily far in one direction and nothing counted them. Total absolute movement
+  is now tracked in \`os_clock_steps\` in the config and bounded too, so the walk terminates.
+  Absolute rather than signed, because a spoofer alternating +290 s and -290 s moves the clock
+  just as far as one that always pushes forward, and
 - **refused** when an NTP daemon already owns the clock.
 
-\`tests/test_time_sync_guards.py\` guards the default and the bound. See
+\`tests/test_time_sync_guards.py\` guards the default and the bounds. See
 [07. RF Time Synchronization Engine](07-RF-Time-Synchronization-Engine.md).
 
 ---
@@ -2818,6 +2933,14 @@ What the suite covers, and why each test is there:
 | \`tests/frontend.test.mjs\` | The transmit gate admitting an out-of-band frequency, an unseeded benchmark PRNG, an amplitude-gated waveform, unvalidated station config, Maidenhead decoding, and the browser benchmark's acquisition stage (that it finds a displaced frame, estimates its own noise floor, refuses to "find" one in pure noise, and reproduces its offsets from the seed) |
 | \`tests/transmitPath.test.mjs\` | The three defects that only appear with a radio attached: a PTT release that drops a different pin than the key drove, a "Test PTT" that reports success without addressing the hardware, and the raw rigctl console keying without the transmit gate. Also the rigctl verb table, where case is significant |
 | \`tests/test_config_wizard.py\` and \`tests/frontend.test.mjs\` | The Python setup wizard and the browser transmit gate disagreeing about which callsigns are valid — a wizard that blesses a callsign the gate will refuse at slot start. Shared vectors in \`tests/vectors/callsign_vectors.json\` |
+| \`tests/rigReadback.test.mjs\` | \`RigStateTracker\`, the WSJT-X-ported closed-loop rig model that \`AGENTS.md\` §4 names explicitly. Guards both directions: that a settled rig reporting a different dial blocks transmit, and that an unverifiable rig, an unsettled QSY and a difference inside the rig's measured tuning resolution do **not** — a check that grounds correctly-working stations is one its operator switches off |
+| \`tests/rigProbeAndWatchdog.test.mjs\` | The CAT defects that only appear when two things happen at once, plus the timers nothing ever let run: the tuning-resolution classification table, a QSY landing mid-probe (which used to be undone on the wire while the tracker was told the pre-QSY dial), a poll reading the probe's throwaway test frequency as a fault, \`pollRigOnce()\` driven through the real controller rather than by poking the tracker, and the \`MAX_TX_SECONDS\` watchdog actually firing and unkeying the hardware |
+| \`tests/dspDeterminism.test.mjs\` | An unseeded generator anywhere the decode path can reach — the defect class that has now recurred twice, in the LDPC dither and again in \`addCalibratedAwgn\`. Asserts byte-identical output across two runs, and checks the noise is still *calibrated* noise by measuring its variance and Gaussian shape off the produced samples, so "deterministic" cannot be achieved by returning a constant |
+| \`tests/test_sic_candidate_detection.py\` | The SIC candidate detector inventing carriers out of noise, and the two languages' detectors diverging again. The raw-bin detector this replaced produced ~52 spurious candidates per frame from pure noise |
+| \`tests/test_git_sync.py\` | The updater doing anything other than a fast-forward — a self-update that could discard an operator's local changes or move the checkout to an unrelated history |
+| \`tests/test_updater_cli.py\` | The layer above that engine: \`run_updater\` turning a \`SyncStatus\` into the wrong exit code, so a startup script never notices the box is behind or reports failure forever on a current one — and an interrupted prompt or a closed stdin being read as consent to update |
+| \`tests/test_band_manager.py\` | Band-preset persistence, dial-to-band detection across every shipped preset, and \`tune_radio()\` reporting success when the rig took the QSY but refused the mode change |
+| \`tests/test_legacy_logger_and_config.py\` | The Python-side twins of jobs the web UI already does correctly, and which were therefore never covered: the Tk-path ADIF writer emitting a literal backslash-n instead of a newline, \`<TAG:len>\` prefixes counting characters instead of UTF-8 bytes, and a station-config save that could truncate \`config.json\` — which \`load_config\` then silently replaces with defaults, emptying the callsign the transmit gate needs |
 
 ---
 
@@ -2825,7 +2948,32 @@ What the suite covers, and why each test is there:
 
 \`.github/workflows/ci.yml\` runs on every push and pull request:
 
-- **Python DSP suite** on 3.10 and 3.12, plus a wheel build-and-import check.
+- **Python DSP suite** on 3.10, 3.12 and 3.13, plus a wheel build-and-import check. Dependencies
+  are installed from the pinned \`requirements.txt\`, not a bare \`pip install numpy scipy\`: CI that
+  resolves different versions from the ones operators install is not testing the software they
+  run, and this is a suite whose numerical behaviour depends on those versions.
+- **Ruff** over \`z30_dsp/\`, \`tests/\` and \`scripts/\`, at a pinned version with a rule set pinned
+  in \`pyproject.toml\` (\`select = ["E4", "E7", "E9", "F"]\`, \`target-version = "py39"\`).
+  Conservative on purpose: a linter that shouts about formatting is one contributors learn to
+  ignore. It earned its place immediately — the unused-variable rule found
+  \`band_manager.tune_radio()\` discarding the CAT mode-set result.
+
+  Both pins matter, and the first CI run proved why: an unpinned \`pip install ruff\` fetched
+  0.16.5, whose default rule set is far wider than 0.15's, and reported 408 findings against a
+  tree that was clean locally. Worse, those defaults include \`UP006\`/\`UP035\` ("use \`dict\`
+  instead of \`Dict\`") — taking that advice would break the **Python 3.9 floor** in
+  \`AGENTS.md\` §7, since builtin generics in annotations are evaluated at runtime without
+  \`from __future__ import annotations\`. A tool whose meaning changes when it releases is not a
+  check, and one that pushes code past the project's stated support floor is worse than none.
+  Bump the version and the rule set deliberately, together, as with any other pin here.
+- **Dependency audit**: \`pip-audit\` against the pinned \`requirements.txt\` and \`npm audit\` at
+  high severity. Pinning exact versions is right for a DSP suite and it also means nothing
+  otherwise reports when a pin picks up a known vulnerability. \`.github/dependabot.yml\` opens
+  grouped monthly bump PRs for the same reason.
+- **Packaging smoke on Windows and macOS**: the suite plus a wheel build-and-import. Every other
+  job runs on \`ubuntu-latest\`, so a change that broke the package on the platform the project
+  ships a PyInstaller build for was found by whoever installed it. This does not build
+  installers — it catches path and platform-API mistakes, which is the cheap half.
 - **Benchmark smoke test**: a short seeded sweep in both modes, run twice, asserting identical
   results. This catches non-determinism in the channel/acquisition path, which would otherwise
   only surface when someone tried to reproduce a published curve.

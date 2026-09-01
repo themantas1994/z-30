@@ -31,7 +31,7 @@ $$\text{SINR}_{\text{DX}} = \frac{P_{\text{DX}}}{P_{\text{local}} + N_0} \approx
          │
    [ Secondary Subtraction ]
          │
-    [ PASS 3 ] ──> Deep DX Signals Decoded (Down to -27.5 dB SNR)
+    [ PASS 3 ] ──> Deep DX Signals Decoded (unmasked from Pass 2)
 ```
 
 ---
@@ -60,15 +60,60 @@ $x_{\text{residual}}^{(1)}(t)$ is transformed back through the STDFT filterbank,
 
 ---
 
+## 🔍 Candidate detection: one algorithm, two languages
+
+Each pass starts by finding candidate carriers in the residual spectrum. Until 2026-09-01 the
+two implementations did this differently, and both were the shipped default on their own side:
+
+| | Before | Now |
+| :--- | :--- | :--- |
+| `z30_dsp/sic_decoder.py` | local maxima on **raw FFT bins**, 8 dB over the median | Bartlett-averaged tone groups, `SIC_MIN_PEAK_DB` |
+| `src/dsp/realReceiver.ts` | Bartlett-averaged tone groups, 6 dB over the median | unchanged |
+
+The averaging step is the part that matters. A ~24 s buffer gives an FFT bin spacing far finer
+than the ~3.125 Hz needed to localise a 16-MFSK comb, and with that many independent noise bins
+a fixed "X dB over the median" test becomes an order-statistics problem: the largest of ~10⁵
+noise bins clears the threshold routinely. Measured on this repository, over five independent
+noise seeds at the frame length the decoder actually uses, the raw-bin detector returned
+**52, 52, 52, 52 and 53 candidates from pure Gaussian noise** — carriers that do not exist, each
+costing a refinement and decode attempt. The grouped detector returned **0** on all five.
+
+Python now runs the grouped detector too. `SIC_MIN_PEAK_DB` and `SIC_MAX_CANDIDATES` are
+declared in both languages and pinned to each other by `tests/test_cross_language_parity.py`;
+`tests/test_sic_candidate_detection.py` covers the behaviour on real synthesised frames.
+
+> This does not move any published sensitivity figure. `benchmark.py` measures through
+> `acquisition.py` and never calls `_find_candidates`, so the −23.1 / −21.7 dB AWGN threshold is
+> untouched by this change.
+
+---
+
 ## 📊 Benchmark Extraction Performance
 
-Across Monte Carlo simulations on fading channels with co-channel collisions (0 Hz to 25 Hz frequency separation):
+> **Retraction (2026-09-01): the collision decode-rate table that stood here is withdrawn.**
+>
+> It reported four z-30 SIC decode rates (98.7% / 95.2% / 91.4% / 84.6% at 5/12/20/26 dB
+> collision differentials) against four FT8 rates, and the pipeline diagram above claimed Pass 3
+> reaches "-27.5 dB SNR". None of those eight numbers came from any instrument in this
+> repository. `z30_dsp/benchmark.py` - the reference instrument, and per `AGENTS.md` §5 the only
+> sanctioned source of a sensitivity figure - has no collision or SIC mode at all: it sweeps a
+> single frame against AWGN and Watterson fading. The figures appear nowhere in `z30_dsp/`,
+> `src/` or `tests/`, and no seed, frame count or method was ever recorded beside them.
+>
+> This is the same shape of claim as the withdrawn "+4.0 dB advantage", which `AGENTS.md` says
+> must never recur. Publishing an unmeasured decode rate for the collision case is worse than
+> publishing nothing: an operator plans an antenna or a band choice around it.
+>
+> **What would be needed to restore it:** a collision mode in `benchmark.py` that synthesises
+> two or more overlapping frames at a controlled power differential and frequency separation,
+> runs them through `sic_decoder.py`, and reports decode rate per pass - then a seeded sweep
+> quoted with its seed, frame count, channel model and a confidence figure a reader can check,
+> at the ≥95% bar `AGENTS.md` §5 sets for a documentation claim. Until that exists, the
+> collision performance of z-30's SIC pipeline **is not measured**.
 
-| Collision Differential ($\Delta P$) | Traditional Non-SIC FT8 Decode Rate | z-30 3-Pass SIC Decode Rate |
-| :--- | :--- | :--- |
-| **5 dB** (Minor overlap) | 38.2% | **98.7%** |
-| **12 dB** (Moderate interference) | 9.4% | **95.2%** |
-| **20 dB** (Heavy local interference) | 0.8% | **91.4%** |
-| **26 dB** (Deep DX buried under local QRO) | 0.0% | **84.6%** |
+The mechanism described above is implemented and exercised - `z30_dsp/sic_decoder.py` and
+`src/dsp/sicDecoder.ts` run the three passes, and `tests/test_sic_candidate_detection.py` covers
+the candidate detector both languages now share. What is absent is a *quantitative* claim about
+how often it succeeds, not the pipeline itself.
 
 In the z-30 user interface, signals decoded via SIC are clearly indicated with a purple badge (**`SIC 2`** or **`SIC 3`**) in the Activity Log and Waterfall.

@@ -81,7 +81,26 @@ def bind_listening_socket(port: int) -> Tuple[socket.socket, int]:
     behaviour; `--port` is there for the rare case where 3000 really must be avoided.
     """
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    # SO_REUSEADDR means opposite things on the two platforms, and only one of them is what this
+    # function wants.
+    #
+    # On POSIX it permits rebinding an address still in TIME_WAIT from a previous run - which is
+    # exactly right here, so a restart of z-30 does not have to wait out the old socket.
+    #
+    # On Windows it permits binding a port ANOTHER SOCKET IS ACTIVELY LISTENING ON. So a second
+    # instance bound the same port, both processes "succeeded", and which one received a given
+    # connection was up to the OS. That defeats the guarantee this whole function exists to give
+    # - and it is worse than the drift it replaced, because the loopback API hands out a bearer
+    # token per start: whichever process wins a connection is the one the browser talks to.
+    # Microsoft's documented answer is SO_EXCLUSIVEADDRUSE, which refuses the second bind.
+    #
+    # Found by the Windows CI leg: tests/test_web_server_api.py's "fails loudly rather than
+    # drifting" case passed on Linux and failed on Windows, because the behaviour it asserts
+    # genuinely was not there.
+    if sys.platform == "win32":
+        sock.setsockopt(socket.SOL_SOCKET, getattr(socket, "SO_EXCLUSIVEADDRUSE", 1), 1)
+    else:
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     try:
         sock.bind(("127.0.0.1", port))
     except OSError as exc:
@@ -635,10 +654,12 @@ class SpaRequestHandler(SimpleHTTPRequestHandler):
         if origin and origin.lower() != self.allowed_origin.lower():
             return f"Origin '{origin}' is not permitted."
 
+        # Header only. The token used to be accepted from a `?token=` query parameter as well,
+        # which no shipped client ever used (localServerApi.ts always sends the header) and which
+        # put a live credential everywhere a URL goes: browser history, the Referer on any
+        # outbound link, and any log that records request lines. A bearer token belongs in a
+        # header precisely because headers do not travel like that.
         supplied = (self.headers.get("X-Z30-Token") or "").strip()
-        if not supplied:
-            query = parse_qs(urlparse(self.path).query)
-            supplied = (query.get("token") or [""])[0].strip()
         if not supplied or not secrets.compare_digest(supplied, self.api_token):
             return "Missing or invalid API token."
         return None
@@ -999,7 +1020,8 @@ def run_web_app(
     BoundHandler.gpio_bridge = gpio_bridge
     BoundHandler.update_job = UpdateJob()
 
-    handler = lambda *args, **kwargs: BoundHandler(*args, directory=dist_dir, **kwargs)
+    def handler(*args, **kwargs):
+        return BoundHandler(*args, directory=dist_dir, **kwargs)
 
     try:
         httpd = ThreadedHTTPServer(listening_socket, handler)
@@ -1028,7 +1050,7 @@ def run_web_app(
     print(f"  * Web UI Engine:  {url}")
     print(f"  * Dist Bundle:    {dist_dir}")
     print(f"  * PTT GPIO Pin:   BCM {gpio_pin} (dead-man release after {GPIO_KEEPALIVE_TIMEOUT_SEC:.1f}s)")
-    print(f"  * Audio/CAT DSP:  16-MFSK @ 50 Hz, Hamlib rigctld relay via /api/rigctl")
+    print("  * Audio/CAT DSP:  16-MFSK @ 50 Hz, Hamlib rigctld relay via /api/rigctl")
     print("==================================================================")
     print("  Open the URL above in a browser on this machine. The local API is")
     print("  token-authenticated, and the token is issued only to that page.")

@@ -26,13 +26,14 @@ import pytest
 from z30_dsp.ldpc import (
     DECODE_SCHEDULES,
     DITHER_AMPLITUDE,
+    LDPC_MAX_ITERATIONS,
     Z30LdpcCodec,
     Z30_CHECK_TO_INFO,
     dither_seed_from_llrs,
     dither_vector,
 )
 from z30_dsp.modem import Z30Config
-from z30_dsp import acquisition, benchmark
+from z30_dsp import acquisition, benchmark, sic_decoder
 
 REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 TS_CONSTANTS = os.path.join(REPO_ROOT, "src", "dsp", "z30Constants.ts")
@@ -131,6 +132,90 @@ def test_frame_geometry_constants_match():
         assert float(match.group(1)) == pytest.approx(float(expected)), (
             f"{name}: TypeScript says {match.group(1)}, Python says {expected}"
         )
+
+
+def test_costas_sync_pattern_matches():
+    """
+    The Costas sync pattern is what a receiver acquires on. AGENTS.md names changing it as a
+    protocol break - "every station on the air stops decoding you" - and until this test the two
+    copies agreed only because nobody had edited one of them. `test_waveform_shaping_constants`
+    pinned two GFSK scalars and stopped there.
+    """
+    ts_source = read(TS_CONSTANTS)
+    cfg = Z30Config()
+
+    for name, expected in (("SYNC_POSITIONS", cfg.sync_positions), ("SYNC_TONES", cfg.sync_tones)):
+        match = re.search(rf"\b{name}:\s*\[(.*?)\]", ts_source, re.S)
+        assert match, f"{name} not found in src/dsp/z30Constants.ts"
+        ts_values = [int(tok) for tok in re.findall(r"-?\d+", match.group(1))]
+        assert ts_values == list(expected), (
+            f"{name} differs: TypeScript {ts_values} vs Python {list(expected)}"
+        )
+
+    # Guards the pattern's own structure, computed from the array rather than asserted as a
+    # literal: 21 sync symbols, every position inside the frame and distinct, every tone a legal
+    # 16-MFSK tone index.
+    assert len(cfg.sync_positions) == len(cfg.sync_tones) == 21
+    assert len(set(cfg.sync_positions)) == len(cfg.sync_positions), "duplicate sync position"
+    assert all(0 <= p < cfg.total_symbols for p in cfg.sync_positions)
+    assert all(0 <= t < cfg.num_tones for t in cfg.sync_tones)
+
+
+def test_ldpc_iteration_cap_matches():
+    """
+    Schedule 1's cap is quoted by SpecsModal and by the benchmark. Both now read it from a named
+    constant; this pins the two constants to each other.
+    """
+    ts_source = read(TS_CODEC)
+    match = re.search(r"export const LDPC_MAX_ITERATIONS\s*=\s*(\d+)", ts_source)
+    assert match, "LDPC_MAX_ITERATIONS not found in src/dsp/ldpcCodec.ts"
+    assert int(match.group(1)) == LDPC_MAX_ITERATIONS, (
+        f"iteration cap differs: TypeScript {match.group(1)}, Python {LDPC_MAX_ITERATIONS}"
+    )
+    # And that the constant is what the codec actually defaults to, not just a number beside it.
+    assert Z30LdpcCodec().max_iterations == LDPC_MAX_ITERATIONS
+
+
+def test_osd_chase_search_thresholds_match():
+    """
+    The OSD-2 / Chase post-processing thresholds decide which re-encoded candidate is accepted
+    after belief propagation stalls. They are magic numbers that happened to agree; a drift in
+    either would change which marginal frames decode, in one language only, with every existing
+    test still passing.
+    """
+    ts_source = read(TS_CODEC)
+    py_source = read(os.path.join(REPO_ROOT, "z30_dsp", "ldpc.py"))
+
+    ts_osd = re.search(r"corr > ([0-9.]+) && corr > maxCorrelation && diffCount <= (\d+)", ts_source)
+    py_osd = re.search(r"corr > ([0-9.]+) and corr > max_correlation and diff_count <= (\d+)", py_source)
+    assert ts_osd, "OSD-2 acceptance test not found in src/dsp/ldpcCodec.ts"
+    assert py_osd, "OSD-2 acceptance test not found in z30_dsp/ldpc.py"
+    assert ts_osd.groups() == py_osd.groups(), (
+        f"OSD-2 thresholds differ: TypeScript {ts_osd.groups()}, Python {py_osd.groups()}"
+    )
+
+    ts_ira = re.search(r"corr > 0 && diffFromHard <= (\d+)", ts_source)
+    py_ira = re.search(r"corr > 0 and diff_from_hard <= (\d+)", py_source)
+    assert ts_ira, "Trellis-IRA acceptance test not found in src/dsp/ldpcCodec.ts"
+    assert py_ira, "Trellis-IRA acceptance test not found in z30_dsp/ldpc.py"
+    assert ts_ira.group(1) == py_ira.group(1), (
+        f"Trellis-IRA distance bound differs: TypeScript {ts_ira.group(1)}, Python {py_ira.group(1)}"
+    )
+
+
+def test_sic_candidate_detection_constants_match():
+    """
+    The SIC candidate detector had genuinely diverged: Python scanned raw FFT bins at 8 dB over
+    the median while TypeScript scanned Bartlett-averaged tone groups at 6 dB. Both were the
+    shipped default on their own side and no test compared them. Python now runs the grouped
+    detector too; this pins the constants so they cannot separate again.
+    """
+    ts_source = read(os.path.join(REPO_ROOT, "src", "dsp", "realReceiver.ts"))
+    ts_peak = re.search(r"export const SIC_MIN_PEAK_DB\s*=\s*([0-9.]+)", ts_source)
+    ts_max = re.search(r"export const SIC_MAX_CANDIDATES\s*=\s*(\d+)", ts_source)
+    assert ts_peak and ts_max, "SIC detection constants not found in src/dsp/realReceiver.ts"
+    assert float(ts_peak.group(1)) == pytest.approx(sic_decoder.SIC_MIN_PEAK_DB)
+    assert int(ts_max.group(1)) == sic_decoder.SIC_MAX_CANDIDATES
 
 
 DITHER_VECTORS = os.path.join(os.path.dirname(__file__), "vectors", "dither_vectors.json")

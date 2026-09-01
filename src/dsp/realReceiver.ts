@@ -25,6 +25,7 @@
 import { Z30_SPECS } from './z30Constants';
 import { ldpcCodec } from './ldpcCodec';
 import { unpackZ30Message } from './z30Codec';
+import { createSeededRandom, type RandomSource } from './seededRandom';
 
 export interface Candidate {
   freqHz: number;
@@ -33,6 +34,19 @@ export interface Candidate {
 }
 
 const TONE_SPACING_HZ = Z30_SPECS.TONE_SPACING_HZ;
+
+/**
+ * How far above the estimated noise floor a tone group must sit to be tried as a candidate.
+ *
+ * The twin of `SIC_MIN_PEAK_DB` in z30_dsp/sic_decoder.py, pinned across the two languages by
+ * tests/test_cross_language_parity.py. Until that test existed the two sides ran different
+ * detectors at different thresholds - raw FFT bins at 8 dB in Python, Bartlett-averaged groups
+ * at 6 dB here - and nothing would have caught either drifting further.
+ */
+export const SIC_MIN_PEAK_DB = 6.0;
+
+/** Most candidates one SIC pass will try, strongest first. Twin of `SIC_MAX_CANDIDATES`. */
+export const SIC_MAX_CANDIDATES = 16;
 const SYMBOL_DURATION_SEC = Z30_SPECS.SYMBOL_DURATION_SEC;
 const SYNC_POSITIONS = Z30_SPECS.SYNC_POSITIONS;
 const SYNC_TONES = Z30_SPECS.SYNC_TONES;
@@ -94,8 +108,8 @@ export function findCandidates(
   sampleRateHz: number,
   minFreqHz: number = 200,
   maxFreqHz: number = 3000,
-  minPeakDb: number = 6.0,
-  maxCandidates: number = 16
+  minPeakDb: number = SIC_MIN_PEAK_DB,
+  maxCandidates: number = SIC_MAX_CANDIDATES
 ): Candidate[] {
   const n = buffer.length;
   if (n < 64) return [];
@@ -685,8 +699,61 @@ export function runSicMultiPass(
   return results;
 }
 
-/** Adds calibrated AWGN referenced to standard 2500 Hz noise bandwidth (Box-Muller). */
-export function addCalibratedAwgn(cleanWaveform: Float32Array, snr2500HzDb: number, sampleRateHz: number): Float32Array {
+/**
+ * Derives a 32-bit seed from a clean waveform and the SNR it is about to be buried at
+ * (FNV-1a over 1/4096-amplitude quanta).
+ *
+ * Same reasoning as `ditherSeedFromLlrs` in ldpcCodec.ts, and the same bug class: the noise
+ * `addCalibratedAwgn` adds used to come from `Math.random()`, so the Experimental Testing
+ * self-test was not a function of its input. That path runs the real `demodulateReal` ->
+ * `decodeMinSum` chain, so a frame that decoded on one run could fail on the next at the
+ * identical configured SNR, which is precisely the near-threshold behaviour the self-test
+ * exists to show. AGENTS.md's determinism invariant says `Math.random()` does not belong
+ * anywhere the decode path can reach.
+ *
+ * `benchmark.py` threads an explicit seeded `rng` into its twin of this function, and callers
+ * that have a seed should pass one here too. Deriving a seed from the input covers the callers
+ * that have none - sicDecoder.ts injects signals that arrived from the UI, with no seed in
+ * scope - so the function is reproducible in every caller rather than only the benchmark.
+ * Different injected signals still get different noise, because the waveform and SNR they hash
+ * differ; the same signal always gets the same noise.
+ *
+ * Quantising to 1/4096 before hashing keeps the derivation on integers so it cannot depend on
+ * float formatting, and `Math.floor(x * 4096 + 0.5)` matches the rounding convention
+ * `ditherSeedFromLlrs` already uses.
+ */
+export function awgnSeedFromWaveform(cleanWaveform: Float32Array, snr2500HzDb: number): number {
+  let h = 0x811c9dc5;
+  const mix = (value: number): void => {
+    const quantum = Math.floor(value * 4096.0 + 0.5) >>> 0;
+    for (let shift = 0; shift < 32; shift += 8) {
+      h = (h ^ ((quantum >>> shift) & 0xff)) >>> 0;
+      h = Math.imul(h, 0x01000193) >>> 0;
+    }
+  };
+  for (let i = 0; i < cleanWaveform.length; i++) mix(cleanWaveform[i]);
+  mix(snr2500HzDb);
+  return h >>> 0;
+}
+
+/**
+ * Adds calibrated AWGN referenced to the standard 2500 Hz noise bandwidth.
+ *
+ * The twin of `add_calibrated_awgn` in z30_dsp/benchmark.py, including its `rng` parameter:
+ * pass a seeded source and two runs of the same configuration give the same waveform. With no
+ * source supplied the seed is derived from the input itself (see `awgnSeedFromWaveform`), so
+ * the result is reproducible even for a caller that has no seed to hand it.
+ *
+ * Uses the shared `RandomSource.normal()` rather than a second Box-Muller: this function used
+ * to carry its own copy, which is how it kept an unseeded `Math.random()` after the generator
+ * beside it had been seeded.
+ */
+export function addCalibratedAwgn(
+  cleanWaveform: Float32Array,
+  snr2500HzDb: number,
+  sampleRateHz: number,
+  rng?: RandomSource
+): Float32Array {
   let signalPower = 0;
   for (let i = 0; i < cleanWaveform.length; i++) signalPower += cleanWaveform[i] * cleanWaveform[i];
   signalPower /= cleanWaveform.length;
@@ -695,13 +762,10 @@ export function addCalibratedAwgn(cleanWaveform: Float32Array, snr2500HzDb: numb
   const bandwidthFactor = 5000.0 / sampleRateHz;
   const sigma = Math.sqrt(signalPower / (snrLinear * bandwidthFactor));
 
+  const source = rng ?? createSeededRandom(awgnSeedFromWaveform(cleanWaveform, snr2500HzDb));
   const noisy = new Float32Array(cleanWaveform.length);
-  for (let i = 0; i < cleanWaveform.length; i += 2) {
-    const u1 = Math.max(1e-12, Math.random());
-    const u2 = Math.random();
-    const mag = sigma * Math.sqrt(-2.0 * Math.log(u1));
-    noisy[i] = cleanWaveform[i] + mag * Math.cos(2.0 * Math.PI * u2);
-    if (i + 1 < cleanWaveform.length) noisy[i + 1] = cleanWaveform[i + 1] + mag * Math.sin(2.0 * Math.PI * u2);
+  for (let i = 0; i < cleanWaveform.length; i++) {
+    noisy[i] = cleanWaveform[i] + sigma * source.normal();
   }
   return noisy;
 }

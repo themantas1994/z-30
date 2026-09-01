@@ -10,6 +10,15 @@ on:
   pull_request:
   workflow_dispatch:
 
+# Least privilege for GITHUB_TOKEN, set once at workflow level so every job inherits it.
+# Without this block the token is granted whatever the repository default is - historically
+# read/write on everything, including `contents`, which is push access to the branch that keys
+# operators' transmitters. Nothing here needs more than the ability to read the checkout; a job
+# that later needs more should ask for it in its own `permissions:`, not widen this one.
+# Reported by CodeQL (github/workflows/ci.yml, "Workflow does not contain permissions").
+permissions:
+  contents: read
+
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
@@ -21,7 +30,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python-version: ['3.10', '3.12']
+        # 3.10 is the floor the PINNED requirements.txt set can install on (numpy 2.2 and
+        # scipy 1.15 both require it); 3.13 is the documented upper bound, now actually tested
+        # rather than only claimed. The package's own `requires-python` stays >=3.9 because its
+        # loose dependency ranges do resolve there - see wiki/02 for the two-floors explanation.
+        python-version: ['3.10', '3.12', '3.13']
     steps:
       - uses: actions/checkout@v4
 
@@ -31,9 +44,33 @@ jobs:
           cache: pip
 
       - name: Install dependencies
+        # From requirements.txt, not a bare `pip install numpy scipy`. That file pins exact
+        # versions for the reason its own header gives - "a DSP suite whose numerical behaviour
+        # depends on its NumPy and SciPy versions is the last place" for an unpinned install -
+        # and CI installing something else meant CI was not testing what an operator following
+        # the documented install path actually runs. A NumPy release that shifts floating-point
+        # behaviour in the min-sum decoder or the channel model could then pass or fail here
+        # with no corresponding change on any real station.
         run: |
           python -m pip install --upgrade pip
-          python -m pip install numpy scipy pytest
+          python -m pip install -r requirements.txt
+          python -m pip install pytest
+
+      - name: Lint the Python sources
+        # Static checks the test suite structurally cannot make: an unused import is harmless,
+        # but the same rule caught a real defect - band_manager.tune_radio() computed the CAT
+        # mode-set result and discarded it, so a rig that refused the mode change reported a
+        # fully successful tune. Kept to a conservative rule set on purpose: a linter that
+        # shouts about formatting is one contributors learn to ignore.
+        #
+        # The version is pinned for the same reason requirements.txt pins NumPy: an unpinned
+        # `pip install ruff` installed 0.16.5 on the first CI run of this job and reported 408
+        # findings against a tree that was clean under 0.15, because 0.16 widened its default
+        # rule set. The rule set itself is pinned in pyproject.toml's [tool.ruff.lint]; bump
+        # both deliberately, together, as with any other pin here.
+        run: |
+          python -m pip install 'ruff==0.16.5'
+          ruff check z30_dsp tests scripts
 
       - name: Run the test suite
         run: python -m pytest tests -v
@@ -121,6 +158,69 @@ jobs:
             exit 1
           }
           echo "PWA assets present and the service worker cache name is stamped."
+
+  audit:
+    name: Dependency audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Audit the pinned Python dependencies
+        # requirements.txt documents a hash-verified pip-compile path that nothing ever ran.
+        # This at least checks the pinned versions against the advisory database, so a known
+        # vulnerability in NumPy or requests is noticed here rather than by an operator.
+        run: |
+          python -m pip install --upgrade pip pip-audit
+          pip-audit --requirement requirements.txt --strict
+
+      - name: Audit the npm dependency tree
+        run: |
+          npm ci
+          npm audit --audit-level=high
+
+  packaging:
+    name: Packaging smoke (${{ matrix.os }})
+    # The project ships a Windows PyInstaller build, an Arch PKGBUILD and a Termux installer,
+    # and every job above this one ran on ubuntu-latest only - so a change that broke the
+    # package on Windows or macOS was found by whoever installed it, not by CI. This does not
+    # build installers; it checks the package builds and imports on each platform, which is the
+    # cheap half that catches path and platform-API mistakes.
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+          python -m pip install pytest
+
+      - name: Run the platform-independent suite
+        run: python -m pytest tests -q
+
+      - name: Build and import the wheel
+        run: |
+          python -m pip install --upgrade build
+          python -m build --wheel --outdir dist-wheel
+          python -c "import z30_dsp.ldpc, z30_dsp.modem, z30_dsp.paths, z30_dsp.channel, z30_dsp.acquisition, z30_dsp.benchmark; print('package imports OK')"
 
   license:
     name: Repository hygiene

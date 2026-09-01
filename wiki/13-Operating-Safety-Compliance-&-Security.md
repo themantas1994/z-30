@@ -83,7 +83,10 @@ boundary**: any page in any browser tab can `fetch()` a loopback URL, and a `tex
 is a CORS simple request that is sent with no preflight. Every `/api/` request must therefore
 satisfy all three of:
 
-- a bearer token (`X-Z30-Token`) minted fresh at each server start and injected only into the
+- a bearer token (**`X-Z30-Token` header only** — the server also used to accept it from a
+  `?token=` query parameter, which no shipped client ever sent and which put a live credential
+  everywhere a URL goes: browser history, the `Referer` on any outbound link, and any log that
+  records request lines) minted fresh at each server start and injected only into the
   `index.html` that this process serves;
 - an `Origin` header that is absent or exactly this server's own origin;
 - a `Host` header naming this server's own loopback address and port, which blocks DNS
@@ -92,9 +95,23 @@ satisfy all three of:
 No wildcard `Access-Control-Allow-Origin` header is sent anywhere, only the single configured
 BCM pin can be driven, and the rigctld relay will only talk to loopback daemons.
 
-`tests/test_web_server_api.py` asserts every one of these. A change that makes any of them pass
-without the token, from a foreign `Origin`, or against an arbitrary GPIO pin is a regression,
-not a convenience.
+The listening socket is bound **exclusively**, and the option that achieves that differs by
+platform. `SO_REUSEADDR` on POSIX permits rebinding an address still in `TIME_WAIT`, which is
+what a restart needs. On Windows the same constant permits binding a port another socket is
+*actively listening on* — so a second instance bound the same port, both processes reported
+success, and the OS decided which one received a given connection. Since the server mints a
+bearer token per start, that decides which process the browser is actually talking to.
+`bind_listening_socket` therefore sets `SO_EXCLUSIVEADDRUSE` on Windows and `SO_REUSEADDR`
+elsewhere.
+
+> Found by the Windows CI leg added on 2026-09-01: the "fails loudly rather than drifting to
+> another port" test passed on Linux and failed on Windows, because the behaviour it asserts
+> genuinely was not there. Every job before that ran on `ubuntu-latest` only.
+
+`tests/test_web_server_api.py` asserts every one of these, including the per-platform socket
+option. A change that makes any of them pass without the token, from a foreign `Origin`, against
+an arbitrary GPIO pin, or that lets a second instance share the port is a regression, not a
+convenience.
 
 ---
 
@@ -109,11 +126,21 @@ Stepping the machine's clock from a decoded time station is therefore:
 
 - **opt-in** (`"allow_set_system_clock": true` in `~/.z30/config.json`, or
   `Z30_ALLOW_SET_SYSTEM_CLOCK=1`),
-- **confirmed** interactively,
-- **bounded to 5 minutes**, and
+- **confirmed per decode** wherever there is somebody to ask. The Tk sync dialog now supplies a
+  confirmation callback, so each successful decode asks again rather than treating the one-time
+  opt-in as standing consent for every decode that follows. On the headless service path
+  (`Z30_ALLOW_SET_SYSTEM_CLOCK=1`, no UI) there is nobody to prompt and the explicit opt-in is
+  the consent; every other guard below still applies there,
+- **bounded to 5 minutes per step _and_ to 15 minutes of total movement in any 24-hour window**.
+  The per-step bound alone bounded nothing over time: each call measured its step against the
+  clock as it stood at that moment, so a series of individually-legal 5-minute steps could walk
+  the clock arbitrarily far in one direction and nothing counted them. Total absolute movement
+  is now tracked in `os_clock_steps` in the config and bounded too, so the walk terminates.
+  Absolute rather than signed, because a spoofer alternating +290 s and -290 s moves the clock
+  just as far as one that always pushes forward, and
 - **refused** when an NTP daemon already owns the clock.
 
-`tests/test_time_sync_guards.py` guards the default and the bound. See
+`tests/test_time_sync_guards.py` guards the default and the bounds. See
 [07. RF Time Synchronization Engine](07-RF-Time-Synchronization-Engine.md).
 
 ---

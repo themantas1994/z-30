@@ -9,14 +9,14 @@ Features:
 - Maidenhead Great-Circle distance (km) and bearing (deg) geometric calculation
 """
 
-from dataclasses import dataclass, asdict
+from dataclasses import dataclass
 from datetime import datetime, timezone
 import math
 import os
 import queue
 import sqlite3
 import threading
-from typing import Optional, List, Callable, Tuple
+from typing import Any, Optional, Tuple
 
 @dataclass
 class QsoLogRecord:
@@ -169,29 +169,46 @@ class AsyncQsoLogger:
             ))
             conn.commit()
 
+    @staticmethod
+    def _adif_field(tag: str, value: Any) -> str:
+        """
+        One ADIF `<TAG:length>value` field, with the length in **bytes**, not characters.
+
+        ADIF counts the octets of the field's data. Python's `len()` on a str counts code
+        points, so any non-ASCII character in a name, a QTH or a comment - an accented callsign
+        holder's name, a "über" in a note - declared a length shorter than the bytes that
+        followed it, and a strict parser resynchronised mid-field and lost the rest of the
+        record. `qsoLogger.ts` fixed exactly this on the web-UI side; the legacy Tk path kept
+        the bug because the two never shared code.
+        """
+        text = "" if value is None else str(value)
+        return f"<{tag}:{len(text.encode('utf-8'))}>{text}"
+
     def _append_adif(self, record: QsoLogRecord) -> None:
         """Appends record in standard ADIF 3.1.4 format."""
         file_exists = os.path.exists(self.adif_path)
         with open(self.adif_path, "a", encoding="utf-8") as f:
             if not file_exists:
-                f.write("ADIF Export from z-30 DSP Transceiver Suite\\n")
-                f.write("<ADIF_VER:5>3.1.4\\n<PROGRAMID:4>z-30\\n<EOH>\\n\\n")
+                # Real newlines. These were "\\n" inside ordinary (non-raw) f-strings, so every
+                # header line and every <EOR> wrote the two characters backslash-n and the whole
+                # log came out as one physical line - which ADIF readers reject outright.
+                f.write("ADIF Export from z-30 DSP Transceiver Suite\n")
+                f.write("<ADIF_VER:5>3.1.4\n<PROGRAMID:4>z-30\n<EOH>\n\n")
 
-            line = (
-                f"<CALL:{len(record.callsign)}>{record.callsign} "
-                f"<QSO_DATE:{len(record.utc_date)}>{record.utc_date} "
-                f"<TIME_ON:{len(record.utc_time)}>{record.utc_time} "
-                f"<BAND:{len(record.band)}>{record.band} "
-                f"<FREQ:{len(str(record.freq_mhz))}>{record.freq_mhz} "
-                f"<MODE:{len(record.mode)}>{record.mode} "
-                f"<SUBMODE:{len(record.submode)}>{record.submode} "
-                f"<RST_SENT:{len(record.rst_sent)}>{record.rst_sent} "
-                f"<RST_RCVD:{len(record.rst_rcvd)}>{record.rst_rcvd} "
-                f"<GRIDSQUARE:{len(record.grid)}>{record.grid} "
-                f"<OPERATOR:{len(self.my_call)}>{self.my_call} "
-                f"<MY_GRIDSQUARE:{len(self.my_grid)}>{self.my_grid} "
-                f"<DISTANCE:{len(str(record.distance_km))}>{record.distance_km} "
-                f"<COMMENT:{len(record.notes)}>{record.notes} "
-                f"<EOR>\\n"
-            )
-            f.write(line)
+            fields = [
+                self._adif_field("CALL", record.callsign),
+                self._adif_field("QSO_DATE", record.utc_date),
+                self._adif_field("TIME_ON", record.utc_time),
+                self._adif_field("BAND", record.band),
+                self._adif_field("FREQ", record.freq_mhz),
+                self._adif_field("MODE", record.mode),
+                self._adif_field("SUBMODE", record.submode),
+                self._adif_field("RST_SENT", record.rst_sent),
+                self._adif_field("RST_RCVD", record.rst_rcvd),
+                self._adif_field("GRIDSQUARE", record.grid),
+                self._adif_field("OPERATOR", self.my_call),
+                self._adif_field("MY_GRIDSQUARE", self.my_grid),
+                self._adif_field("DISTANCE", record.distance_km),
+                self._adif_field("COMMENT", record.notes),
+            ]
+            f.write(" ".join(fields) + " <EOR>\n")

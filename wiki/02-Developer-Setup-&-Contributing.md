@@ -32,7 +32,7 @@ Both environments implement the exact same physical-layer mathematical specifica
 ## 💻 Developer Prerequisites
 
 - **Node.js**: `v18.0.0` or higher (`v20+` recommended)
-- **Python**: `3.9` or higher (`3.10+` recommended)
+- **Python**: `3.10` or higher for the pinned `requirements.txt` development set (the package itself declares `>=3.9`; see the contribution rules below for why there are two floors)
 - **Audio Headers & Libraries**:
   - Debian/Ubuntu: `libportaudio2 portaudio19-dev libasound2-dev libhamlib-dev`
   - Arch Linux: `portaudio hamlib`
@@ -219,7 +219,16 @@ Please use Conventional Commits:
 ### Pull Request Checklist
 1. All TypeScript code must pass `npm run lint` without errors or warnings.
 2. Production bundle must build cleanly via `npm run build`.
-3. Python modifications must maintain compatibility with Python 3.9 through 3.13.
+3. Python modifications must stay syntax-compatible with **Python 3.9** - no `match`, no PEP 604
+   `X | Y` annotations evaluated at runtime, no builtin generics in annotations without
+   `from __future__ import annotations`. That is the floor `pyproject.toml` declares
+   (`requires-python = ">=3.9"`), and its loose dependency ranges do resolve there.
+
+   Note the second, higher floor: the **pinned** set in `requirements.txt` (numpy 2.2, scipy
+   1.15) requires **3.10+**, so that is what a developer or an operator following the documented
+   install path actually runs, and what CI installs. CI tests 3.10, 3.12 and 3.13 - the range the
+   pinned set covers. Claiming "3.9 through 3.13" without qualification was wrong in both
+   directions: 3.9 cannot install the pinned requirements, and 3.13 was never tested.
 4. If modifying DSP code, run `python -m pytest tests` (which includes the codec round trip, the occupied-bandwidth budget, and the acquisition tests) and `python -m z30_dsp.benchmark --mode realistic --fading none --min-snr -28 --max-snr -17 --frames 40 --seed 20260830` to check the decode threshold has not regressed below **-23.1 dB SNR (50%) / -21.7 dB SNR (90%)**. That is measured through the real acquisition path with random carrier and timing offsets. `--mode ideal` gives the genie-aided bound (-24.6 dB / -23.4 dB) for comparison; it is not an on-air threshold.
 5. Documentation changes go in `wiki/`, not the README, and the generated in-app copy is regenerated (`npm run generate:wiki`) and committed. See [Documentation: where things belong](#-documentation-where-things-belong).
 6. Any change to the transmit gate, the local API, the GPIO bridge or the time-sync guards keeps its tests passing unchanged, or explains in the pull request why the guarantee in [13. Operating Safety, Compliance & Local Security](13-Operating-Safety-Compliance-&-Security.md) is still met.

@@ -10,6 +10,8 @@ dead-man switch that bounds a keyed transmitter.
 
 import json
 import os
+import socket
+import sys
 import threading
 import time
 import urllib.error
@@ -379,6 +381,38 @@ def test_bind_fails_loudly_rather_than_drifting_to_another_port():
         assert "--port" in str(excinfo.value)
     finally:
         first.close()
+
+
+def test_the_listening_socket_uses_the_right_exclusivity_option_for_this_platform():
+    """
+    SO_REUSEADDR means opposite things on POSIX and Windows, and only the POSIX meaning is the
+    one wanted here.
+
+    On POSIX it permits rebinding an address still in TIME_WAIT - what a restart needs. On
+    Windows it permits binding a port another socket is ACTIVELY listening on, so two instances
+    both bind, both "succeed", and the OS decides which one receives a given connection. On a
+    server that mints a bearer token per start, that decides which process the browser is
+    talking to. The test above could not see this on Linux; the Windows CI leg could.
+
+    Asserted from the socket the function actually returns, per platform, rather than by reading
+    the branch back out of the source.
+    """
+    sock, _port = ws.bind_listening_socket(0)
+    try:
+        if sys.platform == "win32":
+            exclusive = getattr(socket, "SO_EXCLUSIVEADDRUSE")
+            assert sock.getsockopt(socket.SOL_SOCKET, exclusive) != 0, (
+                "SO_EXCLUSIVEADDRUSE is not set, so a second instance can bind this same port"
+            )
+            assert sock.getsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR) == 0, (
+                "SO_REUSEADDR is set on Windows, where it permits hijacking an active port"
+            )
+        else:
+            assert sock.getsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR) != 0, (
+                "SO_REUSEADDR is not set, so a restart must wait out TIME_WAIT"
+            )
+    finally:
+        sock.close()
 
 
 # -- upstream update endpoints ---------------------------------------------
