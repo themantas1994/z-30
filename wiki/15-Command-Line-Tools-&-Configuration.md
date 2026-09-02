@@ -20,6 +20,9 @@ z30
 # Monte Carlo channel simulation and decode-threshold benchmark
 z30 --benchmark
 # or: python3 -m z30_dsp.benchmark
+# Add --workers N to spread the decoding over N processes (0 = one per CPU). This changes how
+# long the run takes and nothing about the curve it produces - see wiki/16.
+# or: python3 -m z30_dsp.benchmark --workers 0
 
 # Terminal station configuration wizard
 z30 --wizard

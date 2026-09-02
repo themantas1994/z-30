@@ -1681,8 +1681,11 @@ seed alongside any published curve; an unseeded number cannot be reproduced, bis
 verified by anyone else.
 """
 
+import os
 import time
 import argparse
+from concurrent.futures import Executor, ProcessPoolExecutor
+from dataclasses import dataclass
 from typing import List, Optional, Tuple, Dict
 import numpy as np
 
@@ -1693,6 +1696,23 @@ from z30_dsp.acquisition import acquire_frame, slot_timing_search_sec
 
 #: Default PRNG seed. Fixed so the default run is reproducible; override with --seed.
 DEFAULT_BENCHMARK_SEED: int = 20260830
+
+#: Default worker count for the sweep. One - the serial path - deliberately.
+#:
+#: Parallelism here is a wall-clock optimisation and nothing else: the curve a run produces is
+#: identical at every worker count, and \`tests/test_benchmark_parallel.py\` asserts that rather
+#: than trusting it. The default stays serial anyway, so a published figure is reproduced by
+#: the same code path that has always produced it, and \`--workers N\` is an explicit choice made
+#: by whoever is waiting for the run.
+DEFAULT_BENCHMARK_WORKERS: int = 1
+
+#: Frames dispatched to the pool per worker in one batch.
+#:
+#: Frames are prepared sequentially (they consume the sweep's one PRNG, in order) and decoded in
+#: parallel, so every prepared-but-not-yet-decoded frame is a ~0.7 MB audio buffer sitting in
+#: memory. Batching bounds that by the worker count instead of by --frames, which is free to be
+#: 1000, while still keeping every worker fed.
+PARALLEL_CHUNK_PER_WORKER: int = 4
 
 #: Weight of the coherent term in the per-tone likelihood, in \`realistic\` mode.
 #:
@@ -1899,6 +1919,254 @@ def demodulate_mfsk_llrs(
         
     return llrs
 
+# ---------------------------------------------------------------------------------------------
+# Splitting the sweep into a sequential producer and a parallel consumer.
+#
+# The sweep draws every random value it needs - payload bits, the Watterson tap processes, the
+# carrier and timing offsets, the AWGN - from ONE \`np.random.Generator\`, consumed strictly in
+# call order. That shared, order-dependent state is the whole obstacle to running frames
+# concurrently, and there are two ways past it.
+#
+# The obvious one, and the one a first design reaches for, is to give each frame its own
+# generator seeded from (master_seed, snr_index, frame_index). It parallelises everything - and
+# it draws different numbers, so it produces a different curve at the same seed. The published
+# thresholds in wiki/16 would all have to be re-measured, and AGENTS.md section 5 is explicit
+# about what that costs. Speed is not a reason to move a published figure.
+#
+# The other one is this: keep the generator exactly where it is, and split the frame loop by
+# whether a stage touches it.
+#
+#   * \`_prepare_frame\` consumes the PRNG, in the original order, on the main process. It is the
+#     transmitter and the channel: payload, waveform, fading, offsets, noise.
+#   * \`decode_prepared_frame\` consumes nothing. It is the receiver: acquisition, demodulation,
+#     LDPC decode, CRC and payload check. Given the same buffer it returns the same answer on
+#     any process, in any order, at any time - \`Z30LdpcCodec.decode_min_sum\` derives its own
+#     dither from the LLRs handed to it (see \`ldpc.dither_seed_from_llrs\`) precisely so that
+#     this holds.
+#
+# So the parallel path and the serial path see identical inputs and produce identical outputs,
+# bit for bit, and no published number moves. Measured on this code at 6000 Hz in realistic
+# mode, the PRNG-consuming half is 3.1% of a frame's wall clock (payload 0.0%, synthesis 0.3%,
+# fading and offsets 2.7%, noise 0.1%) against 96.9% for acquisition, demodulation and decode -
+# so keeping the producer serial costs an Amdahl ceiling of about 32x, which is well past any
+# core count this is going to run on.
+# ---------------------------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class PreparedFrame:
+    """
+    One frame as it leaves the channel, plus everything the receiver is permitted to know.
+
+    Deliberately a plain data record: it crosses a process boundary by pickle, so it must not
+    carry a codec, a modulator, or anything else holding state a worker could diverge on.
+    """
+    #: Position in the SNR point's frame loop. Results are reassembled by this, never by the
+    #: order workers happen to finish in.
+    index: int
+    noisy_wave: np.ndarray
+    #: The transmitted payload, so a converged codeword can be checked against what was sent.
+    payload_63: np.ndarray
+    #: \`ideal\` mode hands the demodulator the exact sigma used to make the noise. \`realistic\`
+    #: passes None, and the receiver estimates it from the audio like a real one has to.
+    known_sigma: Optional[float]
+    #: \`ideal\` mode's perfect timing and exact carrier. Ignored when \`search_timing_sec\` is set.
+    known_start_sample: int
+    known_base_freq_hz: float
+    #: Half-width of the blind timing search, or None in \`ideal\` mode where nothing is searched.
+    search_timing_sec: Optional[float]
+    #: The pilot-coherence weight for this mode; see REALISTIC_PILOT_COHERENCE.
+    pilot_coherence: Optional[float]
+
+
+@dataclass(frozen=True)
+class FrameOutcome:
+    """What the receiver made of one \`PreparedFrame\`. Carries its index so order cannot be lost."""
+    index: int
+    success: bool
+    iters: int
+    #: Where acquisition put the frame, and on what carrier. In \`ideal\` mode these echo the
+    #: values handed in, so the caller's error accounting reads the same field either way.
+    start_sample: int
+    base_freq_hz: float
+
+
+def _prepare_frame(
+    index: int,
+    snr_db: float,
+    codec: Z30LdpcCodec,
+    cfg: Z30Config,
+    modulator: Z30Modulator,
+    rng: np.random.Generator,
+    mode: str,
+    impairments: ChannelImpairments,
+    max_time_offset_sec: float,
+) -> Tuple[PreparedFrame, int, float]:
+    """
+    Generates one frame and puts it through the channel. THE ONLY PLACE THE SWEEP DRAWS RANDOM
+    NUMBERS, and it draws them in the order the serial loop always has.
+
+    Returns the frame, its true start sample and its true carrier offset. The last two never
+    reach the receiver - they exist so the caller can report acquisition error, exactly as
+    \`impair_frame\` intends.
+    """
+    payload, _codeword, _data_symbols, full_symbols = generate_random_frame(codec, cfg, rng)
+    clean_wave = modulator.synthesize_frame(full_symbols, base_audio_freq_hz=1250.0)
+    frame_power = float(np.mean(clean_wave ** 2))
+
+    if mode == "ideal":
+        # Calibrated AWGN only, and the demodulator is told everything.
+        noisy_wave, sigma = add_calibrated_awgn(
+            clean_wave, snr_db, cfg.sample_rate_hz, rng, frame_power
+        )
+        return (
+            PreparedFrame(
+                index=index,
+                noisy_wave=noisy_wave,
+                payload_63=payload,
+                known_sigma=float(sigma),
+                known_start_sample=0,
+                known_base_freq_hz=1250.0,
+                search_timing_sec=None,
+                pilot_coherence=None,
+            ),
+            0,
+            0.0,
+        )
+
+    # Fading, carrier offset and timing offset, then noise across the whole buffer - referenced
+    # to the frame's own power, not the padded buffer's.
+    buf, true_start, true_foff = impair_frame(clean_wave, cfg.sample_rate_hz, impairments, rng)
+    noisy_wave, _true_sigma = add_calibrated_awgn(buf, snr_db, cfg.sample_rate_hz, rng, frame_power)
+    return (
+        PreparedFrame(
+            index=index,
+            noisy_wave=noisy_wave,
+            payload_63=payload,
+            known_sigma=None,
+            known_start_sample=0,
+            known_base_freq_hz=1250.0,
+            search_timing_sec=slot_timing_search_sec(max_time_offset_sec),
+            pilot_coherence=REALISTIC_PILOT_COHERENCE,
+        ),
+        true_start,
+        true_foff,
+    )
+
+
+def decode_prepared_frame(job: PreparedFrame, cfg: Z30Config, codec: Z30LdpcCodec) -> FrameOutcome:
+    """
+    Runs the receive chain over one prepared frame: acquisition, demodulation, LDPC decode and
+    the CRC-and-payload check.
+
+    A pure function of \`job\` (given a codec built with the same iteration cap). It reads no
+    PRNG, holds no state between calls and mutates nothing it is given, which is what makes a
+    worker pool safe here and what \`tests/test_benchmark_parallel.py\` pins.
+    """
+    if job.search_timing_sec is not None:
+        # Blind acquisition: the receiver gets audio and nothing else, and searches the window
+        # a slot-synchronised receiver actually has rather than the whole stream.
+        acq = acquire_frame(
+            job.noisy_wave,
+            cfg,
+            nominal_base_freq_hz=job.known_base_freq_hz,
+            time_search_sec=job.search_timing_sec,
+        )
+        start_sample = acq.start_sample
+        base_freq = acq.base_freq_hz
+        sigma = acq.noise_sigma
+    else:
+        if job.known_sigma is None:
+            # Silently substituting a tiny sigma here would scale every log-likelihood by 1e18
+            # and still return a plausible-looking curve. A malformed job should stop the run.
+            raise ValueError("a frame with no timing search must carry the sigma it was made with")
+        start_sample = job.known_start_sample
+        base_freq = job.known_base_freq_hz
+        sigma = job.known_sigma
+
+    channel_llrs = demodulate_mfsk_llrs(
+        job.noisy_wave, cfg, sigma,
+        audio_center_hz=base_freq,
+        start_sample=start_sample,
+        pilot_coherence=job.pilot_coherence,
+    )
+
+    success, decoded_info, iters = codec.decode_min_sum(channel_llrs)
+    if success:
+        # Validate CRC-14, and check the payload really is the one transmitted: a converged
+        # codeword with a matching CRC that decoded to the wrong message is a false decode,
+        # not a success.
+        rcvd_crc = int("".join(str(b) for b in decoded_info[63:]), 2)
+        comp_crc = codec.compute_crc14(decoded_info[:63])
+        success = bool(rcvd_crc == comp_crc and np.array_equal(decoded_info[:63], job.payload_63))
+
+    return FrameOutcome(
+        index=job.index,
+        success=bool(success),
+        iters=int(iters),
+        start_sample=int(start_sample),
+        base_freq_hz=float(base_freq),
+    )
+
+
+#: Per-worker receive chain, built once by the pool initializer.
+#:
+#: The codec builds a 139x216 parity-check matrix and its adjacency lists at construction. Sent
+#: with every task instead, that construction would be paid once per frame and pickled across a
+#: pipe once per frame - the "per-task pickling could plausibly lose to the serial loop" trap.
+_WORKER_CFG: Optional[Z30Config] = None
+_WORKER_CODEC: Optional[Z30LdpcCodec] = None
+
+
+def _init_decode_worker(sample_rate_hz: int, max_iterations: int) -> None:
+    """Builds one worker process's config and codec. Runs once per process, not once per frame."""
+    global _WORKER_CFG, _WORKER_CODEC
+    _WORKER_CFG = Z30Config(sample_rate_hz=sample_rate_hz)
+    _WORKER_CODEC = Z30LdpcCodec(max_iterations=max_iterations)
+
+
+def _decode_in_worker(job: PreparedFrame) -> FrameOutcome:
+    """Pool entry point. Module-level and picklable, which \`spawn\` platforms require."""
+    if _WORKER_CFG is None or _WORKER_CODEC is None:
+        raise RuntimeError("decode worker used before _init_decode_worker ran")
+    return decode_prepared_frame(job, _WORKER_CFG, _WORKER_CODEC)
+
+
+def resolve_worker_count(workers: Optional[int]) -> int:
+    """
+    Turns a \`--workers\` argument into a process count.
+
+    None or a value below 1 means "one per CPU"; \`os.cpu_count()\` can itself return None on an
+    exotic platform, so it falls back to serial rather than to a crash.
+    """
+    if workers is None or workers < 1:
+        return os.cpu_count() or 1
+    return int(workers)
+
+
+def _decode_batch(
+    batch: List[PreparedFrame],
+    outcomes: List[Optional[FrameOutcome]],
+    executor: Optional[Executor],
+    cfg: Z30Config,
+    codec: Z30LdpcCodec,
+) -> None:
+    """
+    Decodes one batch of prepared frames and files each result under its own frame index.
+
+    Filing by index rather than appending is the point: a pool returns work in whatever order it
+    finishes, and a sweep that accumulated in that order would produce a curve that depended on
+    machine load. Every count this function feeds is read back in index order by the caller.
+    """
+    if executor is None:
+        for job in batch:
+            outcome = decode_prepared_frame(job, cfg, codec)
+            outcomes[outcome.index] = outcome
+        return
+    for outcome in executor.map(_decode_in_worker, batch):
+        outcomes[outcome.index] = outcome
+
+
 def run_monte_carlo_snr_sweep(
     min_snr_db: float = -33.0,
     max_snr_db: float = -23.0,
@@ -1910,6 +2178,7 @@ def run_monte_carlo_snr_sweep(
     fading: str = "moderate",
     max_freq_offset_hz: float = 5.0,
     max_time_offset_sec: float = 0.5,
+    workers: int = DEFAULT_BENCHMARK_WORKERS,
 ) -> List[Dict]:
     """
     Runs waveform generation, channel impairment, acquisition and LDPC decoding across SNR.
@@ -1921,6 +2190,12 @@ def run_monte_carlo_snr_sweep(
               yields a bound, not a threshold. See the module docstring.
         fading: Watterson preset for realistic mode: none / good / moderate / poor.
         seed: master seed. The same seed and configuration always produce the same curve.
+        workers: decode processes. 1 runs everything in this process; a value below 1 means one
+              per CPU. This changes wall-clock time and NOTHING ELSE - frames are generated in
+              the same order from the same generator and reassembled by frame index, so every
+              count, every RMS column and the interpolated threshold are identical at every
+              worker count. \`tests/test_benchmark_parallel.py\` asserts that rather than
+              asserting it here in prose.
     """
     if mode not in ("realistic", "ideal"):
         raise ValueError(f"mode must be 'realistic' or 'ideal'; got {mode!r}")
@@ -1941,9 +2216,14 @@ def run_monte_carlo_snr_sweep(
     # describing the decoder that ships.
     codec = Z30LdpcCodec(max_iterations=LDPC_MAX_ITERATIONS)
     
+    worker_count = resolve_worker_count(workers)
+    # The serial path batches one frame at a time, so it holds exactly one audio buffer at
+    # once, as it always has. Only the pooled path needs a batch big enough to keep workers fed.
+    batch_size = 1 if worker_count == 1 else worker_count * PARALLEL_CHUNK_PER_WORKER
+
     snr_points = np.arange(min_snr_db, max_snr_db + 1e-4, step_snr_db)
     results = []
-    
+
     print("=" * 96)
     if mode == "ideal":
         print("  z-30 IDEALISED AWGN BOUND (genie-aided)")
@@ -1959,6 +2239,10 @@ def run_monte_carlo_snr_sweep(
         print("  The receiver is given only audio: it finds the frame and estimates the noise itself.")
     print(f"  {frames_per_snr} frames/point | Sample Rate: {sample_rate_hz} Hz | "
           f"Max Iterations: 45 | Seed: {seed}")
+    if worker_count > 1:
+        # Printed only when it is true, so the default run's output stays the one wiki/16 quotes.
+        print(f"  Decoding across {worker_count} worker processes. The curve is unchanged by this;")
+        print("  the per-point elapsed time below is now wall clock across the pool, not serial CPU time.")
     print("=" * 96)
     header = (f"{'SNR (2500Hz)':<14} | {'Frames':<7} | {'Success':<8} | {'FER':<9} | "
               f"{'Decode %':<9} | {'Avg Iters':<10}")
@@ -1967,116 +2251,102 @@ def run_monte_carlo_snr_sweep(
     print(header)
     print("-" * 96)
     
-    for snr in snr_points:
-        t_start = time.time()
-        successes = 0
-        failures = 0
-        acq_failures = 0
-        total_iters = 0
-        timing_errs: List[float] = []
-        freq_errs: List[float] = []
+    executor: Optional[Executor] = None
+    if worker_count > 1:
+        executor = ProcessPoolExecutor(
+            max_workers=worker_count,
+            initializer=_init_decode_worker,
+            initargs=(cfg.sample_rate_hz, codec.max_iterations),
+        )
 
-        for f in range(frames_per_snr):
-            # 1. Generate real random payload and symbols
-            payload, _codeword, _data_symbols, full_symbols = generate_random_frame(codec, cfg, rng)
+    try:
+        for snr in snr_points:
+            t_start = time.time()
+            successes = 0
+            failures = 0
+            acq_failures = 0
+            total_iters = 0
+            timing_errs: List[float] = []
+            freq_errs: List[float] = []
 
-            # 2. Synthesize physical continuous-phase 16-MFSK waveform
-            clean_wave = modulator.synthesize_frame(full_symbols, base_audio_freq_hz=1250.0)
-            frame_power = float(np.mean(clean_wave ** 2))
+            # One slot per frame, filled by frame index. \`truths\` holds what the channel
+            # actually did to each frame; the receiver never sees it.
+            outcomes: List[Optional[FrameOutcome]] = [None] * frames_per_snr
+            truths: List[Tuple[int, float]] = []
 
-            if mode == "ideal":
-                # 3a. Calibrated AWGN only, and the demodulator is told everything.
-                noisy_wave, sigma = add_calibrated_awgn(
-                    clean_wave, snr, cfg.sample_rate_hz, rng, frame_power
-                )
-                start_sample = 0
-                base_freq = 1250.0
-            else:
-                # 3b. Fading, carrier offset and timing offset, then noise across the whole
-                #     buffer - referenced to the frame's own power, not the padded buffer's.
-                buf, true_start, true_foff = impair_frame(
-                    clean_wave, cfg.sample_rate_hz, impairments, rng
-                )
-                noisy_wave, _true_sigma = add_calibrated_awgn(
-                    buf, snr, cfg.sample_rate_hz, rng, frame_power
-                )
+            first = 0
+            while first < frames_per_snr:
+                count = min(batch_size, frames_per_snr - first)
+                # Prepared strictly in frame order, from the one shared generator, exactly as
+                # the serial loop always did. Batching changes when frames are made, never
+                # which random numbers they are made from.
+                batch: List[PreparedFrame] = []
+                for f in range(first, first + count):
+                    job, true_start, true_foff = _prepare_frame(
+                        f, float(snr), codec, cfg, modulator, rng, mode,
+                        impairments, max_time_offset_sec,
+                    )
+                    batch.append(job)
+                    truths.append((true_start, true_foff))
+                _decode_batch(batch, outcomes, executor, cfg, codec)
+                first += count
 
-                # 4b. Blind acquisition: the receiver gets audio and nothing else, and
-                #     searches the window a slot-synchronised receiver actually has rather
-                #     than the whole stream. Measured paired over 200 frames at -26 to -22 dB,
-                #     the two search widths produced zero discordant decodes (p = 1), so this
-                #     is a faithfulness fix and not a change to the curve - see wiki/16.
-                acq = acquire_frame(
-                    noisy_wave,
-                    cfg,
-                    nominal_base_freq_hz=1250.0,
-                    time_search_sec=slot_timing_search_sec(max_time_offset_sec),
-                )
-                start_sample = acq.start_sample
-                base_freq = acq.base_freq_hz
-                sigma = acq.noise_sigma
-                timing_errs.append((start_sample - true_start) / cfg.sample_rate_hz)
-                freq_errs.append(base_freq - (1250.0 + true_foff))
-                # Landing more than half a symbol out cannot decode. Counted separately so an
-                # acquisition failure is visible rather than hidden inside the FER.
-                if abs(start_sample - true_start) > cfg.symbol_duration_sec * cfg.sample_rate_hz / 2:
-                    acq_failures += 1
+            # Reduce in frame order, never in completion order.
+            for f in range(frames_per_snr):
+                outcome = outcomes[f]
+                if outcome is None:
+                    raise RuntimeError(f"frame {f} at {snr:+.1f} dB was never decoded")
+                total_iters += outcome.iters
 
-            # 5. Demodulate via 16-tone matched filters -> Soft LLRs.
-            #    Purely non-coherent in realistic mode; see REALISTIC_PILOT_COHERENCE.
-            channel_llrs = demodulate_mfsk_llrs(
-                noisy_wave, cfg, sigma,
-                audio_center_hz=base_freq,
-                start_sample=start_sample,
-                pilot_coherence=None if mode == "ideal" else REALISTIC_PILOT_COHERENCE,
-            )
+                if mode == "realistic":
+                    true_start, true_foff = truths[f]
+                    timing_errs.append((outcome.start_sample - true_start) / cfg.sample_rate_hz)
+                    freq_errs.append(outcome.base_freq_hz - (1250.0 + true_foff))
+                    # Landing more than half a symbol out cannot decode. Counted separately so
+                    # an acquisition failure is visible rather than hidden inside the FER.
+                    if abs(outcome.start_sample - true_start) > cfg.symbol_duration_sec * cfg.sample_rate_hz / 2:
+                        acq_failures += 1
 
-            # 6. Run actual Systematic (216, 77) Normalized Min-Sum LDPC Decoder
-            success, decoded_info, iters = codec.decode_min_sum(channel_llrs)
-            total_iters += iters
-
-            if success:
-                # Validate CRC-14, and check the payload really is the one transmitted: a
-                # converged codeword with a matching CRC that decoded to the wrong message is
-                # a false decode, not a success.
-                rcvd_crc = int("".join(str(b) for b in decoded_info[63:]), 2)
-                comp_crc = codec.compute_crc14(decoded_info[:63])
-                if rcvd_crc == comp_crc and np.array_equal(decoded_info[:63], payload):
+                if outcome.success:
                     successes += 1
                 else:
                     failures += 1
-            else:
-                failures += 1
-                
-        fer = failures / frames_per_snr
-        decode_pct = (successes / frames_per_snr) * 100.0
-        avg_iters = total_iters / frames_per_snr
-        elapsed = time.time() - t_start
-        
-        res = {
-            "snr_db": float(snr),
-            "total_frames": frames_per_snr,
-            "successes": successes,
-            "failures": failures,
-            "fer": fer,
-            "decode_pct": decode_pct,
-            "avg_iters": avg_iters,
-            "elapsed_sec": elapsed,
-            "seed": seed,
-            "mode": mode,
-            "fading": fading if mode == "realistic" else "none",
-        }
-        if mode == "realistic":
-            res["acq_failures"] = acq_failures
-            res["timing_rms_ms"] = float(np.sqrt(np.mean(np.square(timing_errs))) * 1000.0) if timing_errs else 0.0
-            res["freq_rms_hz"] = float(np.sqrt(np.mean(np.square(freq_errs)))) if freq_errs else 0.0
-        results.append(res)
 
-        row = (f"{snr:+6.1f} dB      | {frames_per_snr:<7} | {successes:<8} | {fer:<9.4f} | "
-               f"{decode_pct:>7.1f}%  | {avg_iters:>6.1f}    ")
-        if mode == "realistic":
-            row += f" | {acq_failures:<8} | {res['timing_rms_ms']:>8.1f} ms | {res['freq_rms_hz']:>6.2f} Hz"
-        print(row)
+            fer = failures / frames_per_snr
+            decode_pct = (successes / frames_per_snr) * 100.0
+            avg_iters = total_iters / frames_per_snr
+            elapsed = time.time() - t_start
+
+            res = {
+                "snr_db": float(snr),
+                "total_frames": frames_per_snr,
+                "successes": successes,
+                "failures": failures,
+                "fer": fer,
+                "decode_pct": decode_pct,
+                "avg_iters": avg_iters,
+                # Wall clock for this point. With workers > 1 that is elapsed time across the
+                # pool, not CPU time - do not read it as a per-frame cost.
+                "elapsed_sec": elapsed,
+                "seed": seed,
+                "mode": mode,
+                "fading": fading if mode == "realistic" else "none",
+                "workers": worker_count,
+            }
+            if mode == "realistic":
+                res["acq_failures"] = acq_failures
+                res["timing_rms_ms"] = float(np.sqrt(np.mean(np.square(timing_errs))) * 1000.0) if timing_errs else 0.0
+                res["freq_rms_hz"] = float(np.sqrt(np.mean(np.square(freq_errs)))) if freq_errs else 0.0
+            results.append(res)
+
+            row = (f"{snr:+6.1f} dB      | {frames_per_snr:<7} | {successes:<8} | {fer:<9.4f} | "
+                   f"{decode_pct:>7.1f}%  | {avg_iters:>6.1f}    ")
+            if mode == "realistic":
+                row += f" | {acq_failures:<8} | {res['timing_rms_ms']:>8.1f} ms | {res['freq_rms_hz']:>6.2f} Hz"
+            print(row)
+    finally:
+        if executor is not None:
+            executor.shutdown()
 
     print("=" * 96)
 
@@ -2161,7 +2431,8 @@ def plot_ascii_curves(results: List[Dict]):
     print(snr_header + " (dB / 2500Hz)")
     print("=" * 80 + "\\n")
 
-def run_benchmark(seed: int = DEFAULT_BENCHMARK_SEED):
+def run_benchmark(seed: int = DEFAULT_BENCHMARK_SEED,
+                  workers: int = DEFAULT_BENCHMARK_WORKERS):
     """Default entry point (\`z30 --benchmark\`): the honest, realistic curve."""
     return run_monte_carlo_snr_sweep(
         min_snr_db=-26.0,
@@ -2171,6 +2442,7 @@ def run_benchmark(seed: int = DEFAULT_BENCHMARK_SEED):
         sample_rate_hz=6000,
         seed=seed,
         mode="realistic",
+        workers=workers,
     )
 
 
@@ -2196,6 +2468,10 @@ if __name__ == "__main__":
     parser.add_argument("--sample-rate", type=int, default=6000, help="Simulation sample rate in Hz")
     parser.add_argument("--seed", type=int, default=DEFAULT_BENCHMARK_SEED,
                         help="PRNG seed. Record it with any published result.")
+    parser.add_argument("--workers", type=int, default=DEFAULT_BENCHMARK_WORKERS,
+                        help="Decode processes (default: 1, serial). 0 or less means one per CPU. "
+                             "Affects wall-clock time only: the curve is identical at every "
+                             "worker count, and the test suite asserts it.")
     args = parser.parse_args()
 
     run_monte_carlo_snr_sweep(
@@ -2209,6 +2485,7 @@ if __name__ == "__main__":
         fading=args.fading,
         max_freq_offset_hz=args.freq_offset,
         max_time_offset_sec=args.time_offset,
+        workers=args.workers,
     )
 `,
   },
