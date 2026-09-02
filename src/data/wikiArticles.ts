@@ -73,13 +73,18 @@ carries a 63-bit message plus a 14-bit CRC behind a rate-0.356 LDPC code.
 
 Its seeded benchmark — run through the real acquisition path, with random carrier and timing
 offsets, no knowledge of the noise level and non-coherent demodulation — crosses 50% decode at
-**-23.1 dB SNR** on AWGN and **-21.3 dB** on a CCIR-moderate fading path, in a 2500 Hz
-reference bandwidth. **That is 2.1 dB deeper than FT8's published -21 dB, measured the same
-way — and it costs 24.0 s of airtime against FT8's 12.64 s (2.8 dB more energy) for 14 fewer
-message bits, so z-30 buys depth with time rather than with a more efficient code.** The
-genie-aided bound, with exact carrier, timing and noise level handed to the demodulator, is
-1.5 dB better again at -24.6 dB; it is reported separately because no other mode's published
-figure is measured that way. See
+**-22.9 dB SNR** on AWGN and **-21.4 dB** on the ITU-R F.1487 mid-latitude moderate fading
+path, in a 2500 Hz reference bandwidth (seed 20260830, 200 frames per point). **That is 1.9 dB
+deeper than FT8's published -21 dB, measured the same way — and it costs 24.0 s of airtime
+against FT8's 12.64 s (2.8 dB more energy) for 14 fewer message bits, so z-30 buys depth with
+time rather than with a more efficient code.** The genie-aided bound, with exact carrier, timing
+and noise level handed to the demodulator, is 1.66 dB better again at -24.58 dB; it is reported
+separately because no other mode's published figure is measured that way.
+
+**The same benchmark says where the mode does not work.** On the ITU-R F.1487 high-latitude
+moderate channel (3 ms / 10 Hz), z-30 decodes essentially nothing at any signal level — the
+Doppler spread is wider than the whole 3.125 Hz tone spacing. The long symbol that buys the
+depth is the same thing that loses a fast-moving ionosphere. See
 [16. Benchmarking, Testing & CI](16-Benchmarking-Testing-&-CI.md).
 
 ### Key technical innovations
@@ -509,7 +514,8 @@ Please use Conventional Commits:
    install path actually runs, and what CI installs. CI tests 3.10, 3.12 and 3.13 - the range the
    pinned set covers. Claiming "3.9 through 3.13" without qualification was wrong in both
    directions: 3.9 cannot install the pinned requirements, and 3.13 was never tested.
-4. If modifying DSP code, run \`python -m pytest tests\` (which includes the codec round trip, the occupied-bandwidth budget, and the acquisition tests) and \`python -m z30_dsp.benchmark --mode realistic --fading none --min-snr -28 --max-snr -17 --frames 40 --seed 20260830\` to check the decode threshold has not regressed below **-23.1 dB SNR (50%) / -21.7 dB SNR (90%)**. That is measured through the real acquisition path with random carrier and timing offsets. \`--mode ideal\` gives the genie-aided bound (-24.6 dB / -23.4 dB) for comparison; it is not an on-air threshold.
+4. If modifying DSP code, run \`python -m pytest tests\` (which includes the codec round trip, the occupied-bandwidth budget, and the acquisition tests) and \`python -m z30_dsp.benchmark --mode realistic --fading none --min-snr -28 --max-snr -17 --frames 200 --workers 0 --seed 20260830\` to check the decode threshold has not regressed below **-22.9 dB SNR (50%) / -22.1 dB SNR (90%)** (95% intervals \`[-23.07, -22.79]\` and \`[-22.16, -22.01]\`). That is measured through the real acquisition path with random carrier and timing offsets. \`--mode ideal\` gives the genie-aided bound (-24.58 dB / -23.48 dB) for comparison; it is not an on-air threshold. \`--frames 200\` is \`PUBLISHABLE_FRAMES_PER_POINT\` — a shorter run is fine for "did I break it" and prints a notice saying so, but its crossing is not a figure to publish or to compare a regression against.
+   If the change touches the demodulator or the acquisition stage, also run \`python -m z30_dsp.benchmark --compare-demod\` against whatever you changed: two sweeps differenced cannot resolve an effect of a dB, and [16](16-Benchmarking-Testing-&-CI.md#-the-paired-instruments---ap-and---compare-demod) explains why paired comparison is the only method this project accepts for that.
 5. Documentation changes go in \`wiki/\`, not the README, and the generated in-app copy is regenerated (\`npm run generate:wiki\`) and committed. See [Documentation: where things belong](#-documentation-where-things-belong).
 6. Any change to the transmit gate, the local API, the GPIO bridge or the time-sync guards keeps its tests passing unchanged, or explains in the pull request why the guarantee in [13. Operating Safety, Compliance & Local Security](13-Operating-Safety-Compliance-&-Security.md) is still met.
 `,
@@ -542,8 +548,9 @@ This document provides the complete mathematical and signal processing specifica
 | **Guard / Processing Time** | $T_{\\text{guard}}$ | **6.0 s** | FFT Framing + 3-Pass SIC + LDPC decode |
 | **Bits per Symbol** | $\\log_2(M)$ | **4 bits/symbol** | $54 \\times 4 = 216$ coded channel bits |
 | **FEC Code** | — | **IRA-LDPC (216, 77)** | Rate $R \\approx 0.356$, dual-diagonal parity |
-| **AWGN Decode Threshold** | — | **-23.1 dB SNR (50%) / -21.7 dB SNR (90%)** | In a $2500\\text{ Hz}$ noise bandwidth, through blind acquisition with random carrier ($\\pm5$ Hz) and timing ($\\pm0.5$ s) offsets, demodulated non-coherently. Comparable with the published on-air figures for FT8 and FT4. |
-| **Idealised AWGN Bound** | — | -24.6 dB SNR (50%) / -23.4 dB SNR (90%) | Exact noise sigma, exact carrier and perfect symbol timing given to the demodulator. A bound on the code, **not** an on-air threshold. The 1.5 dB gap is the acquisition loss. |
+| **AWGN Decode Threshold** | — | **-22.9 dB SNR (50%) / -22.1 dB SNR (90%)** | In a $2500\\text{ Hz}$ noise bandwidth, through blind acquisition with random carrier ($\\pm5$ Hz) and timing ($\\pm0.5$ s) offsets, demodulated non-coherently. Seed 20260830, 200 frames/point; 95% intervals $[-23.07, -22.79]$ and $[-22.16, -22.01]$. Comparable with the published on-air figures for FT8 and FT4. |
+| **Idealised AWGN Bound** | — | -24.58 dB SNR (50%) / -23.48 dB SNR (90%) | Exact noise sigma, exact carrier and perfect symbol timing given to the demodulator. A bound on the code, **not** an on-air threshold. The 1.66 dB gap is the acquisition loss. |
+| **ITU-R F.1487 high-latitude moderate** | — | **does not decode** (3 frames in 1,400, $-10$ to $+20\\text{ dB}$) | 3 ms delay spread, 10 Hz Doppler spread. The Doppler spread is wider than the $3.125\\text{ Hz}$ tone spacing, so tone orthogonality is destroyed; acquisition still finds the frame. See [16](16-Benchmarking-Testing-&-CI.md#the-channel-z-30-cannot-use). |
 
 ---
 
@@ -1539,7 +1546,7 @@ This document addresses common questions, operating issues, hardware setup chall
 ### Q1: Why does z-30 use a 30-second cycle instead of 15 seconds like FT8?
 **A**: Doubling the cycle to 30.0 seconds and halving the symbol rate from 6.25 to 3.125 baud doubles the energy per symbol, and a rate-0.356 code over 75 symbols spends considerably more redundancy per information bit than FT8's rate-0.52 (174, 91). Both buy coding gain.
 
-z-30's benchmark measures the on-air case directly: with random carrier and timing offsets, blind acquisition and non-coherent demodulation, 50% decode is at **-23.1 dB SNR** on AWGN and **-21.3 dB** on a CCIR-moderate path. FT8's published -21 dB is measured the same way, so **z-30 decodes about 2.1 dB deeper than FT8 on AWGN** - but it transmits for 24.0 s against FT8's 12.64 s (2.8 dB more energy) and carries 14 fewer message bits, so it buys that depth with airtime rather than with a better code. The genie-aided bound is -24.6 dB; comparing that with anyone's on-air figure is invalid. Earlier revisions of this page claimed "+4.0 dB over FT8" on exactly that invalid comparison, and it stays withdrawn - the 2.1 dB above is blind-acquisition on both sides.
+z-30's benchmark measures the on-air case directly: with random carrier and timing offsets, blind acquisition and non-coherent demodulation, 50% decode is at **-22.9 dB SNR** on AWGN and **-21.4 dB** on the ITU-R F.1487 mid-latitude moderate path (seed 20260830, 200 frames per point). FT8's published -21 dB is measured the same way, so **z-30 decodes about 1.9 dB deeper than FT8 on AWGN** - but it transmits for 24.0 s against FT8's 12.64 s (2.8 dB more energy) and carries 14 fewer message bits, so it buys that depth with airtime rather than with a better code. **And on a fast-fading path it loses outright:** on ITU-R F.1487 high-latitude moderate (3 ms / 10 Hz) z-30 decodes essentially nothing at any signal level, because 10 Hz of Doppler spread is wider than its whole 3.125 Hz tone spacing. If you are working polar paths or an active aurora, that is the number that matters, not the AWGN one. The genie-aided bound is -24.58 dB; comparing that with anyone's on-air figure is invalid. Earlier revisions of this page claimed "+4.0 dB over FT8" on exactly that invalid comparison, and it stays withdrawn - the 1.9 dB above is blind-acquisition on both sides.
 
 ### Q2: Why is the occupied bandwidth only 50 Hz?
 **A**: 16 orthogonal tones spaced at $3.125\\text{ Hz}$ occupy exactly $16 \\times 3.125 = 50.0\\text{ Hz}$. This allows up to **50 simultaneous contacts** inside a standard 2.7 kHz SSB transceiver passband without mutual interference.
@@ -1622,7 +1629,7 @@ An in-depth technical analysis for **advanced amateur radio operators, RF engine
 
 | Metric / Parameter | FT8 (Franke-Taylor 8-FSK) | z-30 (16-MFSK Weak-Signal) | Physics & Engineering Delta |
 | :--- | :--- | :--- | :--- |
-| **Decoding Threshold ($SNR_{2500}$)** | **-21.0 dB** (measured on the air) | **-23.1 dB (50%) / -21.7 dB (90%)** (blind acquisition, AWGN) | $-2.1\\text{ dB}$, bought with $+2.8\\text{ dB}$ of airtime - see the note below |
+| **Decoding Threshold ($SNR_{2500}$)** | **-21.0 dB** (measured on the air) | **-22.9 dB (50%) / -22.1 dB (90%)** (blind acquisition, AWGN) | $-1.9\\text{ dB}$, bought with $+2.8\\text{ dB}$ of airtime - see the note below |
 | **Transmission Slot Duration** | 15.0 s (12.64 s active TX) | 30.0 s (24.0 s active TX) | $2\\times$ integration time ($+3.01\\text{ dB}$) |
 | **Modulation Format** | 8-MFSK (Continuous Phase) | 16-MFSK (Continuous Phase) | Higher-order orthogonal signaling efficiency |
 | **Occupied Bandwidth** | 47.0 Hz ($8 \\times 6.25\\text{ Hz}$) | 50.0 Hz ($16 \\times 3.125\\text{ Hz}$) | Ultra-narrowband density (50 channels in 2.7 kHz) |
@@ -1652,8 +1659,8 @@ weak-signal modes:
 | **Tone spacing ($\\Delta f$)** | **3.125 Hz** | 6.25 Hz | 20.83 Hz | 1.4648 Hz | 6.25 Hz |
 | **Active TX duration** | **24.0 s (75 symbols)** | 12.64 s | 4.48 s | 110.6 s | 12.64 s |
 | **Decode / guard window** | **6.0 s** | 2.36 s | 3.02 s | 9.4 s | 2.36 s |
-| **Sensitivity (50%), AWGN** | **-23.1 dB SNR †** | -21.0 dB SNR ‡ | -17.5 dB SNR ‡ | -28.0 dB SNR ‡ | -24.0 dB SNR ‡ |
-| **Sensitivity (90%), AWGN** | **-21.7 dB SNR †** | -20.0 dB SNR ‡ | -16.5 dB SNR ‡ | -27.0 dB SNR ‡ | -22.5 dB SNR ‡ |
+| **Sensitivity (50%), AWGN** | **-22.9 dB SNR †** | -21.0 dB SNR ‡ | -17.5 dB SNR ‡ | -28.0 dB SNR ‡ | -24.0 dB SNR ‡ |
+| **Sensitivity (90%), AWGN** | **-22.1 dB SNR †** | -20.0 dB SNR ‡ | -16.5 dB SNR ‡ | -27.0 dB SNR ‡ | -22.5 dB SNR ‡ |
 | **FEC code** | **LDPC (216, 77), $R \\approx 0.356$** | LDPC (174, 91), $R = 0.52$ | LDPC (174, 91), $R = 0.52$ | Convolutional $K=32$, $r=1/2$ | LDPC (174, 91) |
 | **Payload capacity** | **63 message bits (+ CRC-14 = 77)** | 77 message bits (+ CRC-14 = 91) | 77 message bits (+ CRC-14 = 91) | 28 bits (call + loc + pwr) | Free text (var) |
 | **Collision recovery** | **Multi-pass SIC (3 passes)** | Single pass (limited) | None | Non-coherent | Single pass |
@@ -1669,19 +1676,19 @@ for those modes, which include the same acquisition, AFC and timing losses. Repr
 the commands in
 [16. Benchmarking, Testing & CI](16-Benchmarking-Testing-&-CI.md).
 
-**z-30 decodes 2.1 dB deeper than FT8 on AWGN, and it pays more than 2.1 dB for it.**
+**z-30 decodes 1.9 dB deeper than FT8 on AWGN, and it pays more than 1.9 dB for it.**
 
 Take the three facts together before reading the headline number:
 
 | | z-30 | FT8 | Difference |
 | :--- | ---: | ---: | ---: |
-| Decode threshold, 50%, measured the same way | $-23.1\\text{ dB}$ | $-21.0\\text{ dB}$ | $2.1\\text{ dB}$ deeper |
+| Decode threshold, 50%, measured the same way | $-22.9\\text{ dB}$ | $-21.0\\text{ dB}$ | $1.9\\text{ dB}$ deeper |
 | Active transmission per message | $24.0\\text{ s}$ | $12.64\\text{ s}$ | $10\\log_{10}(24.0/12.64) = 2.8\\text{ dB}$ more energy |
 | Message bits carried | 63 | 77 | 14 fewer |
 
-z-30 spends $2.8\\text{ dB}$ of extra airtime and $14$ message bits to buy $2.1\\text{ dB}$ of
-sensitivity. **Per second on the air it is therefore about $0.7\\text{ dB}$ behind FT8, while
-being $2.1\\text{ dB}$ ahead per transmission.** Both statements are true and neither is the
+z-30 spends $2.8\\text{ dB}$ of extra airtime and $14$ message bits to buy $1.9\\text{ dB}$ of
+sensitivity. **Per second on the air it is therefore about $0.9\\text{ dB}$ behind FT8, while
+being $1.9\\text{ dB}$ ahead per transmission.** Both statements are true and neither is the
 whole picture; quoting the first without the second is how this page ended up with a withdrawn
 claim once already.
 
@@ -1698,7 +1705,7 @@ claim once already.
 >
 > The still-withdrawn claim is the older one: a "+4.0 dB advantage" obtained by subtracting
 > FT8's on-air figure from z-30's *genie-aided bound*. That comparison remains invalid and the
-> $2.1\\text{ dB}$ above is not it - it is bound-to-bound-free, measured through blind
+> $1.9\\text{ dB}$ above is not it - it is bound-to-bound-free, measured through blind
 > acquisition on both sides of the comparison.
 
 Where z-30 differs beyond sensitivity is occupied bandwidth, multi-pass SIC, and behaviour on a
@@ -1761,15 +1768,15 @@ arithmetic supports, because the two limits are different numbers:
 | | Threshold | Own Shannon limit | Distance from limit |
 | :--- | ---: | ---: | ---: |
 | FT8, on the air | $-21.0\\text{ dB}$ | $-27.72\\text{ dB}$ | $6.72\\text{ dB}$ |
-| z-30, blind acquisition | $-23.1\\text{ dB}$ | $-31.38\\text{ dB}$ | $8.28\\text{ dB}$ |
-| z-30, genie-aided bound | $-24.6\\text{ dB}$ | $-31.38\\text{ dB}$ | $6.78\\text{ dB}$ |
+| z-30, blind acquisition | $-22.9\\text{ dB}$ | $-31.38\\text{ dB}$ | $8.48\\text{ dB}$ |
+| z-30, genie-aided bound | $-24.58\\text{ dB}$ | $-31.38\\text{ dB}$ | $6.80\\text{ dB}$ |
 
 The comparison to draw is **not** "z-30 is closer to Shannon" — it is further from its own limit
 than FT8 is from its. Sending 63 bits in 24.0 s instead of 77 bits in 12.64 s moves the *limit*
-down by $3.7\\text{ dB}$, and z-30's on-air threshold captures $2.1\\text{ dB}$ of that. Under
-ideal detection its code sits $6.78\\text{ dB}$ from its limit, within a tenth of a dB of where
+down by $3.7\\text{ dB}$, and z-30's on-air threshold captures $1.9\\text{ dB}$ of that. Under
+ideal detection its code sits $6.80\\text{ dB}$ from its limit, within a tenth of a dB of where
 FT8's on-air figure sits from its own — so the codes are of comparable efficiency, and the
-$1.5\\text{ dB}$ that separates z-30's bound from its measured threshold is acquisition loss on a
+$1.66\\text{ dB}$ that separates z-30's bound from its measured threshold is acquisition loss on a
 3.125 Hz-spaced signal. That loss is exactly the part a genie-aided comparison hides, in this
 mode and in every other.
 
@@ -1906,7 +1913,7 @@ $$x_{\\text{residual}}(t) = x_{\\text{rx}}(t) - \\hat{A}(t) \\cos\\left(2\\pi \\
 
 > **Correction (2026-09-01):** this step previously claimed the unmasked signal decodes "at the
 > same $-25.0\\text{ dB}$ (50%) / $-24.0\\text{ dB}$ (90%) AWGN decode floor". Both numbers were
-> wrong twice over: the canonical AWGN threshold is $-23.1\\text{ dB}$ (50%) / $-21.7\\text{ dB}$
+> wrong twice over: the canonical AWGN threshold is $-22.9\\text{ dB}$ (50%) / $-22.1\\text{ dB}$
 > (90%), as measured by \`z30_dsp/benchmark.py\` and stated in
 > [03](03-DSP-&-Physical-Layer-Specification.md), [16](16-Benchmarking-Testing-&-CI.md) and
 > \`Home.md\`; and the claim that a *residual* buffer faces that same floor is a statement about
@@ -1943,8 +1950,9 @@ Data Blocks:       D1       D2        D3         D4         D5         D6
 
 ## 📻 7. Link Budget: What a dB of Sensitivity Buys, and What z-30 Can Claim
 
-**z-30's on-air sensitivity has been measured: 2.1 dB deeper than FT8 on AWGN, bought with
-2.8 dB more airtime and 14 fewer message bits.**
+**z-30's on-air sensitivity has been measured: 1.9 dB deeper than FT8 on AWGN, bought with
+2.8 dB more airtime and 14 fewer message bits - and paid for again on a fast-fading path, where
+z-30 stops decoding entirely and FT8 does not.**
 
 Earlier revisions of this page put z-30's idealised AWGN bound (a benchmark that hands the
 demodulator the exact noise level, the exact carrier frequency and perfect symbol timing) next
@@ -1959,13 +1967,22 @@ What is defensible today:
 - z-30 spends more energy per symbol (3.125 baud against FT8's 6.25) and more redundancy per
   information bit (rate 0.356 against 0.52), and both buy coding gain.
 - Its seeded benchmark, driven through the real acquisition path with random carrier and
-  timing offsets, crosses 50% decode at $-23.1\\text{ dB}$ and 90% at $-21.7\\text{ dB}$ on AWGN
-  in a 2500 Hz reference bandwidth - $2.1\\text{ dB}$ deeper than FT8, measured the same way.
+  timing offsets, crosses 50% decode at $-22.92\\text{ dB}$ $[-23.07, -22.79]$ and 90% at
+  $-22.09\\text{ dB}$ $[-22.16, -22.01]$ on AWGN in a 2500 Hz reference bandwidth, at 200 frames
+  per point - $1.9\\text{ dB}$ deeper than FT8, measured the same way.
 - Under ideal detection (exact carrier, timing and noise level) the same code reaches
-  $-24.6\\text{ dB}$. The $1.5\\text{ dB}$ difference is what it costs to *find* the signal.
-- The coding gain is real and it survives acquisition, but it is not free: the $2.1\\text{ dB}$
+  $-24.58\\text{ dB}$. The $1.66\\text{ dB}$ difference is what it costs to *find* the signal.
+- The coding gain is real and it survives acquisition, but it is not free: the $1.9\\text{ dB}$
   costs $2.8\\text{ dB}$ of extra airtime and 14 message bits against FT8. z-30 is deeper per
   transmission and marginally shallower per second.
+- **And it does not survive every channel.** On ITU-R F.1487 high-latitude moderate
+  ($3\\text{ ms}$ / $10\\text{ Hz}$) - one of the three channels WSJT-X publishes each of its
+  modes against - z-30 decoded 3 frames in 1,400 across $-10$ to $+20\\text{ dB}$, and $30\\text{ dB}$
+  of extra signal buys none of them back. A $10\\text{ Hz}$ Doppler spread is wider than z-30's entire
+  $3.125\\text{ Hz}$ tone spacing, so the tones stop being orthogonal; FT8's $6.25\\text{ Hz}$
+  spacing and $0.16\\text{ s}$ symbols make the opposite trade. The narrow, long symbol is one
+  design decision seen from two sides, and quoting the AWGN half of it alone is the same kind
+  of error as quoting the genie-aided bound was.
 
 ### 7.1 How the honest measurement is made
 
@@ -1973,7 +1990,7 @@ What is defensible today:
 
 1. A random carrier frequency offset ($\\pm5$ Hz) is injected (\`z30_dsp/channel.py\`).
 2. A random symbol timing offset ($\\pm0.5$ s) is injected - slot alignment is never exact.
-3. A Watterson two-path fading channel is applied, with CCIR 520-2 Doppler and delay spreads
+3. A Watterson two-path fading channel is applied, with ITU-R F.1487 Doppler and delay spreads
    for the *good*, *moderate* and *poor* path classes.
 4. The decode is driven through the **real acquisition path** (\`z30_dsp/acquisition.py\`): a
    Costas sync search over the slot-synchronised timing window and the carrier range, plus a
@@ -1986,10 +2003,11 @@ Measured result, seed \`20260830\`:
 
 | Channel | Frames/point | 50% decode | 90% decode |
 | --- | ---: | --- | --- |
-| Idealised bound (genie-aided sync) | 40 | $-24.6\\text{ dB}$ | $-23.4\\text{ dB}$ |
-| AWGN, blind acquisition | 40 | $-23.1\\text{ dB}$ | $-21.7\\text{ dB}$ |
-| CCIR moderate (1.0 ms / 0.5 Hz) | 100 | $-21.3\\text{ dB}$ | $-19.5\\text{ dB}$ |
-| CCIR poor (2.0 ms / 1.0 Hz) | 100 | $-21.3\\text{ dB}$ | $-19.0\\text{ dB}$ |
+| Idealised bound (genie-aided sync) | 200 | $-24.58\\text{ dB}$ | $-23.48\\text{ dB}$ |
+| AWGN, blind acquisition | 200 | $-22.92\\text{ dB}$ | $-22.09\\text{ dB}$ |
+| ITU-R F.1487 mid-latitude moderate (1.0 ms / 0.5 Hz) | 200 | $-21.35\\text{ dB}$ | $-19.16\\text{ dB}$ |
+| ITU-R F.1487 mid-latitude disturbed (2.0 ms / 1.0 Hz) | 200 | $-21.10\\text{ dB}$ | $-19.21\\text{ dB}$ |
+| ITU-R F.1487 high-latitude moderate (3.0 ms / 10 Hz) | 200 | **no decode at any SNR** | — |
 
 The two fading presets are not separable at the 50% point at 100 frames each; see
 [16. Benchmarking, Testing & CI](16-Benchmarking-Testing-&-CI.md) for the intervals.
@@ -2025,7 +2043,7 @@ claimed, on a comparison that did not hold, was worth retracting rather than def
    JS8Call (Slow):                   -24.0 dB   │ Modes
    WSPR (2-Minute Beacon Only):      -28.0 dB ──┘
    ─────────────────────────────────────────────────────────────────────────────
-   z-30 (blind acquisition, AWGN):   -23.1 dB ◄── measured the same way as the rows above
+   z-30 (blind acquisition, AWGN):   -22.9 dB ◄── measured the same way as the rows above
    z-30 (idealised bound, genie sync):-24.6 dB ◄── NOT measured the same way; do not compare
    ─────────────────────────────────────────────────────────────────────────────
    z-30's own Shannon limit:         -31.4 dB   (63 bits / 24.0 s)
@@ -2033,7 +2051,7 @@ claimed, on a comparison that did not hold, was worth retracting rather than def
 \`\`\`
 
 Every figure above the divider is an over-the-air threshold, and z-30's blind-acquisition
-figure belongs on that same scale: it is measured the same way, and it lands 2.1 dB below FT8 —
+figure belongs on that same scale: it is measured the same way, and it lands 1.9 dB below FT8 —
 for 1.9x the airtime and 14 fewer message bits, which is why the two Shannon limits at the
 bottom are different numbers and why neither mode's distance from the other's limit means
 anything. The idealised bound does **not** belong on this scale either: it is an upper limit on
@@ -2751,38 +2769,119 @@ been withdrawn. Both curves are now measured, and the gap between them is the an
 
 ---
 
+## 📐 The standard this benchmark follows
+
+z-30's numbers are only worth anything if they mean the same thing as everybody else's, so the
+method here is not invented. It is the one the modes z-30 gets compared against already use,
+and every piece of it is written down somewhere checkable:
+
+| Convention | What it means here | Where it comes from |
+| :--- | :--- | :--- |
+| **Sensitivity is the SNR in a 2500 Hz reference noise bandwidth at which decode probability reaches 50%** | Every threshold on this page. \`decode_threshold_interval_db(results, 50.0)\` | WSJT-X publishes each of its modes this way, and it is the only reason an FT8 figure and a z-30 figure can sit in the same column |
+| **Measured by Monte Carlo simulation through the decoder that ships, not a model of it** | \`benchmark.py\` calls \`demodulate_mfsk_llrs\` and \`Z30LdpcCodec.decode_min_sum\` - the same functions \`sic_decoder.py\` calls on live audio | WSJT-X generates test signals with \`ft8sim\` and runs the shipped decoder over them. A benchmark that reimplements the receiver measures the reimplementation |
+| **Channels: AWGN, plus named ITU-R F.1487 ionospheric conditions** | \`--fading none / moderate / poor / high-moderate\` | [Recommendation ITU-R F.1487](https://www.itu.int/rec/R-REC-F.1487-0-200005-I/en), "Testing of HF modems ... using ionospheric channel simulators". WSJT-X's own sensitivity tables report AWGN, **mid-latitude disturbed** and **high-latitude moderate** |
+| **Published sensitivity excludes a priori information** | The sweep runs \`decode_min_sum\`; the ladder is a separate instrument, \`--ap\`, reported separately in [17](17-A-Priori-(AP)-Decoding.md) | WSJT-X's tables give "no AP" and "max AP" as two different numbers and never blend them |
+| **A simulated error rate is quoted with a confidence interval** | Every decode percentage carries its 95% Wilson score interval, and every crossing carries the band those intervals imply | Standard practice in Monte Carlo error-rate estimation for communications systems; the same thing MATLAB's \`berconfint\` exists to produce |
+| **Reproducible from a stated seed** | \`--seed\`, default \`20260830\`, printed in every header | This project's own rule ([\`AGENTS.md\` §5](../AGENTS.md#5-honest-numbers)), and the reason any of the above can be rechecked |
+
+Two of those were adopted rather than merely restated, and both changed what gets published:
+
+- **The high-latitude moderate channel was not being swept at all.** z-30's three fading presets
+  were labelled "CCIR good / moderate / poor" and are, in fact, the whole *mid-latitude* row of
+  ITU-R F.1487 and nothing else. Sweeping only that row publishes a mode's best case and calls
+  it the set — and it is exactly the row on which a long, narrow mode looks best. The
+  high-latitude moderate result is now in the table below, and it is not flattering.
+- **The frame counts were too small to support the figures being quoted from them.** 40 frames
+  puts a ±15-point interval on a decode rate, which is most of a dB on the crossing. The
+  published set is now measured at 200 frames per point, and \`PUBLISHABLE_FRAMES_PER_POINT\`
+  makes the benchmark say so when a run is below that.
+
+---
+
 ## 📉 The measured set
 
-Seed \`20260830\`, 2500 Hz reference bandwidth, carrier offset ±5 Hz, timing offset ±0.5 s:
+Seed \`20260830\`, **200 frames per point**, 2500 Hz reference bandwidth, carrier offset ±5 Hz,
+timing offset ±0.5 s. Every figure is the interpolated crossing, and the bracket after it is
+where that crossing falls on the most optimistic and most pessimistic curve the points' 95%
+Wilson intervals allow:
 
-| Channel | Frames/point | 50% decode | 90% decode |
-| :--- | ---: | :--- | :--- |
-| Idealised AWGN bound (genie-aided sync — **not** an on-air figure) | 40 | -24.6 dB | -23.4 dB |
-| AWGN, blind acquisition | 40 | **-23.1 dB** | **-21.7 dB** |
-| CCIR *moderate* fading (1.0 ms / 0.5 Hz), blind acquisition | 100 | -21.3 dB | -19.5 dB |
-| CCIR *poor* fading (2.0 ms / 1.0 Hz), blind acquisition | 100 | -21.3 dB | -19.0 dB |
+| Channel | 50% decode | 90% decode |
+| :--- | :--- | :--- |
+| Idealised AWGN bound (genie-aided sync — **not** an on-air figure) | -24.58 dB [-24.69, -24.48] | -23.48 dB [-23.71, -23.26] |
+| **AWGN, blind acquisition** | **-22.92 dB [-23.07, -22.79]** | **-22.09 dB [-22.16, -22.01]** |
+| ITU-R F.1487 mid-latitude moderate (1.0 ms / 0.5 Hz) | -21.35 dB [-21.54, -21.15] | -19.16 dB [-19.41, -18.68] |
+| ITU-R F.1487 mid-latitude disturbed (2.0 ms / 1.0 Hz) | -21.10 dB [-21.30, -20.89] | -19.21 dB [-19.80, -18.67] |
+| ITU-R F.1487 high-latitude moderate (3.0 ms / 10 Hz) | **never reached — 3 decodes in 1,400 frames from -10 to +20 dB** | — |
 
-**1.5 dB of the bound is spent simply finding the signal.** That gap is the acquisition loss —
+**1.66 dB of the bound is spent simply finding the signal.** That gap is the acquisition loss —
 what it costs to *find* the signal rather than be told where it is. Any mode's genie-aided
 bound is optimistic by a similar margin, which is why the two must never be compared across
 that line. See
 [11. Physics & Comparative Analysis](11-Physics-&-Comparative-Analysis-z30-vs-FT8.md) for what
 this does and does not mean against FT8.
 
-**The two fading presets are not separable at the 50% point, and the table says so rather than
-printing two numbers that look different.** They were re-measured at 100 frames per point
-precisely because 40 frames could not tell them apart: at -21 dB the moderate preset decoded
-57/100 (Wilson 95% CI 47.2–66.3%) and the poor preset 65/100 (55.2–73.6%), intervals that
-overlap across most of their range. Both interpolate to -21.3 dB. The 90% points do separate,
-in the expected direction, by 0.5 dB.
+**Across all 11,000 swept frames — the four channels above and the high-latitude one — there were no false decodes** — no
+frame where the LDPC decoder converged, the CRC-14 passed, and the payload was one that had
+never been transmitted. That is the number that matters for a mode which writes what it decodes
+into a logbook, and it is now a column in every sweep rather than something folded into the
+frame error rate.
 
-Why the two presets are so close has **not** been measured and no mechanism is claimed here.
-What can be said without measuring anything is arithmetic from the preset parameters: a 1.0 ms
-and a 2.0 ms delay spread give coherence bandwidths of roughly 160 Hz and 80 Hz, both far wider
-than z-30's 50 Hz occupied bandwidth, so neither preset is frequency-selective across this
-signal. That leaves Doppler spread (0.5 vs 1.0 Hz) as the parameter that differs in a way the
-waveform can see. Whether that accounts for the result is a question for a benchmark, not for
-this paragraph.
+### The two mid-latitude presets still do not separate
+
+They differ by 0.25 dB at the 50% point, in the expected direction — but their intervals
+overlap ([-21.54, -21.15] against [-21.30, -20.89]), so **200 frames per point does not
+separate them either**, and neither does the 90% point, whose intervals overlap almost
+completely.
+
+This corrects what this page said when the same comparison was run at 100 frames: that the 50%
+points were inseparable but the 90% points "do separate, in the expected direction, by 0.5 dB".
+At 200 frames per point that is the wrong way round, which is what a ±10-point interval on a
+decode rate does to a conclusion drawn from a point estimate. The honest statement is that
+these two channels are not distinguishable by this mode at this sample size, at either level.
+
+The curves also **cross**: the disturbed preset is worse at -22 and -21 dB (19.5% against 27.5%,
+53.5% against 62.0%) and better at -20 dB and above (84.5% against 77.0%). Pooled over -18 and
+-17 dB the moderate preset takes 391/400 against the disturbed preset's 397/400 — intervals
+[95.8, 98.8] and [97.8, 99.7], which overlap, so that ordering is not established either.
+
+What can be said without measuring anything is arithmetic from the preset parameters, and it is
+offered as arithmetic rather than as a mechanism: a 1.0 ms and a 2.0 ms delay spread give
+coherence bandwidths of roughly 160 Hz and 80 Hz, both far wider than z-30's 50 Hz occupied
+bandwidth, so neither preset is frequency-selective across this signal. That leaves Doppler
+spread as the only parameter the waveform can see, and 0.5 Hz against 1.0 Hz is a fade
+correlation time of roughly 2 s against 1 s — both far shorter than the 24 s frame, so both
+give the frame some time diversity and the faster one gives more. **Whether that is why the
+curves cross has not been measured, and nothing here claims it.** It is a question for a paired
+run of the kind [\`--compare-demod\`](#-the-paired-instruments---ap-and---compare-demod) is,
+not for this paragraph.
+
+### The channel z-30 cannot use
+
+**On ITU-R F.1487 high-latitude moderate, z-30 decoded 3 frames out of 1,400 — swept from
+-10 dB to +20 dB in 5 dB steps, 200 frames per point.** Two of those were at -10 dB, one at
++20 dB, and every point in between returned 0/200. Pooled, 3/1400 is a decode rate whose 95%
+Wilson interval is **[0.07%, 0.63%]**, and it does not improve with signal level: 30 dB of extra
+SNR buys nothing, which is what distinguishes "this channel destroys the waveform" from "this
+channel costs some dB". This is the first time the channel has been swept at all, and the
+result is the reason it needed to be:
+the three presets this project shipped for years are the whole *mid-latitude* row of ITU-R
+F.1487 and nothing harder, and that row is exactly where a long, narrow mode looks best.
+
+Acquisition is not what fails. The Costas search still finds the frame — 0 acquisition
+failures, ~20 ms timing RMS, the same numbers it produces on AWGN 30 dB lower. The data symbols
+are what fail, and the arithmetic says why: this preset's 10 Hz Doppler spread is wider than
+z-30's entire 3.125 Hz tone spacing, so a transmitted tone lands energy in its neighbours and
+the orthogonality the matched filters depend on is gone. That is not an assertion — it is
+measured off the produced samples by
+\`tests/test_channel_acquisition.py::test_high_latitude_moderate_spreads_a_tone_across_the_tone_spacing\`,
+which recovers the imposed spread from the faded waveform's own spectrum and checks it against
+\`Z30Config.tone_spacing_hz\`.
+
+**This is the other half of the sensitivity claim, and it belongs beside it.** The 24-second
+frame and the 3.125 Hz tone spacing are one design decision: the long, narrow symbol is what
+buys the AWGN depth, and it is the same thing that loses the channel when the ionosphere moves
+faster than the symbol does. FT8's 0.16 s symbols and 6.25 Hz spacing make the opposite trade,
+which is why WSJT-X publishes this channel and why z-30 now does too.
 
 ---
 
@@ -2792,45 +2891,72 @@ Every run is seeded, so these are reproducible rather than anecdotal — record 
 figure you publish:
 
 \`\`\`bash
-# The honest curve (the default).
-python -m z30_dsp.benchmark --mode realistic --fading none --min-snr -28 --max-snr -17 --frames 40
+# The honest curve: AWGN, blind acquisition. This is the headline figure.
+python -m z30_dsp.benchmark --mode realistic --fading none --min-snr -28 --max-snr -17 --frames 200 --workers 0
 
-# On a disturbed ionospheric path. 100 frames, because 40 could not separate the two presets.
-python -m z30_dsp.benchmark --mode realistic --fading moderate --min-snr -23 --max-snr -17 --frames 100
-python -m z30_dsp.benchmark --mode realistic --fading poor     --min-snr -23 --max-snr -17 --frames 100
+# The ITU-R F.1487 mid-latitude row, on a disturbed ionospheric path.
+python -m z30_dsp.benchmark --mode realistic --fading moderate --min-snr -24 --max-snr -17 --frames 200 --workers 0
+python -m z30_dsp.benchmark --mode realistic --fading poor     --min-snr -24 --max-snr -17 --frames 200 --workers 0
+
+# ITU-R F.1487 high-latitude moderate. Swept far above where the mode has any hope, because
+# the result is that there is no SNR at which it decodes - see the table above.
+python -m z30_dsp.benchmark --mode realistic --fading high-moderate --min-snr -10 --max-snr 20 --step 5 --frames 200 --workers 0
 
 # The genie-aided bound, for comparison only.
-python -m z30_dsp.benchmark --mode ideal --min-snr -30 --max-snr -20 --frames 40
+python -m z30_dsp.benchmark --mode ideal --min-snr -30 --max-snr -20 --frames 200 --workers 0
 \`\`\`
+
+\`--frames 200\` is not decoration. It is \`PUBLISHABLE_FRAMES_PER_POINT\`, and below it the
+benchmark prints an \`EXPLORATORY RUN\` notice: a decode rate is a binomial proportion, and at
+40 frames its 95% interval is ±15 points, which is most of a dB on the crossing. A 20-frame run
+is still the right tool for "did I break the decoder" — it is publishing its crossing as a
+sensitivity figure that is not honest.
 
 Any of these takes \`--workers N\` to spread the decoding over processes without changing what it
 measures — see [\`--workers\`](#-workers-the-same-curve-in-less-time) below.
 
-Sample output from the default mode:
+Sample output from the AWGN command above, verbatim:
 
 \`\`\`
 ================================================================================================
   z-30 DECODE THRESHOLD (blind acquisition through the real receive chain)
   Carrier offset +/-5.0 Hz | timing offset +/-0.50 s | fading: No fading (AWGN only) (0.0 ms / 0.0 Hz)
   The receiver is given only audio: it finds the frame and estimates the noise itself.
-  40 frames/point | Sample Rate: 6000 Hz | Max Iterations: 45 | Seed: 20260830
+  200 frames/point | Sample Rate: 6000 Hz | Iteration cap: 45 + 40 + 35 + 30 = 150 over 4 schedules | Seed: 20260830
+  Decode % is a proportion from 200 frames; the bracket is its 95% Wilson score interval.
 ================================================================================================
-SNR (2500Hz)   | Frames  | Success  | FER       | Decode %  | Avg Iters  | Acq fail | Timing RMS  | Freq RMS
-------------------------------------------------------------------------------------------------
- -28.0 dB      | 40      | 0        | 1.0000    |     0.0%  |  150.0     | 15       |    311.3 ms |   4.61 Hz
- -27.0 dB      | 40      | 0        | 1.0000    |     0.0%  |  150.0     | 3        |    190.0 ms |   2.41 Hz
- -26.0 dB      | 40      | 0        | 1.0000    |     0.0%  |  150.0     | 1        |    124.4 ms |   2.24 Hz
- -25.0 dB      | 40      | 0        | 1.0000    |     0.0%  |  150.0     | 1        |    144.7 ms |   0.83 Hz
- -24.0 dB      | 40      | 0        | 1.0000    |     0.0%  |  150.0     | 0        |     17.8 ms |   0.32 Hz
- -23.0 dB      | 40      | 22       | 0.4500    |    55.0%  |   77.6     | 0        |     13.7 ms |   0.18 Hz  <-- 50% crossing interpolates to -23.1 dB
- -22.0 dB      | 40      | 34       | 0.1500    |    85.0%  |   24.9     | 0        |     13.5 ms |   0.18 Hz
- -21.0 dB      | 40      | 40       | 0.0000    |   100.0%  |    1.2     | 0        |      9.6 ms |   0.14 Hz  <-- 90% crossing interpolates to -21.7 dB
- -20.0 dB      | 40      | 40       | 0.0000    |   100.0%  |    1.1     | 0        |      7.2 ms |   0.12 Hz
- -19.0 dB      | 40      | 40       | 0.0000    |   100.0%  |    1.0     | 0        |      7.5 ms |   0.10 Hz
- -18.0 dB      | 40      | 40       | 0.0000    |   100.0%  |    1.0     | 0        |      4.4 ms |   0.09 Hz
- -17.0 dB      | 40      | 40       | 0.0000    |   100.0%  |    1.0     | 0        |      3.9 ms |   0.07 Hz
+SNR (2500Hz)   | Frames  | Success  | FER       | Decode % (95% CI)     | Avg Iters  | Acq fail | Timing RMS  | Freq RMS
+----------------------------------------------------------------------------------------------------------------
+ -28.0 dB      | 200     | 0        | 1.0000    |   0.0% [ 0.0-  1.9]   |  150.0     | 52       |    283.3 ms |   4.56 Hz
+ -27.0 dB      | 200     | 0        | 1.0000    |   0.0% [ 0.0-  1.9]   |  150.0     | 19       |    195.8 ms |   2.75 Hz
+ -26.0 dB      | 200     | 0        | 1.0000    |   0.0% [ 0.0-  1.9]   |  150.0     | 9        |    159.9 ms |   1.72 Hz
+ -25.0 dB      | 200     | 1        | 0.9950    |   0.5% [ 0.1-  2.8]   |  149.3     | 2        |     56.1 ms |   1.28 Hz
+ -24.0 dB      | 200     | 17       | 0.9150    |   8.5% [ 5.4- 13.2]   |  139.2     | 0        |     19.8 ms |   0.25 Hz
+ -23.0 dB      | 200     | 92       | 0.5400    |  46.0% [39.2- 52.9]   |   85.9     | 0        |     12.4 ms |   0.20 Hz
+ -22.0 dB      | 200     | 189      | 0.0550    |  94.5% [90.4- 96.9]   |   15.1     | 0        |      8.6 ms |   0.17 Hz
+ -21.0 dB      | 200     | 199      | 0.0050    |  99.5% [97.2- 99.9]   |    2.3     | 0        |      8.6 ms |   0.15 Hz
+ -20.0 dB      | 200     | 200      | 0.0000    | 100.0% [98.1-100.0]   |    1.0     | 0        |      7.3 ms |   0.12 Hz
+ -19.0 dB      | 200     | 200      | 0.0000    | 100.0% [98.1-100.0]   |    1.0     | 0        |      6.4 ms |   0.11 Hz
+ -18.0 dB      | 200     | 200      | 0.0000    | 100.0% [98.1-100.0]   |    1.0     | 0        |      4.8 ms |   0.11 Hz
+ -17.0 dB      | 200     | 200      | 0.0000    | 100.0% [98.1-100.0]   |    1.0     | 0        |      3.9 ms |   0.08 Hz
+================================================================================================
+  False decodes across the sweep: 0 of 2400 frames (CRC-14 valid, payload never transmitted).
+  decode threshold (50% frame decode, blind acquisition): -22.92 dB [-23.07, -22.79] (2500 Hz reference bandwidth), seed 20260830, 200 frames/point
+  90% frame decode: -22.09 dB [-22.16, -22.01] (2500 Hz reference bandwidth), seed 20260830, 200 frames/point
 ================================================================================================
 \`\`\`
+
+The bracket after each decode percentage is that point's 95% Wilson score interval, and the
+bracket after each crossing is where 50% (or 90%) falls on the most optimistic and the most
+pessimistic curve those intervals allow. It is computed from the same counts the table prints,
+so a reader can redo it by hand rather than take it on trust.
+
+**\`False decodes\` is a safety column, not a statistic.** It counts frames where the LDPC
+decoder converged, the CRC-14 checked out, and the payload was one that was never transmitted —
+which is to say, frames the shipped software would display and write to a logbook as a contact
+with a station that never called. Nothing distinguishes them from a real decode at the
+receiver, so the sweep counts them separately rather than folding them into the FER. Across
+2400 AWGN frames from -28 to -17 dB there were none; the 14-bit CRC's 2⁻¹⁴ is doing its job.
 
 The \`Acq fail\`, \`Timing RMS\` and \`Freq RMS\` columns report the acquisition stage's own error —
 how often it landed more than half a symbol away, and how far off it was in time and frequency.
@@ -2888,8 +3014,10 @@ any core count this runs on, so the cap costs nothing in practice.
 
 ### Measured
 
-The reference AWGN command at the top of this page — the one the -23.1 dB / -21.7 dB row comes
-from — run at two worker counts on a 4-core machine, seed \`20260830\`, 40 frames per point:
+The reference AWGN command, run at two worker counts on a 4-core machine, seed \`20260830\`.
+This comparison was made at 40 frames per point, when that was the published sample size; it is
+a wall-clock and identical-curve measurement, so the sample size is not what it is testing and
+it has not been redone at 200:
 
 \`\`\`
 python -m z30_dsp.benchmark --mode realistic --fading none --min-snr -28 --max-snr -17 --frames 40 --workers {1,4}
@@ -2987,8 +3115,8 @@ lanes together, paying the transcendentals once per step instead of once per (ed
 **33.04 ms → 16.63 ms per sweep (1.99×)**, and a full failing cascade **1.64 s → 0.92 s (1.77×)**.
 
 **Nothing about the result moved, and that is the point of the change rather than a caveat on
-it.** Three seeded sweeps — AWGN blind-acquisition, the genie-aided bound, and CCIR-moderate
-fading — were run before and after and compared field by field: **145 fields across 11 SNR points,
+it.** Three seeded sweeps — AWGN blind-acquisition, the genie-aided bound, and ITU mid-latitude
+moderate fading — were run before and after and compared field by field: **145 fields across 11 SNR points,
 all identical**, successes, FER, average iterations and the acquisition RMS columns alike.
 \`tests/test_ldpc_vectorized_equivalence.py\` holds the line going forward by pinning the sweep
 against a transcription of the scalar one, bit for bit on float32 state rather than "same decodes
@@ -3030,7 +3158,7 @@ pinned by \`tests/test_cross_language_parity.py\`:
 | Constant | Value | What it fixes |
 | :--- | :--- | :--- |
 | \`SLOT_SEARCH_MARGIN_SEC\` | 0.05 s | The timing search half-width is the station's timing uncertainty plus this margin — ±0.55 s at the default ±0.5 s offset. z-30 is slot-synchronised, so a real receiver knows where the frame should start and searches a window, not an arbitrary stream. |
-| \`REALISTIC_PILOT_COHERENCE\` | 0.0 | Purely non-coherent demodulation, which is what z-30's receiver is specified to be. \`ideal\` mode keeps the pilot-adaptive weight, because it is handed perfect timing. |
+| \`RECEIVER_PILOT_COHERENCE\` | 0.0 | Purely non-coherent demodulation, which is what z-30's receiver is specified to be. \`ideal\` mode keeps the pilot-adaptive weight, because it is handed perfect timing. It is declared in \`src/dsp/realReceiver.ts\` and in \`z30_dsp/benchmark.py\` — **beside each language's demodulator, not in its benchmark** — and \`monteCarloEngine.ts\` imports it. It used to be declared here, in the benchmark, and [that is how the on-air decoders came to be running a different one](#-a-benchmark-challenging-the-code-the-receiver-measured-was-not-the-receiver-that-shipped). |
 
 Measured at seed \`20260830\`, 40 frames per point, AWGN:
 
@@ -3064,8 +3192,15 @@ Measured at seed \`20260830\`, 40 frames per point, AWGN:
 >
 > The trade-off side is recorded rather than left out: at -24 dB, below the point where the
 > Costas pattern is reliably findable, both receivers are near zero and the semi-coherent one
-> took that point 3–0. The full per-point table is in the \`REALISTIC_PILOT_COHERENCE\` comment in
+> took that point 3–0. The full per-point table is in the \`RECEIVER_PILOT_COHERENCE\` comment in
 > \`z30_dsp/benchmark.py\`.
+>
+> **Follow-up (2026-09-02):** that correction fixed the Python *benchmark* and stopped there.
+> The two on-air decoders went on applying the semi-coherent term for another two days, because
+> nothing compared a benchmark against a decoder — only benchmarks against each other. Re-measured
+> at 100 frames per point, the same effect is 1.77 dB on AWGN (p = 2.9 × 10⁻³⁶) and very much
+> larger on a fading path (p = 5 × 10⁻¹¹⁹). See
+> [A benchmark challenging the code](#-a-benchmark-challenging-the-code-the-receiver-measured-was-not-the-receiver-that-shipped).
 
 Both engines now run the same receiver model and land 0.1 dB apart on the threshold, which is
 inside the sampling noise of 40 frames per point. **The Python benchmark is still the
@@ -3119,6 +3254,115 @@ The result: the wiki was corrected (this page and
 [04. Forward Error Correction & LDPC](04-Forward-Error-Correction-&-LDPC.md)), not the decoder.
 Nobody proposed reverting the code to match old documentation once the documentation was shown to
 describe the worse design.
+
+---
+
+## 🔧 A benchmark challenging the code: the receiver measured was not the receiver that shipped
+
+The [worked example](#-a-worked-example-a-benchmark-challenging-the-wiki) below is a benchmark
+correcting the *wiki*. This one is a benchmark correcting the *decoder*, and it is the more
+important of the two, because for months the published threshold on this page described a
+receiver that had never decoded a frame off the air.
+
+### What was wrong
+
+\`demodulate_mfsk_llrs\` takes a \`pilot_coherence\` weight: how much of each tone's likelihood
+comes from a coherent projection onto the nearest Costas pilot's measured phase, and how much
+from the non-coherent envelope. There were two live values of it in the shipped software at
+once, and no test over either:
+
+| Code path | What it did | What it is |
+| :--- | :--- | :--- |
+| \`benchmark.py\`, \`realistic\` mode | passed \`0.0\` | the reference instrument |
+| \`monteCarloEngine.ts\`, \`realistic\` mode | passed \`0.0\` | the in-app benchmark |
+| \`sic_decoder.py\` \`_estimate_llrs\` | took the parameter's default, which was the pilot-distance-adaptive 0.35–0.85 | **decodes real audio** |
+| \`realReceiver.ts\` \`demodulateReal\` | hardcoded that same adaptive weight | **decodes real audio** |
+
+The two benchmarks agreed with each other exactly, which is what made it invisible: the
+cross-language parity test compared benchmark against benchmark. Nothing compared either
+against the decoder. The constant was even named \`REALISTIC_PILOT_COHERENCE\` — after a
+benchmark mode, which is precisely the thinking that let a receiver parameter live in a
+benchmark.
+
+### What it cost, measured
+
+\`python -m z30_dsp.benchmark --compare-demod\` puts every frame through the channel once,
+acquires it once, and then demodulates it **twice** — once at each weight — and decodes both.
+Both arms therefore see the identical channel realisation, the identical acquisition and the
+identical noise, so the frame-to-frame scatter that would otherwise bury an effect of a dB
+cancels out of the comparison completely. The statistic is the count of frames where the two
+arms disagreed, tested with the exact two-sided McNemar test (\`mcnemar_exact_p\`).
+
+**AWGN, blind acquisition, seed \`20260830\`, 100 frames per point:**
+
+| SNR | non-coherent (0.0) | semi-coherent (0.35–0.85) | non-coh only | semi only | acq timing RMS |
+| :--- | ---: | ---: | ---: | ---: | ---: |
+| −25 dB | 1/100 | 1/100 | 1 | 1 | 19.8 ms |
+| −24 dB | 4/100 | 13/100 | 3 | **12** | 18.2 ms |
+| −23 dB | 51/100 | 18/100 | 41 | 8 | 14.8 ms |
+| −22 dB | 93/100 | 35/100 | 58 | 0 | 12.0 ms |
+| −21 dB | 100/100 | 55/100 | 45 | 0 | 8.7 ms |
+| −20 dB | 100/100 | 76/100 | 24 | 0 | 6.9 ms |
+| −19 dB | 100/100 | 78/100 | 22 | 0 | 5.9 ms |
+
+Pooled over the 700 frames: **194 discordant pairs won by the non-coherent receiver against 21
+by the semi-coherent one, exact two-sided McNemar p = 2.9 × 10⁻³⁶** — far past the ≥99%
+confidence [\`AGENTS.md\` §5](../AGENTS.md#5-honest-numbers) requires of a result that changes
+shipped code. The 50% crossings are **−23.02 dB [−23.21, −22.81]** against **−21.25 dB
+[−21.73, −20.78]**, 95% Wilson bands that do not overlap. **The shipped receiver was 1.77 dB
+worse than the one every published figure described.**
+
+The −24 dB row is recorded rather than dropped, and it goes the other way. Both arms are under
+15% there — below the SNR at which the Costas pattern is reliably findable at all, which is not
+an SNR a station operates at.
+
+**On a fading path it was not a 1.77 dB question.** The same comparison on ITU-R F.1487
+mid-latitude disturbed (\`--fading poor\`), 100 frames per point over −24 to −17 dB:
+
+| | non-coherent | semi-coherent |
+| :--- | ---: | ---: |
+| Frames decoded, 800 total | **460** | 66 |
+| Decode rate at −17 dB | 99% | 30% |
+| Discordant pairs | **394** | 0 |
+
+**p = 5 × 10⁻¹¹⁹**, and the semi-coherent arm never reaches 50% anywhere in the swept range. A
+pilot phase reference does not survive a channel that is rotating it, which is the condition
+the mode exists to work in.
+
+### The mechanism, confirmed rather than assumed
+
+The obvious objection is that a coherent term ought to help — that is the whole point of one.
+It does, and the same instrument shows exactly when. Run with perfect symbol timing handed to
+the demodulator (\`--compare-demod --mode ideal\`, 100 frames per point, −27 to −22 dB), the
+result **reverses completely**: 136 discordant pairs to 1 *for* the semi-coherent arm,
+p = 1.6 × 10⁻³⁹, 50% crossings **−24.58 dB** against −23.29 dB.
+
+So the coherent term is worth **+1.29 dB when the phase reference is exact**, and costs
+**−1.77 dB when the receiver has to find the frame itself** — because residual timing error
+\`dt\` rotates a tone at \`f\` by \`2πf·dt\` relative to the pilot it is projected onto, and the
+projection then subtracts signal instead of adding it. At the 6–20 ms of residual timing error
+blind acquisition actually leaves, and at a 1250 Hz carrier, that is many whole cycles: the
+"coherent" term is being measured against a phase that is, for practical purposes, random.
+
+This is also why \`--mode ideal\` **keeps** the adaptive weight and passes it explicitly. It is a
+genie-aided bound, and the genie includes the phase reference.
+
+### What changed
+
+- \`demodulate_mfsk_llrs\`'s default is now \`RECEIVER_PILOT_COHERENCE\` (0.0), so
+  \`sic_decoder._estimate_llrs\`, which takes the default, gets the measured receiver.
+- \`realReceiver.ts\`'s \`demodulateReal\` reads the same constant instead of recomputing a weight.
+- The constant lives in \`realReceiver.ts\` and \`benchmark.py\` — **beside the receiver** — and
+  \`monteCarloEngine.ts\` imports it rather than declaring its own. A benchmark that owns the
+  receiver's parameters can be perfectly self-consistent while measuring software nobody runs.
+- \`tests/test_cross_language_parity.py::test_the_benchmark_demodulates_like_the_receiver_that_ships\`
+  asserts all three: that the constant is declared beside the shipped demodulator, that the
+  Python default equals it, and that \`demodulateReal\` applies it rather than a locally computed
+  weight. It fails if either half of the old code comes back.
+
+**No published threshold moved because of this change.** The benchmark was already measuring
+the non-coherent receiver; what changed is that the software now *is* that receiver. That is
+the whole point: a sensitivity figure is a claim about the program someone downloads.
 
 ---
 
@@ -3214,39 +3458,54 @@ What the suite covers, and why each test is there:
 
 ---
 
-## 🎯 The paired instrument: \`--ap\`
+## 🎯 The paired instruments: \`--ap\` and \`--compare-demod\`
 
-\`python -m z30_dsp.benchmark --ap\` does not sweep a curve. It runs a **paired comparison**:
-every frame goes through the channel once, is demodulated once, and the resulting 216 LLRs are
-decoded twice - once by the ordinary decoder and once with the a priori hypothesis ladder behind
-it. Both arms therefore see bit-identical channel evidence, and the statistic is the count of
-frames where they disagreed, tested with an exact two-sided McNemar test (\`ap_mcnemar_exact_p\`,
-computed from \`math.comb\` so a reader can recompute it by hand).
+Neither of these sweeps a curve. Both run a **paired comparison**, and pairing is the whole
+method: an effect of a fraction of a dB is smaller than the frame-to-frame scatter of a sweep,
+so two independent runs differenced leave the reader unable to tell a real effect from the
+noise in the measurement. Paired, the statistic is the count of frames where the two arms
+disagreed, tested with the exact two-sided McNemar test (\`mcnemar_exact_p\`, computed from
+\`math.comb\` so a reader can recompute it by hand rather than trusting a library version).
 
-This is the shape any comparison of two decoders on this project should take. The alternative -
-two independent sweeps, differenced - buries an effect of a fraction of a dB inside the
-frame-to-frame scatter of the measurement, and the reader has no way to tell which they are
-looking at. It is the same method the four-schedule cascade was established with in the worked
-example above.
+| | What is held identical | What differs | Where the result is |
+| :--- | :--- | :--- | :--- |
+| \`--ap\` | the channel, the acquisition **and the demodulation** - both arms decode the same 216 LLRs | the QSO-state hypothesis ladder behind the decoder | [17. A Priori (AP) Decoding](17-A-Priori-(AP)-Decoding.md) |
+| \`--compare-demod\` | the channel, the noise draw and the acquisition | the demodulator's coherent-term weight - both arms are then decoded separately | [the section above](#-a-benchmark-challenging-the-code-the-receiver-measured-was-not-the-receiver-that-shipped) |
 
-Serial by construction: parallelising it would spread a pair across processes for no change to
-the result and one more place for the two arms to diverge. The measured effect and the modelled
-band it was measured over are in
-[17. A Priori (AP) Decoding](17-A-Priori-(AP)-Decoding.md).
+Both are serial by construction: parallelising a pair would spread its two arms across
+processes for no change to the result and one more place for them to diverge.
+
+\`--ap\` demodulates **once** and decodes the resulting LLR vector twice, so its two arms see
+bit-identical channel evidence and the ladder is the only difference between them.
+\`--compare-demod\` cannot do that - the demodulator is the thing under test - so it shares
+everything up to and including the acquisition result and diverges from there. Its population
+is the ordinary random-payload sweep; \`--ap\`'s is a modelled band, half the QSO the receiver is
+in and half foreign traffic, because a hypothesis ladder's worth depends entirely on how much
+of the band it describes.
+
+It is the same method the four-schedule cascade was established with in the worked example
+above, and the same method that established the demodulator result before it.
 
 ---
 
 ## ✅ Before you publish a number
 
-1. Run the benchmark seeded, and quote the seed, frame count and mode alongside the figure.
-2. Never compare a \`--mode ideal\` figure with another mode's published on-air threshold.
-3. If a DSP change moves the threshold, update **every** place the figure appears: this page,
+1. Run the benchmark seeded, and quote the seed, frame count, mode and channel alongside the
+   figure. At least \`PUBLISHABLE_FRAMES_PER_POINT\` (200) frames per point - the benchmark
+   prints an EXPLORATORY RUN notice below that, and a crossing from fewer is uncertain by more
+   than most changes worth measuring.
+2. Quote the interval, not just the crossing. Every table on this page carries one.
+3. Never compare a \`--mode ideal\` figure with another mode's published on-air threshold.
+4. Comparing two decoders? Pair them (\`--ap\`, \`--compare-demod\`) and report the exact McNemar
+   p-value. Two sweeps differenced is not a comparison at this effect size.
+5. If a DSP change moves the threshold, update **every** place the figure appears: this page,
    [03. DSP & Physical Layer Specification](03-DSP-&-Physical-Layer-Specification.md),
    [11. Physics & Comparative Analysis](11-Physics-&-Comparative-Analysis-z30-vs-FT8.md),
    the pull request checklist in
    [02. Developer Setup & Contributing](02-Developer-Setup-&-Contributing.md),
-   \`Home.md\`, and the summary line in the repository \`README.md\`.
-4. Regenerate the in-app copy afterwards (\`npm run generate:wiki\`), or CI will fail.
+   \`Home.md\`, the \`Z30_SPECS\` sensitivity constants in \`src/dsp/z30Constants.ts\`, and the
+   summary line in the repository \`README.md\`.
+6. Regenerate the in-app copy afterwards (\`npm run generate:wiki\`), or CI will fail.
 `,
   },
   {
