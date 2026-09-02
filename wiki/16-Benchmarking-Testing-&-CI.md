@@ -34,7 +34,7 @@ and every piece of it is written down somewhere checkable:
 | Convention | What it means here | Where it comes from |
 | :--- | :--- | :--- |
 | **Sensitivity is the SNR in a 2500 Hz reference noise bandwidth at which decode probability reaches 50%** | Every threshold on this page. `decode_threshold_interval_db(results, 50.0)` | WSJT-X publishes each of its modes this way, and it is the only reason an FT8 figure and a z-30 figure can sit in the same column |
-| **Measured by Monte Carlo simulation through the decoder that ships, not a model of it** | `benchmark.py` calls `demodulate_mfsk_llrs` and `Z30LdpcCodec.decode_min_sum` - the same functions `sic_decoder.py` calls on live audio | WSJT-X generates test signals with `ft8sim` and runs the shipped decoder over them. A benchmark that reimplements the receiver measures the reimplementation |
+| **Measured by Monte Carlo simulation through the decoder that ships, not a model of it** | `benchmark.py` calls `demodulate_mfsk_llrs` and `Z30LdpcCodec.decode_min_sum` - the same functions `sic_decoder.py` calls on live audio. The front end is not yet shared; [see below](#where-this-is-still-only-half-true) | WSJT-X generates test signals with `ft8sim` and runs the shipped decoder over them. A benchmark that reimplements the receiver measures the reimplementation |
 | **Channels: AWGN, plus named ITU-R F.1487 ionospheric conditions** | `--fading none / moderate / poor / high-moderate` | [Recommendation ITU-R F.1487](https://www.itu.int/rec/R-REC-F.1487-0-200005-I/en), "Testing of HF modems ... using ionospheric channel simulators". WSJT-X's own sensitivity tables report AWGN, **mid-latitude disturbed** and **high-latitude moderate** |
 | **Published sensitivity excludes a priori information** | The sweep runs `decode_min_sum`; the ladder is a separate instrument, `--ap`, reported separately in [17](17-A-Priori-(AP)-Decoding.md) | WSJT-X's tables give "no AP" and "max AP" as two different numbers and never blend them |
 | **A simulated error rate is quoted with a confidence interval** | Every decode percentage carries its 95% Wilson score interval, and every crossing carries the band those intervals imply | Standard practice in Monte Carlo error-rate estimation for communications systems; the same thing MATLAB's `berconfint` exists to produce |
@@ -51,6 +51,30 @@ Two of those were adopted rather than merely restated, and both changed what get
   puts a ±15-point interval on a decode rate, which is most of a dB on the crossing. The
   published set is now measured at 200 frames per point, and `PUBLISHABLE_FRAMES_PER_POINT`
   makes the benchmark say so when a run is below that.
+
+### Where this is still only half true
+
+The demodulator and the decoder are now literally the shipped ones - the same functions, at the
+same settings, which is what [the section further down](#-a-benchmark-challenging-the-code-the-receiver-measured-was-not-the-receiver-that-shipped)
+is about. **The acquisition front end is not.** There are three Costas-based front ends in this
+repository and the benchmark exercises the first of them:
+
+| | Finds the frame with | Timing search |
+| :--- | :--- | :--- |
+| `benchmark.py` (this instrument) | `acquisition.py` - zero-padded symbol-rate spectrogram, then a fine grid | ±(station uncertainty + `SLOT_SEARCH_MARGIN_SEC`) |
+| `sic_decoder.py` (Python SIC path) | `_find_candidates` → `_refine_base_freq` → `_refine_fine_frequency` | **none** - the buffer is assumed slot-aligned |
+| `realReceiver.ts` (the web transceiver's on-air path) | `findCandidates` → `refineTimingAndFreq` → `refineFineFrequency` | ±`MAX_DT_SEC` |
+
+So the **1.66 dB of acquisition loss** in the table below is `acquisition.py`'s acquisition
+loss. Whether the front end a station actually runs costs more, less, or the same has **not
+been measured**, and nothing on this page should be read as saying it has. The measurement that
+would settle it is the same shape as `--compare-demod`: one channel realisation, both front
+ends, McNemar over the discordant frames. Until that exists, the honest reading of the AWGN
+threshold is *"this decoder, behind this acquisition stage"* - which is still a far stronger
+claim than the number was making a week ago, when the demodulator did not match either.
+
+The demodulator half is the half that was silently wrong, and it is the half that was worth
+1.77 dB. This one is a known, stated gap rather than a discovered one.
 
 ---
 
@@ -416,12 +440,27 @@ pinned by `tests/test_cross_language_parity.py`:
 | `SLOT_SEARCH_MARGIN_SEC` | 0.05 s | The timing search half-width is the station's timing uncertainty plus this margin — ±0.55 s at the default ±0.5 s offset. z-30 is slot-synchronised, so a real receiver knows where the frame should start and searches a window, not an arbitrary stream. |
 | `RECEIVER_PILOT_COHERENCE` | 0.0 | Purely non-coherent demodulation, which is what z-30's receiver is specified to be. `ideal` mode keeps the pilot-adaptive weight, because it is handed perfect timing. It is declared in `src/dsp/realReceiver.ts` and in `z30_dsp/benchmark.py` — **beside each language's demodulator, not in its benchmark** — and `monteCarloEngine.ts` imports it. It used to be declared here, in the benchmark, and [that is how the on-air decoders came to be running a different one](#-a-benchmark-challenging-the-code-the-receiver-measured-was-not-the-receiver-that-shipped). |
 
-Measured at seed `20260830`, 40 frames per point, AWGN:
+Measured at seed `20260830`, **200 frames per point**, AWGN, blind acquisition, over the three
+points that bracket the crossing (-24, -23, -22 dB) — the same frames-per-point and the same
+interpolation rule on both sides, so this is a like-for-like comparison and not two different
+measurements put in one table:
 
 | | Python (`z30_dsp/benchmark.py`) | Browser (`monteCarloEngine.ts`) |
 | :--- | :--- | :--- |
-| Genie-aided bound, 50% | -24.6 dB | ≈ -24.2 dB |
-| AWGN blind acquisition, 50% | **-23.1 dB** | **-23.0 dB** |
+| Decodes at -24 dB | 17/200 | 11/200 |
+| Decodes at -23 dB | 92/200 | 94/200 |
+| Decodes at -22 dB | 189/200 | 188/200 |
+| **50% crossing** | **-22.92 dB [-23.07, -22.79]** | **-22.94 dB [-23.09, -22.80]** |
+
+**0.02 dB apart, with 95% bands that essentially coincide.** The previous version of this table
+put them 0.1 dB apart at 40 frames per point, which was as much precision as 40 frames could
+support; at 200 the agreement is tighter than the interval on either figure.
+
+This is worth stating carefully, because agreement between two engines is the thing that
+[hid the demodulator defect](#-a-benchmark-challenging-the-code-the-receiver-measured-was-not-the-receiver-that-shipped)
+for months. Two benchmarks agreeing means they model the same receiver. It does not mean either
+of them models the receiver that ships — that is a separate claim, and it now has a separate
+test.
 
 > **Correction (2026-08-31, second revision):** this page used to publish that same row as
 > **-21.1 dB** against **≈ -22.9 dB** and explain the 1.8 dB gap by saying the browser searched a
@@ -464,6 +503,11 @@ reference**: it is the one CI runs, the one the seed defaults are pinned to, and
 output the tables above are copied from. Use the browser engine to see which way a change moved
 the curve without leaving the app; confirm with a seeded Python run before a number reaches
 documentation.
+
+The genie-aided bound has not been re-measured in the browser at 200 frames per point; the
+`ideal`-mode row of the previous 40-frame table (Python -24.6 dB against a browser figure near
+-24.2 dB) is the last like-for-like measurement of it, and it is not the figure this project
+publishes anyway. The `realistic` row above is, and that is the one that was redone.
 
 One thing the browser engine is *not* free to differ on: `ideal` and `realistic` mean exactly
 what they mean here. A browser run in `ideal` mode is a bound, is labelled a bound in the UI,
