@@ -2598,6 +2598,9 @@ z30
 # Monte Carlo channel simulation and decode-threshold benchmark
 z30 --benchmark
 # or: python3 -m z30_dsp.benchmark
+# Add --workers N to spread the decoding over N processes (0 = one per CPU). This changes how
+# long the run takes and nothing about the curve it produces - see wiki/16.
+# or: python3 -m z30_dsp.benchmark --workers 0
 
 # Terminal station configuration wizard
 z30 --wizard
@@ -2774,6 +2777,9 @@ python -m z30_dsp.benchmark --mode realistic --fading poor     --min-snr -23 --m
 python -m z30_dsp.benchmark --mode ideal --min-snr -30 --max-snr -20 --frames 40
 \`\`\`
 
+Any of these takes \`--workers N\` to spread the decoding over processes without changing what it
+measures — see [\`--workers\`](#-workers-the-same-curve-in-less-time) below.
+
 Sample output from the default mode:
 
 \`\`\`
@@ -2804,6 +2810,127 @@ The \`Acq fail\`, \`Timing RMS\` and \`Freq RMS\` columns report the acquisition
 how often it landed more than half a symbol away, and how far off it was in time and frequency.
 Below about -24 dB the sync pattern stops being findable at all, and that shows up in those
 columns rather than being hidden inside the frame error rate.
+
+---
+
+## 🧵 \`--workers\`: the same curve, in less time
+
+A sweep is embarrassingly parallel and takes a long time, so \`benchmark.py\` can spread frame
+decoding across processes:
+
+\`\`\`bash
+# One process per CPU. --workers 1 (the default) is the serial path, unchanged.
+python -m z30_dsp.benchmark --mode realistic --fading none --min-snr -28 --max-snr -17 --frames 40 --workers 0
+\`\`\`
+
+**\`--workers\` changes wall-clock time and nothing else.** The curve is identical at every worker
+count, bit for bit, at the same seed — the same successes, the same FER, the same average
+iterations, the same acquisition RMS columns, the same interpolated threshold. That is a
+stronger guarantee than "it also runs fast", and it is the only guarantee that lets a
+published figure be reproduced on a machine with a different core count than the one that
+measured it.
+
+### Why it is identical, and what was not done to achieve it
+
+The sweep draws every random value it needs — payload bits, the Watterson tap processes, the
+carrier and timing offsets, the AWGN — from **one** \`np.random.Generator\`, consumed strictly in
+call order. That shared state is the whole obstacle to running frames concurrently.
+
+The obvious fix is to give each frame its own generator seeded from
+\`(master_seed, snr_index, frame_index)\`. It parallelises everything — and it draws different
+numbers, so it produces a **different curve at the same seed**. Every threshold on this page
+would have to be re-measured, and the retraction history at the top of it says what that is
+worth. Speed is not a reason to move a published figure.
+
+What was done instead is to split the frame loop along the generator:
+
+| Stage | Where it runs | Touches the PRNG |
+| :--- | :--- | :--- |
+| Payload, waveform synthesis, fading, carrier and timing offsets, AWGN (\`_prepare_frame\`) | Main process, in frame order | **Yes** — in exactly the order the serial loop always used |
+| Acquisition, demodulation, LDPC decode, CRC and payload check (\`decode_prepared_frame\`) | Any worker, in any order | No |
+
+The receive half is a pure function of the buffer it is handed. It already had to be:
+\`decode_min_sum\` derives its dither seed from the LLRs (\`ldpc.dither_seed_from_llrs\`) precisely
+so that a decode does not depend on when it happens. Results come back keyed by frame index and
+are reduced in index order, never in completion order, so a busy machine cannot change a count.
+
+This leaves the PRNG-consuming half serial, which caps the achievable speedup. Measured on this
+code at 6000 Hz in realistic mode, that half is **3.1% of a frame's wall clock** — payload 0.0%,
+waveform synthesis 0.3%, fading and offsets 2.7%, noise 0.1% — against **96.9%** for
+acquisition, demodulation and decode. The Amdahl ceiling is therefore about **32×**, well past
+any core count this runs on, so the cap costs nothing in practice.
+
+### Measured
+
+The reference AWGN command at the top of this page — the one the -23.1 dB / -21.7 dB row comes
+from — run at two worker counts on a 4-core machine, seed \`20260830\`, 40 frames per point:
+
+\`\`\`
+python -m z30_dsp.benchmark --mode realistic --fading none --min-snr -28 --max-snr -17 --frames 40 --workers {1,4}
+\`\`\`
+
+| Workers | Wall clock | 50% crossing | 90% crossing | Curve |
+| ---: | ---: | ---: | ---: | :--- |
+| 1 (serial) | 660.6 s | -23.09 dB | -21.67 dB | reference |
+| 4 | 271.5 s (**2.43×**) | -23.09 dB | -21.67 dB | identical in every field, at every SNR point |
+
+Both runs reproduce the sample output above row for row — 22 successes at -23.0 dB, 77.6 average
+iterations, 13.7 ms timing RMS, 0.18 Hz frequency RMS — so the published thresholds are the same
+numbers they were before this existed, produced by both paths.
+
+A second, tighter comparison across three worker counts, at -24 to -21 dB where successes,
+failures and the full four-schedule decode cascade are all exercised:
+
+| Workers | Wall clock | Curve |
+| ---: | ---: | :--- |
+| pre-change code, serial | 53.7 s | reference |
+| 1 (serial) | 52.9 s | identical, every field |
+| 2 | 32.4 s (1.63×) | identical, every field |
+| 4 | 21.0 s (2.52×) | identical, every field |
+
+So the refactor itself neither moved a number nor cost measurable time, and the speedup on four
+cores is roughly 2.4-2.5× rather than 4× — process startup, pickling a ~0.7 MB buffer per frame
+and the serial 3.1% together account for the rest. That is the go/no-go answer at the documented
+defaults: worth having, and not the 4× a core count alone would suggest.
+
+Two practical notes:
+
+- With \`--workers\` above 1, the per-point **\`elapsed_sec\` is wall clock across the pool**, not
+  serial CPU time. The run prints a line saying so. Do not read it as a per-frame cost.
+- If NumPy is linked against a threaded BLAS, a process pool can oversubscribe the CPUs. On this
+  code it makes little difference either way — the receive chain's hot loops are FFTs and short
+  dot products rather than large matrix products. Three frames through the full chain, with
+  \`OMP_NUM_THREADS\`/\`OPENBLAS_NUM_THREADS\`/\`MKL_NUM_THREADS\` unset, set to 1 and set to 4, gave a
+  **byte-identical** SHA-256 over the LLRs, the decoded bits and the acquisition results in all
+  three cases, at 6.02 s / 5.43 s / 5.66 s. Nothing in the benchmark touches those variables —
+  setting them would be a numerical change disguised as a performance knob — so if a future
+  change does start hitting threaded BLAS, set them in the environment before the run.
+
+### What is not parallelised, and why
+
+- **The three SIC passes.** Sequential by construction: pass 2 reads pass 1's residual.
+- **The candidates within one SIC pass.** These *look* independent, but
+  \`Z30SicMultiSignalDecoder.process_buffer\` subtracts each successful decode from
+  \`residual_buffer\` **inside** the candidate loop, so a later candidate in the same pass is
+  demodulated against a buffer an earlier one has already changed. Measured on a two-signal
+  composite (carriers at 700 Hz and 940 Hz, the second at 0.6 of the first's amplitude — 240 Hz
+  apart, so no spectral overlap at all between two 50 Hz signals), cancelling the first candidate
+  moved the second candidate's noise-sigma estimate from 0.921 to 0.627,
+  because \`_estimate_llrs\` takes that estimate from the whole buffer's median absolute
+  deviation. Parallelising against a frozen start-of-pass residual is therefore a **change to
+  what the decoder does**, not just to how fast it does it, and it needs the paired measurement
+  AGENTS.md §5 requires before it can land. (Whether that sigma shift changes any decoded bit is
+  itself unmeasured: at the SNRs probed, every LLR was already at the ±25 clip, which hides the
+  difference. That is a question for a benchmark, not for this paragraph.)
+- **\`decode_min_sum\` internally.** The opportunity is running many decodes at once, not speeding
+  up one 216-bit decode.
+- **Anything reachable from the transmit path.** \`canTransmit()\`, \`setPtt()\`, \`withCatLock()\`,
+  \`RigStateTracker\` and the GPIO watchdog are already concurrent in exactly the ways they need
+  to be, and are out of scope. See
+  [13. Operating Safety, Compliance & Security](13-Operating-Safety-Compliance-&-Security.md).
+
+The browser benchmark (\`src/dsp/monteCarloEngine.ts\`) still runs on the main JS thread. Moving
+it into a Worker is the same problem with a different mechanism and has not been done.
 
 ---
 
@@ -2950,6 +3077,7 @@ What the suite covers, and why each test is there:
 | \`tests/rigReadback.test.mjs\` | \`RigStateTracker\`, the WSJT-X-ported closed-loop rig model that \`AGENTS.md\` §4 names explicitly. Guards both directions: that a settled rig reporting a different dial blocks transmit, and that an unverifiable rig, an unsettled QSY and a difference inside the rig's measured tuning resolution do **not** — a check that grounds correctly-working stations is one its operator switches off |
 | \`tests/rigProbeAndWatchdog.test.mjs\` | The CAT defects that only appear when two things happen at once, plus the timers nothing ever let run: the tuning-resolution classification table, a QSY landing mid-probe (which used to be undone on the wire while the tracker was told the pre-QSY dial), a poll reading the probe's throwaway test frequency as a fault, \`pollRigOnce()\` driven through the real controller rather than by poking the tracker, and the \`MAX_TX_SECONDS\` watchdog actually firing and unkeying the hardware |
 | \`tests/dspDeterminism.test.mjs\` | An unseeded generator anywhere the decode path can reach — the defect class that has now recurred twice, in the LDPC dither and again in \`addCalibratedAwgn\`. Asserts byte-identical output across two runs, and checks the noise is still *calibrated* noise by measuring its variance and Gaussian shape off the produced samples, so "deterministic" cannot be achieved by returning a constant |
+| \`tests/test_benchmark_parallel.py\` | \`--workers\` becoming more than a wall-clock knob. Asserts the sweep produces an identical curve on one process and on several, that frame generation is unaffected by the batch size frames are dispatched in, that the receive chain is a pure function of its input and leaves that input alone, and that results are filed by frame index rather than by the order an executor hands them back — driven by an executor that deliberately returns them backwards, because \`concurrent.futures.map\` re-imposes input order and would hide the bug |
 | \`tests/test_sic_candidate_detection.py\` | The SIC candidate detector inventing carriers out of noise, and the two languages' detectors diverging again. The raw-bin detector this replaced produced ~52 spurious candidates per frame from pure noise |
 | \`tests/test_git_sync.py\` | The updater doing anything other than a fast-forward — a self-update that could discard an operator's local changes or move the checkout to an unrelated history |
 | \`tests/test_updater_cli.py\` | The layer above that engine: \`run_updater\` turning a \`SyncStatus\` into the wrong exit code, so a startup script never notices the box is behind or reports failure forever on a current one — and an interrupted prompt or a closed stdin being read as consent to update |
@@ -2988,9 +3116,12 @@ What the suite covers, and why each test is there:
   job runs on \`ubuntu-latest\`, so a change that broke the package on the platform the project
   ships a PyInstaller build for was found by whoever installed it. This does not build
   installers — it catches path and platform-API mistakes, which is the cheap half.
-- **Benchmark smoke test**: a short seeded sweep in both modes, run twice, asserting identical
-  results. This catches non-determinism in the channel/acquisition path, which would otherwise
-  only surface when someone tried to reproduce a published curve.
+- **Benchmark smoke test**: a short seeded sweep in both modes, run three times — twice
+  serially and once across two worker processes — asserting an identical curve every time. The
+  first two catch non-determinism in the channel/acquisition path, which would otherwise only
+  surface when someone tried to reproduce a published curve. The third catches a sweep that
+  reduces its counts in worker-completion order rather than in frame order, which would satisfy
+  the run-to-run check on an idle CI runner and drift on a busy machine.
 - **Generated sources are up to date** (\`npm run check:generated\`): \`src/data/pythonSource.ts\`
   and \`src/data/wikiArticles.ts\` are produced from the real Python files and the markdown in
   \`wiki/\`. Both were once hand-copied snapshots that drifted — the in-app wiki still showed

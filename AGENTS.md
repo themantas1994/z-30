@@ -88,6 +88,12 @@ tests/                     pytest + node (tsx) suites. See wiki/16.
                            different dial blocks transmit, and - just as important - that an
                            unverifiable rig, an unsettled QSY and a rig's own tuning resolution
                            do not.
+  test_benchmark_parallel.py
+                           That `benchmark.py --workers N` is a wall-clock knob and nothing
+                           else: the same curve at every worker count, at every batch size, and
+                           whatever order results come back in. Also that the receive chain
+                           `decode_prepared_frame` runs is a pure function of its input, which
+                           is the property a worker pool rests on.
 scripts/                   Build-time generators for src/data/.
 public/                    PWA assets copied verbatim (sw.js, manifest, icons).
 ```
@@ -209,6 +215,15 @@ the test to match. Full rationale: [`wiki/13`](wiki/13-Operating-Safety-Complian
   `tests/dspDeterminism.test.mjs` asserts byte-identical output across runs *and* measures the
   noise's variance and Gaussian shape off the samples, so "deterministic" cannot be satisfied
   by returning a constant.
+- **Determinism has to survive a worker count, not just a rerun.** `benchmark.py --workers N`
+  spreads frame *decoding* over processes, and the curve it produces is identical at every N.
+  It is identical because the split is drawn along the PRNG: `_prepare_frame` consumes the one
+  shared generator, in the original order, on the main process, and `decode_prepared_frame`
+  consumes nothing and is a pure function of the buffer handed to it. Deriving a per-frame seed
+  instead - the obvious design - parallelises more and draws different numbers, which moves
+  every published threshold in wiki/16 for a wall-clock gain. Do not take that trade. Results
+  are filed by frame index and reduced in index order, never in completion order.
+  `tests/test_benchmark_parallel.py` and the CI benchmark smoke test both assert it.
 
 **One source of truth per rule**
 - `isValidCallsign()` in `src/dsp/bandPlan.ts` is the only callsign validator in TypeScript, and
@@ -309,6 +324,8 @@ Do not add marketing superlatives to documentation. This project's comments and 
 pip install -r requirements.txt pytest
 python -m pytest tests -v
 python -m z30_dsp.benchmark --mode realistic --fading none --min-snr -28 --max-snr -17 --frames 40
+# Same curve, spread over processes. --workers 0 means one per CPU; the default is 1 (serial).
+python -m z30_dsp.benchmark --mode realistic --fading none --min-snr -28 --max-snr -17 --frames 40 --workers 0
 
 # TypeScript / web
 npm ci

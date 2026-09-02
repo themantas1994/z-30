@@ -94,24 +94,41 @@ jobs:
         # global RNG. The check passed for years over a genuinely non-deterministic decoder
         # because its sample never executed the non-deterministic line. Frames below threshold
         # run all four schedules.
+        #
+        # Three runs, not two. The first two are the run-to-run check this always made. The
+        # third runs the same sweep across two processes: --workers only ever changes wall-clock
+        # time, and a sweep that reduced its counts in worker-completion order rather than in
+        # frame order would satisfy the run-to-run check on a quiet machine and drift on a busy
+        # one. tests/test_benchmark_parallel.py covers the same ground in more detail; this
+        # keeps the end-to-end path honest on every supported Python.
         run: |
           python - <<'PY'
           from z30_dsp.benchmark import run_monte_carlo_snr_sweep
+
+          def curve(rows):
+              # elapsed_sec is a stopwatch and workers is the knob under test; everything
+              # else is the result and must not move.
+              return [{k: v for k, v in r.items() if k not in ("elapsed_sec", "workers")}
+                      for r in rows]
+
           for mode in ("ideal", "realistic"):
               for lo, hi in ((-18, -16), (-27, -25)):
                   kwargs = dict(min_snr_db=lo, max_snr_db=hi, step_snr_db=2,
                                 frames_per_snr=3, mode=mode, fading="none", seed=1)
                   a = run_monte_carlo_snr_sweep(**kwargs)
                   b = run_monte_carlo_snr_sweep(**kwargs)
-                  assert [r["successes"] for r in a] == [r["successes"] for r in b], \
+                  c = run_monte_carlo_snr_sweep(workers=2, **kwargs)
+                  assert curve(a) == curve(b), \
                       f"{mode} mode is not reproducible with a fixed seed at {lo}..{hi} dB"
+                  assert curve(a) == curve(c), \
+                      f"{mode} mode at {lo}..{hi} dB gives a different curve on 2 workers than on 1"
                   # Below threshold every frame should exhaust the whole four-schedule
                   # cascade; if it stops converging early this check silently stops
                   # covering the dithered pass again.
                   if (lo, hi) == (-27, -25):
                       assert a[0]["avg_iters"] > 100, \
                           f"{mode} sweep at {lo} dB is not reaching the later schedules"
-                  print(f"{mode} mode reproducible at {lo}..{hi} dB")
+                  print(f"{mode} mode reproducible at {lo}..{hi} dB, serially and on 2 workers")
           PY
 
   frontend:
