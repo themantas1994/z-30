@@ -420,11 +420,15 @@ trying more.
 
 ---
 
-## 🖥️ The in-app benchmark, and why it now agrees with the Python one
+## 🖥️ The in-app benchmark: where it agrees with the Python one, and where it does not
 
 **Station Settings → 5. Experimental Testing → Launch Benchmark Suite** runs the same two modes
 in the browser, over `src/dsp/monteCarloEngine.ts`. It has a **Measurement mode** selector, and
 it defaults to `realistic` for the same reason the Python benchmark does.
+
+Short version, both re-measured at 200 frames per point: **the two engines land 0.02 dB apart
+on the decode threshold and 0.70 dB apart on the genie-aided bound.** The tables below are that
+result and what it does and does not license.
 
 In realistic mode the browser engine gives every frame a random carrier offset (±5 Hz) and
 timing offset (±0.5 s), searches for the frame using only the 21 Costas symbols
@@ -504,10 +508,32 @@ output the tables above are copied from. Use the browser engine to see which way
 the curve without leaving the app; confirm with a seeded Python run before a number reaches
 documentation.
 
-The genie-aided bound has not been re-measured in the browser at 200 frames per point; the
-`ideal`-mode row of the previous 40-frame table (Python -24.6 dB against a browser figure near
--24.2 dB) is the last like-for-like measurement of it, and it is not the figure this project
-publishes anyway. The `realistic` row above is, and that is the one that was redone.
+### And where they do not agree: `ideal` mode
+
+Re-measured the same way — 200 frames per point, the three SNRs that bracket the crossing,
+seed `20260830` — the genie-aided bound does **not** agree between the two engines:
+
+| | Python | Browser |
+| :--- | :--- | :--- |
+| Decodes at -26 dB | 7/200 | 30/200 |
+| Decodes at -25 dB | 55/200 | 127/200 |
+| Decodes at -24 dB | 163/200 | 192/200 |
+| **50% crossing** | **-24.58 dB [-24.69, -24.48]** | **-25.28 dB [-25.40, -25.14]** |
+
+**0.70 dB apart, with bands that do not overlap** — against 0.02 dB in `realistic` mode on the
+same runs. So the two engines agree, to well inside their own measurement error, on the figure
+this project publishes, and disagree on the one it does not.
+
+That is not a coincidence worth hand-waving past, but nor is the mechanism established here.
+What can be said is what `ideal` mode *is*: the mode where each engine hands its demodulator
+things a receiver would have to work out, and "the exact noise sigma, the exact carrier and
+perfect symbol timing" is a specification with implementation slack in it — how the sigma is
+derived, where sample zero is taken to be, what the pilot-adaptive weight sees. `realistic`
+mode has far less of that slack, because the receiver is told nothing and both engines then
+have to do the same work. **Which of those differences accounts for the 0.70 dB has not been
+measured**, and until it has, the useful conclusion is the narrow one: the browser bound is not
+interchangeable with the Python bound, and neither is a threshold. The published bound is the
+Python one, as it always was.
 
 One thing the browser engine is *not* free to differ on: `ideal` and `realistic` mean exactly
 what they mean here. A browser run in `ideal` mode is a bound, is labelled a bound in the UI,

@@ -343,10 +343,14 @@ the code and the wiki on purpose. Follow the same standard:
   and `RECEIVER_PILOT_COHERENCE` are shared constants, pinned across the two languages by
   `tests/test_cross_language_parity.py`. `RECEIVER_PILOT_COHERENCE` is declared beside each
   language's **demodulator**, not in its benchmark, and that is not cosmetic - see the invariant
-  in section 4. The two land 0.1 dB apart on the AWGN threshold at the
-  same seed. It used to read 1.8 dB more optimistic, which `wiki/16` blamed on a narrower timing
-  window; measured paired, the timing window accounted for none of it and the Python side's
-  semi-coherent demodulator term accounted for all of it. Agreement is still not authority: use
+  in section 4. At 200 frames a point and the same seed the two land **0.02 dB apart on the
+  AWGN threshold** and **0.70 dB apart on the genie-aided bound** - the second is unexplained,
+  and is one more reason a bound is not a publishable figure. The Python side used to read
+  1.8 dB more optimistic than the browser, which `wiki/16` blamed on a narrower timing window;
+  measured paired, the timing window accounted for none of it and the Python side's
+  semi-coherent demodulator term accounted for all of it. Agreement is still not authority - it
+  is what hid the demodulator defect in section 4 for months, since the parity test compared
+  benchmark against benchmark. Use
   the browser engine to see which way a change moved the curve, and confirm with a seeded Python
   run before any number reaches documentation.
   [`wiki/16`](wiki/16-Benchmarking-Testing-&-CI.md) has the side-by-side table.
