@@ -153,8 +153,8 @@ export const MonteCarloBenchmarkModal: React.FC<MonteCarloBenchmarkModalProps> =
    *
    * This used to report the first grid point already at or above the target, which quantises
    * the answer to snrStepDb - a full 1.0 dB by default - and makes it incomparable with the
-   * Python benchmark, whose worked example in wiki/16 interpolates ("50% crossing interpolates
-   * to -23.1 dB"). Returns null when the sweep never crosses, rather than reporting an
+   * Python benchmark, whose worked example in wiki/16 interpolates (its AWGN 50% crossing
+   * interpolates to -22.92 dB). Returns null when the sweep never crosses, rather than reporting an
    * endpoint as if it were a crossing.
    */
   const interpolateCrossing = (targetPct: number): number | null => {

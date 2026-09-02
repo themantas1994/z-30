@@ -209,11 +209,15 @@ export const SpecsModal: React.FC<SpecsModalProps> = ({ isOpen, onClose }) => {
               All thresholds in this column are like-for-like: z-30's is its own blind-acquisition
               measurement, the others are published over-the-air figures, and both include the same
               acquisition, AFC and timing losses. z-30's genie-aided bound ({Z30_SPECS.SNR_IDEAL_BOUND_AWGN} dB) is deliberately
-              <strong className="text-purple-300"> not</strong> in this table &mdash; it is 1.5 dB
+              <strong className="text-purple-300"> not</strong> in this table &mdash; it is
+              {' '}{(Z30_SPECS.SNR_THRESHOLD_AWGN - Z30_SPECS.SNR_IDEAL_BOUND_AWGN).toFixed(1)} dB
               optimistic and belongs beside no other mode's on-air number.
-              <strong className="text-[#D4D4D4]"> z-30 decodes 2.1 dB deeper than FT8 while transmitting
+              <strong className="text-[#D4D4D4]"> z-30 decodes {(FT8_ONAIR_THRESHOLD_DB - Z30_SPECS.SNR_THRESHOLD_AWGN).toFixed(1)} dB deeper than FT8 while transmitting
               for 1.9&times; as long (2.8 dB more energy) and carrying 14 fewer payload bits &mdash; so
-              it buys depth with airtime, and is marginally behind FT8 per second on the air.</strong>
+              it buys depth with airtime, and is marginally behind FT8 per second on the air. On a
+              fast-fading path it is behind outright: on ITU-R F.1487 high-latitude moderate
+              (3 ms / 10 Hz) z-30 does not decode at all, because 10 Hz of Doppler spread is wider
+              than its 3.125 Hz tone spacing.</strong>
             </p>
           </div>
 
