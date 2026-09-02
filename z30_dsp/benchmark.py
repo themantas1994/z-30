@@ -892,8 +892,14 @@ def decode_prepared_frame_paired(
     so the only thing that differs is the hypothesis ladder.
 
     A pure function of its arguments, like `decode_prepared_frame`: no PRNG, no state, nothing
-    mutated. The AP arm's ordinary decode is `decode_with_ap`'s own first step, so it is not
-    repeated here - `plain` below IS that step, and the two arms share it.
+    mutated.
+
+    The ordinary decode is run twice per frame - once here for the plain arm, and again inside
+    `decode_with_ap` as its own first step. That is deliberate waste. The alternative is to
+    inline the ladder here and hand `decode_with_ap` a precomputed result, which would mean the
+    benchmark measured a reimplementation of the shipped function rather than the shipped
+    function. A measurement of something other than what ships is worth less than the CPU time
+    it saves.
     """
     if job.search_timing_sec is not None:
         acq = acquire_frame(
@@ -999,7 +1005,7 @@ def run_ap_paired_sweep(
     print("  z-30 A PRIORI (AP) DECODING - PAIRED COMPARISON")
     print(f"  Scenario: this station is {AP_SCENARIO_MY_CALL}, working {AP_SCENARIO_DX_CALL}, "
           f"QSO stage {AP_SCENARIO_STAGE}.")
-    print(f"  Hypothesis ladder: " + ", ".join(
+    print("  Hypothesis ladder: " + ", ".join(
         f"a{h.ap_type} ({h.label}, {h.asserted_bit_count}/63 bits)" for h in hypotheses
     ))
     print(f"  Population: {AP_IN_QSO_FRACTION:.0%} of frames are this QSO, the rest is foreign traffic")

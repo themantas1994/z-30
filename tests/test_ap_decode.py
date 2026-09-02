@@ -517,7 +517,6 @@ def test_scenario_payloads_are_reproducible_and_correctly_labelled():
         ap_scenario_payload,
     )
 
-    first = [ap_scenario_payload(np.random.default_rng(4242)) for _ in range(1)]
     rng_a = np.random.default_rng(4242)
     rng_b = np.random.default_rng(4242)
     for _ in range(40):
@@ -530,7 +529,6 @@ def test_scenario_payloads_are_reproducible_and_correctly_labelled():
             assert (to_call, from_call) == (AP_SCENARIO_MY_CALL, AP_SCENARIO_DX_CALL)
         else:
             assert (to_call, from_call) != (AP_SCENARIO_MY_CALL, AP_SCENARIO_DX_CALL)
-    assert first  # the single draw above is only here to prove a fresh generator is usable
 
 
 def test_scenario_produces_both_populations():
