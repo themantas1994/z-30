@@ -27,7 +27,7 @@ import { DecodedSignal } from '../types/z30';
 import { Z30_SPECS } from './z30Constants';
 import { audioEngine } from './audioEngine';
 import { formatUtcTime } from './timeUtils';
-import { ldpcCodec } from './ldpcCodec';
+import { ApContext, decodeWithAp } from './apDecode';
 import { unpackZ30Message } from './z30Codec';
 import {
   runSicMultiPass,
@@ -112,6 +112,8 @@ function toDecodedSignal(
     confidence: 99,
     rawSymbols: frame.rawSymbols,
     ldpcIterations: frame.ldpcIterations,
+    apType: frame.apType,
+    apLabel: frame.apLabel,
   };
 }
 
@@ -134,6 +136,9 @@ export class Z30SicDecoderEngine {
    * @param _txFreqHz - Optional baseband audio frequency of local transmission
    * @param timeOffsetMs - Calibrated correction from the local system clock to true UTC (rf_time_sync),
    *   used to align the captured audio window to the actual UTC slot boundary.
+   * @param apContext - QSO state for a priori decoding (src/dsp/apDecode.ts). Undefined - which
+   *   is what the caller passes whenever the operator has not enabled it - leaves the receive
+   *   path exactly as it was before AP existed.
    * @returns Object containing all decoded signals and step-by-step SIC iteration diagnostics
    */
   public runSicDecodeCycle(
@@ -142,7 +147,8 @@ export class Z30SicDecoderEngine {
     _myGrid: string,
     isStationTransmitting: boolean = false,
     _txFreqHz?: number,
-    timeOffsetMs: number = 0
+    timeOffsetMs: number = 0,
+    apContext?: ApContext
   ): { decodes: DecodedSignal[]; steps: SicIterationStep[] } {
     const now = new Date(Date.now() + timeOffsetMs);
     const timeStr = formatUtcTime(now);
@@ -188,7 +194,7 @@ export class Z30SicDecoderEngine {
       const capturedWindow = audioEngine.getCaptureWindow(windowStartLocalMs, windowDurationSec, DSP_SAMPLE_RATE_HZ);
       if (capturedWindow) {
         hadCaptureWindow = true;
-        const sicResult = runSicMultiPass(capturedWindow, DSP_SAMPLE_RATE_HZ, 3, 200, 3000, MAX_DT_SEC);
+        const sicResult = runSicMultiPass(capturedWindow, DSP_SAMPLE_RATE_HZ, 3, 200, 3000, MAX_DT_SEC, apContext);
         realFrames = sicResult.frames;
         passMeasurements = sicResult.passes;
       }
@@ -205,7 +211,11 @@ export class Z30SicDecoderEngine {
       const clean = synthesizeReplica(sig.symbols, sig.freqHz, DSP_SAMPLE_RATE_HZ);
       const noisy = addCalibratedAwgn(clean, sig.snrDb, DSP_SAMPLE_RATE_HZ);
       const llrs = demodulateReal(noisy, DSP_SAMPLE_RATE_HZ, sig.freqHz, estimateSigmaFromSnr(sig.snrDb, clean, DSP_SAMPLE_RATE_HZ));
-      const decodeResult = ldpcCodec.decodeMinSum(llrs);
+      // The self-test path deliberately passes NO hypotheses. Its job is to exercise the real
+      // demodulate -> decode chain end to end; letting a priori information stand in for
+      // channel evidence here would make the self-test report a chain that half worked.
+      const apOutcome = decodeWithAp(llrs, []);
+      const decodeResult = apOutcome.result;
       if (decodeResult.success && decodeResult.crcValid) {
         const unpacked = unpackZ30Message(decodeResult.infoBits);
         realFrames.push({
@@ -216,6 +226,8 @@ export class Z30SicDecoderEngine {
           rawSymbols: sig.symbols,
           unpacked,
           ldpcIterations: decodeResult.iterations,
+          apType: apOutcome.apType,
+          apLabel: apOutcome.apLabel,
         });
       }
     }

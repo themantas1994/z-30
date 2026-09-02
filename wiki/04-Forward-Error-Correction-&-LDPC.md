@@ -134,3 +134,21 @@ dithered passes from oscillating.
    the table runs on a fresh copy of the channel LLRs. If schedule 4 also fails to produce a
    CRC-valid codeword, the frame is flagged for SIC processing (see
    [05. Successive Interference Cancellation](05-Successive-Interference-Cancellation-(SIC).md)) or marked unresolvable.
+
+---
+
+## 🎯 Decoding with information the receiver already has
+
+Everything above treats all 77 information bits as unknowns. When the receiver is in a QSO it is
+not: a station answering your CQ has to have put your callsign in the first 28 bits, or it is
+not answering you. **A priori (AP) decoding** asserts those bits instead of measuring them, and
+lets the CRC-14 decide whether the assertion was right.
+
+The whole cascade above runs first and unchanged — AP is only attempted on a frame that has
+already failed every schedule, so it can add decodes but cannot change or lose one. An asserted
+bit is *pinned*: its belief is held at the asserted value for every iteration rather than merely
+initialised there, so no run of confident check messages can walk it back.
+
+The mechanism, the hypothesis ladder, the gates that keep it from being tried where the QSO
+state does not apply, the measured effect and the false-accept cost are all in
+[17. A Priori (AP) Decoding](17-A-Priori-(AP)-Decoding.md).

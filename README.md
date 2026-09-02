@@ -220,6 +220,7 @@ z-30 is an experimental mode and is not coordinated with any band plan authority
 | [14. UI & Operation Reference](wiki/14-User-Interface-&-Operation-Reference.md) | Waterfall, QSO macros, auto-reply, band manager, logbook |
 | [15. Command-Line Tools & Configuration](wiki/15-Command-Line-Tools-&-Configuration.md) | `z30` subcommands, file locations, environment variables |
 | [16. Benchmarking, Testing & CI](wiki/16-Benchmarking-Testing-&-CI.md) | Both benchmark modes, measured curves, test suite, CI checks |
+| [17. A Priori (AP) Decoding](wiki/17-A-Priori-(AP)-Decoding.md) | Constraining the decode with what the QSO state already implies, ported from WSJT-X |
 
 Working on z-30 with a coding assistant? **[`AGENTS.md`](AGENTS.md)** is the architecture,
 invariants and house rules on one page.

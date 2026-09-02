@@ -292,17 +292,16 @@ export function packZ30Message(text: string): PackedMessage {
     callFrom = tokens[1];
     const third = tokens[2] || '';
 
-    if (third.startsWith('R-') || third.startsWith('R+')) {
-      msgType = 'ROGER_REPORT';
-      report = third;
-      const num = parseInt(third.replace('R', ''), 10);
-      extraCode = Math.max(0, Math.min(60, (isNaN(num) ? -12 : num) + 30));
-    } else if (third.startsWith('-') || third.startsWith('+') || /^\d+$/.test(third)) {
-      msgType = 'REPORT';
-      report = third;
-      const num = parseInt(third, 10);
-      extraCode = Math.max(0, Math.min(60, (isNaN(num) ? -12 : num) + 30));
-    } else if (third === 'RRR') {
+    // The three closing modifiers are tested BEFORE the numeric report branch, and the order is
+    // load-bearing: `/^\d+$/` matches '73', so while the report branch came first the
+    // `third === '73'` arm below was unreachable and every sign-off packed as extraCode
+    // `min(60, 73 + 30)` = 60 - a +30 dB signal report. The Tx5 macro (`buildQsoMacros`) is
+    // `<dx> <me> 73`, so every z-30 QSO ended by transmitting a report of +30 dB, and
+    // `unpackZ30Message` faithfully rendered it back as "+30". The 7-bit allocation always
+    // reserved 62 for '73' and the unpacker has always decoded 62 as '73'; only the packer never
+    // emitted it, so emitting it now is a fix rather than a wire-format change - an existing
+    // receiver already understands the value. `tests/frontend.test.mjs` guards the ordering.
+    if (third === 'RRR') {
       msgType = 'RRR_73';
       report = 'RRR';
       extraCode = 61;
@@ -314,6 +313,16 @@ export function packZ30Message(text: string): PackedMessage {
       msgType = 'RRR_73';
       report = 'RR73';
       extraCode = 63;
+    } else if (third.startsWith('R-') || third.startsWith('R+')) {
+      msgType = 'ROGER_REPORT';
+      report = third;
+      const num = parseInt(third.replace('R', ''), 10);
+      extraCode = Math.max(0, Math.min(60, (isNaN(num) ? -12 : num) + 30));
+    } else if (third.startsWith('-') || third.startsWith('+') || /^\d+$/.test(third)) {
+      msgType = 'REPORT';
+      report = third;
+      const num = parseInt(third, 10);
+      extraCode = Math.max(0, Math.min(60, (isNaN(num) ? -12 : num) + 30));
     } else if (third.length === 4 && /^[A-R]{2}[0-9]{2}$/i.test(third)) {
       msgType = 'REPLY';
       grid = third;

@@ -21,7 +21,7 @@ Welcome to the technical documentation for **z-30**: an experimental open-source
 | :--- | :--- | :--- |
 | **New ham operator / user** | [Getting Started & First Steps](01-New-User-Guide-&-First-Steps.md) | [Operating Reference](14-User-Interface-&-Operation-Reference.md), [CAT & PTT Wiring](06-Transceiver-CAT-Control-&-PTT-Wiring.md), [Time Synchronization](07-RF-Time-Synchronization-Engine.md), [Troubleshooting & FAQ](10-Troubleshooting-&-FAQ.md) |
 | **Operator about to transmit** | [Operating Safety & Compliance](13-Operating-Safety-Compliance-&-Security.md) | [Operating Reference](14-User-Interface-&-Operation-Reference.md), [Troubleshooting & FAQ](10-Troubleshooting-&-FAQ.md) |
-| **DSP / protocol developer** | [Developer Setup & Contributing](02-Developer-Setup-&-Contributing.md) | [DSP & Physical Layer Specs](03-DSP-&-Physical-Layer-Specification.md), [LDPC FEC](04-Forward-Error-Correction-&-LDPC.md), [SIC Engine](05-Successive-Interference-Cancellation-(SIC).md), [Benchmarking & CI](16-Benchmarking-Testing-&-CI.md) |
+| **DSP / protocol developer** | [Developer Setup & Contributing](02-Developer-Setup-&-Contributing.md) | [DSP & Physical Layer Specs](03-DSP-&-Physical-Layer-Specification.md), [LDPC FEC](04-Forward-Error-Correction-&-LDPC.md), [SIC Engine](05-Successive-Interference-Cancellation-(SIC).md), [AP Decoding](17-A-Priori-(AP)-Decoding.md), [Benchmarking & CI](16-Benchmarking-Testing-&-CI.md) |
 | **Advanced ham / RF engineer** | [Physics & FT8 Comparison](11-Physics-&-Comparative-Analysis-z30-vs-FT8.md) | [DSP Specs](03-DSP-&-Physical-Layer-Specification.md), [SIC Engine](05-Successive-Interference-Cancellation-(SIC).md), [Benchmarking & CI](16-Benchmarking-Testing-&-CI.md) |
 | **Hardware & rig integrator** | [CAT & PTT Wiring](06-Transceiver-CAT-Control-&-PTT-Wiring.md) | [Raspberry Pi / DigiPi](09-Cross-Platform-Build-&-Packaging.md), [RF Time Sync](07-RF-Time-Synchronization-Engine.md), [CLI & Configuration](15-Command-Line-Tools-&-Configuration.md) |
 | **Frontend / web developer** | [Developer Setup & Contributing](02-Developer-Setup-&-Contributing.md) | [Web & PWA Architecture](08-Web-&-PWA-Architecture.md), [Cross-Platform Packaging](09-Cross-Platform-Build-&-Packaging.md) |
@@ -77,19 +77,20 @@ figure is measured that way. See
 5. [03. DSP & Physical Layer Specification](03-DSP-&-Physical-Layer-Specification.md)
 6. [04. Forward Error Correction & LDPC](04-Forward-Error-Correction-&-LDPC.md)
 7. [05. Successive Interference Cancellation (SIC)](05-Successive-Interference-Cancellation-(SIC).md)
-8. [11. Physics & Comparative Analysis: z-30 vs. FT8](11-Physics-&-Comparative-Analysis-z30-vs-FT8.md)
+8. [17. A Priori (AP) Decoding](17-A-Priori-(AP)-Decoding.md)
+9. [11. Physics & Comparative Analysis: z-30 vs. FT8](11-Physics-&-Comparative-Analysis-z30-vs-FT8.md)
 
 ### Hardware & rig control
-9. [06. Transceiver CAT Control & PTT Wiring](06-Transceiver-CAT-Control-&-PTT-Wiring.md)
-10. [07. RF Time Synchronization Engine](07-RF-Time-Synchronization-Engine.md)
+10. [06. Transceiver CAT Control & PTT Wiring](06-Transceiver-CAT-Control-&-PTT-Wiring.md)
+11. [07. RF Time Synchronization Engine](07-RF-Time-Synchronization-Engine.md)
 
 ### Development, build & packaging
-11. [02. Developer Setup & Contributing](02-Developer-Setup-&-Contributing.md)
-12. [08. Web & PWA Architecture](08-Web-&-PWA-Architecture.md)
-13. [09. Cross-Platform Build & Packaging](09-Cross-Platform-Build-&-Packaging.md)
-14. [12. Software Updates & GitHub Sync](12-Software-Updates-&-GitHub-Sync.md)
-15. [15. Command-Line Tools & Configuration](15-Command-Line-Tools-&-Configuration.md)
-16. [16. Benchmarking, Testing & CI](16-Benchmarking-Testing-&-CI.md)
+12. [02. Developer Setup & Contributing](02-Developer-Setup-&-Contributing.md)
+13. [08. Web & PWA Architecture](08-Web-&-PWA-Architecture.md)
+14. [09. Cross-Platform Build & Packaging](09-Cross-Platform-Build-&-Packaging.md)
+15. [12. Software Updates & GitHub Sync](12-Software-Updates-&-GitHub-Sync.md)
+16. [15. Command-Line Tools & Configuration](15-Command-Line-Tools-&-Configuration.md)
+17. [16. Benchmarking, Testing & CI](16-Benchmarking-Testing-&-CI.md)
 
 ---
 

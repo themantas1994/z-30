@@ -1,0 +1,137 @@
+{
+  "_comment": [
+    "Shared 28-bit callsign PACKING vectors, asserted from both languages.",
+    "",
+    "Distinct from callsign_vectors.json, which pins the structural VALIDATION rule the",
+    "transmit gate applies. This file pins the encoding: what integer a callsign occupies in",
+    "the 28-bit field, and whether it survives a round trip.",
+    "",
+    "It exists because a priori decoding asserts those 28 bits as certain. src/dsp/apDecode.ts",
+    "derives them by packing a message and reading its bits, and z30_dsp/ap_decode.py derives",
+    "them from z30_dsp/message_codec.py. If the two packers disagreed by one integer, the",
+    "Python benchmark would be measuring the gain of a hypothesis the browser never forms.",
+    "",
+    "'round_trips' is what decides whether a callsign may be used as a priori knowledge at all:",
+    "a call that takes the generic Base-37 fallback packs to an integer that does not unpack",
+    "back to it, so asserting those bits would assert a callsign nobody transmitted. This is",
+    "WSJT-X's ft8apset rule (pack a dummy message, unpack it, and refuse unless msg.eq.msgchk).",
+    "",
+    "Generated from src/dsp/z30Codec.ts, which shipped first. Asserted by",
+    "tests/apDecode.test.mjs (TypeScript) and tests/test_cross_language_parity.py (Python)."
+  ],
+  "field_width_bits": 28,
+  "vectors": [
+    {
+      "call": "CQ",
+      "why": "reserved token 0",
+      "packed": 0,
+      "unpacked": "CQ",
+      "round_trips": true
+    },
+    {
+      "call": "CQ DX",
+      "why": "reserved token 1",
+      "packed": 1,
+      "unpacked": "CQ DX",
+      "round_trips": true
+    },
+    {
+      "call": "CQ TEST",
+      "why": "reserved token 2",
+      "packed": 2,
+      "unpacked": "CQ TEST",
+      "round_trips": true
+    },
+    {
+      "call": "QRZ",
+      "why": "reserved token 3",
+      "packed": 3,
+      "unpacked": "QRZ",
+      "round_trips": true
+    },
+    {
+      "call": "W1AW",
+      "why": "canonical US callsign, one-character prefix",
+      "packed": 6516523,
+      "unpacked": "W1AW",
+      "round_trips": true
+    },
+    {
+      "call": "K1ABC",
+      "why": "one-character prefix, three-character suffix",
+      "packed": 4153999,
+      "unpacked": "K1ABC",
+      "round_trips": true
+    },
+    {
+      "call": "DL1ABC",
+      "why": "two-character prefix",
+      "packed": 106308769,
+      "unpacked": "DL1ABC",
+      "round_trips": true
+    },
+    {
+      "call": "G0ABC",
+      "why": "zero in the digit position",
+      "packed": 3346996,
+      "unpacked": "G0ABC",
+      "round_trips": true
+    },
+    {
+      "call": "VK2DEF",
+      "why": "two-letter prefix, three-letter suffix",
+      "packed": 237222673,
+      "unpacked": "VK2DEF",
+      "round_trips": true
+    },
+    {
+      "call": "JA1ZLO",
+      "why": "Japanese club station",
+      "packed": 147858406,
+      "unpacked": "JA1ZLO",
+      "round_trips": true
+    },
+    {
+      "call": "3DA0RS",
+      "why": "prefix containing a digit",
+      "packed": 35739243,
+      "unpacked": "3W5SWZ",
+      "round_trips": false
+    },
+    {
+      "call": "N0AX",
+      "why": "two-character suffix",
+      "packed": 4725397,
+      "unpacked": "N0AX",
+      "round_trips": true
+    },
+    {
+      "call": "w1aw",
+      "why": "lower case is upper-cased before packing",
+      "packed": 6516523,
+      "unpacked": "W1AW",
+      "round_trips": true
+    },
+    {
+      "call": "EA8/G4XYZ",
+      "why": "portable prefix: takes the Base-37 fallback, does NOT round-trip",
+      "packed": 255949127,
+      "unpacked": "Y43OAP",
+      "round_trips": false
+    },
+    {
+      "call": "W1AW/P",
+      "why": "portable suffix: takes the Base-37 fallback, does NOT round-trip",
+      "packed": 6516539,
+      "unpacked": "W1AWP",
+      "round_trips": false
+    },
+    {
+      "call": "NOCAL",
+      "why": "the placeholder Station Settings holds before a callsign is entered",
+      "packed": 46265415,
+      "unpacked": "5C0NBE",
+      "round_trips": false
+    }
+  ]
+}

@@ -52,6 +52,13 @@ z-30 automates standard amateur contact exchanges via a 6-stage finite state mac
   ClubLog and eQSL.
 - **Watchdog safety** disarms the transmitter after a configurable number of unanswered cycles
   (1 to 10), so an unattended station cannot call CQ indefinitely.
+- **A priori (AP) decoding** (Station Settings -> Automation, off by default) uses the stage this
+  machine is in to retry a frame that failed to decode, asserting what that stage implies must be
+  in it - your callsign, the station you are working, and the closing message. Frames recovered
+  that way are tagged `a1`...`a6` in the activity log rather than shown as ordinary decodes,
+  because a frame that only closed on an assumption is a weaker claim than one that closed
+  without help. See [17. A Priori (AP) Decoding](17-A-Priori-(AP)-Decoding.md) for what it buys,
+  what it costs, and why it ships off.
 
 ---
 

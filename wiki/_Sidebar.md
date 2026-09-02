@@ -19,6 +19,7 @@
 - [03. DSP & Physical Layer Specs](03-DSP-&-Physical-Layer-Specification)
 - [04. LDPC Forward Error Correction](04-Forward-Error-Correction-&-LDPC)
 - [05. SIC Co-Channel Decoder](05-Successive-Interference-Cancellation-(SIC))
+- [17. A Priori (AP) Decoding](17-A-Priori-(AP)-Decoding)
 
 ---
 
