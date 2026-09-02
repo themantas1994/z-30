@@ -17,6 +17,7 @@ still catches a drifted table.
 """
 
 import json
+import inspect
 import os
 import re
 
@@ -375,12 +376,48 @@ def test_benchmark_receiver_model_constants_match():
     assert margin, "SLOT_SEARCH_MARGIN_SEC not found in monteCarloEngine.ts"
     assert float(margin.group(1)) == acquisition.SLOT_SEARCH_MARGIN_SEC
 
-    coherence = re.search(r"export const REALISTIC_PILOT_COHERENCE\s*=\s*([0-9.]+);", engine)
-    assert coherence, "REALISTIC_PILOT_COHERENCE not found in monteCarloEngine.ts"
-    assert float(coherence.group(1)) == benchmark.REALISTIC_PILOT_COHERENCE
-
     # The window itself, not just the margin, so an off-by-one in either expression shows up.
     assert acquisition.slot_timing_search_sec(0.5) == pytest.approx(0.55)
+
+
+def test_the_benchmark_demodulates_like_the_receiver_that_ships():
+    """
+    The coherent weight the benchmarks apply must be the one the ON-AIR decoders apply.
+
+    This is the parity that was missing, and its absence was not visible from either side. Both
+    benchmark engines declared 0.0 and agreed with each other perfectly, while
+    `realReceiver.ts`'s `demodulateReal` hardcoded the pilot-distance-adaptive 0.35-0.85 and
+    `sic_decoder.py` inherited it from `demodulate_mfsk_llrs`'s old default. Every published
+    sensitivity figure therefore described a receiver that never decoded a frame off the air.
+    Measured paired at 100 frames per point it was worth 1.77 dB on AWGN (p = 2.9e-36) and far
+    more on a fading path (p = 5e-119); see benchmark.RECEIVER_PILOT_COHERENCE.
+
+    So this asserts three things at once: that the constant is declared beside the shipped
+    demodulator, that the Python default matches it, and that `demodulateReal` reads the
+    constant rather than recomputing a weight of its own.
+    """
+    receiver = read(os.path.join(REPO_ROOT, "src", "dsp", "realReceiver.ts"))
+
+    coherence = re.search(r"export const RECEIVER_PILOT_COHERENCE\s*=\s*([0-9.]+);", receiver)
+    assert coherence, "RECEIVER_PILOT_COHERENCE not found in realReceiver.ts"
+    assert float(coherence.group(1)) == benchmark.RECEIVER_PILOT_COHERENCE
+
+    # The TypeScript demodulator must USE it, not merely declare it next to a literal. The
+    # regex targets the assignment the defect lived in: any locally computed per-symbol weight.
+    assert "RECEIVER_PILOT_COHERENCE * coherent" in receiver, (
+        "demodulateReal no longer applies RECEIVER_PILOT_COHERENCE to the coherent term"
+    )
+    assert not re.search(r"const\s+pilotCoherence\s*=", receiver), (
+        "demodulateReal computes its own coherence weight again - the exact shape of the "
+        "defect this test exists to catch"
+    )
+
+    # And the Python demodulator's DEFAULT is that same weight, so a caller that does not ask
+    # for anything (sic_decoder._estimate_llrs is one) gets the measured receiver.
+    default = inspect.signature(benchmark.demodulate_mfsk_llrs).parameters["pilot_coherence"].default
+    assert default == benchmark.RECEIVER_PILOT_COHERENCE, (
+        "demodulate_mfsk_llrs defaults to something other than the shipped receiver's weight"
+    )
 
 
 # ---------------------------------------------------------------------------------------------

@@ -1230,7 +1230,7 @@ export const MonteCarloBenchmarkModal: React.FC<MonteCarloBenchmarkModalProps> =
 
         {/* This engine is NOT the reference instrument, and saying so is the whole point.
             It now lands 0.1 dB from z30_dsp/benchmark.py on the AWGN threshold at the same
-            seed - the two share SLOT_SEARCH_MARGIN_SEC and REALISTIC_PILOT_COHERENCE, so they
+            seed - the two share SLOT_SEARCH_MARGIN_SEC and RECEIVER_PILOT_COHERENCE, so they
             model the same receiver - but agreement is not authority: the Python benchmark is
             what CI runs and what the published tables are copied from.
 

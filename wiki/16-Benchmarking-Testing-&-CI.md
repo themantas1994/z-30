@@ -304,7 +304,7 @@ pinned by `tests/test_cross_language_parity.py`:
 | Constant | Value | What it fixes |
 | :--- | :--- | :--- |
 | `SLOT_SEARCH_MARGIN_SEC` | 0.05 s | The timing search half-width is the station's timing uncertainty plus this margin — ±0.55 s at the default ±0.5 s offset. z-30 is slot-synchronised, so a real receiver knows where the frame should start and searches a window, not an arbitrary stream. |
-| `REALISTIC_PILOT_COHERENCE` | 0.0 | Purely non-coherent demodulation, which is what z-30's receiver is specified to be. `ideal` mode keeps the pilot-adaptive weight, because it is handed perfect timing. |
+| `RECEIVER_PILOT_COHERENCE` | 0.0 | Purely non-coherent demodulation, which is what z-30's receiver is specified to be. `ideal` mode keeps the pilot-adaptive weight, because it is handed perfect timing. |
 
 Measured at seed `20260830`, 40 frames per point, AWGN:
 
@@ -338,7 +338,7 @@ Measured at seed `20260830`, 40 frames per point, AWGN:
 >
 > The trade-off side is recorded rather than left out: at -24 dB, below the point where the
 > Costas pattern is reliably findable, both receivers are near zero and the semi-coherent one
-> took that point 3–0. The full per-point table is in the `REALISTIC_PILOT_COHERENCE` comment in
+> took that point 3–0. The full per-point table is in the `RECEIVER_PILOT_COHERENCE` comment in
 > `z30_dsp/benchmark.py`.
 
 Both engines now run the same receiver model and land 0.1 dB apart on the threshold, which is
@@ -494,7 +494,7 @@ What the suite covers, and why each test is there:
 every frame goes through the channel once, is demodulated once, and the resulting 216 LLRs are
 decoded twice - once by the ordinary decoder and once with the a priori hypothesis ladder behind
 it. Both arms therefore see bit-identical channel evidence, and the statistic is the count of
-frames where they disagreed, tested with an exact two-sided McNemar test (`ap_mcnemar_exact_p`,
+frames where they disagreed, tested with an exact two-sided McNemar test (`mcnemar_exact_p`,
 computed from `math.comb` so a reader can recompute it by hand).
 
 This is the shape any comparison of two decoders on this project should take. The alternative -
