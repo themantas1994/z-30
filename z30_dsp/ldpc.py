@@ -37,12 +37,18 @@ Mathematical Specification & Design Rationale:
    written from that specification would have produced a CRC that failed against both.
    Undetected frame error probability P_ue ~= 2^-14 = 6.1e-5 for random errors.
 
-5. Vectorized Normalized Min-Sum Belief Propagation Decoder:
+5. Multi-Schedule Belief Propagation Decoder:
    - Check Node Update: L_{c->v} = alpha * prod(sign(L_{v'->c})) * min_{v' != v}(|L_{v'->c}|)
      where alpha is the schedule's own empirical normalization factor mitigating check node
      overestimation - see DECODE_SCHEDULES; there is no single alpha for the decoder.
    - Variable Node Update: L_{v->c} = L_{ch, v} + sum_{c' != c} L_{c'->v}
    - Early stopping condition: syndrome s = H * c^T == 0 (mod 2) and CRC valid.
+   - The sweep is layered and stays serial across checks; only schedule 2's box-plus fold is
+     vectorised, and only because measurement said so. This heading read "Vectorized Normalized
+     Min-Sum" for years while every message was computed one edge at a time in NumPy scalar
+     arithmetic - the slowest way to do it - so the name described an implementation that did
+     not exist. See `_sweep_checks` for what is and is not vectorised now, and the numbers that
+     decided it.
 """
 
 from typing import Any, Dict, List, Tuple
@@ -159,6 +165,63 @@ def dither_vector(llr_channel: "np.ndarray | List[float]", length: int) -> "np.n
     return out
 
 
+#: Magnitude the check-node scan initialises its two running minima to.
+#:
+#: A sentinel, not a bound: a magnitude at or above it never replaces `min1`/`min2`, so a check
+#: whose incoming messages were all that large would behave as if every message had magnitude
+#: 999999. The demodulator clips channel LLRs to +/-25 and every schedule clips or normalises its
+#: own messages, so nothing on this code approaches it. Named rather than left as a literal so
+#: the sweep and anything checking the sweep read the same number.
+_MIN_SENTINEL: float = 999999.0
+
+#: float32 constants `_box_plus_into` compares and multiplies against. Named so the kernel cannot
+#: quietly acquire a float64 operand: NumPy keeps a float32 array float32 against a Python float,
+#: but an intermediate that widens to float64 and back rounds differently from the edge-at-a-time
+#: box-plus it has to match, which is what the equivalence test exists to catch.
+_F32_ZERO = np.float32(0.0)
+_F32_ONE = np.float32(1.0)
+_F32_NEG_ONE = np.float32(-1.0)
+_F32_NEG_THIRTY = np.float32(-30.0)
+
+
+class _SweepScratch:
+    """
+    Per-decode working buffers for the check-node sweep, sized to the largest check degree.
+
+    Allocated once per `decode_min_sum` call rather than once per check per iteration: the
+    reference built a fresh `np.zeros(num_vars)` inside the check loop, which is 139 allocations
+    an iteration and up to 20,850 across a full four-schedule cascade.
+
+    Held on the call, never on the codec. A worker pool shares one `Z30LdpcCodec` across frames
+    (`benchmark._init_decode_worker`), and `decode_prepared_frame` is required to be a pure
+    function of its input - scratch hung off `self` would make two concurrent decodes share a
+    buffer and would make the codec carry state between frames.
+    """
+
+    __slots__ = ("vals", "msg", "acc", "aux", "work")
+
+    def __init__(self, degree: int) -> None:
+        self.vals = np.zeros(degree, dtype=np.float32)
+        self.msg = np.zeros(degree, dtype=np.float32)
+        self.acc = np.zeros(degree, dtype=np.float32)
+        self.aux = np.zeros(degree, dtype=np.float32)
+        self.work = np.zeros(2 * degree, dtype=np.float32)
+
+
+def _bits_to_int(bits: "np.ndarray | List[int]") -> int:
+    """
+    MSB-first integer value of a bit sequence.
+
+    Replaces `int("".join(str(b) for b in bits), 2)`, which built a Python string per call - once
+    per decode iteration for the received CRC field, and again for every OSD candidate. Same
+    value, no formatting; the arithmetic is integer either way so nothing about the result moves.
+    """
+    value = 0
+    for bit in (bits.tolist() if isinstance(bits, np.ndarray) else bits):
+        value = (value << 1) | (int(bit) & 1)
+    return value
+
+
 #: Schedule 1's belief-propagation iteration cap, and the codec's default.
 #:
 #: The twin of `LDPC_MAX_ITERATIONS` in src/dsp/ldpcCodec.ts, pinned across the two languages by
@@ -200,11 +263,28 @@ class Z30LdpcCodec:
         self.check_to_vars: List[List[int]] = [[] for _ in range(self.m)]
         self.var_to_checks: List[List[int]] = [[] for _ in range(self.n)]
 
-        for c in range(self.m):
-            for v in range(self.n):
-                if self.H[c, v] == 1:
-                    self.check_to_vars[c].append(v)
-                    self.var_to_checks[v].append(c)
+        check_rows, var_cols = np.nonzero(self.H)
+        for c, v in zip(check_rows.tolist(), var_cols.tolist()):
+            self.check_to_vars[c].append(v)
+            self.var_to_checks[v].append(c)
+
+        # Flat edge layout for the check-node sweep: the messages of check c occupy
+        # `_edge_lo[c]:_edge_hi[c]` of one contiguous float32 array, in the same ascending
+        # variable order `check_to_vars[c]` uses. One array instead of 139 keeps the sweep's
+        # per-check work to slice views, and lets a decode allocate its message state once
+        # rather than once per check per iteration.
+        degrees = np.array([len(vars_c) for vars_c in self.check_to_vars], dtype=np.intp)
+        self._edge_hi: np.ndarray = np.cumsum(degrees)
+        self._edge_lo: np.ndarray = self._edge_hi - degrees
+        self._n_edges: int = int(self._edge_hi[-1]) if self.m else 0
+        self._max_check_degree: int = int(degrees.max()) if self.m else 0
+        self._check_order_forward: List[int] = list(range(self.m))
+        self._check_order_reverse: List[int] = list(range(self.m))[::-1]
+
+        # (139, 5) view of the connection table, so the IRA parity accumulation is a pair of
+        # array reductions rather than a 139x5 Python loop. Re-derived from the same table the
+        # matrix is built from, not from H, so a table edit reaches both.
+        self._info_index_table: np.ndarray = np.asarray(Z30_CHECK_TO_INFO, dtype=np.intp)
 
     def _build_parity_check_matrix(self) -> np.ndarray:
         """
@@ -241,9 +321,12 @@ class Z30LdpcCodec:
         """
         crc = 0x2757
         poly = 0x2443
-        for b in bits:
+        # `.tolist()` first: iterating a NumPy array yields a fresh scalar object per bit, and
+        # this runs twice per decode iteration and once per OSD candidate. The register maths
+        # below is integer either way, so the value is unchanged.
+        for b in (bits.tolist() if isinstance(bits, np.ndarray) else bits):
             msb = (crc >> 13) & 1
-            crc = ((crc << 1) & 0x3FFF) ^ (poly if (msb ^ (b & 1)) else 0)
+            crc = ((crc << 1) & 0x3FFF) ^ (poly if (msb ^ (int(b) & 1)) else 0)
         return crc & 0x3FFF
 
     def encode(self, payload_63_bits: np.ndarray | List[int]) -> np.ndarray:
@@ -270,18 +353,24 @@ class Z30LdpcCodec:
         # 3. Compute 139 parity bits via IRA Accumulator over Girth-6 connections
         codeword = np.zeros(self.n, dtype=np.uint8)
         codeword[:self.k] = info_bits
-
-        for p in range(self.m):
-            check_sum = 0
-            for info_idx in Z30_CHECK_TO_INFO[p]:
-                check_sum ^= codeword[info_idx]
-
-            if p > 0:
-                check_sum ^= codeword[self.k + p - 1]
-
-            codeword[self.k + p] = check_sum
+        codeword[self.k:] = self._accumulate_parity(info_bits)
 
         return codeword
+
+    def _accumulate_parity(self, info_bits_77: np.ndarray) -> np.ndarray:
+        """
+        The dual-diagonal IRA parity bits for 77 information bits.
+
+        p_i = p_{i-1} ^ (sum_{j in N(i)} u_j), which is a running XOR of the per-check
+        information sums - one gather, one row-wise XOR reduction and one cumulative XOR,
+        instead of the 139x5 scalar loop this replaces. Integer XOR is exact and associative,
+        so the bits are the ones the loop produced; what changes is that `decode_min_sum` calls
+        this up to a hundred times per failing frame from the OSD-2 search.
+        """
+        info_sums = np.bitwise_xor.reduce(
+            np.asarray(info_bits_77, dtype=np.uint8)[self._info_index_table], axis=1
+        )
+        return np.bitwise_xor.accumulate(info_sums)
 
     def compute_syndrome(self, codeword: np.ndarray) -> np.ndarray:
         """
@@ -302,13 +391,7 @@ class Z30LdpcCodec:
         """
         codeword = np.zeros(self.n, dtype=np.uint8)
         codeword[:self.k] = np.array(info_bits_77[:self.k], dtype=np.uint8)
-        for p in range(self.m):
-            check_sum = 0
-            for info_idx in Z30_CHECK_TO_INFO[p]:
-                check_sum ^= codeword[info_idx]
-            if p > 0:
-                check_sum ^= codeword[self.k + p - 1]
-            codeword[self.k + p] = check_sum
+        codeword[self.k:] = self._accumulate_parity(codeword[:self.k])
         return codeword
 
     @staticmethod
@@ -321,6 +404,174 @@ class Z30LdpcCodec:
         corr_sum = np.log1p(np.exp(-diff_sum)) if diff_sum < 30 else 0.0
         corr_diff = np.log1p(np.exp(-diff_diff)) if diff_diff < 30 else 0.0
         return sign_prod * min_val + corr_sum - corr_diff
+
+    @staticmethod
+    def _box_plus_into(x: np.ndarray, y: "np.float32", out: np.ndarray, work: np.ndarray) -> None:
+        """
+        `_box_plus(x[i], y)` for every element of `x`, written to `out`.
+
+        The same expression as `_box_plus`, in the same order, on float32 operands throughout -
+        which is the precision `_box_plus` itself runs at, since its arguments come from the
+        float32 message array and NumPy keeps a float32 scalar float32 against a Python float.
+
+        `work` is a scratch buffer of twice the check degree: both Jacobian corrections are
+        computed as one array so the `exp` and `log1p` dispatches are paid once instead of
+        twice. Those two transcendentals are the reason this function is the decoder's hot
+        spot - schedule 2 evaluates it 5,838 times per sweep - and a NumPy scalar call costs
+        essentially the same as a call on a short vector, so what buys the time here is calling
+        them fewer times, not on fewer numbers.
+
+        `diff_sum < 30` is tested as `-diff_sum > -30`, the negation being needed for the
+        exponent anyway; the comparison is exact either way. The branch is kept rather than left
+        to underflow: at |x+y| just past 30 the correction is ~9e-14, below float32 resolution
+        beside a message of order 1 but *not* beside a message of order 0, so dropping the mask
+        would change the smallest messages.
+        """
+        degree = x.size
+        sign_y = _F32_ONE if y >= _F32_ZERO else _F32_NEG_ONE
+        head = work[:degree]
+        tail = work[degree:]
+
+        # sign_prod * min(|x|, |y|)
+        np.abs(x, out=out)
+        np.minimum(out, abs(y), out=out)
+        np.multiply(out, np.where(x >= _F32_ZERO, sign_y, -sign_y), out=out)
+
+        # log1p(exp(-|x + y|)) and log1p(exp(-|x - y|)), together
+        np.add(x, y, out=head)
+        np.subtract(x, y, out=tail)
+        np.abs(work, out=work)
+        np.negative(work, out=work)
+        keep = work > _F32_NEG_THIRTY
+        np.exp(work, out=work)
+        np.log1p(work, out=work)
+        np.multiply(work, keep, out=work)
+
+        np.add(out, head, out=out)
+        np.subtract(out, tail, out=out)
+
+    def _spa_messages(
+        self,
+        vals: np.ndarray,
+        degree: int,
+        alpha: float,
+        out: np.ndarray,
+        scratch: "_SweepScratch",
+    ) -> None:
+        """
+        The log-domain sum-product (box-plus) check-to-variable messages for one check.
+
+        Schedule 2 folds, for each edge i, over the other edges in increasing j - so the fold
+        order differs per edge, and box-plus is not associative in floating point. The usual
+        leave-one-out shortcut (a forward/backward cumulative pair) folds the suffix from the
+        right and lands a few ULP away, which is a different decoder rather than a faster one,
+        so it is not used here.
+
+        What is used instead: run the d folds as d lanes stepping j together. Every lane still
+        consumes j in increasing order, so each lane's fold order is exactly the one the
+        edge-at-a-time loop produced, while the transcendentals inside `_box_plus` are paid
+        once per step instead of once per (edge, step) pair.
+
+        Lane i skips step j == i, so at j == 0 every lane but lane 0 takes its first value, and
+        at j == 1 lane 0 takes its own first value while the rest are already folding.
+        """
+        acc = scratch.acc[:degree]
+        aux = scratch.aux[:degree]
+        acc.fill(_F32_ZERO)
+
+        for j in range(degree):
+            y = vals[j]
+            if j == 0:
+                acc[1:] = y
+                continue
+            self._box_plus_into(acc, y, aux, scratch.work[:2 * degree])
+            if j == 1:
+                acc[2:] = aux[2:]
+                acc[0] = y
+            else:
+                acc[:j] = aux[:j]
+                acc[j + 1:] = aux[j + 1:]
+
+        np.multiply(acc, alpha, out=out)
+        np.clip(out, -20.0, 20.0, out=out)
+
+    def _sweep_checks(
+        self,
+        total_llrs: np.ndarray,
+        msgs: np.ndarray,
+        scratch: "_SweepScratch",
+        alpha: float,
+        beta: float,
+        damping: float,
+        spa: bool,
+        reverse: bool,
+    ) -> None:
+        """
+        One layered check-node sweep, mutating `total_llrs` and `msgs` in place.
+
+        **The sweep stays serial across checks on purpose.** The schedule is layered: a check
+        reads `total_llrs` entries that earlier checks in the same sweep have already written,
+        so updating all 139 checks from one snapshot is the *flooding* schedule instead - a
+        different decoder, which converges differently and would move every threshold in
+        wiki/16. There is no order-preserving way around it either: the dual-diagonal parity
+        structure puts checks p and p+1 on a shared parity bit, so consecutive checks always
+        conflict, and no reordering into independent groups exists.
+
+        **Only schedule 2's box-plus fold is vectorised, because only it is worth vectorising.**
+        Measured per sweep on this code: the min-sum schedules cost 2.1 ms and schedule 2 costs
+        34.4 ms, so the sum-product fold is ~86% of a full cascade. Rewriting the min-sum edge
+        loop in NumPy was tried and made it *slower* (3.8 ms against 2.1 ms): at a check degree
+        of 6 or 7, a ufunc dispatch costs more than the scalar arithmetic it replaces. The fold
+        wins because it is the one place where vectorising removes `exp`/`log1p` *calls* rather
+        than merely widening them. Measure before extending this either way.
+
+        Every intermediate stays float32 and every operation keeps the reference's order, so
+        the messages are bit-identical; `tests/test_ldpc_vectorized_equivalence.py` pins that
+        against a transcription of the scalar sweep.
+        """
+        check_order = self._check_order_reverse if reverse else self._check_order_forward
+
+        for c in check_order:
+            vars_connected = self.check_to_vars[c]
+            num_vars = len(vars_connected)
+            lo = int(self._edge_lo[c])
+            msgs_c = msgs[lo:lo + num_vars]
+
+            v_to_c_vals = scratch.vals[:num_vars]
+            min1, min2 = _MIN_SENTINEL, _MIN_SENTINEL
+            min1_idx = -1
+            prod_sign = 1.0
+
+            for i, v in enumerate(vars_connected):
+                val = total_llrs[v] - msgs_c[i]
+                v_to_c_vals[i] = val
+                sign = 1.0 if val >= 0 else -1.0
+                prod_sign *= sign
+                mag = abs(val)
+                if mag < min1:
+                    min2 = min1
+                    min1 = mag
+                    min1_idx = i
+                elif mag < min2:
+                    min2 = mag
+
+            if spa:
+                self._spa_messages(v_to_c_vals, num_vars, alpha, scratch.msg[:num_vars], scratch)
+
+            for i, v in enumerate(vars_connected):
+                if spa:
+                    new_msg = scratch.msg[i]
+                else:
+                    val = v_to_c_vals[i]
+                    self_sign = 1.0 if val >= 0 else -1.0
+                    edge_sign = prod_sign * self_sign
+                    min_mag = min2 if i == min1_idx else min1
+                    new_msg = edge_sign * max(0.0, alpha * min_mag - beta)
+
+                damped_msg = (1.0 - damping) * msgs_c[i] + damping * new_msg
+                diff = damped_msg - msgs_c[i]
+                msgs_c[i] = damped_msg
+                total_llrs[v] += diff
 
     def decode_min_sum(self, llr_channel: np.ndarray) -> Tuple[bool, np.ndarray, int]:
         """
@@ -337,9 +588,9 @@ class Z30LdpcCodec:
         input_llr = np.array(llr_channel, dtype=np.float32)
 
         # 1. Check if raw channel hard decisions already form a valid codeword
-        raw_hard = np.array([1 if x < 0 else 0 for x in input_llr], dtype=np.uint8)
+        raw_hard = (input_llr < 0).astype(np.uint8)
         raw_payload = raw_hard[:63]
-        raw_crc = int("".join(str(b) for b in raw_hard[63:77]), 2)
+        raw_crc = _bits_to_int(raw_hard[63:77])
         if self.compute_crc14(raw_payload) == raw_crc:
             if np.all(self.compute_syndrome(raw_hard) == 0):
                 return True, raw_hard[:self.k], 1
@@ -354,6 +605,7 @@ class Z30LdpcCodec:
         min_syndrome_weight = 999
         total_iterations = 0
         best_total_llrs = np.copy(input_llr)
+        scratch = _SweepScratch(self._max_check_degree)
 
         for sched in schedules:
             total_llrs = np.copy(input_llr)
@@ -362,65 +614,27 @@ class Z30LdpcCodec:
                 # dither_vector(). This is what keeps a seeded benchmark reproducible.
                 total_llrs += dither_vector(input_llr, self.n)
 
-            # Check-to-variable message buffers
-            c_to_v = [np.zeros(len(self.check_to_vars[c]), dtype=np.float32) for c in range(self.m)]
-            check_order = list(range(self.m))[::-1] if sched['reverse'] else list(range(self.m))
+            # Check-to-variable messages, one flat array indexed by _edge_lo/_edge_hi.
+            c_to_v = np.zeros(self._n_edges, dtype=np.float32)
+            is_spa = sched['mode'] == 'SPA'
 
             for iteration in range(1, sched['iters'] + 1):
                 total_iterations += 1
 
                 # Layered Schedule Check-Node Sweep
-                for c in check_order:
-                    vars_connected = self.check_to_vars[c]
-                    num_vars = len(vars_connected)
-
-                    # Compute incoming variable-to-check messages
-                    v_to_c_vals = np.zeros(num_vars, dtype=np.float32)
-                    min1, min2 = 999999.0, 999999.0
-                    min1_idx = -1
-                    prod_sign = 1.0
-
-                    for i, v in enumerate(vars_connected):
-                        val = total_llrs[v] - c_to_v[c][i]
-                        v_to_c_vals[i] = val
-                        sign = 1.0 if val >= 0 else -1.0
-                        prod_sign *= sign
-                        mag = abs(val)
-                        if mag < min1:
-                            min2 = min1
-                            min1 = mag
-                            min1_idx = i
-                        elif mag < min2:
-                            min2 = mag
-
-                    # Update check-to-variable messages and variable total LLRs
-                    for i, v in enumerate(vars_connected):
-                        val = v_to_c_vals[i]
-                        self_sign = 1.0 if val >= 0 else -1.0
-                        edge_sign = prod_sign * self_sign
-                        min_mag = min2 if i == min1_idx else min1
-
-                        if sched['mode'] == 'SPA':
-                            box_acc = 999.0
-                            first = True
-                            for j in range(num_vars):
-                                if j != i:
-                                    if first:
-                                        box_acc = v_to_c_vals[j]
-                                        first = False
-                                    else:
-                                        box_acc = self._box_plus(box_acc, v_to_c_vals[j])
-                            new_msg = np.clip(sched['alpha'] * box_acc, -20.0, 20.0)
-                        else:
-                            new_msg = edge_sign * max(0.0, sched['alpha'] * min_mag - sched['beta'])
-
-                        damped_msg = (1.0 - sched['damping']) * c_to_v[c][i] + sched['damping'] * new_msg
-                        diff = damped_msg - c_to_v[c][i]
-                        c_to_v[c][i] = damped_msg
-                        total_llrs[v] += diff
+                self._sweep_checks(
+                    total_llrs,
+                    c_to_v,
+                    scratch,
+                    sched['alpha'],
+                    sched['beta'],
+                    sched['damping'],
+                    is_spa,
+                    sched['reverse'],
+                )
 
                 # Hard decisions
-                hard_decision = np.array([1 if x < 0 else 0 for x in total_llrs], dtype=np.uint8)
+                hard_decision = (total_llrs < 0).astype(np.uint8)
                 syndrome = self.compute_syndrome(hard_decision)
                 syn_weight = int(np.sum(syndrome))
 
@@ -433,14 +647,14 @@ class Z30LdpcCodec:
                 if syn_weight == 0:
                     info_bits = hard_decision[:self.k]
                     payload = info_bits[:63]
-                    rcvd_crc = int("".join(str(b) for b in info_bits[63:]), 2)
+                    rcvd_crc = _bits_to_int(info_bits[63:])
                     if self.compute_crc14(payload) == rcvd_crc:
                         return True, info_bits, total_iterations
 
                 # Trellis-IRA Parity Check when payload CRC matches received CRC
                 tentative_payload = hard_decision[:63]
                 tentative_crc = self.compute_crc14(tentative_payload)
-                rcvd_crc = int("".join(str(b) for b in hard_decision[63:77]), 2)
+                rcvd_crc = _bits_to_int(hard_decision[63:77])
 
                 if tentative_crc == rcvd_crc:
                     crc_bits = np.array([(tentative_crc >> (13 - b)) & 1 for b in range(14)], dtype=np.uint8)
@@ -455,7 +669,7 @@ class Z30LdpcCodec:
             if min_syndrome_weight == 0:
                 info_bits = best_codeword[:self.k]
                 payload = info_bits[:63]
-                rcvd_crc = int("".join(str(b) for b in info_bits[63:]), 2)
+                rcvd_crc = _bits_to_int(info_bits[63:])
                 if self.compute_crc14(payload) == rcvd_crc:
                     return True, info_bits, total_iterations
 
@@ -499,7 +713,7 @@ class Z30LdpcCodec:
             if best_osd_cw is not None:
                 info_bits = best_osd_cw[:self.k]
                 payload = info_bits[:63]
-                rcvd_crc = int("".join(str(b) for b in info_bits[63:]), 2)
+                rcvd_crc = _bits_to_int(info_bits[63:])
                 if self.compute_crc14(payload) == rcvd_crc:
                     return True, info_bits, total_iterations
 

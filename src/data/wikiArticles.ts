@@ -2922,8 +2922,9 @@ Two practical notes:
   AGENTS.md §5 requires before it can land. (Whether that sigma shift changes any decoded bit is
   itself unmeasured: at the SNRs probed, every LLR was already at the ±25 clip, which hides the
   difference. That is a question for a benchmark, not for this paragraph.)
-- **\`decode_min_sum\` internally.** The opportunity is running many decodes at once, not speeding
-  up one 216-bit decode.
+- **\`decode_min_sum\` across frames.** The opportunity there is running many decodes at once. A
+  single 216-bit decode is a different question, and one this page used to answer wrongly — see
+  [below](#-what-a-decode-actually-costs).
 - **Anything reachable from the transmit path.** \`canTransmit()\`, \`setPtt()\`, \`withCatLock()\`,
   \`RigStateTracker\` and the GPIO watchdog are already concurrent in exactly the ways they need
   to be, and are out of scope. See
@@ -2931,6 +2932,57 @@ Two practical notes:
 
 The browser benchmark (\`src/dsp/monteCarloEngine.ts\`) still runs on the main JS thread. Moving
 it into a Worker is the same problem with a different mechanism and has not been done.
+
+---
+
+## ⏱️ What a decode actually costs
+
+A sweep's wall clock is dominated by frames that **fail**. A frame that converges leaves the
+decoder in single-digit iterations; a frame below threshold runs all four schedules to their caps
+— 150 iterations — and pays for every one of them. Profiled on this code at 6000 Hz, one
+\`decode_min_sum\` call on a frame at -26 dB took **1.64 s**, against 2.6 ms for a frame at -22 dB
+that converged on the first iteration.
+
+Where that 1.64 s went is not where the shape of the code suggests. Measured per sweep, median of
+12 sweeps over 3 real frames:
+
+| Schedule | Cap | Cost per sweep, as it stood | Share of a full cascade |
+| :--- | ---: | ---: | ---: |
+| 1 — normalized min-sum | 45 | 2.00 ms | 6% |
+| 2 — log-domain sum-product (box-plus) | 40 | **33.04 ms** | **86%** |
+| 3 — normalized min-sum, reverse | 35 | 2.02 ms | 5% |
+| 4 — dithered normalized min-sum | 30 | 2.01 ms | 4% |
+
+**Schedule 2 was 86% of the cost of a failing decode**, at 16× the per-sweep cost of a min-sum
+schedule. It is the only schedule that evaluates \`_box_plus\` — 5,838 times per sweep, each call
+two NumPy scalar \`exp\`/\`log1p\` dispatches — and a NumPy call on one number costs about what a
+call on seven numbers costs. So the fold was rewritten to step its *d* leave-one-out folds as *d*
+lanes together, paying the transcendentals once per step instead of once per (edge, step) pair:
+**33.04 ms → 16.63 ms per sweep (1.99×)**, and a full failing cascade **1.64 s → 0.92 s (1.77×)**.
+
+**Nothing about the result moved, and that is the point of the change rather than a caveat on
+it.** Three seeded sweeps — AWGN blind-acquisition, the genie-aided bound, and CCIR-moderate
+fading — were run before and after and compared field by field: **145 fields across 11 SNR points,
+all identical**, successes, FER, average iterations and the acquisition RMS columns alike.
+\`tests/test_ldpc_vectorized_equivalence.py\` holds the line going forward by pinning the sweep
+against a transcription of the scalar one, bit for bit on float32 state rather than "same decodes
+on the frames we tried".
+
+Three things were tried and **rejected on measurement**, and are recorded because each looks like
+the obvious next step:
+
+| Idea | Why not |
+| :--- | :--- |
+| Vectorise the min-sum edge loop the same way | **Slower**: 3.8 ms against 2.1 ms per sweep. At a check degree of 6 or 7, a ufunc dispatch costs more than the scalar arithmetic it replaces. Vectorising wins in schedule 2 because it removes \`exp\`/\`log1p\` *calls*, not because arrays are involved. |
+| Update all 139 checks from one snapshot | That is the *flooding* schedule, not the layered one both codebases specify. It converges differently — a different decoder, and every threshold on this page would need re-measuring. Nor is there an order-preserving way to group checks: the dual-diagonal parity structure puts checks *p* and *p+1* on a shared parity bit, so consecutive checks always conflict. |
+| Forward/backward cumulative leave-one-out in the fold | The standard O(d) trick, but it folds the suffix from the right, and box-plus is not associative in floating point. A few ULP away is a different decoder. The lane-parallel form keeps each lane's fold order exactly. |
+
+The practical value is headroom rather than sensitivity. A slot gives 4.5 s for decode and SIC
+([03](03-DSP-&-Physical-Layer-Specification.md)), and \`sic_decoder.py\` will try up to
+\`SIC_MAX_CANDIDATES\` (16) candidates on each of three passes with no wall-clock guard, so the
+cost of a candidate that *fails* to decode is what bounds how many can be tried. This does not
+make z-30 decode anything it could not decode before; it buys back time that could be spent
+trying more.
 
 ---
 
@@ -3078,6 +3130,7 @@ What the suite covers, and why each test is there:
 | \`tests/rigProbeAndWatchdog.test.mjs\` | The CAT defects that only appear when two things happen at once, plus the timers nothing ever let run: the tuning-resolution classification table, a QSY landing mid-probe (which used to be undone on the wire while the tracker was told the pre-QSY dial), a poll reading the probe's throwaway test frequency as a fault, \`pollRigOnce()\` driven through the real controller rather than by poking the tracker, and the \`MAX_TX_SECONDS\` watchdog actually firing and unkeying the hardware |
 | \`tests/dspDeterminism.test.mjs\` | An unseeded generator anywhere the decode path can reach — the defect class that has now recurred twice, in the LDPC dither and again in \`addCalibratedAwgn\`. Asserts byte-identical output across two runs, and checks the noise is still *calibrated* noise by measuring its variance and Gaussian shape off the produced samples, so "deterministic" cannot be achieved by returning a constant |
 | \`tests/test_benchmark_parallel.py\` | \`--workers\` becoming more than a wall-clock knob. Asserts the sweep produces an identical curve on one process and on several, that frame generation is unaffected by the batch size frames are dispatched in, that the receive chain is a pure function of its input and leaves that input alone, and that results are filed by frame index rather than by the order an executor hands them back — driven by an executor that deliberately returns them backwards, because \`concurrent.futures.map\` re-imposes input order and would hide the bug |
+| \`tests/test_ldpc_vectorized_equivalence.py\` | The decoder's check-node sweep being optimised into a *different* decoder. Pins the shipped sweep against a transcription of the scalar one **bit for bit** — \`np.array_equal\` on the float32 LLR and message state after each of six consecutive sweeps, for all four schedules, on real frames from -19 to -26 dB — plus a full-cascade comparison covering the hard-decision, CRC-field and parity-accumulation paths rewritten alongside it. A speed change that moves a decoded bit is a change to the published thresholds, and this is what makes that impossible to do by accident |
 | \`tests/test_sic_candidate_detection.py\` | The SIC candidate detector inventing carriers out of noise, and the two languages' detectors diverging again. The raw-bin detector this replaced produced ~52 spurious candidates per frame from pure noise |
 | \`tests/test_git_sync.py\` | The updater doing anything other than a fast-forward — a self-update that could discard an operator's local changes or move the checkout to an unrelated history |
 | \`tests/test_updater_cli.py\` | The layer above that engine: \`run_updater\` turning a \`SyncStatus\` into the wrong exit code, so a startup script never notices the box is behind or reports failure forever on a current one — and an interrupted prompt or a closed stdin being read as consent to update |
