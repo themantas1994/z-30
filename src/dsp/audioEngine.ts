@@ -137,6 +137,24 @@ class Z30AudioEngine {
     return this.isTxActive ? this.activeTxToneFreqHz : null;
   }
 
+  /**
+   * Whether the currently selected output device can carry two discrete channels.
+   *
+   * The Right-Channel Audio PTT Tone method (and the Tune button's carrier when that method is
+   * selected) puts the 16-MFSK data on the left channel and a continuous keying tone on the
+   * right. On a device whose hardware only exposes one output channel - exactly the CM108 audio
+   * fobs, HT audio cables and SignaLink jumpers this method's own catalog entry names as its
+   * targets - the browser downmixes L+R into that one channel by summing them. The tone (0.9
+   * peak, continuous, unmodulated) then swamps the data (0.5 peak, GFSK) in the physical output,
+   * so the radio radiates what looks like a fixed tone at the keying frequency instead of the
+   * frame. `maxChannelCount` is the only reliable signal Web Audio gives for this before the
+   * fact; callers must refuse to enable the right-channel tone when it reports less than 2.
+   */
+  public supportsStereoOutput(): boolean {
+    this.initAudioContext();
+    return (this.ctx?.destination.maxChannelCount ?? 1) >= 2;
+  }
+
   public subscribe(listener: () => void): () => void {
     this.stateListeners.add(listener);
     return () => this.stateListeners.delete(listener);
@@ -167,6 +185,20 @@ class Z30AudioEngine {
       this.txGain = this.ctx.createGain();
       this.txGain.gain.setValueAtTime(0.7, this.ctx.currentTime);
       this.txGain.connect(this.masterGain);
+
+      // Ask the destination for real stereo explicitly. Several implementations otherwise leave
+      // AudioDestinationNode.channelCount at 1 even when the hardware can do 2, which silently
+      // downmixes any 2-channel buffer (data on left, PTT tone on right) into one channel by
+      // summing L+R - see supportsStereoOutput() below for what that does on the air.
+      try {
+        const destMax = this.ctx.destination.maxChannelCount || 1;
+        this.ctx.destination.channelCount = Math.min(2, Math.max(1, destMax));
+        this.ctx.destination.channelCountMode = 'explicit';
+        this.ctx.destination.channelInterpretation = 'discrete';
+      } catch {
+        // Some implementations make channelCount read-only for the destination node; the
+        // maxChannelCount check in supportsStereoOutput() is what actually gates the tone.
+      }
 
       // Route TX audio to destination (speakers / rig line-out)
       this.masterGain.connect(this.ctx.destination);
@@ -776,6 +808,20 @@ class Z30AudioEngine {
       return false;
     }
 
+    if (options?.enableRightTone && !this.supportsStereoOutput()) {
+      // See supportsStereoOutput(): on a mono-only device this would downmix the keying tone
+      // onto the same channel as the data and radiate a fixed tone instead of the frame. Refuse
+      // rather than transmit that, the same way a malformed symbol sequence is refused below.
+      console.error(
+        '[AudioEngine] Refusing to transmit: the Right-Channel Audio PTT Tone method needs a ' +
+        'true 2-channel output device, but the selected output reports only 1 channel. On mono ' +
+        'hardware the keying tone gets summed onto the data channel and the radio transmits a ' +
+        'fixed tone instead of the 16-MFSK frame. Choose a different PTT method or a stereo-' +
+        'capable audio output device.'
+      );
+      return false;
+    }
+
     const sampleRate = this.ctx.sampleRate;
     const leadInSec = (options?.leadInMs || 20) / 1000;
     const hangTimeSec = (options?.hangTimeMs || 30) / 1000;
@@ -860,11 +906,24 @@ class Z30AudioEngine {
     // silent refusal left the transmitter keyed with nothing to transmit.
     this.initAudioContext();
     if (!this.ctx || !this.txGain) return false;
+
+    const enableRightTone = Boolean(options?.enableRightTone);
+    if (enableRightTone && !this.supportsStereoOutput()) {
+      // Same hazard as play16MfskSequence(): a mono-only device sums the panned data and tone
+      // carriers back into one channel, so refuse rather than radiate the tone alone as if it
+      // were the frame.
+      console.error(
+        '[AudioEngine] Refusing to start the tune carrier: the Right-Channel Audio PTT Tone ' +
+        'method needs a true 2-channel output device, but the selected output reports only 1 ' +
+        'channel. Choose a different PTT method or a stereo-capable audio output device.'
+      );
+      return false;
+    }
+
     this.stopTransmission();
     this.isTxActive = true;
     this.activeTxToneFreqHz = freqHz;
 
-    const enableRightTone = Boolean(options?.enableRightTone);
     const rightToneFreq = options?.toneFreqHz || 1000;
 
     let dataPanner: StereoPannerNode | null = null;
