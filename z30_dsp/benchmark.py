@@ -28,11 +28,34 @@ decode threshold. The demodulator is handed things a real receiver has to work o
 Every one of those is a real loss in a real contact, and none of them is present in `ideal`.
 Quoting that figure beside a mode's published over-the-air threshold - FT8's -21 dB, say,
 which is WSJT-X's measured number and *includes* all of those losses - compares two different
-quantities and flatters this one. Measured on this code at seed DEFAULT_BENCHMARK_SEED, 40
-frames per point: the bound is -24.6 dB, while the blind-acquisition threshold is -23.1 dB on
-AWGN. The gap between them - 1.5 dB - is the acquisition loss, what it costs to *find* a
-3.125 Hz-spaced signal rather than be told where it is. wiki/16 carries the full set,
-including the two fading presets, and the README states the comparison in the same terms.
+quantities and flatters this one. Measured on this code at seed DEFAULT_BENCHMARK_SEED, 200
+frames per point: the bound is -24.58 dB [-24.69, -24.48], while the blind-acquisition
+threshold is -22.92 dB [-23.07, -22.79] on AWGN. The gap between them - 1.66 dB - is the
+acquisition loss, what it costs to *find* a 3.125 Hz-spaced signal rather than be told where
+it is. wiki/16 carries the full set, including the ITU-R F.1487 fading conditions, and the
+README states the comparison in the same terms.
+
+THE METHOD IS NOT INVENTED HERE
+-------------------------------
+Everything about how these numbers are produced is the convention the modes z-30 is compared
+against already use, so that the figures mean the same thing:
+
+  * Sensitivity is the SNR in a 2500 Hz reference noise bandwidth at which decode probability
+    reaches 50%. That is how WSJT-X publishes every one of its modes, and it is the only
+    reason an FT8 figure and a z-30 figure can sit in the same column.
+  * It is measured by Monte Carlo simulation through the decoder that SHIPS, not through a
+    model of it. `demodulate_mfsk_llrs` and `Z30LdpcCodec.decode_min_sum` here are the same
+    functions `sic_decoder.py` calls on live audio. A benchmark that reimplements the receiver
+    measures the reimplementation - see RECEIVER_PILOT_COHERENCE for what that cost when the
+    two drifted apart.
+  * The channels are AWGN plus the named test conditions of Recommendation ITU-R F.1487; see
+    channel.WATTERSON_PRESETS.
+  * A published sensitivity figure excludes a priori information. The sweep runs the ordinary
+    decoder; the hypothesis ladder is a separate instrument (`--ap`) reported separately, the
+    same way WSJT-X's tables give "no AP" and "max AP" as two different numbers.
+  * A simulated error rate is quoted with a confidence interval, not as a bare point estimate.
+    Every decode rate here carries its 95% Wilson score interval and every crossing carries the
+    band those intervals imply - see wilson_interval and PUBLISHABLE_FRAMES_PER_POINT.
 
 Reproducibility: every run is seeded (`--seed`, default DEFAULT_BENCHMARK_SEED). Record the
 seed alongside any published curve; an unseeded number cannot be reproduced, bisected, or

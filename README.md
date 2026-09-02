@@ -51,9 +51,9 @@ walks through the setup wizard, audio levels, time sync and your first contact i
 
 ## Why z-30
 
-- **Deep weak-signal decoding.** -23.1 dB SNR at 50% decode probability on AWGN — see
+- **Deep weak-signal decoding.** -22.9 dB SNR at 50% decode probability on AWGN — see
   [the honest numbers below](#about-that-sensitivity-figure) for exactly what that does and does
-  not mean next to other modes.
+  not mean next to other modes, including the channel on which it does not work at all.
 - **Narrow enough to pack a band.** 50.0 Hz nominal occupied bandwidth (49.8 Hz measured), so many
   signals fit in the space one SSB voice contact would use.
 - **Recovers collisions, not just clean signals.** Three-pass SIC decodes co-channel stations that
@@ -94,30 +94,41 @@ walks through the setup wizard, audio levels, time sync and your first contact i
 | **Occupied bandwidth** | 50.0 Hz nominal — **49.8 Hz measured** at 99% occupancy, 66 Hz at -40 dB |
 | **Cycle** | 30.0 s UTC slots · 24.0 s active TX (75 symbols) · 6.0 s decode + guard |
 | **FEC** | IRA-LDPC (216, 77), rate ≈ 0.356, with CRC-14 |
-| **Decode threshold (AWGN, blind acquisition)** | **-23.1 dB SNR at 50%**, -21.7 dB at 90% (2500 Hz reference) |
-| **Decode threshold (CCIR moderate fading)** | -21.3 dB at 50% |
+| **Decode threshold (AWGN, blind acquisition)** | **-22.9 dB SNR at 50%**, -22.1 dB at 90% (2500 Hz reference, 200 frames/point) |
+| **Decode threshold (ITU-R F.1487 mid-latitude moderate)** | -21.4 dB at 50% |
+| **ITU-R F.1487 high-latitude moderate (3 ms / 10 Hz)** | **does not decode** — 10 Hz Doppler spread is wider than the 3.125 Hz tone spacing |
 | **Collision recovery** | 3-pass successive interference cancellation |
 | **Platforms** | Android (PWA & Termux), Ubuntu/Debian, Arch, Windows 10/11, Raspberry Pi, generic Linux |
 
 ### About that sensitivity figure
 
--23.1 dB is measured the way other modes publish theirs: random carrier offset, random timing
-offset, non-coherent demodulation, and a receiver handed nothing but audio, which finds the
-frame and estimates the noise floor itself. **On AWGN that is 2.1 dB deeper than FT8's published
--21.0 dB — and z-30 transmits for 24.0 s against FT8's 12.64 s, which is 2.8 dB more energy, to
-carry 14 fewer message bits.** So it buys depth with airtime, not with a more efficient code;
-per second on the air it is marginally behind FT8. Both halves of that belong in any quote of
-the number.
+-22.9 dB is measured the way other modes publish theirs: sensitivity is the SNR in a 2500 Hz
+reference bandwidth at which decode probability reaches 50%, measured by seeded Monte Carlo
+through the decoder that ships, with random carrier offset, random timing offset, non-coherent
+demodulation, and a receiver handed nothing but audio, which finds the frame and estimates the
+noise floor itself. **On AWGN that is 1.9 dB deeper than FT8's published -21.0 dB — and z-30
+transmits for 24.0 s against FT8's 12.64 s, which is 2.8 dB more energy, to carry 14 fewer
+message bits.** So it buys depth with airtime, not with a more efficient code; per second on the
+air it is marginally behind FT8. Both halves of that belong in any quote of the number.
+
+**And there is a third half, which is the one a comparison usually leaves out.** On the ITU-R
+F.1487 high-latitude moderate channel — 3 ms delay spread, 10 Hz Doppler spread, one of the
+conditions WSJT-X publishes every mode against — z-30 decoded 3 frames out of 1,400 across
+-10 dB to +20 dB — two of them at the *lowest* SNR swept, and 30 dB of extra signal buys
+nothing. The 24-second symbol-rich frame that buys
+the depth on a quiet path is the same thing that loses the signal entirely when the ionosphere
+moves faster than the symbol does: 10 Hz of Doppler spread is wider than the whole 3.125 Hz
+tone spacing. FT8's 0.16 s symbols make the opposite trade.
 
 An earlier version of this project claimed a "+4.0 dB advantage" by comparing its own
-genie-aided bound against FT8's on-air number; that claim stays withdrawn, and the 2.1 dB above
-is not a revival of it — it is blind-acquisition on both sides. The genie-aided bound (-24.6 dB)
-is still reported, but separately, because 1.5 dB of it is simply the cost of *finding* the
+genie-aided bound against FT8's on-air number; that claim stays withdrawn, and the 1.9 dB above
+is not a revival of it — it is blind-acquisition on both sides. The genie-aided bound (-24.58 dB)
+is still reported, but separately, because 1.66 dB of it is simply the cost of *finding* the
 signal.
 
-Where z-30 also differs is occupied bandwidth, multi-pass SIC, and behaviour on a disturbed
-path. The full curves, the seeds, and the commands to reproduce them are in
-**[16. Benchmarking, Testing & CI](wiki/16-Benchmarking-Testing-&-CI.md)**.
+Every figure here comes from a seeded run at 200 frames per point and carries a 95% confidence
+interval in the wiki table. The full curves, the seeds, and the commands to reproduce them are
+in **[16. Benchmarking, Testing & CI](wiki/16-Benchmarking-Testing-&-CI.md)**.
 
 ---
 

@@ -37,13 +37,18 @@ carries a 63-bit message plus a 14-bit CRC behind a rate-0.356 LDPC code.
 
 Its seeded benchmark — run through the real acquisition path, with random carrier and timing
 offsets, no knowledge of the noise level and non-coherent demodulation — crosses 50% decode at
-**-23.1 dB SNR** on AWGN and **-21.3 dB** on a CCIR-moderate fading path, in a 2500 Hz
-reference bandwidth. **That is 2.1 dB deeper than FT8's published -21 dB, measured the same
-way — and it costs 24.0 s of airtime against FT8's 12.64 s (2.8 dB more energy) for 14 fewer
-message bits, so z-30 buys depth with time rather than with a more efficient code.** The
-genie-aided bound, with exact carrier, timing and noise level handed to the demodulator, is
-1.5 dB better again at -24.6 dB; it is reported separately because no other mode's published
-figure is measured that way. See
+**-22.9 dB SNR** on AWGN and **-21.4 dB** on the ITU-R F.1487 mid-latitude moderate fading
+path, in a 2500 Hz reference bandwidth (seed 20260830, 200 frames per point). **That is 1.9 dB
+deeper than FT8's published -21 dB, measured the same way — and it costs 24.0 s of airtime
+against FT8's 12.64 s (2.8 dB more energy) for 14 fewer message bits, so z-30 buys depth with
+time rather than with a more efficient code.** The genie-aided bound, with exact carrier, timing
+and noise level handed to the demodulator, is 1.66 dB better again at -24.58 dB; it is reported
+separately because no other mode's published figure is measured that way.
+
+**The same benchmark says where the mode does not work.** On the ITU-R F.1487 high-latitude
+moderate channel (3 ms / 10 Hz), z-30 decodes essentially nothing at any signal level — the
+Doppler spread is wider than the whole 3.125 Hz tone spacing. The long symbol that buys the
+depth is the same thing that loses a fast-moving ionosphere. See
 [16. Benchmarking, Testing & CI](16-Benchmarking-Testing-&-CI.md).
 
 ### Key technical innovations

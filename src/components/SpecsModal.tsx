@@ -12,7 +12,7 @@ import { LDPC_MAX_ITERATIONS, Z30_DECODE_SCHEDULES, Z30_LDPC_PARAMS } from '../d
 // Same reasoning for the sensitivity figures below: Z30_SPECS is the source AGENTS.md section 5
 // names for these numbers (wiki/16), and this modal used to retype them as literal JSX text
 // instead of importing it - the exact failure mode the LDPC constants above were fixed for.
-import { Z30_SPECS } from '../dsp/z30Constants';
+import { FT8_ONAIR_THRESHOLD_DB, Z30_SPECS } from '../dsp/z30Constants';
 
 interface SpecsModalProps {
   isOpen: boolean;
@@ -70,7 +70,7 @@ export const SpecsModal: React.FC<SpecsModalProps> = ({ isOpen, onClose }) => {
               <span className="text-[9px] text-[#888] block uppercase">AWGN 50% (BLIND ACQ.)</span>
               <span
                 className="font-bold text-purple-400 text-xs"
-                title={`Measured with random carrier and timing offsets through blind Costas acquisition, with the receiver estimating its own noise floor and demodulating non-coherently - the figure comparable with other modes' published on-air numbers. The genie-aided bound, with exact sigma, carrier and timing handed to the demodulator, is ${Z30_SPECS.SNR_IDEAL_BOUND_AWGN} dB; the 1.5 dB gap is acquisition loss.`}
+                title={`Measured with random carrier and timing offsets through blind Costas acquisition, with the receiver estimating its own noise floor and demodulating non-coherently - the figure comparable with other modes' published on-air numbers. The genie-aided bound, with exact sigma, carrier and timing handed to the demodulator, is ${Z30_SPECS.SNR_IDEAL_BOUND_AWGN} dB; the ${(Z30_SPECS.SNR_THRESHOLD_AWGN - Z30_SPECS.SNR_IDEAL_BOUND_AWGN).toFixed(1)} dB gap is acquisition loss.`}
               >
                 {Z30_SPECS.SNR_THRESHOLD_AWGN} dB SNR
               </span>
@@ -91,8 +91,8 @@ export const SpecsModal: React.FC<SpecsModalProps> = ({ isOpen, onClose }) => {
               <li><strong>Active Transmission:</strong> 75 symbols * 0.320s = 24.0 seconds.</li>
               <li><strong>Guard & Decode Window:</strong> 6.0 seconds for FFT framing, multi-stage SIC, and LDPC decoding.</li>
               <li><strong>Synchronization:</strong> 21 Costas array sync symbols interleaved throughout the frame for sub-Hz frequency tracking and symbol time offset (DT) estimation.</li>
-              <li><strong>Sensitivity (AWGN, blind acquisition, seeded Monte Carlo):</strong> 50% decode at <strong>{Z30_SPECS.SNR_THRESHOLD_AWGN} dB</strong> SNR; 90% at <strong>{Z30_SPECS.SNR_THRESHOLD_90_AWGN} dB</strong>. Each frame gets a random carrier offset (&plusmn;5 Hz) and timing offset (&plusmn;0.5 s), and the receiver is handed nothing but audio: it finds the frame from the 21 Costas symbols, estimates the noise floor itself, and demodulates non-coherently. This is the figure comparable with other modes' published on-air numbers &mdash; 2.1 dB deeper than FT8's -21.0 dB, bought with 1.9&times; the airtime.</li>
-              <li><strong>Idealised bound (genie-aided, not a threshold):</strong> 50% at {Z30_SPECS.SNR_IDEAL_BOUND_AWGN} dB, 90% at -23.4 dB, measured with the exact noise level, carrier frequency and symbol timing handed to the demodulator. It bounds what the code can do under ideal detection and nothing more. The 1.5 dB gap between the two is what it costs to <em>find</em> a 3.125 Hz-spaced signal rather than be told where it is. Never compare it with another mode's on-air figure.</li>
+              <li><strong>Sensitivity (AWGN, blind acquisition, seeded Monte Carlo):</strong> 50% decode at <strong>{Z30_SPECS.SNR_THRESHOLD_AWGN} dB</strong> SNR; 90% at <strong>{Z30_SPECS.SNR_THRESHOLD_90_AWGN} dB</strong>. Each frame gets a random carrier offset (&plusmn;5 Hz) and timing offset (&plusmn;0.5 s), and the receiver is handed nothing but audio: it finds the frame from the 21 Costas symbols, estimates the noise floor itself, and demodulates non-coherently. This is the figure comparable with other modes' published on-air numbers &mdash; {(FT8_ONAIR_THRESHOLD_DB - Z30_SPECS.SNR_THRESHOLD_AWGN).toFixed(1)} dB deeper than FT8's {FT8_ONAIR_THRESHOLD_DB} dB, bought with 1.9&times; the airtime. On the ITU-R F.1487 high-latitude moderate channel (3 ms / 10 Hz) it does not decode at any SNR: 10 Hz of Doppler spread is wider than the 3.125 Hz tone spacing. Both halves belong to the same design decision.</li>
+              <li><strong>Idealised bound (genie-aided, not a threshold):</strong> 50% at {Z30_SPECS.SNR_IDEAL_BOUND_AWGN} dB, 90% at {Z30_SPECS.SNR_IDEAL_BOUND_90_AWGN} dB, measured with the exact noise level, carrier frequency and symbol timing handed to the demodulator. It bounds what the code can do under ideal detection and nothing more. The {(Z30_SPECS.SNR_THRESHOLD_AWGN - Z30_SPECS.SNR_IDEAL_BOUND_AWGN).toFixed(1)} dB gap between the two is what it costs to <em>find</em> a 3.125 Hz-spaced signal rather than be told where it is. Never compare it with another mode's on-air figure.</li>
             </ul>
           </div>
 
@@ -174,7 +174,7 @@ export const SpecsModal: React.FC<SpecsModalProps> = ({ isOpen, onClose }) => {
                   <td className="p-1.5">8-FSK</td>
                   <td className="p-1.5">47.0 Hz</td>
                   <td className="p-1.5">15 sec</td>
-                  <td className="p-1.5">-21.0 dB</td>
+                  <td className="p-1.5">{FT8_ONAIR_THRESHOLD_DB} dB</td>
                   <td className="p-1.5 text-[#666]">No</td>
                 </tr>
                 <tr className="text-[#888]">
