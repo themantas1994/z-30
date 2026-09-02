@@ -226,7 +226,88 @@ Stated rather than tuned, because the answer depends on it entirely:
 The two halves are reported separately, so anyone whose band is busier or quieter than 50/50 can
 reweight the result instead of taking this one on trust.
 
-<!-- RESULTS TABLE -->
+### What was measured
+
+Three seeded paired sweeps, every frame decoded twice off one demodulation:
+
+| Channel | Seed | Frames / point | Total frames (in-QSO) | Discordant (AP : plain) | Exact McNemar *p* |
+| :--- | ---: | ---: | ---: | ---: | ---: |
+| AWGN | 20260830 | 80 | 880 (444) | **150 : 0** | 1.4 × 10⁻⁴⁵ |
+| Watterson `moderate` | 20260830 | 60 | 540 (280) | **132 : 0** | 3.7 × 10⁻⁴⁰ |
+| AWGN | 7 | 60 | 420 (197) | **92 : 0** | 4.0 × 10⁻²⁸ |
+
+**Not one frame in 1,840 was decoded by the ordinary arm and lost by the AP arm.** That is the
+structural guarantee showing up in the data rather than only in the tests: `decode_with_ap`
+returns the ordinary decode untouched when it succeeds, so the AP arm's decode set is a superset
+by construction.
+
+### The size of it
+
+The 50% crossing over the in-QSO frames — **only** those frames, because they are the population
+the ladder makes a claim about:
+
+| Channel | Seed | Plain | With AP | Shift | In-QSO decode rate |
+| :--- | ---: | ---: | ---: | ---: | :--- |
+| AWGN | 20260830 | −22.88 dB | −24.76 dB | **1.88 dB deeper** | 31.3% → 65.1% |
+| AWGN | 7 | −22.93 dB | −24.75 dB | **1.82 dB deeper** | 33.5% → 80.2% |
+| Watterson `moderate` | 20260830 | −20.90 dB | −23.83 dB | 2.93 dB deeper | 32.1% → 79.3% |
+
+Two independent seeds put the AWGN figure at **1.8–1.9 dB**, and that is the number to quote.
+The fading figure is directionally consistent and larger, but it is interpolated from a noisier
+curve — under Watterson the per-point in-QSO decode counts are not monotone in SNR (the AP arm
+reads 100% at −21.5 dB and 87% at −21.0 dB on ~35 frames a point), so treat 2.93 dB as evidence
+that the effect survives fading, not as a figure of merit.
+
+### What this figure is not
+
+**It is not a new decode threshold for z-30, and must never be quoted as one.** wiki/16's
+−23.1 dB is measured over arbitrary traffic with no a priori information; this is measured over
+the frames of one QSO, with the receiver in that QSO, with AP switched on. A station hearing a
+band that is 10% its own QSO gets a tenth of the frames improved, not a 1.9 dB better receiver.
+The right sentence is *"AP recovers frames the ordinary decoder loses, and for the frames it
+describes it moves the 50% point by 1.8–1.9 dB on AWGN"* — the two halves together or neither,
+the same rule §5 of `AGENTS.md` applies to the FT8 comparison.
+
+The plain arm's own in-QSO crossing (−22.88 dB) sits 0.2 dB off the published −23.1 dB. That is
+not a revision of the published figure: it is the same quantity estimated from ~40 frames per
+point instead of a dedicated sweep, and 0.2 dB is inside that estimate's noise. The published
+threshold is unchanged, and is guaranteed unchanged by the bit-identity tests rather than by
+this sweep.
+
+### The cost side, measured as far as it can be
+
+**Foreign traffic was untouched in all 27 rows of all three sweeps** — the AP arm decoded exactly
+the same foreign frames as the plain arm, everywhere. That is the ladder behaving as designed: a
+frame between two other stations satisfies no hypothesis, the CRC rejects each one, and nothing
+changes. It also means the entire measured gain came from frames the hypothesis actually
+described, which is the result a "50% of the band is your QSO" model could otherwise have
+flattered.
+
+**Zero false decodes** — no CRC-valid codeword carrying a payload other than the transmitted one
+— on either arm, in 1,840 frames.
+
+That last figure is reassuring but it is *not* a measurement of the false-accept rate, and should
+not be reported as one. 1,266 frames failed the ordinary decode and were offered at most four
+hypotheses each: at most ~5,060 attempts. With zero events observed, the rule of three puts the
+95% upper bound at **5.9 × 10⁻⁴ per attempt** — an order of magnitude *above* the analytic
+2⁻¹⁴ ≈ 6.1 × 10⁻⁵ this page quotes. The sweep is entirely consistent with the analytic figure and
+has nowhere near the power to confirm or refute it. The cost stated earlier on this page remains
+analysis, not a measured result, and a sweep large enough to test it has not been run.
+
+### Confidence
+
+`AGENTS.md` §5 sets the bar for a benchmark result at ≥99% confidence that it is comparable to
+real-world behaviour, stated as something checkable. For the primary sweep: the comparison is
+paired at the LLR vector, so both arms see identical channel evidence; it runs the real receive
+chain in `realistic` mode (blind acquisition, blind noise estimation, non-coherent
+demodulation); the operating points are ones the mode actually has to work at; and the exact
+two-sided McNemar test over 150 discordant pairs gives *p* = 1.4 × 10⁻⁴⁵, recomputable from
+`math.comb` in three lines. The replication at an independent seed lands within 0.06 dB.
+
+The remaining threat to real-world comparability is the population model, not the statistics —
+whether half your traffic is really your own QSO. That is why the two halves are reported
+separately, why the shift is quoted over the in-QSO half alone, and why the paragraph above
+insists on quoting both.
 
 ---
 
