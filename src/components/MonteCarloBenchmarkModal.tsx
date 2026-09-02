@@ -257,7 +257,7 @@ export const MonteCarloBenchmarkModal: React.FC<MonteCarloBenchmarkModalProps> =
     if (snr50Threshold !== null) txt += `50% ${resultNoun} (interpolated): ${snr50Threshold.toFixed(2)} dB SNR (2500 Hz BW)\n`;
     if (snr90Threshold !== null) txt += `90% ${resultNoun} (interpolated): ${snr90Threshold.toFixed(2)} dB SNR (2500 Hz BW)\n`;
     if (!isRealistic) {
-      txt += 'NOTE: an ideal-mode figure is a genie-aided BOUND, roughly 1.5 dB optimistic.\n';
+      txt += 'NOTE: an ideal-mode figure is a genie-aided BOUND, roughly 2.3 dB optimistic.\n';
       txt += '      Never quote it against another mode\'s published on-air threshold.\n';
     }
 
@@ -321,8 +321,9 @@ export const MonteCarloBenchmarkModal: React.FC<MonteCarloBenchmarkModalProps> =
         {showConfigDrawer && (
           <div className="bg-[#121212] border-b border-[#333] p-3 text-xs animate-fadeIn space-y-3">
             {/* The measurement mode comes first because it decides what the run MEANS, not
-                just how long it takes. Switching it also moves the sweep range: the two curves
-                sit about 1.5 dB apart, so one range cannot bracket both. */}
+                just how long it takes. Switching it also moves the sweep range: measured at 200
+                frames a point, this engine's two curves sit about 2.3 dB apart, so one range
+                cannot bracket both. */}
             <div className="bg-[#0A0A0A] border border-[#333] p-2 space-y-2">
               <div className="flex flex-wrap items-center gap-3">
                 <span className="text-[10px] text-[#888] uppercase">Measurement mode:</span>
@@ -358,7 +359,7 @@ export const MonteCarloBenchmarkModal: React.FC<MonteCarloBenchmarkModalProps> =
                 ) : (
                   <>
                     The demodulator is handed the exact noise sigma, the exact carrier and perfect symbol
-                    timing. The result is a <strong className="text-yellow-300">bound</strong>, roughly 1.5 dB
+                    timing. The result is a <strong className="text-yellow-300">bound</strong>, roughly 2.3 dB
                     optimistic, and is <strong className="text-yellow-300">not</strong> comparable with any
                     other mode's on-air number. Quoting one against FT8's -21.0 dB is the error wiki/11 §1.1
                     records as withdrawn.

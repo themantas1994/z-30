@@ -441,7 +441,11 @@ public synthesizePhysicalWaveform(
   /**
    * Builds the audio stream a receiver would actually be handed in realistic mode.
    *
-   * Three things the ideal path does not do, and which together cost about 1.5 dB:
+   * Three things the ideal path does not do, and which together cost about 2.3 dB in this
+   * engine (measured: this engine's 50% crossings are -22.94 dB realistic against -25.28 dB
+   * ideal, 200 frames a point, seed 20260830; the Python benchmark's own gap is 1.66 dB, and
+   * wiki/16 records that the two engines' BOUNDS differ by 0.70 dB while their thresholds
+   * differ by 0.02 dB):
    *   - the frame sits at a RANDOM carrier offset, not exactly on the nominal centre;
    *   - it starts at a RANDOM time, not at sample zero;
    *   - it is surrounded by noise-only audio, so the receiver has to find it.
@@ -562,8 +566,8 @@ public synthesizePhysicalWaveform(
   /**
    * Finds a z-30 frame in a stream using only the 21 Costas sync symbols.
    *
-   * The twin of z30_dsp/acquisition.py, and the reason a realistic run is worth about 1.5 dB
-   * less than the genie-aided bound. Two stages, because a search fine enough to be useful is
+   * The twin of z30_dsp/acquisition.py, and the reason a realistic run in this engine measures
+   * about 2.3 dB worse than its genie-aided bound. Two stages, because a search fine enough to be useful is
    * too large to run directly:
    *   1. Coarse: a grid over start time (one fifth of a symbol) and carrier offset (1 Hz),
    *      scored by summing the matched-filter power at the 21 known sync tones.

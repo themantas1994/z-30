@@ -501,11 +501,12 @@ test.
 > larger on a fading path (p = 5 × 10⁻¹¹⁹). See
 > [A benchmark challenging the code](#-a-benchmark-challenging-the-code-the-receiver-measured-was-not-the-receiver-that-shipped).
 
-Both engines now run the same receiver model and land 0.1 dB apart on the threshold, which is
-inside the sampling noise of 40 frames per point. **The Python benchmark is still the
-reference**: it is the one CI runs, the one the seed defaults are pinned to, and the one whose
-output the tables above are copied from. Use the browser engine to see which way a change moved
-the curve without leaving the app; confirm with a seeded Python run before a number reaches
+Both engines run the same receiver model in `realistic` mode and land 0.02 dB apart on the
+threshold — tighter than the interval on either figure. **The Python benchmark is still the
+reference**: it is the one CI runs, the one the seed defaults are pinned to, the one whose
+output the tables above are copied from, and — as the `ideal`-mode table shows — the two are
+not interchangeable everywhere. Use the browser engine to see which way a change moved the
+curve without leaving the app; confirm with a seeded Python run before a number reaches
 documentation.
 
 ### And where they do not agree: `ideal` mode
