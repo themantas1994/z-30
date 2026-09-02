@@ -165,6 +165,65 @@ def dither_vector(llr_channel: "np.ndarray | List[float]", length: int) -> "np.n
     return out
 
 
+#: How far an a priori LLR is pushed beyond the strongest evidence the channel actually
+#: supplied, as a multiple of max|LLR| over the frame.
+#:
+#: WSJT-X's `lib/ft8/ft8b.f90` computes `apmag=maxval(abs(llra))*1.01` and this is a direct
+#: port of that rule. The magnitude is *derived from the frame*, never a constant: a fixed
+#: number large enough to dominate a strong frame would be arbitrarily larger than the evidence
+#: in a weak one, and a fixed number sized for a weak frame would be overridden in a strong one.
+#: Scaling with the frame keeps an AP bit exactly one notch more certain than the most certain
+#: thing the demodulator measured, whatever the signal level.
+#:
+#: The twin of `AP_LLR_MARGIN` in src/dsp/apDecode.ts, pinned by
+#: tests/test_cross_language_parity.py.
+AP_LLR_MARGIN: float = 1.01
+
+
+def ap_llr_magnitude(llr_channel: "np.ndarray | List[float]") -> float:
+    """
+    The magnitude an a priori bit is asserted with, for this frame's channel LLRs.
+
+    `AP_LLR_MARGIN * max(|LLR|)`, WSJT-X's rule. Returns 0.0 for an all-zero frame, which
+    `apply_ap_hypothesis` turns into a no-op rather than a division or a NaN.
+    """
+    arr = np.asarray(llr_channel, dtype=np.float64)
+    return float(AP_LLR_MARGIN * np.max(np.abs(arr))) if arr.size else 0.0
+
+
+def apply_ap_hypothesis(
+    llr_channel: "np.ndarray | List[float]",
+    ap_mask: "np.ndarray | List[int]",
+    ap_bits: "np.ndarray | List[int]",
+) -> "np.ndarray":
+    """
+    A copy of `llr_channel` with every masked position replaced by its a priori LLR.
+
+    Sign convention is this codec's, not WSJT-X's: here L = ln(P(c=0)/P(c=1)) and the hard
+    decision is `llr < 0 -> 1`, so an asserted 0 becomes `+apmag` and an asserted 1 becomes
+    `-apmag`. WSJT-X's `bpdecode174_91` reads the opposite sign and its `apsym=2*bit-1` term
+    carries the flip; transcribing that expression instead of re-deriving it would assert every
+    a priori bit inverted, and every hypothesis would fail its CRC.
+
+    Args:
+        llr_channel: the frame's channel LLRs (216, or 77 when only the information block is
+            being constrained - the length is whatever the caller passes).
+        ap_mask: 1 where the bit is asserted, 0 where the channel is left to speak.
+        ap_bits: the asserted values, read only where `ap_mask` is 1.
+    """
+    out = np.array(llr_channel, dtype=np.float32)
+    mask = np.asarray(ap_mask, dtype=bool)
+    bits = np.asarray(ap_bits, dtype=np.uint8)
+    if mask.size > out.size or bits.size < mask.size:
+        raise ValueError("ap_mask/ap_bits must not be longer than the LLR vector")
+    apmag = ap_llr_magnitude(out)
+    if apmag <= 0.0:
+        return out
+    idx = np.nonzero(mask)[0]
+    out[idx] = np.where(bits[idx] == 0, np.float32(apmag), np.float32(-apmag))
+    return out
+
+
 #: Magnitude the check-node scan initialises its two running minima to.
 #:
 #: A sentinel, not a bound: a magnitude at or above it never replaces `min1`/`min2`, so a check
@@ -505,6 +564,7 @@ class Z30LdpcCodec:
         damping: float,
         spa: bool,
         reverse: bool,
+        ap_pinned: "List[bool] | None" = None,
     ) -> None:
         """
         One layered check-node sweep, mutating `total_llrs` and `msgs` in place.
@@ -528,6 +588,18 @@ class Z30LdpcCodec:
         Every intermediate stays float32 and every operation keeps the reference's order, so
         the messages are bit-identical; `tests/test_ldpc_vectorized_equivalence.py` pins that
         against a transcription of the scalar sweep.
+
+        `ap_pinned` marks variables held at their a priori value: their `total_llrs` entry never
+        receives a check message, so the belief the caller asserted survives every iteration.
+        This is WSJT-X's `bpdecode174_91` rule (`zn(i)=llr(i)` where `apmask(i)==1`) expressed
+        in a layered decoder. Note that the variable-to-check message for a pinned bit is still
+        `total_llrs[v] - msgs_c[i]`, which reproduces WSJT-X's `toc = zn(ibj) - tov(kk,ibj)`
+        exactly - the pin fixes the bit's *belief*, it does not stop the bit from telling its
+        checks what it believes.
+
+        `None` is the ordinary path, and the identity check that selects it is the only thing
+        that path pays: no arithmetic here changes, so an AP-less decode is bit-identical to
+        the one this function performed before AP existed.
         """
         check_order = self._check_order_reverse if reverse else self._check_order_forward
 
@@ -571,21 +643,48 @@ class Z30LdpcCodec:
                 damped_msg = (1.0 - damping) * msgs_c[i] + damping * new_msg
                 diff = damped_msg - msgs_c[i]
                 msgs_c[i] = damped_msg
-                total_llrs[v] += diff
+                if ap_pinned is None or not ap_pinned[v]:
+                    total_llrs[v] += diff
 
-    def decode_min_sum(self, llr_channel: np.ndarray) -> Tuple[bool, np.ndarray, int]:
+    def decode_min_sum(
+        self,
+        llr_channel: np.ndarray,
+        ap_mask: "np.ndarray | List[int] | None" = None,
+    ) -> Tuple[bool, np.ndarray, int]:
         """
         Ultra-Sensitive Multi-Schedule Damped Log-SPA & Layered Normalized Min-Sum LDPC Decoder
         with Trellis-IRA Re-Accumulation and OSD-2 Chase Reliability Search.
 
         Args:
             llr_channel (np.ndarray): Array of 216 soft channel log-likelihood ratios.
+            ap_mask: optional a priori mask, 1 where the corresponding LLR is an asserted belief
+                rather than a measurement. Shorter than 216 is accepted and zero-extended, so a
+                caller constraining only the information block passes 77 values. `llr_channel`
+                must already carry the asserted LLRs at those positions - build both with
+                `apply_ap_hypothesis`, which is what keeps the assertion and the mask from
+                drifting apart. The default of None is the ordinary decode, and it is
+                bit-identical to what this decoder produced before AP existed.
 
         Returns:
             Tuple[bool, np.ndarray, int]: (success_flag, decoded_77_info_bits, iterations)
         """
         assert len(llr_channel) == self.n, f"Expected {self.n} LLRs"
         input_llr = np.array(llr_channel, dtype=np.float32)
+
+        # A Python list of bools, not a NumPy array: this is indexed once per edge per check per
+        # iteration inside `_sweep_checks`, where a NumPy scalar read costs far more than a list
+        # element read. Built once per decode.
+        ap_pinned: "List[bool] | None" = None
+        pinned_indices: np.ndarray = np.zeros(0, dtype=np.intp)
+        if ap_mask is not None:
+            mask_arr = np.zeros(self.n, dtype=bool)
+            supplied = np.asarray(ap_mask, dtype=bool)
+            if supplied.size > self.n:
+                raise ValueError(f"ap_mask has {supplied.size} entries; the code has {self.n} bits")
+            mask_arr[:supplied.size] = supplied
+            if mask_arr.any():
+                ap_pinned = mask_arr.tolist()
+                pinned_indices = np.nonzero(mask_arr)[0]
 
         # 1. Check if raw channel hard decisions already form a valid codeword
         raw_hard = (input_llr < 0).astype(np.uint8)
@@ -613,6 +712,11 @@ class Z30LdpcCodec:
                 # Derived from the channel LLRs, not from the unseeded global RNG - see
                 # dither_vector(). This is what keeps a seeded benchmark reproducible.
                 total_llrs += dither_vector(input_llr, self.n)
+                # A pinned bit is an assertion, not a measurement, so there is nothing there for
+                # stochastic resonance to shake loose. The dither vector itself is still drawn
+                # over all 216 positions from the same seed, so schedule 4 perturbs the
+                # unpinned bits by exactly the values it would have without a mask.
+                total_llrs[pinned_indices] = input_llr[pinned_indices]
 
             # Check-to-variable messages, one flat array indexed by _edge_lo/_edge_hi.
             c_to_v = np.zeros(self._n_edges, dtype=np.float32)
@@ -631,6 +735,7 @@ class Z30LdpcCodec:
                     sched['damping'],
                     is_spa,
                     sched['reverse'],
+                    ap_pinned,
                 )
 
                 # Hard decisions
@@ -678,7 +783,16 @@ class Z30LdpcCodec:
         # =====================================================================
         if min_syndrome_weight <= 14:
             base_payload = best_codeword[:63]
-            ranked_indices = sorted(range(63), key=lambda i: abs(best_total_llrs[i]))
+            # A pinned bit is never a flip candidate. In practice it would not be chosen anyway
+            # - it carries the largest magnitude in the frame by construction, so it sorts last
+            # - but "never" and "not in practice" are different guarantees, and the difference
+            # matters here: flipping one would hand back a codeword that contradicts the very
+            # hypothesis whose CRC is being used to decide the hypothesis was right.
+            flip_candidates = (
+                range(63) if ap_pinned is None
+                else [i for i in range(63) if not ap_pinned[i]]
+            )
+            ranked_indices = sorted(flip_candidates, key=lambda i: abs(best_total_llrs[i]))
             test_indices = ranked_indices[:min(14, len(ranked_indices))]
 
             best_osd_cw = None

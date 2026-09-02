@@ -435,6 +435,7 @@ What the suite covers, and why each test is there:
 | `tests/test_git_sync.py` | The updater doing anything other than a fast-forward — a self-update that could discard an operator's local changes or move the checkout to an unrelated history |
 | `tests/test_updater_cli.py` | The layer above that engine: `run_updater` turning a `SyncStatus` into the wrong exit code, so a startup script never notices the box is behind or reports failure forever on a current one — and an interrupted prompt or a closed stdin being read as consent to update |
 | `tests/test_band_manager.py` | Band-preset persistence, dial-to-band detection across every shipped preset, and `tune_radio()` reporting success when the rig took the QSY but refused the mode change |
+| `tests/test_ap_decode.py` and `tests/apDecode.test.mjs` | A priori decoding reaching further than it should. That an asserted bit survives every iteration even when the whole frame argues against it; that the AP LLR's sign convention is z-30's and not WSJT-X's (getting it backwards asserts every bit inverted and fails silently and totally); that a hypothesis naming other stations is *never* accepted; that AP cannot lose a frame the ordinary decoder found; that a callsign which does not survive the 28-bit packing produces no hypothesis; that the frequency gate fires at both edges of `AP_FREQ_WINDOW_HZ`; and that an empty mask decodes bit-identically to no mask, so every published threshold above still describes the shipped decoder. See [17. A Priori (AP) Decoding](17-A-Priori-(AP)-Decoding.md) |
 | `tests/test_legacy_logger_and_config.py` | The Python-side twins of jobs the web UI already does correctly, and which were therefore never covered: the Tk-path ADIF writer emitting a literal backslash-n instead of a newline, `<TAG:len>` prefixes counting characters instead of UTF-8 bytes, and a station-config save that could truncate `config.json` — which `load_config` then silently replaces with defaults, emptying the callsign the transmit gate needs |
 
 ---
@@ -484,6 +485,28 @@ What the suite covers, and why each test is there:
   service-worker cache name must be build-stamped rather than left as the placeholder.
 - **Repository hygiene**: a LICENSE file containing the MIT text, no tracked build artifacts or
   bytecode, and exactly one JavaScript lockfile.
+
+---
+
+## 🎯 The paired instrument: `--ap`
+
+`python -m z30_dsp.benchmark --ap` does not sweep a curve. It runs a **paired comparison**:
+every frame goes through the channel once, is demodulated once, and the resulting 216 LLRs are
+decoded twice - once by the ordinary decoder and once with the a priori hypothesis ladder behind
+it. Both arms therefore see bit-identical channel evidence, and the statistic is the count of
+frames where they disagreed, tested with an exact two-sided McNemar test (`ap_mcnemar_exact_p`,
+computed from `math.comb` so a reader can recompute it by hand).
+
+This is the shape any comparison of two decoders on this project should take. The alternative -
+two independent sweeps, differenced - buries an effect of a fraction of a dB inside the
+frame-to-frame scatter of the measurement, and the reader has no way to tell which they are
+looking at. It is the same method the four-schedule cascade was established with in the worked
+example above.
+
+Serial by construction: parallelising it would spread a pair across processes for no change to
+the result and one more place for the two arms to diverge. The measured effect and the modelled
+band it was measured over are in
+[17. A Priori (AP) Decoding](17-A-Priori-(AP)-Decoding.md).
 
 ---
 

@@ -181,6 +181,15 @@ const ARTICLES = [
     description: "The two benchmark modes and why the difference matters, the measured decode curves and how to reproduce them, what each test guards, and what CI enforces on every push.",
     tags: ['benchmark', 'monte carlo', 'snr', 'threshold', 'tests', 'pytest', 'ci', 'reproducibility', 'seed'],
   },
+  {
+    id: "ap-decoding",
+    file: "17-A-Priori-(AP)-Decoding.md",
+    slug: "17-A-Priori-(AP)-Decoding",
+    title: "17. A Priori (AP) Decoding",
+    category: "Protocol & DSP",
+    description: "Constraining the LDPC decode with what the QSO state already implies must be in the frame: the hypothesis ladder ported from WSJT-X, the pinning rule, the gates, the paired measurement and what it costs.",
+    tags: ['ap', 'a priori', 'wsjt-x', 'apmask', 'apmag', 'iaptype', 'ldpc', 'decoder', 'qso state', 'napwid'],
+  },
 ];
 
 /** Escapes markdown for embedding in a TypeScript template literal. */

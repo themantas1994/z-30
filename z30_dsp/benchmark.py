@@ -40,17 +40,27 @@ verified by anyone else.
 """
 
 import os
+import math
 import time
 import argparse
 from concurrent.futures import Executor, ProcessPoolExecutor
 from dataclasses import dataclass
-from typing import List, Optional, Tuple, Dict
+from typing import List, Optional, Sequence, Tuple, Dict
 import numpy as np
 
 from z30_dsp.modem import Z30Modulator, Z30Config, codeword_to_symbols
 from z30_dsp.ldpc import Z30LdpcCodec, LDPC_MAX_ITERATIONS
 from z30_dsp.channel import ChannelImpairments, impair_frame, WATTERSON_PRESETS
 from z30_dsp.acquisition import acquire_frame, slot_timing_search_sec
+from z30_dsp.ap_decode import ApHypothesis, build_ap_hypotheses, decode_with_ap
+from z30_dsp.message_codec import (
+    EXTRA_73,
+    EXTRA_RR73,
+    EXTRA_RRR,
+    callsign_round_trips,
+    extra_code_for_report,
+    pack_payload63,
+)
 
 #: Default PRNG seed. Fixed so the default run is reproducible; override with --seed.
 DEFAULT_BENCHMARK_SEED: int = 20260830
@@ -109,13 +119,22 @@ def generate_random_frame(
     codec: Z30LdpcCodec,
     cfg: Z30Config,
     rng: Optional[np.random.Generator] = None,
+    payload_63: Optional[np.ndarray] = None,
 ) -> Tuple[np.ndarray, np.ndarray, List[int], List[int]]:
     """
     Generates a random 63-bit amateur payload, encodes to 216-bit LDPC codeword,
     and assembles the 75-symbol 16-MFSK transmission sequence.
+
+    `payload_63` supplies the payload instead of drawing one, for the a priori sweep, where the
+    frames have to be real QSO messages rather than random bits. When it is None - every caller
+    that existed before AP did - the draw is the one this function has always made, from the
+    shared generator, in the same order.
     """
     rng = rng if rng is not None else np.random.default_rng(DEFAULT_BENCHMARK_SEED)
-    payload_63 = rng.integers(0, 2, 63, dtype=np.uint8)
+    if payload_63 is None:
+        payload_63 = rng.integers(0, 2, 63, dtype=np.uint8)
+    else:
+        payload_63 = np.asarray(payload_63, dtype=np.uint8)
     codeword_216 = codec.encode(payload_63)
 
     # 54 data symbols (4 bits/symbol), used below only to report them separately from the
@@ -359,6 +378,7 @@ def _prepare_frame(
     mode: str,
     impairments: ChannelImpairments,
     max_time_offset_sec: float,
+    payload_63: Optional[np.ndarray] = None,
 ) -> Tuple[PreparedFrame, int, float]:
     """
     Generates one frame and puts it through the channel. THE ONLY PLACE THE SWEEP DRAWS RANDOM
@@ -368,7 +388,7 @@ def _prepare_frame(
     reach the receiver - they exist so the caller can report acquisition error, exactly as
     `impair_frame` intends.
     """
-    payload, _codeword, _data_symbols, full_symbols = generate_random_frame(codec, cfg, rng)
+    payload, _codeword, _data_symbols, full_symbols = generate_random_frame(codec, cfg, rng, payload_63)
     clean_wave = modulator.synthesize_frame(full_symbols, base_audio_freq_hz=1250.0)
     frame_power = float(np.mean(clean_wave ** 2))
 
@@ -725,6 +745,379 @@ def run_monte_carlo_snr_sweep(
     return results
 
 
+# =============================================================================================
+# A PRIORI (AP) DECODING - THE PAIRED MEASUREMENT
+# =============================================================================================
+#
+# `--ap` does not produce another decode curve. It produces a *paired comparison*: every frame
+# is put through the channel once, demodulated once, and the resulting LLR vector is decoded
+# twice - once by the ordinary decoder and once with the QSO-state hypothesis ladder behind it.
+# The two arms therefore see bit-identical channel evidence, and any difference between them is
+# the ladder and nothing else.
+#
+# Pairing is not a nicety here. AP is worth a fraction of a dB, which is well inside the
+# frame-to-frame scatter of an unpaired 40-frame run at a single SNR; two independent sweeps
+# would leave the reader unable to tell a real effect from the noise in the measurement. Paired,
+# the statistic is the count of frames where the two arms disagreed, and an exact McNemar test
+# over those discordant pairs gives a p-value a reader can check.
+#
+# The population is stated rather than tuned, because the answer depends on it entirely. Half
+# the frames are the QSO the receiver is actually in (`W1AW K1ABC ...`), which is what the
+# ladder asserts; half are foreign traffic between other stations, which it does not. The two
+# halves are reported separately, so anyone who thinks their own band is busier or quieter than
+# 50/50 can reweight the result instead of taking this one on trust. AGENTS.md section 5 sets
+# the bar for a benchmark that changes a published figure at >=99% confidence stated as
+# something checkable; that is what `ap_mcnemar_exact_p` is for.
+
+
+#: The station this sweep's receiver is, the station it is working, and where its QSO state
+#: machine is. Fixed rather than swept: AP asserts these bits, so the scenario IS the
+#: experiment's independent variable, and changing it between runs would make two runs
+#: incomparable. Any standard callsign gives the same answer - what matters is that 28 bits are
+#: asserted, not which 28.
+AP_SCENARIO_MY_CALL: str = "W1AW"
+AP_SCENARIO_DX_CALL: str = "K1ABC"
+AP_SCENARIO_STAGE: str = "SENDING_REPORT"
+
+#: Fraction of frames that belong to the QSO the receiver is in. The rest are foreign traffic,
+#: on which the ladder is a pure cost: four extra CRC-14 rejections and a chance of a false
+#: accept. Both halves are counted and both are printed.
+AP_IN_QSO_FRACTION: float = 0.5
+
+#: Prefix, digit and suffix alphabets of a standard callsign, as `encode_callsign28` parses one.
+#: Foreign callsigns are drawn from these rather than from a fixed list, so the foreign
+#: population is a real sample of the callsign space instead of a handful of repeated strings.
+_AP_PREFIX_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+_AP_SUFFIX_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+
+
+def random_standard_callsign(rng: np.random.Generator, exclude: Sequence[str] = ()) -> str:
+    """
+    A random callsign that survives the 28-bit packing, drawn from the shared generator.
+
+    Built from the standard `[1-2 prefix][digit][1-3 suffix]` structure and then verified with
+    `callsign_round_trips` rather than assumed - the same check the AP path itself applies. A
+    call that failed it would be one the hypothesis machinery refuses, which would quietly
+    change what the foreign population is made of.
+    """
+    for _ in range(64):
+        prefix_len = int(rng.integers(1, 3))
+        suffix_len = int(rng.integers(1, 4))
+        prefix = "".join(_AP_PREFIX_ALPHABET[int(rng.integers(0, 26))] for _ in range(prefix_len))
+        suffix = "".join(_AP_SUFFIX_ALPHABET[int(rng.integers(0, 26))] for _ in range(suffix_len))
+        call = f"{prefix}{int(rng.integers(0, 10))}{suffix}"
+        if call not in exclude and callsign_round_trips(call):
+            return call
+    raise RuntimeError("could not draw a round-tripping standard callsign")
+
+
+def ap_scenario_payload(rng: np.random.Generator) -> Tuple[np.ndarray, bool]:
+    """
+    One frame of the modelled band: either the QSO this receiver is in, or foreign traffic.
+
+    Returns the 63 payload bits and whether the frame is in-QSO. Every draw comes from the one
+    shared generator in a fixed order, so the population is reproducible from the seed alone -
+    the same requirement AGENTS.md places on the rest of the sweep.
+    """
+    in_qso = bool(rng.random() < AP_IN_QSO_FRACTION)
+
+    if in_qso:
+        # What the station being worked actually sends back during a report exchange: a report,
+        # a rogered report, or one of the three closings. Drawn, not cycled, so the mix is not an
+        # artefact of the frame index.
+        choice = int(rng.integers(0, 5))
+        if choice in (0, 1):
+            report_db = int(rng.integers(-30, 1))
+            extra = extra_code_for_report(report_db)
+            if extra is None:
+                raise RuntimeError(f"report {report_db} dB has no 7-bit code")
+        else:
+            extra = (EXTRA_RRR, EXTRA_73, EXTRA_RR73)[choice - 2]
+        payload = pack_payload63(AP_SCENARIO_MY_CALL, AP_SCENARIO_DX_CALL, extra)
+        return np.array(payload, dtype=np.uint8), True
+
+    # Foreign traffic: a CQ, or an exchange between two other stations. Neither matches any
+    # hypothesis in the ladder, so these frames measure what AP costs rather than what it buys.
+    other = random_standard_callsign(rng, exclude=(AP_SCENARIO_MY_CALL, AP_SCENARIO_DX_CALL))
+    if rng.random() < 0.5:
+        # A CQ. The 7-bit field carries a grid, which occupies codes 64..127; the particular
+        # grid is irrelevant to decoding, so it is drawn across that range rather than looked up
+        # in the table src/dsp/z30Codec.ts owns.
+        payload = pack_payload63("CQ", other, int(rng.integers(64, 128)))
+    else:
+        second = random_standard_callsign(rng, exclude=(AP_SCENARIO_MY_CALL, AP_SCENARIO_DX_CALL, other))
+        report_db = int(rng.integers(-30, 1))
+        extra = extra_code_for_report(report_db)
+        if extra is None:
+            raise RuntimeError(f"report {report_db} dB has no 7-bit code")
+        payload = pack_payload63(other, second, extra)
+    return np.array(payload, dtype=np.uint8), False
+
+
+@dataclass(frozen=True)
+class ApPairedOutcome:
+    """
+    One frame decoded both ways off the same LLR vector.
+
+    `plain_success` and `ap_success` mean the same thing the ordinary sweep means by success:
+    a CRC-valid codeword whose payload is the one that was transmitted. A CRC-valid codeword
+    carrying a *different* payload is counted in `false_decode` instead - it is the cost side of
+    AP and the reason the ladder is short and gated.
+    """
+
+    index: int
+    in_qso: bool
+    plain_success: bool
+    ap_success: bool
+    ap_type: int
+    plain_false_decode: bool
+    ap_false_decode: bool
+    plain_iters: int
+    ap_iters: int
+
+
+def decode_prepared_frame_paired(
+    job: PreparedFrame,
+    cfg: Z30Config,
+    codec: Z30LdpcCodec,
+    hypotheses: Sequence[ApHypothesis],
+    in_qso: bool,
+) -> ApPairedOutcome:
+    """
+    Acquires and demodulates once, then decodes the resulting LLRs twice.
+
+    Demodulating once is the point. Running the receive chain separately for each arm would let
+    blind acquisition land the two arms on different samples, and the comparison would then be
+    partly a comparison of two acquisitions. Here both arms are handed the identical 216 LLRs,
+    so the only thing that differs is the hypothesis ladder.
+
+    A pure function of its arguments, like `decode_prepared_frame`: no PRNG, no state, nothing
+    mutated. The AP arm's ordinary decode is `decode_with_ap`'s own first step, so it is not
+    repeated here - `plain` below IS that step, and the two arms share it.
+    """
+    if job.search_timing_sec is not None:
+        acq = acquire_frame(
+            job.noisy_wave,
+            cfg,
+            nominal_base_freq_hz=job.known_base_freq_hz,
+            time_search_sec=job.search_timing_sec,
+        )
+        start_sample, base_freq, sigma = acq.start_sample, acq.base_freq_hz, acq.noise_sigma
+    else:
+        if job.known_sigma is None:
+            raise ValueError("a frame with no timing search must carry the sigma it was made with")
+        start_sample, base_freq, sigma = job.known_start_sample, job.known_base_freq_hz, job.known_sigma
+
+    channel_llrs = demodulate_mfsk_llrs(
+        job.noisy_wave, cfg, sigma,
+        audio_center_hz=base_freq,
+        start_sample=start_sample,
+        pilot_coherence=job.pilot_coherence,
+    )
+
+    plain_ok, plain_info, plain_iters = codec.decode_min_sum(channel_llrs)
+    plain_correct = bool(plain_ok and np.array_equal(plain_info[:63], job.payload_63))
+
+    ap = decode_with_ap(codec, channel_llrs, hypotheses)
+    ap_correct = bool(ap.success and np.array_equal(ap.info_bits[:63], job.payload_63))
+
+    return ApPairedOutcome(
+        index=job.index,
+        in_qso=in_qso,
+        plain_success=plain_correct,
+        ap_success=ap_correct,
+        ap_type=int(ap.ap_type) if ap_correct else 0,
+        plain_false_decode=bool(plain_ok and not plain_correct),
+        ap_false_decode=bool(ap.success and not ap_correct),
+        plain_iters=int(plain_iters),
+        ap_iters=int(ap.iterations),
+    )
+
+
+def ap_mcnemar_exact_p(only_ap: int, only_plain: int) -> float:
+    """
+    Two-sided exact McNemar p-value for `only_ap` frames won by AP against `only_plain` won by
+    the ordinary decoder.
+
+    Under the null hypothesis that the ladder changes nothing, each discordant frame is an
+    independent coin flip, so the count of one kind is Binomial(n_discordant, 0.5). This is the
+    exact binomial tail doubled, not the chi-squared approximation, because the discordant
+    counts in a benchmark of this size are small enough that the approximation is not
+    trustworthy - and a confidence figure that cannot be checked is the thing AGENTS.md section
+    5 exists to keep out.
+
+    Computed from `math.comb`, so it is exact rational arithmetic up to the final division; no
+    tabulated critical values and no library-version-dependent answer.
+    """
+    n = only_ap + only_plain
+    if n == 0:
+        return 1.0
+    k = min(only_ap, only_plain)
+    tail = sum(math.comb(n, i) for i in range(0, k + 1))
+    return min(1.0, 2.0 * tail / (2 ** n))
+
+
+def run_ap_paired_sweep(
+    min_snr_db: float = -26.0,
+    max_snr_db: float = -20.0,
+    step_snr_db: float = 1.0,
+    frames_per_snr: int = 40,
+    sample_rate_hz: int = 6000,
+    seed: int = DEFAULT_BENCHMARK_SEED,
+    mode: str = "realistic",
+    fading: str = "none",
+    max_freq_offset_hz: float = 5.0,
+    max_time_offset_sec: float = 0.5,
+) -> List[Dict]:
+    """
+    The paired a priori measurement. Serial by construction - see the section note above.
+
+    Every frame is decoded by both arms in this process, off one demodulation, so there is no
+    worker pool here: parallelising it would spread the pair across processes for no change to
+    the result and one more place for the two arms to diverge.
+    """
+    if mode not in ("realistic", "ideal"):
+        raise ValueError(f"mode must be 'realistic' or 'ideal'; got {mode!r}")
+    if fading not in WATTERSON_PRESETS:
+        raise ValueError(f"fading must be one of {sorted(WATTERSON_PRESETS)}; got {fading!r}")
+
+    rng = np.random.default_rng(seed)
+    impairments = ChannelImpairments(
+        max_freq_offset_hz=max_freq_offset_hz,
+        max_time_offset_sec=max_time_offset_sec,
+        fading=fading,
+    )
+    cfg = Z30Config(sample_rate_hz=sample_rate_hz)
+    modulator = Z30Modulator(cfg)
+    codec = Z30LdpcCodec(max_iterations=LDPC_MAX_ITERATIONS)
+
+    hypotheses = build_ap_hypotheses(
+        AP_SCENARIO_STAGE, AP_SCENARIO_MY_CALL, AP_SCENARIO_DX_CALL
+    )
+
+    print("=" * 104)
+    print("  z-30 A PRIORI (AP) DECODING - PAIRED COMPARISON")
+    print(f"  Scenario: this station is {AP_SCENARIO_MY_CALL}, working {AP_SCENARIO_DX_CALL}, "
+          f"QSO stage {AP_SCENARIO_STAGE}.")
+    print(f"  Hypothesis ladder: " + ", ".join(
+        f"a{h.ap_type} ({h.label}, {h.asserted_bit_count}/63 bits)" for h in hypotheses
+    ))
+    print(f"  Population: {AP_IN_QSO_FRACTION:.0%} of frames are this QSO, the rest is foreign traffic")
+    print("  the ladder does not describe. Both arms decode the SAME demodulated LLRs.")
+    print(f"  {frames_per_snr} frames/point | mode: {mode} | fading: {fading} | "
+          f"sample rate: {sample_rate_hz} Hz | seed: {seed}")
+    print("=" * 104)
+    header = (f"{'SNR':<12} | {'In-QSO':<17} | {'Foreign':<17} | {'All frames':<17} | "
+              f"{'AP only':<7} | {'Plain only':<10} | {'False':<5}")
+    print(header)
+    print("-" * 104)
+
+    results: List[Dict] = []
+    snr_points = np.arange(min_snr_db, max_snr_db + 1e-4, step_snr_db)
+
+    for snr in snr_points:
+        outcomes: List[ApPairedOutcome] = []
+        for f in range(frames_per_snr):
+            payload, in_qso = ap_scenario_payload(rng)
+            job, _true_start, _true_foff = _prepare_frame(
+                f, float(snr), codec, cfg, modulator, rng, mode,
+                impairments, max_time_offset_sec, payload,
+            )
+            outcomes.append(decode_prepared_frame_paired(job, cfg, codec, hypotheses, in_qso))
+
+        in_qso_outcomes = [o for o in outcomes if o.in_qso]
+        foreign_outcomes = [o for o in outcomes if not o.in_qso]
+
+        only_ap = sum(1 for o in outcomes if o.ap_success and not o.plain_success)
+        only_plain = sum(1 for o in outcomes if o.plain_success and not o.ap_success)
+        plain_total = sum(1 for o in outcomes if o.plain_success)
+        ap_total = sum(1 for o in outcomes if o.ap_success)
+        ap_false = sum(1 for o in outcomes if o.ap_false_decode)
+        plain_false = sum(1 for o in outcomes if o.plain_false_decode)
+
+        res = {
+            "snr_db": float(snr),
+            "total_frames": frames_per_snr,
+            "in_qso_frames": len(in_qso_outcomes),
+            "foreign_frames": len(foreign_outcomes),
+            "plain_successes": plain_total,
+            "ap_successes": ap_total,
+            "in_qso_plain": sum(1 for o in in_qso_outcomes if o.plain_success),
+            "in_qso_ap": sum(1 for o in in_qso_outcomes if o.ap_success),
+            "foreign_plain": sum(1 for o in foreign_outcomes if o.plain_success),
+            "foreign_ap": sum(1 for o in foreign_outcomes if o.ap_success),
+            "only_ap": only_ap,
+            "only_plain": only_plain,
+            "ap_false_decodes": ap_false,
+            "plain_false_decodes": plain_false,
+            "ap_types": sorted({o.ap_type for o in outcomes if o.ap_type}),
+            "plain_decode_pct": 100.0 * plain_total / frames_per_snr,
+            "ap_decode_pct": 100.0 * ap_total / frames_per_snr,
+            "seed": seed,
+            "mode": mode,
+            "fading": fading,
+        }
+        results.append(res)
+
+        def arm(before: int, after: int, total: int) -> str:
+            return f"{before:>3}/{total:<3} -> {after:>3}/{total:<3}"
+
+        print(f"{snr:+6.1f} dB    | "
+              f"{arm(res['in_qso_plain'], res['in_qso_ap'], res['in_qso_frames']):<17} | "
+              f"{arm(res['foreign_plain'], res['foreign_ap'], res['foreign_frames']):<17} | "
+              f"{arm(plain_total, ap_total, frames_per_snr):<17} | "
+              f"{only_ap:<7} | {only_plain:<10} | {ap_false:<5}")
+
+    print("=" * 104)
+
+    total_only_ap = sum(r["only_ap"] for r in results)
+    total_only_plain = sum(r["only_plain"] for r in results)
+    p_value = ap_mcnemar_exact_p(total_only_ap, total_only_plain)
+    total_frames = sum(r["total_frames"] for r in results)
+    total_in_qso = sum(r["in_qso_frames"] for r in results)
+
+    print(f"  Frames: {total_frames} ({total_in_qso} in-QSO, {total_frames - total_in_qso} foreign)")
+    print(f"  Discordant pairs: {total_only_ap} decoded only with AP, {total_only_plain} only without.")
+    print(f"  Exact two-sided McNemar p = {p_value:.3e}")
+    print(f"  Plain: {sum(r['plain_successes'] for r in results)} decodes | "
+          f"AP: {sum(r['ap_successes'] for r in results)} decodes")
+    print(f"  False decodes (CRC-valid codeword carrying the wrong payload): "
+          f"plain {sum(r['plain_false_decodes'] for r in results)}, "
+          f"AP {sum(r['ap_false_decodes'] for r in results)}")
+    print(f"  In-QSO decode rate: "
+          f"{100.0 * sum(r['in_qso_plain'] for r in results) / max(1, total_in_qso):.1f}% -> "
+          f"{100.0 * sum(r['in_qso_ap'] for r in results) / max(1, total_in_qso):.1f}%")
+    print("  A p-value says the ladder changed something, not by how much. The in-QSO 50% crossing")
+    print("  of each arm - and only the in-QSO frames, see ap_threshold_shift - is the size of it.")
+    print("=" * 104)
+    return results
+
+
+def ap_threshold_shift(results: List[Dict]) -> Dict[str, Optional[float]]:
+    """
+    Each arm's 50% crossing over the in-QSO frames, and the difference between them.
+
+    Reported only over the in-QSO population, because that is the population the ladder makes a
+    claim about. A crossing computed over the whole band mix would move with the mix rather than
+    with the decoder, and would read as a sensitivity figure while being a statement about how
+    busy the band is.
+    """
+    plain_curve = [
+        {"snr_db": r["snr_db"], "decode_pct": 100.0 * r["in_qso_plain"] / max(1, r["in_qso_frames"])}
+        for r in results
+    ]
+    ap_curve = [
+        {"snr_db": r["snr_db"], "decode_pct": 100.0 * r["in_qso_ap"] / max(1, r["in_qso_frames"])}
+        for r in results
+    ]
+    plain_threshold = decode_threshold_db(plain_curve)
+    ap_threshold = decode_threshold_db(ap_curve)
+    shift = None
+    if plain_threshold is not None and ap_threshold is not None:
+        shift = plain_threshold - ap_threshold
+    return {"plain_db": plain_threshold, "ap_db": ap_threshold, "shift_db": shift}
+
+
 def decode_threshold_db(results: List[Dict]) -> Optional[float]:
     """
     The SNR at which 50% of frames decode, linearly interpolated between the two swept points
@@ -830,7 +1223,36 @@ if __name__ == "__main__":
                         help="Decode processes (default: 1, serial). 0 or less means one per CPU. "
                              "Affects wall-clock time only: the curve is identical at every "
                              "worker count, and the test suite asserts it.")
+    parser.add_argument("--ap", action="store_true",
+                        help="Measure a priori (AP) decoding instead of sweeping a curve: every "
+                             "frame is decoded twice off one demodulation, with and without the "
+                             "QSO-state hypothesis ladder, and the discordant pairs are tested "
+                             "exactly. Serial; --workers is ignored.")
     args = parser.parse_args()
+
+    if args.ap:
+        ap_results = run_ap_paired_sweep(
+            min_snr_db=args.min_snr,
+            max_snr_db=args.max_snr,
+            step_snr_db=args.step,
+            frames_per_snr=args.frames,
+            sample_rate_hz=args.sample_rate,
+            seed=args.seed,
+            mode=args.mode,
+            fading=args.fading,
+            max_freq_offset_hz=args.freq_offset,
+            max_time_offset_sec=args.time_offset,
+        )
+        shift = ap_threshold_shift(ap_results)
+        if shift["shift_db"] is None:
+            print("  In-QSO 50% crossing is outside the swept range for at least one arm -")
+            print("  widen --min-snr / --max-snr before quoting a threshold shift.")
+        else:
+            print(f"  In-QSO 50% crossing: plain {shift['plain_db']:+.2f} dB, "
+                  f"AP {shift['ap_db']:+.2f} dB -> {shift['shift_db']:+.2f} dB deeper with AP")
+            print(f"  (seed {args.seed}, {args.frames} frames/point, mode {args.mode}, "
+                  f"fading {args.fading}. Quote all four with the figure.)")
+        raise SystemExit(0)
 
     run_monte_carlo_snr_sweep(
         min_snr_db=args.min_snr,

@@ -42,6 +42,15 @@ export interface DecodedSignal {
   confidence: number; // 0 - 100%
   rawSymbols?: number[];
   ldpcIterations?: number;
+  /**
+   * The a priori hypothesis that recovered this frame, or 0/undefined for one decoded from the
+   * air alone. WSJT-X reports its `iaptype` next to each decode for a reason: a frame that only
+   * closed because the receiver assumed your callsign was in it is a weaker claim than one that
+   * closed without help, and an operator logging a contact is entitled to see which they have.
+   */
+  apType?: number;
+  /** Human-readable form of `apType`, e.g. 'MyCall DxCall RR73'. Empty for an ordinary decode. */
+  apLabel?: string;
 }
 
 export type PttMethodType =
@@ -97,6 +106,14 @@ export interface StationConfig {
   pttLeadInMs?: number; // Lead-in PTT pre-key delay in ms (e.g. 20ms)
   pttHangTimeMs?: number; // Tail hangover release delay in ms (e.g. 30ms)
   autoSeq: boolean;
+  /**
+   * Whether the receiver may retry a failed decode with a priori information drawn from the QSO
+   * state (see src/dsp/apDecode.ts). Off by default, and deliberately: AP trades a handful of
+   * extra CRC-14 rejections per frame - and with them a higher chance of accepting a wrong
+   * message - for decodes that would otherwise be lost. That is a trade an operator should make
+   * knowingly rather than inherit.
+   */
+  apDecodeEnabled?: boolean;
   call1st: boolean;
   autoReplyPriority?: AutoReplyPriority;
   watchdogCycles: number;

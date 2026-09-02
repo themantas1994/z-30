@@ -188,6 +188,62 @@ export function ditherVector(llrChannel: Float32Array | number[], length: number
   return out;
 }
 
+/**
+ * How far an a priori LLR is pushed beyond the strongest evidence the channel actually
+ * supplied, as a multiple of max|LLR| over the frame.
+ *
+ * WSJT-X's `lib/ft8/ft8b.f90` computes `apmag=maxval(abs(llra))*1.01` and this is a direct port
+ * of that rule. The magnitude is *derived from the frame*, never a constant: a fixed number
+ * large enough to dominate a strong frame would be arbitrarily larger than the evidence in a
+ * weak one, and a fixed number sized for a weak frame would be overridden in a strong one.
+ * Scaling with the frame keeps an AP bit exactly one notch more certain than the most certain
+ * thing the demodulator measured, whatever the signal level.
+ *
+ * The twin of `AP_LLR_MARGIN` in z30_dsp/ldpc.py, pinned by tests/test_cross_language_parity.py.
+ */
+export const AP_LLR_MARGIN = 1.01;
+
+/**
+ * The magnitude an a priori bit is asserted with, for this frame's channel LLRs.
+ *
+ * Returns 0 for an all-zero frame, which `applyApHypothesis` turns into a no-op rather than a
+ * vector of zeroed "certainties" that would assert nothing while claiming to assert everything.
+ */
+export function apLlrMagnitude(llrChannel: Float32Array | number[]): number {
+  let peak = 0;
+  for (let i = 0; i < llrChannel.length; i++) {
+    const mag = Math.abs(llrChannel[i]);
+    if (mag > peak) peak = mag;
+  }
+  return AP_LLR_MARGIN * peak;
+}
+
+/**
+ * A copy of `llrChannel` with every masked position replaced by its a priori LLR.
+ *
+ * Sign convention is this codec's, not WSJT-X's: here L = ln(P(c=0)/P(c=1)) and the hard
+ * decision is `llr < 0 -> 1`, so an asserted 0 becomes `+apmag` and an asserted 1 becomes
+ * `-apmag`. WSJT-X's `bpdecode174_91` reads the opposite sign and its `apsym=2*bit-1` term
+ * carries the flip; transcribing that expression instead of re-deriving it would assert every
+ * a priori bit inverted, and every hypothesis would fail its CRC.
+ */
+export function applyApHypothesis(
+  llrChannel: Float32Array | number[],
+  apMask: Uint8Array | number[],
+  apBits: Uint8Array | number[]
+): Float32Array {
+  const out = Float32Array.from(llrChannel);
+  if (apMask.length > out.length || apBits.length < apMask.length) {
+    throw new Error('apMask/apBits must not be longer than the LLR vector');
+  }
+  const apmag = apLlrMagnitude(out);
+  if (apmag <= 0) return out;
+  for (let i = 0; i < apMask.length; i++) {
+    if (apMask[i]) out[i] = apBits[i] === 0 ? apmag : -apmag;
+  }
+  return out;
+}
+
 export class Z30LdpcEngine {
   private readonly n = Z30_LDPC_PARAMS.n;
   private readonly k = Z30_LDPC_PARAMS.k;
@@ -428,10 +484,33 @@ export class Z30LdpcEngine {
    */
   public decodeMinSum(
     llrChannel: Float32Array | number[],
-    maxIterations: number = LDPC_MAX_ITERATIONS
+    maxIterations: number = LDPC_MAX_ITERATIONS,
+    apMask?: Uint8Array | number[] | null
   ): LdpcDecodeResult {
     const inputLlr = Float32Array.from(llrChannel);
     const iterationHistory: LdpcDecodeResult['iterationHistory'] = [];
+
+    // A priori mask: 1 where the corresponding LLR is an asserted belief rather than a
+    // measurement. Shorter than 216 is accepted and zero-extended, so a caller constraining
+    // only the information block passes 77 values. `llrChannel` must already carry the asserted
+    // LLRs at those positions - build both with `applyApHypothesis`, which is what keeps the
+    // assertion and the mask from drifting apart. Undefined is the ordinary decode, and it is
+    // bit-identical to what this decoder produced before AP existed.
+    let apPinned: Uint8Array | null = null;
+    const pinnedIndices: number[] = [];
+    if (apMask) {
+      if (apMask.length > this.n) {
+        throw new Error(`apMask has ${apMask.length} entries; the code has ${this.n} bits`);
+      }
+      const expanded = new Uint8Array(this.n);
+      for (let i = 0; i < apMask.length; i++) {
+        if (apMask[i]) {
+          expanded[i] = 1;
+          pinnedIndices.push(i);
+        }
+      }
+      if (pinnedIndices.length > 0) apPinned = expanded;
+    }
 
     let initialErrorCount = 0;
     for (let i = 0; i < this.n; i++) {
@@ -495,6 +574,11 @@ export class Z30LdpcEngine {
         for (let i = 0; i < this.n; i++) {
           totalLlrs[i] += dither[i];
         }
+        // A pinned bit is an assertion, not a measurement, so there is nothing there for
+        // stochastic resonance to shake loose. The dither vector itself is still drawn over all
+        // 216 positions from the same seed, so schedule 4 perturbs the unpinned bits by exactly
+        // the values it would have without a mask.
+        for (const v of pinnedIndices) totalLlrs[v] = inputLlr[v];
       }
 
       // Check-to-variable message buffers: checkToVarMsg[c][idxInCheck]
@@ -574,8 +658,15 @@ export class Z30LdpcEngine {
             const diff = dampedCtoV - checkToVarMsg[c][i];
             checkToVarMsg[c][i] = dampedCtoV;
 
-            // Layered update of variable node total LLR
-            totalLlrs[v] += diff;
+            // Layered update of variable node total LLR. A pinned variable is held at the
+            // value the caller asserted: WSJT-X's `bpdecode174_91` rule (`zn(i)=llr(i)` where
+            // `apmask(i)==1`) expressed in a layered decoder. Its outgoing message is still
+            // `totalLlrs[v] - checkToVarMsg[c][i]` above, reproducing WSJT-X's
+            // `toc = zn(ibj) - tov(kk,ibj)` - the pin fixes the bit's belief, it does not stop
+            // the bit from telling its checks what it believes.
+            if (apPinned === null || apPinned[v] === 0) {
+              totalLlrs[v] += diff;
+            }
           }
         }
 
@@ -695,9 +786,16 @@ export class Z30LdpcEngine {
       const llrSource = bestTotalLlrs.length === this.n ? bestTotalLlrs : inputLlr;
       const basePayload = overallBestDecoded.slice(0, 63);
 
-      // Rank 63 payload bit positions by absolute LLR magnitude (reliability)
+      // Rank 63 payload bit positions by absolute LLR magnitude (reliability). A pinned bit is
+      // never a flip candidate. In practice it would not be chosen anyway - it carries the
+      // largest magnitude in the frame by construction, so it sorts last - but "never" and "not
+      // in practice" are different guarantees, and the difference matters here: flipping one
+      // would hand back a codeword that contradicts the very hypothesis whose CRC is being used
+      // to decide the hypothesis was right.
       const rankedIndices: number[] = [];
-      for (let i = 0; i < 63; i++) rankedIndices.push(i);
+      for (let i = 0; i < 63; i++) {
+        if (apPinned === null || apPinned[i] === 0) rankedIndices.push(i);
+      }
       rankedIndices.sort((a, b) => Math.abs(llrSource[a]) - Math.abs(llrSource[b]));
 
       const numLeastReliable = Math.min(14, rankedIndices.length);

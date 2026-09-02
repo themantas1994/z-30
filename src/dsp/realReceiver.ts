@@ -23,7 +23,7 @@
  */
 
 import { Z30_SPECS } from './z30Constants';
-import { ldpcCodec } from './ldpcCodec';
+import { ApContext, buildApHypotheses, decodeWithAp } from './apDecode';
 import { unpackZ30Message } from './z30Codec';
 import { createSeededRandom, type RandomSource } from './seededRandom';
 
@@ -672,6 +672,12 @@ export interface RealDecodedFrame {
   rawSymbols: number[];
   unpacked: ReturnType<typeof unpackZ30Message>;
   ldpcIterations: number;
+  /**
+   * The a priori hypothesis that recovered this frame, 0 for one that decoded on its own.
+   * Carried out to the operator rather than kept internal - see the note on `DecodedSignal.apType`.
+   */
+  apType: number;
+  apLabel: string;
 }
 
 /** What one SIC pass actually did, measured rather than assumed. */
@@ -700,6 +706,10 @@ export interface SicMultiPassResult {
  *
  * `paddedBuffer` must span [nominalSlotStart - maxDtSec, nominalSlotStart + 24.0 + maxDtSec]
  * at sampleRateHz.
+ *
+ * `apContext`, when supplied, lets a candidate that fails an ordinary decode be retried against
+ * the QSO-state hypothesis ladder (src/dsp/apDecode.ts). Omitting it is the pre-AP behaviour
+ * exactly: `decodeWithAp` with no hypotheses is one `decodeMinSum` call and nothing else.
  */
 export function runSicMultiPass(
   paddedBuffer: Float32Array,
@@ -707,7 +717,8 @@ export function runSicMultiPass(
   maxPasses: number = 3,
   minFreqHz: number = 200,
   maxFreqHz: number = 3000,
-  maxDtSec: number = 1.5
+  maxDtSec: number = 1.5,
+  apContext?: ApContext
 ): SicMultiPassResult {
   const residual = new Float32Array(paddedBuffer);
   const results: RealDecodedFrame[] = [];
@@ -736,7 +747,12 @@ export function runSicMultiPass(
       if (preSnrDb < -30.0) continue;
 
       const llrs = demodulateReal(frameView, sampleRateHz, fineFreqHz, sigma);
-      const decodeResult = ldpcCodec.decodeMinSum(llrs);
+      // The ladder is rebuilt per candidate because its deep types are gated on where in the
+      // passband this candidate sits (AP_FREQ_WINDOW_HZ). With no context it is empty, and
+      // decodeWithAp then reduces to exactly the plain `decodeMinSum` call this line used to be.
+      const hypotheses = apContext ? buildApHypotheses(apContext, fineFreqHz) : [];
+      const apOutcome = decodeWithAp(llrs, hypotheses);
+      const decodeResult = apOutcome.result;
 
       if (decodeResult.success && decodeResult.crcValid) {
         const symbols = recoverSymbols(decodeResult.codeword);
@@ -754,6 +770,8 @@ export function runSicMultiPass(
           rawSymbols: symbols,
           unpacked,
           ldpcIterations: decodeResult.iterations,
+          apType: apOutcome.apType,
+          apLabel: apOutcome.apLabel,
         });
         newDecodes++;
       }

@@ -33,7 +33,14 @@ wiki/                      THE DOCUMENTATION. Source of truth. Also served insid
 z30_dsp/                   Native Python 3 DSP package (NumPy/SciPy).
   main.py                  CLI/GUI entry router behind the `z30` command.
   modem.py                 16-MFSK continuous-phase modulator/demodulator (GFSK BT=2.0).
-  ldpc.py                  IRA-LDPC (216, 77) encoder, min-sum decoder, CRC-14.
+  ldpc.py                  IRA-LDPC (216, 77) encoder, min-sum decoder, CRC-14. Also the AP
+                           mask path: `decode_min_sum(..., ap_mask=)` pins asserted bits.
+  ap_decode.py             A priori decoding: the hypothesis ladder ported from WSJT-X's
+                           ft8b.f90, the gates, and decode_with_ap(). Twin of
+                           src/dsp/apDecode.ts. See wiki/17.
+  message_codec.py         The Python twin of the CALLSIGN half of z30Codec.ts - 28-bit packing
+                           only. The grid table stays in TypeScript on purpose: nothing here
+                           reads a grid, and a second copy is a second place to drift.
   acquisition.py           Blind frame acquisition from the Costas pattern.
   channel.py               AWGN and Watterson fading channel models (seeded).
   sic_decoder.py           3-pass successive interference cancellation.
@@ -58,6 +65,10 @@ src/                       Web transceiver (React 19 + TypeScript + Vite + Tailw
     z30Codec.ts            63-bit Radix-37/27 packing + CRC-14. Twin of the codec half of ldpc.py.
     ldpcCodec.ts           Twin of the LDPC half of ldpc.py.
     sicDecoder.ts          Twin of sic_decoder.py.
+    apDecode.ts            Twin of ap_decode.py. Builds its asserted bits by packing a real
+                           message through packZ30Message and reading them back, which is
+                           WSJT-X's ft8apset exactly - the assertion cannot describe a frame
+                           the transmitter would not produce.
     catController.ts       Hamlib/serial CAT, PTT keying, and canTransmit() — the transmit gate.
     bandPlan.ts            IARU R1-R3 + FCC Part 97 segments and licence privileges.
     localServerApi.ts      Token-authenticated client for web_server.py.
@@ -88,6 +99,13 @@ tests/                     pytest + node (tsx) suites. See wiki/16.
                            different dial blocks transmit, and - just as important - that an
                            unverifiable rig, an unsettled QSY and a rig's own tuning resolution
                            do not.
+  test_ap_decode.py, apDecode.test.mjs
+                           A priori decoding. Both halves assert the same things from opposite
+                           sides: that a pinned bit survives every iteration, that a hypothesis
+                           naming other stations is never accepted, that AP cannot lose a frame
+                           the ordinary decoder found, and that an empty mask decodes
+                           bit-identically to no mask - which is what keeps every published
+                           threshold describing the shipped decoder.
   test_benchmark_parallel.py
                            That `benchmark.py --workers N` is a wall-clock knob and nothing
                            else: the same curve at every worker count, at every batch size, and
@@ -225,6 +243,27 @@ the test to match. Full rationale: [`wiki/13`](wiki/13-Operating-Safety-Complian
   are filed by frame index and reduced in index order, never in completion order.
   `tests/test_benchmark_parallel.py` and the CI benchmark smoke test both assert it.
 
+**A priori decoding**
+- AP asserts message bits the receiver did not measure, so it is the one place in this decoder
+  where an assumption can become a logged QSO. Three rules keep that honest, and
+  `tests/test_ap_decode.py` / `tests/apDecode.test.mjs` guard all three.
+- **AP never runs first.** `decode_with_ap` attempts the ordinary decode and returns it
+  untouched when it succeeds. AP may add decodes; it may not change or lose one. Reordering
+  those two steps would make every published threshold in wiki/16 a measurement of a different
+  decoder.
+- **A frame recovered by AP is labelled.** `apType` travels out to `DecodedSignal` and the
+  activity log shows `a1`…`a6`. WSJT-X prints its `iaptype` for the same reason: a frame that
+  only closed because the receiver assumed your callsign was in it is a weaker claim than one
+  that closed without help. Do not drop the tag to tidy a UI.
+- **The gates only ever narrow.** The callsign round-trip check (WSJT-X's `ft8apset`
+  `msg.eq.msgchk`), the `AP_FREQ_WINDOW_HZ = 75` window on types 3+ (its `napwid`), and AP being
+  off by default all exist because each hypothesis is another 2^-14 roll of the CRC dice.
+  Loosening one raises the false-accept rate of a mode that keys real transmitters.
+- An AP-less decode must stay **bit-identical**: `decode_min_sum(llr)` and
+  `decode_min_sum(llr, ap_mask=zeros)` produce the same bits, the same iteration count and the
+  same syndrome. The mask must never reach the 14 CRC bits either - the CRC is the only thing
+  testing the hypothesis, and asserting it would make every hypothesis "succeed".
+
 **One source of truth per rule**
 - `isValidCallsign()` in `src/dsp/bandPlan.ts` is the only callsign validator in TypeScript, and
   `z30_dsp/station_settings.py` carries the same pattern. Shared cases live in
@@ -326,6 +365,8 @@ python -m pytest tests -v
 python -m z30_dsp.benchmark --mode realistic --fading none --min-snr -28 --max-snr -17 --frames 40
 # Same curve, spread over processes. --workers 0 means one per CPU; the default is 1 (serial).
 python -m z30_dsp.benchmark --mode realistic --fading none --min-snr -28 --max-snr -17 --frames 40 --workers 0
+# Paired a priori comparison: every frame decoded twice off one demodulation, exact McNemar test.
+python -m z30_dsp.benchmark --ap --mode realistic --fading none --min-snr -26.5 --max-snr -21.5 --frames 80
 
 # TypeScript / web
 npm ci
@@ -381,6 +422,7 @@ artifacts or bytecode, exactly one lockfile).
 | Waveform or demodulation | `z30_dsp/modem.py`, `src/dsp/z30Waveform.ts`, [`wiki/03`](wiki/03-DSP-&-Physical-Layer-Specification.md) |
 | Codec, CRC or LDPC | `z30_dsp/ldpc.py`, `src/dsp/z30Codec.ts`, `src/dsp/ldpcCodec.ts`, [`wiki/04`](wiki/04-Forward-Error-Correction-&-LDPC.md) |
 | Collision handling | `z30_dsp/sic_decoder.py`, `src/dsp/sicDecoder.ts`, [`wiki/05`](wiki/05-Successive-Interference-Cancellation-(SIC).md) |
+| A priori (AP) decoding | `z30_dsp/ap_decode.py`, `src/dsp/apDecode.ts`, [`wiki/17`](wiki/17-A-Priori-(AP)-Decoding.md) |
 | Rig, CAT or PTT hardware | `src/dsp/catController.ts`, `src/dsp/hamlibCatalog.ts`, [`wiki/06`](wiki/06-Transceiver-CAT-Control-&-PTT-Wiring.md) |
 | Local server or hardware API | `z30_dsp/web_server.py`, `src/dsp/localServerApi.ts`, [`wiki/13`](wiki/13-Operating-Safety-Compliance-&-Security.md) |
 | UI behaviour | `src/App.tsx`, `src/components/`, [`wiki/14`](wiki/14-User-Interface-&-Operation-Reference.md) |

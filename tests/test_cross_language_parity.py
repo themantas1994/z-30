@@ -32,6 +32,21 @@ from z30_dsp.ldpc import (
     dither_seed_from_llrs,
     dither_vector,
 )
+from z30_dsp.ldpc import AP_LLR_MARGIN
+from z30_dsp.ap_decode import (
+    AP_DEEP_TYPE,
+    AP_FREQ_WINDOW_HZ,
+    AP_STAGE_LADDER,
+    AP_TYPE_EXTRA,
+    AP_TYPE_LABELS,
+)
+from z30_dsp.message_codec import (
+    EXTRA_73,
+    EXTRA_RR73,
+    EXTRA_RRR,
+    decode_callsign28,
+    encode_callsign28,
+)
 from z30_dsp.modem import Z30Config
 from z30_dsp import acquisition, benchmark, sic_decoder
 
@@ -40,6 +55,10 @@ TS_CONSTANTS = os.path.join(REPO_ROOT, "src", "dsp", "z30Constants.ts")
 TS_CODEC = os.path.join(REPO_ROOT, "src", "dsp", "ldpcCodec.ts")
 TS_WAVEFORM = os.path.join(REPO_ROOT, "src", "dsp", "z30Waveform.ts")
 VECTORS = os.path.join(os.path.dirname(__file__), "vectors", "crc14_vectors.json")
+TS_AP = os.path.join(REPO_ROOT, "src", "dsp", "apDecode.ts")
+CALLSIGN_PACK_VECTORS = os.path.join(
+    os.path.dirname(__file__), "vectors", "callsign_pack_vectors.json"
+)
 
 
 def read(path: str) -> str:
@@ -362,3 +381,146 @@ def test_benchmark_receiver_model_constants_match():
 
     # The window itself, not just the margin, so an off-by-one in either expression shows up.
     assert acquisition.slot_timing_search_sec(0.5) == pytest.approx(0.55)
+
+
+# ---------------------------------------------------------------------------------------------
+# A priori (AP) decoding
+#
+# AP is a two-language feature like everything else here, and it has an extra way to drift: a
+# hypothesis is only useful if the bits it asserts are the bits the OTHER language's transmitter
+# would emit. A Python benchmark measuring the gain of an assertion the browser never forms
+# would be measuring nothing, and would look exactly like a measurement.
+# ---------------------------------------------------------------------------------------------
+
+
+def test_ap_llr_margin_matches():
+    """WSJT-X's `apmag=maxval(abs(llra))*1.01`, in both languages."""
+    ts_source = read(TS_CODEC)
+    match = re.search(r"export const AP_LLR_MARGIN\s*=\s*([0-9.]+);", ts_source)
+    assert match, "AP_LLR_MARGIN not found in src/dsp/ldpcCodec.ts"
+    assert float(match.group(1)) == pytest.approx(AP_LLR_MARGIN)
+
+
+def test_ap_frequency_window_matches():
+    """
+    WSJT-X's `napwid`. The deep hypotheses assert most of the message, and this is the only
+    thing keeping them off a passband the operator is not working - so it has to be the same
+    number on both sides, not merely a similar one.
+    """
+    ts_source = read(TS_AP)
+    window = re.search(r"export const AP_FREQ_WINDOW_HZ\s*=\s*([0-9.]+);", ts_source)
+    deep = re.search(r"export const AP_DEEP_TYPE\s*=\s*(\d+);", ts_source)
+    assert window and deep, "AP window constants not found in src/dsp/apDecode.ts"
+    assert float(window.group(1)) == pytest.approx(AP_FREQ_WINDOW_HZ)
+    assert int(deep.group(1)) == AP_DEEP_TYPE
+
+
+def test_ap_type_catalogue_matches():
+    """The `iaptype` table itself: same types, same labels, in both languages."""
+    ts_source = read(TS_AP)
+    block = re.search(
+        r"export const AP_TYPE_LABELS:[^=]*=\s*\{(.*?)\};", ts_source, re.S
+    )
+    assert block, "AP_TYPE_LABELS not found in src/dsp/apDecode.ts"
+    ts_labels = {
+        int(num): label
+        for num, label in re.findall(r"(\d+):\s*'([^']*)'", block.group(1))
+    }
+    assert ts_labels == dict(AP_TYPE_LABELS), (
+        f"AP type catalogue differs: TypeScript {ts_labels} vs Python {dict(AP_TYPE_LABELS)}"
+    )
+
+
+def test_ap_stage_ladder_matches():
+    """
+    WSJT-X's `naptypes(nQSOProgress,1:4)`, mapped onto z-30's QsoStage union.
+
+    The ORDER matters as much as the membership: the ladder is tried in sequence and each entry
+    is another 2^-14 roll of the CRC dice, so a reordering changes both which frames are
+    recovered and how exposed the receiver is - in one language only.
+    """
+    ts_source = read(TS_AP)
+    block = re.search(
+        r"export const AP_STAGE_LADDER:[^=]*=\s*\{(.*?)\n\};", ts_source, re.S
+    )
+    assert block, "AP_STAGE_LADDER not found in src/dsp/apDecode.ts"
+    ts_ladder = {
+        stage: tuple(int(n) for n in re.findall(r"\d+", types))
+        for stage, types in re.findall(r"(\w+):\s*\[([0-9,\s]*)\]", block.group(1))
+    }
+    assert ts_ladder == dict(AP_STAGE_LADDER), (
+        f"AP stage ladder differs: TypeScript {ts_ladder} vs Python {dict(AP_STAGE_LADDER)}"
+    )
+
+    # And every stage in the TypeScript QsoStage union has a ladder, so a stage added there
+    # cannot silently fall through to "no AP" without anyone deciding that.
+    types_source = read(os.path.join(REPO_ROOT, "src", "types", "z30.ts"))
+    union = re.search(r"export type QsoStage\s*=\s*(.*?);", types_source, re.S)
+    assert union, "QsoStage union not found in src/types/z30.ts"
+    # [A-Z0-9_], not [A-Z_]: SENDING_73 carries digits, and a pattern that quietly skipped it
+    # would let this test pass while the very stage it exists to cover went unchecked.
+    stages = set(re.findall(r"'([A-Z0-9_]+)'", union.group(1)))
+    assert stages == set(AP_STAGE_LADDER), (
+        f"QsoStage union {sorted(stages)} does not match the AP ladder {sorted(AP_STAGE_LADDER)}"
+    )
+
+
+def test_ap_closing_modifiers_match_the_packers_codes():
+    r"""
+    Types 4-6 assert a 7-bit modifier. Python names it by constant; TypeScript re-derives it by
+    packing the message text, so this pins the two spellings to each other AND to the packer.
+
+    The `73` code is the one that matters most: `packZ30Message` used to reach its numeric
+    report branch first (`/^\d+$/` matches '73'), so the modifier branch was unreachable and
+    every sign-off went out as a +30 dB report. AP type 5 asserted a message the transmitter
+    could not produce.
+    """
+    ts_source = read(TS_AP)
+    block = re.search(
+        r"export const AP_TYPE_MODIFIER:[^=]*=\s*\{(.*?)\};", ts_source, re.S
+    )
+    assert block, "AP_TYPE_MODIFIER not found in src/dsp/apDecode.ts"
+    ts_modifiers = {
+        int(num): text for num, text in re.findall(r"(\d+):\s*'([^']*)'", block.group(1))
+    }
+    expected = {4: "RRR", 5: "73", 6: "RR73"}
+    assert ts_modifiers == expected
+
+    py_codes = {4: EXTRA_RRR, 5: EXTRA_73, 6: EXTRA_RR73}
+    assert dict(AP_TYPE_EXTRA) == py_codes
+    assert set(AP_TYPE_EXTRA) == set(ts_modifiers), "the two sides close a QSO with different types"
+
+    # The TypeScript packer's own branch order, which is what makes those codes reachable.
+    codec_source = read(os.path.join(REPO_ROOT, "src", "dsp", "z30Codec.ts"))
+    modifier_at = codec_source.find("third === '73'")
+    numeric_at = codec_source.find("/^\\d+$/.test(third)")
+    assert modifier_at != -1 and numeric_at != -1
+    assert modifier_at < numeric_at, (
+        "packZ30Message tests the numeric report branch before the '73' branch again; "
+        "'73' matches /^\\d+$/, so the sign-off would pack as a +30 dB report"
+    )
+
+
+def test_shared_callsign_packing_vectors_match_the_python_implementation():
+    """
+    The 28-bit callsign encoding, which is what AP asserts. `tests/apDecode.test.mjs` runs the
+    same file through the TypeScript implementation.
+    """
+    with open(CALLSIGN_PACK_VECTORS, "r", encoding="utf-8") as handle:
+        document = json.load(handle)
+
+    assert document["field_width_bits"] == 28
+    assert len(document["vectors"]) >= 10
+
+    for vector in document["vectors"]:
+        packed = encode_callsign28(vector["call"])
+        assert packed == vector["packed"], (
+            f"{vector['call']}: Python packed {packed}, vector says {vector['packed']}"
+        )
+        assert 0 <= packed <= 0x0FFFFFFF, f"{vector['call']}: packed value outside the 28-bit field"
+        unpacked = decode_callsign28(packed)
+        assert unpacked == vector["unpacked"], (
+            f"{vector['call']}: Python unpacked {unpacked}, vector says {vector['unpacked']}"
+        )
+        # The round-trip flag is what decides whether a callsign may be asserted at all.
+        assert (unpacked == vector["call"].strip().upper()) == vector["round_trips"]

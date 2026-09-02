@@ -10,6 +10,7 @@ import { audioEngine } from './dsp/audioEngine';
 import { packZ30Message } from './dsp/z30Codec';
 import { sicDecoderEngine } from './dsp/sicDecoder';
 import { qsoEngine, QsoState } from './dsp/qsoEngine';
+import { ApContext } from './dsp/apDecode';
 import { qsoLogger, StorageStatus } from './dsp/qsoLogger';
 import { rigctl } from './dsp/catController';
 
@@ -212,13 +213,30 @@ export default function App() {
 
   // Perform a full 30s SIC Decode Cycle on real received audio (self-decoding inhibited)
   const executeDecodeCycle = useCallback(() => {
+    // Built here rather than inside the decoder because this is where the QSO state machine
+    // lives: the ladder a priori decoding tries depends on which message the operator is
+    // currently sending, and the deep hypotheses are gated on the frequencies being worked.
+    // Undefined whenever the operator has not enabled AP, which leaves the decode path exactly
+    // as it was.
+    const apContext: ApContext | undefined = config.apDecodeEnabled
+      ? {
+          stage: qsoState.stage,
+          myCall: config.myCall,
+          dxCall: qsoState.targetDxCall,
+          cqToken: qsoState.currentTxMacro === 'tx6' ? 'CQ DX' : 'CQ',
+          rxFreqHz: qsoState.rxFreqHz,
+          txFreqHz: qsoState.txFreqHz,
+        }
+      : undefined;
+
     const result = sicDecoderEngine.runSicDecodeCycle(
       dialFreqHz,
       config.myCall,
       config.myGrid,
       isTransmitting,
       qsoState.txFreqHz,
-      timeOffsetMs
+      timeOffsetMs,
+      apContext
     );
 
     setDecodes(sicDecoderEngine.getHistory());
@@ -238,7 +256,11 @@ export default function App() {
         qsoLogger.logQsoAsync(autoResult.autoLogged);
       }
     }
-  }, [dialFreqHz, config, isTransmitting, qsoState.txFreqHz, currentBandIdx, timeOffsetMs]);
+    // Every qsoState field the AP context reads is listed. A stale closure here would build the
+    // ladder from the QSO stage of a previous slot, which is the one way AP can assert something
+    // the operator has already moved on from.
+  }, [dialFreqHz, config, isTransmitting, qsoState.txFreqHz, qsoState.rxFreqHz, qsoState.stage,
+      qsoState.targetDxCall, qsoState.currentTxMacro, currentBandIdx, timeOffsetMs]);
 
   const tuneTimeoutRef = useRef<number | null>(null);
 

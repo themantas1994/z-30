@@ -55,6 +55,9 @@ import { PythonSourceViewer } from './PythonSourceViewer';
 // so the wizard showed "Valid ITU Callsign" for calls the gate refuses at slot start (W1, K1A2)
 // and "Invalid" for ones it permits (DL/W1AW).
 import { isValidCallsign } from '../dsp/bandPlan';
+// Quoted, not retyped: AGENTS.md's rule that UI prose reads the constant rather than a
+// number beside it. This window is WSJT-X's napwid and lives in apDecode.ts.
+import { AP_FREQ_WINDOW_HZ } from '../dsp/apDecode';
 import { isValidGrid, maidenheadToLatLon } from '../dsp/gridSquare';
 import {
   BAND_PLANS,
@@ -1703,6 +1706,27 @@ export const StationSettingsModal: React.FC<StationSettingsModalProps> = ({
                     />
                     <span className="text-[#D4D4D4]">
                       Auto-Reply / Call 1st (Automatically answer decoded stations responding to your CQ call)
+                    </span>
+                  </label>
+
+                  <label className="flex items-start space-x-2 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={!!form.apDecodeEnabled}
+                      onChange={(e) => setForm({ ...form, apDecodeEnabled: e.target.checked })}
+                      className="w-4 h-4 mt-0.5 bg-[#141414] border-[#333] text-[#00FF41] focus:ring-0 accent-[#00FF41]"
+                    />
+                    <span className="text-[#D4D4D4]">
+                      A Priori (AP) Decoding &mdash; retry a frame that failed to decode using what the
+                      QSO state already implies must be in it (your callsign, the station you are
+                      working, and the closing message).
+                      <span className="block text-[10px] text-[#888] mt-0.5">
+                        AP-recovered decodes are tagged <span className="text-[#00FF41] font-bold">a3</span>&hellip;
+                        <span className="text-[#00FF41] font-bold">a6</span> in the activity log. It costs up to four
+                        extra CRC-14 rejections per frame, so a wrong message is somewhat more likely to be
+                        accepted than without it. Deep hypotheses are only tried within {AP_FREQ_WINDOW_HZ} Hz of the
+                        frequency you are working.
+                      </span>
                     </span>
                   </label>
 

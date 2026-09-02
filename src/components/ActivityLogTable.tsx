@@ -265,6 +265,19 @@ export const ActivityLogTable: React.FC<ActivityLogTableProps> = ({
                         >
                           {d.message}
                         </span>
+                        {/*
+                          A frame recovered by assuming what must be in it is a weaker claim
+                          than one decoded from the air alone, so it is labelled rather than
+                          shown identically. WSJT-X prints its `iaptype` for the same reason.
+                        */}
+                        {!!d.apType && (
+                          <span
+                            className="text-[10px] font-bold text-amber-400 border border-amber-400/40 px-1"
+                            title={`Recovered with a priori information: ${d.apLabel || `type ${d.apType}`}`}
+                          >
+                            a{d.apType}
+                          </span>
+                        )}
                         {d.ldpcIterations && (
                           <span className="text-[10px] text-[#666]">
                             ({d.ldpcIterations} iters)

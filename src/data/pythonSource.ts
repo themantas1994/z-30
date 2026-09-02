@@ -192,6 +192,65 @@ def dither_vector(llr_channel: "np.ndarray | List[float]", length: int) -> "np.n
     return out
 
 
+#: How far an a priori LLR is pushed beyond the strongest evidence the channel actually
+#: supplied, as a multiple of max|LLR| over the frame.
+#:
+#: WSJT-X's \`lib/ft8/ft8b.f90\` computes \`apmag=maxval(abs(llra))*1.01\` and this is a direct
+#: port of that rule. The magnitude is *derived from the frame*, never a constant: a fixed
+#: number large enough to dominate a strong frame would be arbitrarily larger than the evidence
+#: in a weak one, and a fixed number sized for a weak frame would be overridden in a strong one.
+#: Scaling with the frame keeps an AP bit exactly one notch more certain than the most certain
+#: thing the demodulator measured, whatever the signal level.
+#:
+#: The twin of \`AP_LLR_MARGIN\` in src/dsp/apDecode.ts, pinned by
+#: tests/test_cross_language_parity.py.
+AP_LLR_MARGIN: float = 1.01
+
+
+def ap_llr_magnitude(llr_channel: "np.ndarray | List[float]") -> float:
+    """
+    The magnitude an a priori bit is asserted with, for this frame's channel LLRs.
+
+    \`AP_LLR_MARGIN * max(|LLR|)\`, WSJT-X's rule. Returns 0.0 for an all-zero frame, which
+    \`apply_ap_hypothesis\` turns into a no-op rather than a division or a NaN.
+    """
+    arr = np.asarray(llr_channel, dtype=np.float64)
+    return float(AP_LLR_MARGIN * np.max(np.abs(arr))) if arr.size else 0.0
+
+
+def apply_ap_hypothesis(
+    llr_channel: "np.ndarray | List[float]",
+    ap_mask: "np.ndarray | List[int]",
+    ap_bits: "np.ndarray | List[int]",
+) -> "np.ndarray":
+    """
+    A copy of \`llr_channel\` with every masked position replaced by its a priori LLR.
+
+    Sign convention is this codec's, not WSJT-X's: here L = ln(P(c=0)/P(c=1)) and the hard
+    decision is \`llr < 0 -> 1\`, so an asserted 0 becomes \`+apmag\` and an asserted 1 becomes
+    \`-apmag\`. WSJT-X's \`bpdecode174_91\` reads the opposite sign and its \`apsym=2*bit-1\` term
+    carries the flip; transcribing that expression instead of re-deriving it would assert every
+    a priori bit inverted, and every hypothesis would fail its CRC.
+
+    Args:
+        llr_channel: the frame's channel LLRs (216, or 77 when only the information block is
+            being constrained - the length is whatever the caller passes).
+        ap_mask: 1 where the bit is asserted, 0 where the channel is left to speak.
+        ap_bits: the asserted values, read only where \`ap_mask\` is 1.
+    """
+    out = np.array(llr_channel, dtype=np.float32)
+    mask = np.asarray(ap_mask, dtype=bool)
+    bits = np.asarray(ap_bits, dtype=np.uint8)
+    if mask.size > out.size or bits.size < mask.size:
+        raise ValueError("ap_mask/ap_bits must not be longer than the LLR vector")
+    apmag = ap_llr_magnitude(out)
+    if apmag <= 0.0:
+        return out
+    idx = np.nonzero(mask)[0]
+    out[idx] = np.where(bits[idx] == 0, np.float32(apmag), np.float32(-apmag))
+    return out
+
+
 #: Magnitude the check-node scan initialises its two running minima to.
 #:
 #: A sentinel, not a bound: a magnitude at or above it never replaces \`min1\`/\`min2\`, so a check
@@ -532,6 +591,7 @@ class Z30LdpcCodec:
         damping: float,
         spa: bool,
         reverse: bool,
+        ap_pinned: "List[bool] | None" = None,
     ) -> None:
         """
         One layered check-node sweep, mutating \`total_llrs\` and \`msgs\` in place.
@@ -555,6 +615,18 @@ class Z30LdpcCodec:
         Every intermediate stays float32 and every operation keeps the reference's order, so
         the messages are bit-identical; \`tests/test_ldpc_vectorized_equivalence.py\` pins that
         against a transcription of the scalar sweep.
+
+        \`ap_pinned\` marks variables held at their a priori value: their \`total_llrs\` entry never
+        receives a check message, so the belief the caller asserted survives every iteration.
+        This is WSJT-X's \`bpdecode174_91\` rule (\`zn(i)=llr(i)\` where \`apmask(i)==1\`) expressed
+        in a layered decoder. Note that the variable-to-check message for a pinned bit is still
+        \`total_llrs[v] - msgs_c[i]\`, which reproduces WSJT-X's \`toc = zn(ibj) - tov(kk,ibj)\`
+        exactly - the pin fixes the bit's *belief*, it does not stop the bit from telling its
+        checks what it believes.
+
+        \`None\` is the ordinary path, and the identity check that selects it is the only thing
+        that path pays: no arithmetic here changes, so an AP-less decode is bit-identical to
+        the one this function performed before AP existed.
         """
         check_order = self._check_order_reverse if reverse else self._check_order_forward
 
@@ -598,21 +670,48 @@ class Z30LdpcCodec:
                 damped_msg = (1.0 - damping) * msgs_c[i] + damping * new_msg
                 diff = damped_msg - msgs_c[i]
                 msgs_c[i] = damped_msg
-                total_llrs[v] += diff
+                if ap_pinned is None or not ap_pinned[v]:
+                    total_llrs[v] += diff
 
-    def decode_min_sum(self, llr_channel: np.ndarray) -> Tuple[bool, np.ndarray, int]:
+    def decode_min_sum(
+        self,
+        llr_channel: np.ndarray,
+        ap_mask: "np.ndarray | List[int] | None" = None,
+    ) -> Tuple[bool, np.ndarray, int]:
         """
         Ultra-Sensitive Multi-Schedule Damped Log-SPA & Layered Normalized Min-Sum LDPC Decoder
         with Trellis-IRA Re-Accumulation and OSD-2 Chase Reliability Search.
 
         Args:
             llr_channel (np.ndarray): Array of 216 soft channel log-likelihood ratios.
+            ap_mask: optional a priori mask, 1 where the corresponding LLR is an asserted belief
+                rather than a measurement. Shorter than 216 is accepted and zero-extended, so a
+                caller constraining only the information block passes 77 values. \`llr_channel\`
+                must already carry the asserted LLRs at those positions - build both with
+                \`apply_ap_hypothesis\`, which is what keeps the assertion and the mask from
+                drifting apart. The default of None is the ordinary decode, and it is
+                bit-identical to what this decoder produced before AP existed.
 
         Returns:
             Tuple[bool, np.ndarray, int]: (success_flag, decoded_77_info_bits, iterations)
         """
         assert len(llr_channel) == self.n, f"Expected {self.n} LLRs"
         input_llr = np.array(llr_channel, dtype=np.float32)
+
+        # A Python list of bools, not a NumPy array: this is indexed once per edge per check per
+        # iteration inside \`_sweep_checks\`, where a NumPy scalar read costs far more than a list
+        # element read. Built once per decode.
+        ap_pinned: "List[bool] | None" = None
+        pinned_indices: np.ndarray = np.zeros(0, dtype=np.intp)
+        if ap_mask is not None:
+            mask_arr = np.zeros(self.n, dtype=bool)
+            supplied = np.asarray(ap_mask, dtype=bool)
+            if supplied.size > self.n:
+                raise ValueError(f"ap_mask has {supplied.size} entries; the code has {self.n} bits")
+            mask_arr[:supplied.size] = supplied
+            if mask_arr.any():
+                ap_pinned = mask_arr.tolist()
+                pinned_indices = np.nonzero(mask_arr)[0]
 
         # 1. Check if raw channel hard decisions already form a valid codeword
         raw_hard = (input_llr < 0).astype(np.uint8)
@@ -640,6 +739,11 @@ class Z30LdpcCodec:
                 # Derived from the channel LLRs, not from the unseeded global RNG - see
                 # dither_vector(). This is what keeps a seeded benchmark reproducible.
                 total_llrs += dither_vector(input_llr, self.n)
+                # A pinned bit is an assertion, not a measurement, so there is nothing there for
+                # stochastic resonance to shake loose. The dither vector itself is still drawn
+                # over all 216 positions from the same seed, so schedule 4 perturbs the
+                # unpinned bits by exactly the values it would have without a mask.
+                total_llrs[pinned_indices] = input_llr[pinned_indices]
 
             # Check-to-variable messages, one flat array indexed by _edge_lo/_edge_hi.
             c_to_v = np.zeros(self._n_edges, dtype=np.float32)
@@ -658,6 +762,7 @@ class Z30LdpcCodec:
                     sched['damping'],
                     is_spa,
                     sched['reverse'],
+                    ap_pinned,
                 )
 
                 # Hard decisions
@@ -705,7 +810,16 @@ class Z30LdpcCodec:
         # =====================================================================
         if min_syndrome_weight <= 14:
             base_payload = best_codeword[:63]
-            ranked_indices = sorted(range(63), key=lambda i: abs(best_total_llrs[i]))
+            # A pinned bit is never a flip candidate. In practice it would not be chosen anyway
+            # - it carries the largest magnitude in the frame by construction, so it sorts last
+            # - but "never" and "not in practice" are different guarantees, and the difference
+            # matters here: flipping one would hand back a codeword that contradicts the very
+            # hypothesis whose CRC is being used to decide the hypothesis was right.
+            flip_candidates = (
+                range(63) if ap_pinned is None
+                else [i for i in range(63) if not ap_pinned[i]]
+            )
+            ranked_indices = sorted(flip_candidates, key=lambda i: abs(best_total_llrs[i]))
             test_indices = ranked_indices[:min(14, len(ranked_indices))]
 
             best_osd_cw = None
@@ -1443,6 +1557,627 @@ class Z30SicMultiSignalDecoder:
 `,
   },
   {
+    filename: "ap_decode.py",
+    path: "z30_dsp/ap_decode.py",
+    description: "A priori decoding: the QSO-state hypothesis ladder ported from WSJT-X, the gates that keep it narrow, and the constrained decode the CRC-14 arbitrates.",
+    code: `"""
+z-30 a priori (AP) decoding - the hypothesis ladder and the constrained decode.
+==============================================================================
+
+A ported idea, and the port is the interesting part
+---------------------------------------------------
+WSJT-X has decoded FT8 with a priori information since v1.8. The mechanism lives in
+\`lib/ft8/ft8b.f90\` and \`lib/ft8/bpdecode174_91.f90\`: when an ordinary decode fails, the decoder
+is re-run with some of the message bits *asserted* rather than measured, the assertion drawn
+from what the QSO state machine already knows must be in the message - the operator's own
+callsign, the callsign they are working, and for the closing messages the whole exchange. The
+14-bit CRC then decides whether the assertion was right. A wrong hypothesis fails its CRC and
+costs nothing but time; a right one recovers a frame that had too few good bits to close on its
+own.
+
+The gain is not a decoder improvement. It is information the receiver genuinely has and was
+throwing away: a station answering your CQ *has* to have put your callsign in the first field,
+so those 28 bits were never in question, and spending channel evidence to re-derive them is
+spending it twice.
+
+Four mechanisms carry over verbatim, and each is here for the reason WSJT-X has it:
+
+  * **\`apmag\` scales with the frame.** \`AP_LLR_MARGIN * max|LLR|\` (WSJT-X's
+    \`apmag=maxval(abs(llra))*1.01\`), computed in \`z30_dsp.ldpc.ap_llr_magnitude\`. See the
+    constant's own note for why a fixed magnitude cannot work.
+  * **Asserted bits are pinned, not merely biased.** \`decode_min_sum(..., ap_mask=...)\` holds
+    them at their asserted value for every iteration, WSJT-X's \`zn(i)=llr(i)\`. Substituting a
+    large LLR and letting belief propagation update it normally would let a run of confident
+    check messages walk an asserted bit back, which is the one thing the assertion exists to
+    prevent.
+  * **The CRC is the arbiter, so AP never runs first.** An ordinary decode is attempted before
+    any hypothesis, and a hypothesis is only accepted on a CRC-valid codeword. Every AP frame
+    is therefore a frame that failed to decode on its own.
+  * **The deep hypotheses are gated by frequency.** Types 3 and up assert 56 or 63 bits, which
+    is most of the message; WSJT-X only permits those within \`napwid\` Hz of the frequency the
+    operator is actually working (\`AP_FREQ_WINDOW_HZ\` here). Off in the corner of the passband
+    there is no reason to believe the QSO state applies, and each extra hypothesis is another
+    2^-14 roll of the CRC dice.
+
+What that last point costs, stated plainly
+-------------------------------------------
+AP is not free. Each hypothesis is an additional codeword the CRC-14 has to reject, so a
+station running the four-hypothesis ladder gives the receiver five chances (one ordinary, four
+AP) to accept a wrong message instead of one. On random errors that is a false-accept
+probability of roughly \`5 * 2^-14\` per candidate instead of \`2^-14\` - about 3.1e-4 against
+6.1e-5. That is the trade WSJT-X makes too, and it is why the ladder is short, why it is
+ordered by how likely the hypothesis is *given the QSO state*, and why the deep types are
+frequency-gated. It is also why \`decode_with_ap\` re-checks the asserted fields in the accepted
+payload rather than trusting that pinning made that impossible.
+
+The measured effect on z-30 is in
+[\`wiki/17\`](../wiki/17-A-Priori-(AP)-Decoding.md); \`benchmark.py --ap\` is the instrument.
+"""
+
+from dataclasses import dataclass
+from typing import Dict, List, Optional, Sequence, Tuple
+
+import numpy as np
+
+from .ldpc import Z30LdpcCodec, apply_ap_hypothesis
+from .message_codec import (
+    EXTRA_73,
+    EXTRA_RR73,
+    EXTRA_RRR,
+    FIELD_CALL_FROM,
+    FIELD_CALL_TO,
+    FIELD_EXTRA,
+    PAYLOAD_BITS,
+    bits_to_int,
+    callsign_round_trips,
+    encode_callsign28,
+    field_slice,
+    int_to_bits,
+)
+
+#: Half-width, in Hz, of the window around the worked frequency inside which the deep AP
+#: hypotheses (types 3 and up) are permitted.
+#:
+#: WSJT-X sets \`napwid=75\` in \`lib/jt9.f90\` and applies it as
+#: \`abs(f1-nfqso).gt.napwid .and. abs(f1-nftx).gt.napwid\` - the candidate has to be near either
+#: the receive frequency or the transmit frequency. z-30 occupies the same 50 Hz an FT8 signal
+#: does, so the number ports across unchanged: it is one signal width either side of the
+#: carrier the operator is actually working.
+#:
+#: The twin of \`AP_FREQ_WINDOW_HZ\` in src/dsp/apDecode.ts, pinned by
+#: tests/test_cross_language_parity.py.
+AP_FREQ_WINDOW_HZ: float = 75.0
+
+#: The lowest AP type that asserts more than one field, and so the lowest one the frequency
+#: window applies to. Types 1 and 2 assert 28 bits and are cheap enough to try passband-wide,
+#: which is what lets a CQ or a call to you be dug out of a corner you were not watching.
+AP_DEEP_TYPE: int = 3
+
+#: The AP hypothesis catalogue, adapted from the \`iaptype\` table in WSJT-X's \`lib/ft8/ft8b.f90\`.
+#:
+#: FT8 packs 28+28+15 bits plus a 3-bit message type; z-30 packs 28+28+7 and has no type field,
+#: so the FT8 types' trailing \`i3\`/\`n3\` assertions have no counterpart here and the bit counts
+#: differ. What is preserved is the ladder itself: which fields each hypothesis claims to know,
+#: and in what order the QSO state makes them worth trying.
+#:
+#:   type  hypothesis              asserted fields                       payload bits asserted
+#:   ----  ----------------------  ------------------------------------  ---------------------
+#:    1    CQ     ???    ???       to = the CQ token                     28
+#:    2    MyCall ???    ???       to = my callsign                      28
+#:    3    MyCall DxCall ???       to = mine, from = theirs              56
+#:    4    MyCall DxCall RRR       to, from, extra = RRR                 63
+#:    5    MyCall DxCall 73        to, from, extra = 73                  63
+#:    6    MyCall DxCall RR73      to, from, extra = RR73                63
+#:
+#: Types 4-6 assert every payload bit, leaving the 14 CRC bits as the only thing the channel
+#: still has to supply - which is exactly WSJT-X's \`apmask(1:77)=1\`, where the FT8 CRC likewise
+#: stays free. Asserting the CRC too would leave nothing to check the hypothesis against.
+AP_TYPE_LABELS: Dict[int, str] = {
+    1: "CQ ??? ???",
+    2: "MyCall ??? ???",
+    3: "MyCall DxCall ???",
+    4: "MyCall DxCall RRR",
+    5: "MyCall DxCall 73",
+    6: "MyCall DxCall RR73",
+}
+
+#: The 7-bit modifier each closing hypothesis asserts.
+AP_TYPE_EXTRA: Dict[int, int] = {4: EXTRA_RRR, 5: EXTRA_73, 6: EXTRA_RR73}
+
+#: QSO stage -> the AP types to try, in order.
+#:
+#: The twin of WSJT-X's \`naptypes(nQSOProgress,1:4)\` table, mapped onto z-30's \`QsoStage\` union
+#: (src/types/z30.ts). The orderings are WSJT-X's, stage for stage: while you are calling CQ the
+#: likely frames are other CQs and answers to you; once you are exchanging reports the likely
+#: frames are the closing messages of the QSO you are in; and at the 73 the ladder falls back
+#: towards the general cases as the QSO winds down.
+#:
+#: The twin of \`AP_STAGE_LADDER\` in src/dsp/apDecode.ts, pinned by
+#: tests/test_cross_language_parity.py.
+AP_STAGE_LADDER: Dict[str, Tuple[int, ...]] = {
+    "IDLE": (1, 2),
+    "CALLING_CQ": (1, 2),
+    "REPLYING_CQ": (2, 3),
+    "SENDING_REPORT": (3, 4, 5, 6),
+    "SENDING_R_REPORT": (3, 4, 5, 6),
+    "SENDING_73": (3, 1, 2),
+    "QSO_COMPLETED": (1, 2),
+}
+
+
+@dataclass(frozen=True)
+class ApHypothesis:
+    """
+    One assertion about a frame's payload bits.
+
+    \`mask\` and \`bits\` are 63 entries - the payload only. \`decode_min_sum\` zero-extends to 216,
+    so nothing here ever asserts a parity bit: parity is what the code derives, and asserting it
+    would be asserting the answer.
+    """
+
+    ap_type: int
+    label: str
+    mask: Tuple[int, ...]
+    bits: Tuple[int, ...]
+
+    @property
+    def asserted_bit_count(self) -> int:
+        return sum(self.mask)
+
+
+@dataclass(frozen=True)
+class ApDecodeResult:
+    """
+    What \`decode_with_ap\` made of one frame.
+
+    \`ap_type\` is 0 for a frame that decoded on its own, which is the overwhelming majority of
+    them; a nonzero value names the hypothesis that recovered it, the way WSJT-X reports
+    \`iaptype\` alongside each decode so the operator can see which decodes leaned on assumed
+    information.
+    """
+
+    success: bool
+    info_bits: np.ndarray
+    iterations: int
+    ap_type: int
+    ap_label: str
+    hypotheses_tried: int
+
+
+def _payload_assertion(fields: Sequence[Tuple[Tuple[int, int], int]]) -> Tuple[List[int], List[int]]:
+    """Builds the (mask, bits) pair asserting each \`(field, value)\` and nothing else."""
+    mask = [0] * PAYLOAD_BITS
+    bits = [0] * PAYLOAD_BITS
+    for field, value in fields:
+        offset, width = field
+        for i, bit in enumerate(int_to_bits(value, width)):
+            mask[offset + i] = 1
+            bits[offset + i] = bit
+    return mask, bits
+
+
+def build_hypothesis(
+    ap_type: int,
+    my_call: str,
+    dx_call: str = "",
+    cq_token: str = "CQ",
+) -> Optional[ApHypothesis]:
+    """
+    The hypothesis for one AP type, or None when the station data cannot support it.
+
+    Returns None rather than a weaker hypothesis. WSJT-X's guards are
+    \`if(iaptype.ge.2 .and. apsym(1).gt.1) cycle\` and
+    \`if(iaptype.ge.3 .and. apsym(30).gt.1) cycle\` - no usable callsign means the type is skipped
+    outright, not tried with a placeholder. \`callsign_round_trips\` is the z-30 equivalent of the
+    \`msg.eq.msgchk\` test \`ft8apset\` performs, and it rejects the same cases: a callsign that
+    does not survive the 28-bit packing cannot be asserted, because the bits it would assert
+    belong to a different callsign.
+    """
+    if ap_type not in AP_TYPE_LABELS:
+        raise ValueError(f"unknown AP type {ap_type}; known types are {sorted(AP_TYPE_LABELS)}")
+
+    if ap_type == 1:
+        mask, bits = _payload_assertion([(FIELD_CALL_TO, encode_callsign28(cq_token))])
+        return ApHypothesis(1, AP_TYPE_LABELS[1], tuple(mask), tuple(bits))
+
+    if not callsign_round_trips(my_call):
+        return None
+    my_packed = encode_callsign28(my_call)
+
+    if ap_type == 2:
+        mask, bits = _payload_assertion([(FIELD_CALL_TO, my_packed)])
+        return ApHypothesis(2, AP_TYPE_LABELS[2], tuple(mask), tuple(bits))
+
+    if not callsign_round_trips(dx_call):
+        return None
+    dx_packed = encode_callsign28(dx_call)
+
+    fields: List[Tuple[Tuple[int, int], int]] = [
+        (FIELD_CALL_TO, my_packed),
+        (FIELD_CALL_FROM, dx_packed),
+    ]
+    if ap_type in AP_TYPE_EXTRA:
+        fields.append((FIELD_EXTRA, AP_TYPE_EXTRA[ap_type]))
+
+    mask, bits = _payload_assertion(fields)
+    return ApHypothesis(ap_type, AP_TYPE_LABELS[ap_type], tuple(mask), tuple(bits))
+
+
+def build_ap_hypotheses(
+    stage: str,
+    my_call: str,
+    dx_call: str = "",
+    cq_token: str = "CQ",
+    candidate_freq_hz: Optional[float] = None,
+    worked_freqs_hz: Sequence[float] = (),
+) -> List[ApHypothesis]:
+    """
+    The ordered hypothesis ladder for a QSO stage, already filtered by the gates.
+
+    Args:
+        stage: a \`QsoStage\` value (src/types/z30.ts). An unrecognised stage yields no
+            hypotheses - AP is an optimisation, and a state machine that has grown a stage
+            nobody wrote a ladder for should decode exactly as it did before, not guess.
+        candidate_freq_hz: where in the passband this candidate was found. Omit it and the
+            frequency gate does not apply, which is the right behaviour for the benchmark and
+            for any caller with no frequency to compare against - but a live receiver has one
+            and should pass it.
+        worked_freqs_hz: the receive and transmit audio frequencies the operator is working.
+            WSJT-X compares against both (\`nfqso\` and \`nftx\`), because in split operation the
+            station you are working is not on the frequency you are transmitting on.
+    """
+    ladder = AP_STAGE_LADDER.get(stage.strip().upper(), ())
+    near_worked = _within_ap_window(candidate_freq_hz, worked_freqs_hz)
+
+    hypotheses: List[ApHypothesis] = []
+    for ap_type in ladder:
+        if ap_type >= AP_DEEP_TYPE and not near_worked:
+            continue
+        hypothesis = build_hypothesis(ap_type, my_call, dx_call, cq_token)
+        if hypothesis is not None:
+            hypotheses.append(hypothesis)
+    return hypotheses
+
+
+def _within_ap_window(
+    candidate_freq_hz: Optional[float],
+    worked_freqs_hz: Sequence[float],
+) -> bool:
+    """
+    Whether a candidate is close enough to a worked frequency for the deep hypotheses.
+
+    No candidate frequency, or no worked frequency to compare it against, means the gate cannot
+    be evaluated and does not fire. That is deliberate: the gate exists to stop the deep types
+    being tried across a passband the operator is not working, and a caller that has no notion
+    of passband position (the benchmark decodes one frame at a time, at one carrier) is not the
+    situation it guards against.
+    """
+    if candidate_freq_hz is None:
+        return True
+    usable = [f for f in worked_freqs_hz if f is not None and f > 0]
+    if not usable:
+        return True
+    return any(abs(candidate_freq_hz - f) <= AP_FREQ_WINDOW_HZ for f in usable)
+
+
+def hypothesis_holds(info_bits: "np.ndarray | Sequence[int]", hypothesis: ApHypothesis) -> bool:
+    """
+    Whether a decoded payload really carries what the hypothesis asserted.
+
+    Pinning is supposed to make this impossible to fail, and in the decoder as it stands it
+    cannot: \`decode_min_sum\` holds pinned variables at their asserted value and excludes them
+    from the OSD flip set. This is checked anyway because the consequence of it ever becoming
+    possible - a decoder change, a mask off by one field - is a frame reported to the operator
+    and written to the log under a callsign that was assumed rather than received. A guard that
+    can only fire when something else is already wrong is exactly the guard worth keeping.
+    """
+    bits = np.asarray(info_bits, dtype=np.uint8)
+    if bits.size < PAYLOAD_BITS:
+        return False
+    for i in range(PAYLOAD_BITS):
+        if hypothesis.mask[i] and int(bits[i]) != hypothesis.bits[i]:
+            return False
+    return True
+
+
+def decode_with_ap(
+    codec: Z30LdpcCodec,
+    llr_channel: "np.ndarray",
+    hypotheses: Sequence[ApHypothesis] = (),
+) -> ApDecodeResult:
+    """
+    An ordinary decode, and then - only if it failed - each hypothesis in turn.
+
+    The ordering is the whole safety argument. A frame that decodes on its own is returned by
+    the same code path it always was, with \`ap_type=0\`, having been through no AP machinery at
+    all; AP can therefore add decodes but cannot change or lose one. That is WSJT-X's structure
+    too, where AP occupies passes 4 onwards and passes 1-3 are the ordinary ones.
+    """
+    success, info_bits, iterations = codec.decode_min_sum(llr_channel)
+    if success:
+        return ApDecodeResult(True, info_bits, iterations, 0, "", 0)
+
+    total_iterations = iterations
+    for tried, hypothesis in enumerate(hypotheses, start=1):
+        ap_llrs = apply_ap_hypothesis(llr_channel, hypothesis.mask, hypothesis.bits)
+        ok, ap_info, ap_iters = codec.decode_min_sum(ap_llrs, ap_mask=hypothesis.mask)
+        total_iterations += ap_iters
+        if ok and hypothesis_holds(ap_info, hypothesis):
+            return ApDecodeResult(
+                True, ap_info, total_iterations, hypothesis.ap_type, hypothesis.label, tried
+            )
+
+    return ApDecodeResult(False, info_bits, total_iterations, 0, "", len(hypotheses))
+
+
+def describe_ap_decode(result: ApDecodeResult) -> str:
+    """
+    A short operator-facing tag for a decode, or the empty string for an ordinary one.
+
+    WSJT-X prints \`iaptype\` next to each decode for a reason: a frame recovered by assuming your
+    own callsign was in it is a weaker claim than one decoded from the air alone, and an
+    operator logging a contact is entitled to know which they are looking at.
+    """
+    if not result.success or result.ap_type == 0:
+        return ""
+    return f"a{result.ap_type}"
+
+
+def payload_extra_code(info_bits: "np.ndarray | Sequence[int]") -> int:
+    """The 7-bit modifier field of a decoded payload."""
+    bits = [int(b) & 1 for b in np.asarray(info_bits, dtype=np.uint8)[:PAYLOAD_BITS]]
+    return bits_to_int([bits[i] for i in field_slice(FIELD_EXTRA)])
+`,
+  },
+  {
+    filename: "message_codec.py",
+    path: "z30_dsp/message_codec.py",
+    description: "28-bit callsign packing and the payload field layout - the Python twin of the callsign half of src/dsp/z30Codec.ts.",
+    code: `"""
+z-30 message field packing - the Python twin of the callsign half of src/dsp/z30Codec.ts.
+==========================================================================================
+
+The 63-bit z-30 payload is three fields:
+
+    bits  0..27   destination callsign, 28 bits (Radix-37 prefix / digit / Radix-27 suffix)
+    bits 28..55   source callsign, 28 bits, same encoding
+    bits 56..62   grid / report / modifier, 7 bits
+
+Only the two callsign fields and the three modifier codes are implemented here, because those
+are exactly the fields a priori decoding asserts (see z30_dsp/ap_decode.py). The 7-bit grid
+table and the report arithmetic stay in \`src/dsp/z30Codec.ts\` alone: a second copy of the
+64-entry \`COMMON_GRIDS\` table would be a second place for it to drift, and nothing on the
+Python side reads a grid. AGENTS.md's "one source of truth per rule" cuts both ways - do not
+port a rule here to have it nearby, port it because something here needs it.
+
+What is here is checked against the TypeScript original by
+\`tests/test_cross_language_parity.py\`, which drives both implementations over the shared
+vectors in \`tests/vectors/callsign_vectors.json\` and asserts identical 28-bit integers. That is
+the same arrangement \`tests/vectors/crc14_vectors.json\` already uses for the CRC, and it exists
+for the same reason: two implementations of one encoding agree until the day they quietly do
+not, and both halves go on working perfectly on their own while they disagree about what is on
+the air.
+"""
+
+from typing import List, Optional, Tuple
+import re
+
+#: Bit offsets and widths of the three payload fields, MSB-first within each field.
+#: The twin of the layout documented at the top of src/dsp/z30Codec.ts.
+FIELD_CALL_TO: Tuple[int, int] = (0, 28)
+FIELD_CALL_FROM: Tuple[int, int] = (28, 28)
+FIELD_EXTRA: Tuple[int, int] = (56, 7)
+
+#: Payload width, and the width once the CRC-14 is appended.
+PAYLOAD_BITS: int = 63
+INFO_BITS: int = 77
+
+#: The three 7-bit modifier codes \`packZ30Message\` assigns to the closing messages of a QSO.
+#: Reports occupy 0..60 (report + 30) and grids occupy 64..127; these three sit between.
+EXTRA_RRR: int = 61
+EXTRA_73: int = 62
+EXTRA_RR73: int = 63
+
+#: The reserved low callsign values. \`encodeCallsign28\` maps these tokens to fixed integers
+#: rather than through the radix packing, and \`decodeCallsign28\` maps them back.
+CALL_TOKENS = {
+    "CQ": 0,
+    "CQ DX": 1,
+    "CQ TEST": 2,
+    "QRZ": 3,
+}
+
+#: What Station Settings stores before an operator has entered a real callsign. The twin of
+#: \`PLACEHOLDER_CALLSIGN\` in src/dsp/z30Constants.ts. A frame from this station cannot be
+#: asserted as a priori knowledge, because it is not knowledge - it is a default.
+PLACEHOLDER_CALLSIGN: str = "NOCAL"
+
+_STANDARD_CALL = re.compile(r"^([A-Z0-9]{1,2})([0-9])([A-Z]{1,3})$")
+
+
+def _char_to_prefix(c: str) -> int:
+    """Radix-37 prefix alphabet: space=0, '0'-'9'=1..10, 'A'-'Z'=11..36."""
+    if c == " ":
+        return 0
+    if "0" <= c <= "9":
+        return ord(c) - 48 + 1
+    return ord(c) - 65 + 11
+
+
+def _char_to_suffix(c: str) -> int:
+    """Radix-27 suffix alphabet: space=0, 'A'-'Z'=1..26."""
+    return 0 if c == " " else ord(c) - 65 + 1
+
+
+def _prefix_to_char(v: int) -> str:
+    if v == 0:
+        return ""
+    return chr(48 + v - 1) if v <= 10 else chr(65 + v - 11)
+
+
+def _suffix_to_char(v: int) -> str:
+    return "" if v == 0 else chr(65 + v - 1)
+
+
+def encode_callsign28(call: str) -> int:
+    """
+    Packs an amateur callsign or operational token into 28 bits.
+
+    The twin of \`encodeCallsign28\` in src/dsp/z30Codec.ts, transcribed operation for operation.
+    Standard \`[1-2 prefix][digit][1-3 suffix]\` callsigns take the radix path; anything else
+    falls through to the generic Base-37 accumulator, which is lossy - see
+    \`callsign_round_trips\`, which is how a caller finds out.
+    """
+    clean = re.sub(r"[^A-Z0-9 ]", "", call.strip().upper())
+    if not clean or clean == "CQ":
+        return 0
+    if clean in CALL_TOKENS:
+        return CALL_TOKENS[clean]
+
+    formatted = clean[:6]
+    match = _STANDARD_CALL.match(formatted)
+    if match:
+        prefix = match.group(1)
+        p_str = (" " + prefix) if len(prefix) == 1 else prefix
+        d_val = int(match.group(2))
+        s_str = match.group(3).ljust(3, " ")
+
+        p_val = _char_to_prefix(p_str[0]) * 37 + _char_to_prefix(p_str[1])
+        s_val = (
+            _char_to_suffix(s_str[0]) * 729
+            + _char_to_suffix(s_str[1]) * 27
+            + _char_to_suffix(s_str[2])
+        )
+        packed = p_val * (10 * 19683) + d_val * 19683 + s_val + 100
+        return packed & 0x0FFFFFFF
+
+    acc = 0
+    for c in formatted[:6]:
+        if "0" <= c <= "9":
+            val = ord(c) - 48 + 1
+        elif "A" <= c <= "Z":
+            val = ord(c) - 65 + 11
+        else:
+            val = 0
+        acc = (acc * 37 + val) & 0x0FFFFFFF
+    return (acc + 1000) & 0x0FFFFFFF
+
+
+def decode_callsign28(num: int) -> str:
+    """
+    Unpacks a 28-bit callsign field. The twin of \`decodeCallsign28\` in src/dsp/z30Codec.ts.
+
+    Returns 'DX' for a value that does not correspond to a standard callsign, which is what the
+    TypeScript implementation returns and is deliberately not a callsign anyone holds.
+    """
+    for token, value in CALL_TOKENS.items():
+        if num == value:
+            return token
+    if num < 100:
+        return "CQ"
+
+    val = num - 100
+    s_val = val % 19683
+    rem1 = val // 19683
+    d_val = rem1 % 10
+    p_val = rem1 // 10
+
+    if p_val < 37 * 37:
+        prefix = (_prefix_to_char(p_val // 37) + _prefix_to_char(p_val % 37)).strip()
+        suffix = (
+            _suffix_to_char(s_val // 729)
+            + _suffix_to_char((s_val % 729) // 27)
+            + _suffix_to_char(s_val % 27)
+        ).strip()
+        if prefix and suffix:
+            return f"{prefix}{d_val}{suffix}"
+
+    return "DX"
+
+
+def callsign_round_trips(call: str) -> bool:
+    """
+    Whether this callsign survives \`encode_callsign28\` -> \`decode_callsign28\` unchanged.
+
+    This is the z-30 analogue of WSJT-X's \`ft8apset\`, which packs a dummy standard message,
+    unpacks it again and refuses to supply any a priori symbols unless \`msg.eq.msgchk\`. The
+    check is not decoration. A callsign that takes the generic Base-37 fallback - a special
+    event call, a \`/P\` suffix, anything longer than six characters - packs to an integer that
+    does not unpack back to it, so asserting those 28 bits as certain would be asserting a
+    callsign nobody transmitted, and every hypothesis built on it is guaranteed wrong.
+
+    The placeholder callsign is rejected for a different reason: it round-trips perfectly, but
+    it is what Station Settings holds before the operator has entered anything, so it is a
+    default rather than knowledge.
+    """
+    clean = call.strip().upper()
+    if not clean or clean == PLACEHOLDER_CALLSIGN or clean in CALL_TOKENS:
+        return False
+    return decode_callsign28(encode_callsign28(clean)) == clean
+
+
+def int_to_bits(value: int, width: int) -> List[int]:
+    """MSB-first bit expansion of \`value\` in \`width\` bits, the order the payload is packed in."""
+    return [(value >> (width - 1 - i)) & 1 for i in range(width)]
+
+
+def bits_to_int(bits: "List[int]") -> int:
+    """MSB-first integer value of a bit sequence."""
+    value = 0
+    for bit in bits:
+        value = (value << 1) | (int(bit) & 1)
+    return value
+
+
+def pack_payload63(call_to: str, call_from: str, extra_code: int) -> List[int]:
+    """
+    The 63 payload bits for a \`<to> <from> <extra>\` message.
+
+    The twin of the field-packing block at the end of \`packZ30Message\`, without the text
+    tokenizer in front of it: callers here already know which field is which, and reproducing
+    the tokenizer would be reproducing the grid table with it.
+    """
+    if not 0 <= extra_code < 128:
+        raise ValueError(f"extra_code must be a 7-bit value; got {extra_code}")
+    return (
+        int_to_bits(encode_callsign28(call_to), 28)
+        + int_to_bits(encode_callsign28(call_from), 28)
+        + int_to_bits(extra_code, 7)
+    )
+
+
+def unpack_payload63(payload: "List[int]") -> Tuple[str, str, int]:
+    """The \`(to, from, extra_code)\` a 63-bit payload carries."""
+    if len(payload) < PAYLOAD_BITS:
+        raise ValueError(f"payload must be {PAYLOAD_BITS} bits; got {len(payload)}")
+    bits = [int(b) & 1 for b in payload[:PAYLOAD_BITS]]
+    return (
+        decode_callsign28(bits_to_int(bits[0:28])),
+        decode_callsign28(bits_to_int(bits[28:56])),
+        bits_to_int(bits[56:63]),
+    )
+
+
+def field_slice(field: Tuple[int, int]) -> "range":
+    """The payload bit indices one of the FIELD_* constants covers."""
+    offset, width = field
+    return range(offset, offset + width)
+
+
+def extra_code_for_report(report_db: int) -> Optional[int]:
+    """
+    The 7-bit code \`packZ30Message\` assigns to a signal report, or None if out of range.
+
+    \`Math.max(0, Math.min(60, num + 30))\` in TypeScript clamps rather than rejects; this returns
+    None instead, because a caller building an a priori hypothesis needs to know the report it
+    asked for is not the report that would be transmitted. Silently clamping -40 to -30 would
+    assert seven bits of a message the other station never sent.
+    """
+    code = report_db + 30
+    return code if 0 <= code <= 60 else None
+`,
+  },
+  {
     filename: "channel.py",
     path: "z30_dsp/channel.py",
     description: "Propagation impairments: Watterson two-path HF fading, carrier frequency offset and symbol timing offset.",
@@ -1896,17 +2631,27 @@ verified by anyone else.
 """
 
 import os
+import math
 import time
 import argparse
 from concurrent.futures import Executor, ProcessPoolExecutor
 from dataclasses import dataclass
-from typing import List, Optional, Tuple, Dict
+from typing import List, Optional, Sequence, Tuple, Dict
 import numpy as np
 
 from z30_dsp.modem import Z30Modulator, Z30Config, codeword_to_symbols
 from z30_dsp.ldpc import Z30LdpcCodec, LDPC_MAX_ITERATIONS
 from z30_dsp.channel import ChannelImpairments, impair_frame, WATTERSON_PRESETS
 from z30_dsp.acquisition import acquire_frame, slot_timing_search_sec
+from z30_dsp.ap_decode import ApHypothesis, build_ap_hypotheses, decode_with_ap
+from z30_dsp.message_codec import (
+    EXTRA_73,
+    EXTRA_RR73,
+    EXTRA_RRR,
+    callsign_round_trips,
+    extra_code_for_report,
+    pack_payload63,
+)
 
 #: Default PRNG seed. Fixed so the default run is reproducible; override with --seed.
 DEFAULT_BENCHMARK_SEED: int = 20260830
@@ -1965,13 +2710,22 @@ def generate_random_frame(
     codec: Z30LdpcCodec,
     cfg: Z30Config,
     rng: Optional[np.random.Generator] = None,
+    payload_63: Optional[np.ndarray] = None,
 ) -> Tuple[np.ndarray, np.ndarray, List[int], List[int]]:
     """
     Generates a random 63-bit amateur payload, encodes to 216-bit LDPC codeword,
     and assembles the 75-symbol 16-MFSK transmission sequence.
+
+    \`payload_63\` supplies the payload instead of drawing one, for the a priori sweep, where the
+    frames have to be real QSO messages rather than random bits. When it is None - every caller
+    that existed before AP did - the draw is the one this function has always made, from the
+    shared generator, in the same order.
     """
     rng = rng if rng is not None else np.random.default_rng(DEFAULT_BENCHMARK_SEED)
-    payload_63 = rng.integers(0, 2, 63, dtype=np.uint8)
+    if payload_63 is None:
+        payload_63 = rng.integers(0, 2, 63, dtype=np.uint8)
+    else:
+        payload_63 = np.asarray(payload_63, dtype=np.uint8)
     codeword_216 = codec.encode(payload_63)
 
     # 54 data symbols (4 bits/symbol), used below only to report them separately from the
@@ -2215,6 +2969,7 @@ def _prepare_frame(
     mode: str,
     impairments: ChannelImpairments,
     max_time_offset_sec: float,
+    payload_63: Optional[np.ndarray] = None,
 ) -> Tuple[PreparedFrame, int, float]:
     """
     Generates one frame and puts it through the channel. THE ONLY PLACE THE SWEEP DRAWS RANDOM
@@ -2224,7 +2979,7 @@ def _prepare_frame(
     reach the receiver - they exist so the caller can report acquisition error, exactly as
     \`impair_frame\` intends.
     """
-    payload, _codeword, _data_symbols, full_symbols = generate_random_frame(codec, cfg, rng)
+    payload, _codeword, _data_symbols, full_symbols = generate_random_frame(codec, cfg, rng, payload_63)
     clean_wave = modulator.synthesize_frame(full_symbols, base_audio_freq_hz=1250.0)
     frame_power = float(np.mean(clean_wave ** 2))
 
@@ -2581,6 +3336,379 @@ def run_monte_carlo_snr_sweep(
     return results
 
 
+# =============================================================================================
+# A PRIORI (AP) DECODING - THE PAIRED MEASUREMENT
+# =============================================================================================
+#
+# \`--ap\` does not produce another decode curve. It produces a *paired comparison*: every frame
+# is put through the channel once, demodulated once, and the resulting LLR vector is decoded
+# twice - once by the ordinary decoder and once with the QSO-state hypothesis ladder behind it.
+# The two arms therefore see bit-identical channel evidence, and any difference between them is
+# the ladder and nothing else.
+#
+# Pairing is not a nicety here. AP is worth a fraction of a dB, which is well inside the
+# frame-to-frame scatter of an unpaired 40-frame run at a single SNR; two independent sweeps
+# would leave the reader unable to tell a real effect from the noise in the measurement. Paired,
+# the statistic is the count of frames where the two arms disagreed, and an exact McNemar test
+# over those discordant pairs gives a p-value a reader can check.
+#
+# The population is stated rather than tuned, because the answer depends on it entirely. Half
+# the frames are the QSO the receiver is actually in (\`W1AW K1ABC ...\`), which is what the
+# ladder asserts; half are foreign traffic between other stations, which it does not. The two
+# halves are reported separately, so anyone who thinks their own band is busier or quieter than
+# 50/50 can reweight the result instead of taking this one on trust. AGENTS.md section 5 sets
+# the bar for a benchmark that changes a published figure at >=99% confidence stated as
+# something checkable; that is what \`ap_mcnemar_exact_p\` is for.
+
+
+#: The station this sweep's receiver is, the station it is working, and where its QSO state
+#: machine is. Fixed rather than swept: AP asserts these bits, so the scenario IS the
+#: experiment's independent variable, and changing it between runs would make two runs
+#: incomparable. Any standard callsign gives the same answer - what matters is that 28 bits are
+#: asserted, not which 28.
+AP_SCENARIO_MY_CALL: str = "W1AW"
+AP_SCENARIO_DX_CALL: str = "K1ABC"
+AP_SCENARIO_STAGE: str = "SENDING_REPORT"
+
+#: Fraction of frames that belong to the QSO the receiver is in. The rest are foreign traffic,
+#: on which the ladder is a pure cost: four extra CRC-14 rejections and a chance of a false
+#: accept. Both halves are counted and both are printed.
+AP_IN_QSO_FRACTION: float = 0.5
+
+#: Prefix, digit and suffix alphabets of a standard callsign, as \`encode_callsign28\` parses one.
+#: Foreign callsigns are drawn from these rather than from a fixed list, so the foreign
+#: population is a real sample of the callsign space instead of a handful of repeated strings.
+_AP_PREFIX_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+_AP_SUFFIX_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+
+
+def random_standard_callsign(rng: np.random.Generator, exclude: Sequence[str] = ()) -> str:
+    """
+    A random callsign that survives the 28-bit packing, drawn from the shared generator.
+
+    Built from the standard \`[1-2 prefix][digit][1-3 suffix]\` structure and then verified with
+    \`callsign_round_trips\` rather than assumed - the same check the AP path itself applies. A
+    call that failed it would be one the hypothesis machinery refuses, which would quietly
+    change what the foreign population is made of.
+    """
+    for _ in range(64):
+        prefix_len = int(rng.integers(1, 3))
+        suffix_len = int(rng.integers(1, 4))
+        prefix = "".join(_AP_PREFIX_ALPHABET[int(rng.integers(0, 26))] for _ in range(prefix_len))
+        suffix = "".join(_AP_SUFFIX_ALPHABET[int(rng.integers(0, 26))] for _ in range(suffix_len))
+        call = f"{prefix}{int(rng.integers(0, 10))}{suffix}"
+        if call not in exclude and callsign_round_trips(call):
+            return call
+    raise RuntimeError("could not draw a round-tripping standard callsign")
+
+
+def ap_scenario_payload(rng: np.random.Generator) -> Tuple[np.ndarray, bool]:
+    """
+    One frame of the modelled band: either the QSO this receiver is in, or foreign traffic.
+
+    Returns the 63 payload bits and whether the frame is in-QSO. Every draw comes from the one
+    shared generator in a fixed order, so the population is reproducible from the seed alone -
+    the same requirement AGENTS.md places on the rest of the sweep.
+    """
+    in_qso = bool(rng.random() < AP_IN_QSO_FRACTION)
+
+    if in_qso:
+        # What the station being worked actually sends back during a report exchange: a report,
+        # a rogered report, or one of the three closings. Drawn, not cycled, so the mix is not an
+        # artefact of the frame index.
+        choice = int(rng.integers(0, 5))
+        if choice in (0, 1):
+            report_db = int(rng.integers(-30, 1))
+            extra = extra_code_for_report(report_db)
+            if extra is None:
+                raise RuntimeError(f"report {report_db} dB has no 7-bit code")
+        else:
+            extra = (EXTRA_RRR, EXTRA_73, EXTRA_RR73)[choice - 2]
+        payload = pack_payload63(AP_SCENARIO_MY_CALL, AP_SCENARIO_DX_CALL, extra)
+        return np.array(payload, dtype=np.uint8), True
+
+    # Foreign traffic: a CQ, or an exchange between two other stations. Neither matches any
+    # hypothesis in the ladder, so these frames measure what AP costs rather than what it buys.
+    other = random_standard_callsign(rng, exclude=(AP_SCENARIO_MY_CALL, AP_SCENARIO_DX_CALL))
+    if rng.random() < 0.5:
+        # A CQ. The 7-bit field carries a grid, which occupies codes 64..127; the particular
+        # grid is irrelevant to decoding, so it is drawn across that range rather than looked up
+        # in the table src/dsp/z30Codec.ts owns.
+        payload = pack_payload63("CQ", other, int(rng.integers(64, 128)))
+    else:
+        second = random_standard_callsign(rng, exclude=(AP_SCENARIO_MY_CALL, AP_SCENARIO_DX_CALL, other))
+        report_db = int(rng.integers(-30, 1))
+        extra = extra_code_for_report(report_db)
+        if extra is None:
+            raise RuntimeError(f"report {report_db} dB has no 7-bit code")
+        payload = pack_payload63(other, second, extra)
+    return np.array(payload, dtype=np.uint8), False
+
+
+@dataclass(frozen=True)
+class ApPairedOutcome:
+    """
+    One frame decoded both ways off the same LLR vector.
+
+    \`plain_success\` and \`ap_success\` mean the same thing the ordinary sweep means by success:
+    a CRC-valid codeword whose payload is the one that was transmitted. A CRC-valid codeword
+    carrying a *different* payload is counted in \`false_decode\` instead - it is the cost side of
+    AP and the reason the ladder is short and gated.
+    """
+
+    index: int
+    in_qso: bool
+    plain_success: bool
+    ap_success: bool
+    ap_type: int
+    plain_false_decode: bool
+    ap_false_decode: bool
+    plain_iters: int
+    ap_iters: int
+
+
+def decode_prepared_frame_paired(
+    job: PreparedFrame,
+    cfg: Z30Config,
+    codec: Z30LdpcCodec,
+    hypotheses: Sequence[ApHypothesis],
+    in_qso: bool,
+) -> ApPairedOutcome:
+    """
+    Acquires and demodulates once, then decodes the resulting LLRs twice.
+
+    Demodulating once is the point. Running the receive chain separately for each arm would let
+    blind acquisition land the two arms on different samples, and the comparison would then be
+    partly a comparison of two acquisitions. Here both arms are handed the identical 216 LLRs,
+    so the only thing that differs is the hypothesis ladder.
+
+    A pure function of its arguments, like \`decode_prepared_frame\`: no PRNG, no state, nothing
+    mutated. The AP arm's ordinary decode is \`decode_with_ap\`'s own first step, so it is not
+    repeated here - \`plain\` below IS that step, and the two arms share it.
+    """
+    if job.search_timing_sec is not None:
+        acq = acquire_frame(
+            job.noisy_wave,
+            cfg,
+            nominal_base_freq_hz=job.known_base_freq_hz,
+            time_search_sec=job.search_timing_sec,
+        )
+        start_sample, base_freq, sigma = acq.start_sample, acq.base_freq_hz, acq.noise_sigma
+    else:
+        if job.known_sigma is None:
+            raise ValueError("a frame with no timing search must carry the sigma it was made with")
+        start_sample, base_freq, sigma = job.known_start_sample, job.known_base_freq_hz, job.known_sigma
+
+    channel_llrs = demodulate_mfsk_llrs(
+        job.noisy_wave, cfg, sigma,
+        audio_center_hz=base_freq,
+        start_sample=start_sample,
+        pilot_coherence=job.pilot_coherence,
+    )
+
+    plain_ok, plain_info, plain_iters = codec.decode_min_sum(channel_llrs)
+    plain_correct = bool(plain_ok and np.array_equal(plain_info[:63], job.payload_63))
+
+    ap = decode_with_ap(codec, channel_llrs, hypotheses)
+    ap_correct = bool(ap.success and np.array_equal(ap.info_bits[:63], job.payload_63))
+
+    return ApPairedOutcome(
+        index=job.index,
+        in_qso=in_qso,
+        plain_success=plain_correct,
+        ap_success=ap_correct,
+        ap_type=int(ap.ap_type) if ap_correct else 0,
+        plain_false_decode=bool(plain_ok and not plain_correct),
+        ap_false_decode=bool(ap.success and not ap_correct),
+        plain_iters=int(plain_iters),
+        ap_iters=int(ap.iterations),
+    )
+
+
+def ap_mcnemar_exact_p(only_ap: int, only_plain: int) -> float:
+    """
+    Two-sided exact McNemar p-value for \`only_ap\` frames won by AP against \`only_plain\` won by
+    the ordinary decoder.
+
+    Under the null hypothesis that the ladder changes nothing, each discordant frame is an
+    independent coin flip, so the count of one kind is Binomial(n_discordant, 0.5). This is the
+    exact binomial tail doubled, not the chi-squared approximation, because the discordant
+    counts in a benchmark of this size are small enough that the approximation is not
+    trustworthy - and a confidence figure that cannot be checked is the thing AGENTS.md section
+    5 exists to keep out.
+
+    Computed from \`math.comb\`, so it is exact rational arithmetic up to the final division; no
+    tabulated critical values and no library-version-dependent answer.
+    """
+    n = only_ap + only_plain
+    if n == 0:
+        return 1.0
+    k = min(only_ap, only_plain)
+    tail = sum(math.comb(n, i) for i in range(0, k + 1))
+    return min(1.0, 2.0 * tail / (2 ** n))
+
+
+def run_ap_paired_sweep(
+    min_snr_db: float = -26.0,
+    max_snr_db: float = -20.0,
+    step_snr_db: float = 1.0,
+    frames_per_snr: int = 40,
+    sample_rate_hz: int = 6000,
+    seed: int = DEFAULT_BENCHMARK_SEED,
+    mode: str = "realistic",
+    fading: str = "none",
+    max_freq_offset_hz: float = 5.0,
+    max_time_offset_sec: float = 0.5,
+) -> List[Dict]:
+    """
+    The paired a priori measurement. Serial by construction - see the section note above.
+
+    Every frame is decoded by both arms in this process, off one demodulation, so there is no
+    worker pool here: parallelising it would spread the pair across processes for no change to
+    the result and one more place for the two arms to diverge.
+    """
+    if mode not in ("realistic", "ideal"):
+        raise ValueError(f"mode must be 'realistic' or 'ideal'; got {mode!r}")
+    if fading not in WATTERSON_PRESETS:
+        raise ValueError(f"fading must be one of {sorted(WATTERSON_PRESETS)}; got {fading!r}")
+
+    rng = np.random.default_rng(seed)
+    impairments = ChannelImpairments(
+        max_freq_offset_hz=max_freq_offset_hz,
+        max_time_offset_sec=max_time_offset_sec,
+        fading=fading,
+    )
+    cfg = Z30Config(sample_rate_hz=sample_rate_hz)
+    modulator = Z30Modulator(cfg)
+    codec = Z30LdpcCodec(max_iterations=LDPC_MAX_ITERATIONS)
+
+    hypotheses = build_ap_hypotheses(
+        AP_SCENARIO_STAGE, AP_SCENARIO_MY_CALL, AP_SCENARIO_DX_CALL
+    )
+
+    print("=" * 104)
+    print("  z-30 A PRIORI (AP) DECODING - PAIRED COMPARISON")
+    print(f"  Scenario: this station is {AP_SCENARIO_MY_CALL}, working {AP_SCENARIO_DX_CALL}, "
+          f"QSO stage {AP_SCENARIO_STAGE}.")
+    print(f"  Hypothesis ladder: " + ", ".join(
+        f"a{h.ap_type} ({h.label}, {h.asserted_bit_count}/63 bits)" for h in hypotheses
+    ))
+    print(f"  Population: {AP_IN_QSO_FRACTION:.0%} of frames are this QSO, the rest is foreign traffic")
+    print("  the ladder does not describe. Both arms decode the SAME demodulated LLRs.")
+    print(f"  {frames_per_snr} frames/point | mode: {mode} | fading: {fading} | "
+          f"sample rate: {sample_rate_hz} Hz | seed: {seed}")
+    print("=" * 104)
+    header = (f"{'SNR':<12} | {'In-QSO':<17} | {'Foreign':<17} | {'All frames':<17} | "
+              f"{'AP only':<7} | {'Plain only':<10} | {'False':<5}")
+    print(header)
+    print("-" * 104)
+
+    results: List[Dict] = []
+    snr_points = np.arange(min_snr_db, max_snr_db + 1e-4, step_snr_db)
+
+    for snr in snr_points:
+        outcomes: List[ApPairedOutcome] = []
+        for f in range(frames_per_snr):
+            payload, in_qso = ap_scenario_payload(rng)
+            job, _true_start, _true_foff = _prepare_frame(
+                f, float(snr), codec, cfg, modulator, rng, mode,
+                impairments, max_time_offset_sec, payload,
+            )
+            outcomes.append(decode_prepared_frame_paired(job, cfg, codec, hypotheses, in_qso))
+
+        in_qso_outcomes = [o for o in outcomes if o.in_qso]
+        foreign_outcomes = [o for o in outcomes if not o.in_qso]
+
+        only_ap = sum(1 for o in outcomes if o.ap_success and not o.plain_success)
+        only_plain = sum(1 for o in outcomes if o.plain_success and not o.ap_success)
+        plain_total = sum(1 for o in outcomes if o.plain_success)
+        ap_total = sum(1 for o in outcomes if o.ap_success)
+        ap_false = sum(1 for o in outcomes if o.ap_false_decode)
+        plain_false = sum(1 for o in outcomes if o.plain_false_decode)
+
+        res = {
+            "snr_db": float(snr),
+            "total_frames": frames_per_snr,
+            "in_qso_frames": len(in_qso_outcomes),
+            "foreign_frames": len(foreign_outcomes),
+            "plain_successes": plain_total,
+            "ap_successes": ap_total,
+            "in_qso_plain": sum(1 for o in in_qso_outcomes if o.plain_success),
+            "in_qso_ap": sum(1 for o in in_qso_outcomes if o.ap_success),
+            "foreign_plain": sum(1 for o in foreign_outcomes if o.plain_success),
+            "foreign_ap": sum(1 for o in foreign_outcomes if o.ap_success),
+            "only_ap": only_ap,
+            "only_plain": only_plain,
+            "ap_false_decodes": ap_false,
+            "plain_false_decodes": plain_false,
+            "ap_types": sorted({o.ap_type for o in outcomes if o.ap_type}),
+            "plain_decode_pct": 100.0 * plain_total / frames_per_snr,
+            "ap_decode_pct": 100.0 * ap_total / frames_per_snr,
+            "seed": seed,
+            "mode": mode,
+            "fading": fading,
+        }
+        results.append(res)
+
+        def arm(before: int, after: int, total: int) -> str:
+            return f"{before:>3}/{total:<3} -> {after:>3}/{total:<3}"
+
+        print(f"{snr:+6.1f} dB    | "
+              f"{arm(res['in_qso_plain'], res['in_qso_ap'], res['in_qso_frames']):<17} | "
+              f"{arm(res['foreign_plain'], res['foreign_ap'], res['foreign_frames']):<17} | "
+              f"{arm(plain_total, ap_total, frames_per_snr):<17} | "
+              f"{only_ap:<7} | {only_plain:<10} | {ap_false:<5}")
+
+    print("=" * 104)
+
+    total_only_ap = sum(r["only_ap"] for r in results)
+    total_only_plain = sum(r["only_plain"] for r in results)
+    p_value = ap_mcnemar_exact_p(total_only_ap, total_only_plain)
+    total_frames = sum(r["total_frames"] for r in results)
+    total_in_qso = sum(r["in_qso_frames"] for r in results)
+
+    print(f"  Frames: {total_frames} ({total_in_qso} in-QSO, {total_frames - total_in_qso} foreign)")
+    print(f"  Discordant pairs: {total_only_ap} decoded only with AP, {total_only_plain} only without.")
+    print(f"  Exact two-sided McNemar p = {p_value:.3e}")
+    print(f"  Plain: {sum(r['plain_successes'] for r in results)} decodes | "
+          f"AP: {sum(r['ap_successes'] for r in results)} decodes")
+    print(f"  False decodes (CRC-valid codeword carrying the wrong payload): "
+          f"plain {sum(r['plain_false_decodes'] for r in results)}, "
+          f"AP {sum(r['ap_false_decodes'] for r in results)}")
+    print(f"  In-QSO decode rate: "
+          f"{100.0 * sum(r['in_qso_plain'] for r in results) / max(1, total_in_qso):.1f}% -> "
+          f"{100.0 * sum(r['in_qso_ap'] for r in results) / max(1, total_in_qso):.1f}%")
+    print("  A p-value says the ladder changed something, not by how much. The in-QSO 50% crossing")
+    print("  of each arm - and only the in-QSO frames, see ap_threshold_shift - is the size of it.")
+    print("=" * 104)
+    return results
+
+
+def ap_threshold_shift(results: List[Dict]) -> Dict[str, Optional[float]]:
+    """
+    Each arm's 50% crossing over the in-QSO frames, and the difference between them.
+
+    Reported only over the in-QSO population, because that is the population the ladder makes a
+    claim about. A crossing computed over the whole band mix would move with the mix rather than
+    with the decoder, and would read as a sensitivity figure while being a statement about how
+    busy the band is.
+    """
+    plain_curve = [
+        {"snr_db": r["snr_db"], "decode_pct": 100.0 * r["in_qso_plain"] / max(1, r["in_qso_frames"])}
+        for r in results
+    ]
+    ap_curve = [
+        {"snr_db": r["snr_db"], "decode_pct": 100.0 * r["in_qso_ap"] / max(1, r["in_qso_frames"])}
+        for r in results
+    ]
+    plain_threshold = decode_threshold_db(plain_curve)
+    ap_threshold = decode_threshold_db(ap_curve)
+    shift = None
+    if plain_threshold is not None and ap_threshold is not None:
+        shift = plain_threshold - ap_threshold
+    return {"plain_db": plain_threshold, "ap_db": ap_threshold, "shift_db": shift}
+
+
 def decode_threshold_db(results: List[Dict]) -> Optional[float]:
     """
     The SNR at which 50% of frames decode, linearly interpolated between the two swept points
@@ -2686,7 +3814,36 @@ if __name__ == "__main__":
                         help="Decode processes (default: 1, serial). 0 or less means one per CPU. "
                              "Affects wall-clock time only: the curve is identical at every "
                              "worker count, and the test suite asserts it.")
+    parser.add_argument("--ap", action="store_true",
+                        help="Measure a priori (AP) decoding instead of sweeping a curve: every "
+                             "frame is decoded twice off one demodulation, with and without the "
+                             "QSO-state hypothesis ladder, and the discordant pairs are tested "
+                             "exactly. Serial; --workers is ignored.")
     args = parser.parse_args()
+
+    if args.ap:
+        ap_results = run_ap_paired_sweep(
+            min_snr_db=args.min_snr,
+            max_snr_db=args.max_snr,
+            step_snr_db=args.step,
+            frames_per_snr=args.frames,
+            sample_rate_hz=args.sample_rate,
+            seed=args.seed,
+            mode=args.mode,
+            fading=args.fading,
+            max_freq_offset_hz=args.freq_offset,
+            max_time_offset_sec=args.time_offset,
+        )
+        shift = ap_threshold_shift(ap_results)
+        if shift["shift_db"] is None:
+            print("  In-QSO 50% crossing is outside the swept range for at least one arm -")
+            print("  widen --min-snr / --max-snr before quoting a threshold shift.")
+        else:
+            print(f"  In-QSO 50% crossing: plain {shift['plain_db']:+.2f} dB, "
+                  f"AP {shift['ap_db']:+.2f} dB -> {shift['shift_db']:+.2f} dB deeper with AP")
+            print(f"  (seed {args.seed}, {args.frames} frames/point, mode {args.mode}, "
+                  f"fading {args.fading}. Quote all four with the figure.)")
+        raise SystemExit(0)
 
     run_monte_carlo_snr_sweep(
         min_snr_db=args.min_snr,
@@ -10623,6 +11780,620 @@ def test_every_unconfigured_marker_keeps_a_config_file_from_reading_as_ready(tmp
     assert SettingsManager(config_path=path).has_valid_config_file(), (
         "a real callsign and grid must still count as configured"
     )
+`,
+  },
+  {
+    filename: "test_ap_decode.py",
+    path: "tests/test_ap_decode.py",
+    description: "A priori decoding tests: that a pinned bit survives every iteration, that a wrong hypothesis is always rejected, and that an AP-less decode is unchanged.",
+    code: `"""
+A priori (AP) decoding: the mechanism, the gates, and what must not change because of it.
+
+AP is the one feature in this decoder that lets information the receiver *assumed* stand in for
+information it *measured*. That makes two classes of test necessary, and both are here:
+
+  * that it works - an asserted hypothesis really does pin its bits and really does recover
+    frames the ordinary decoder loses; and
+  * that it cannot reach anything it should not - a frame that decodes on its own never touches
+    the AP path, a wrong hypothesis is rejected by the CRC, a callsign that does not survive the
+    28-bit packing produces no hypothesis at all, and the ordinary decode is bit-identical to
+    what it was before AP existed.
+
+Every expectation below is computed from the data the test itself generates. There are no
+recorded "expected" decode counts: a decode count that was written down once and asserted
+forever is a test that passes because the number was copied, not because the decoder worked.
+"""
+
+import math
+
+import numpy as np
+import pytest
+
+from z30_dsp.ap_decode import (
+    AP_DEEP_TYPE,
+    AP_FREQ_WINDOW_HZ,
+    AP_STAGE_LADDER,
+    AP_TYPE_LABELS,
+    ApHypothesis,
+    build_ap_hypotheses,
+    build_hypothesis,
+    decode_with_ap,
+    describe_ap_decode,
+    hypothesis_holds,
+    payload_extra_code,
+)
+from z30_dsp.ldpc import (
+    AP_LLR_MARGIN,
+    Z30LdpcCodec,
+    ap_llr_magnitude,
+    apply_ap_hypothesis,
+)
+from z30_dsp.message_codec import (
+    EXTRA_73,
+    EXTRA_RR73,
+    EXTRA_RRR,
+    callsign_round_trips,
+    decode_callsign28,
+    encode_callsign28,
+    pack_payload63,
+    unpack_payload63,
+)
+
+MY_CALL = "W1AW"
+DX_CALL = "K1ABC"
+
+
+@pytest.fixture(scope="module")
+def codec():
+    return Z30LdpcCodec()
+
+
+def noisy_llrs(codeword, sigma, rng, amplitude=4.0):
+    """
+    Channel LLRs for a codeword at a given noise level.
+
+    Deliberately a plain BPSK-like model rather than the real demodulator: these tests are about
+    the decoder's treatment of an AP mask, and putting the modem and the acquisition search in
+    front of it would make a failure here ambiguous between the two. \`benchmark.py --ap\` is what
+    measures the real receive chain.
+    """
+    clean = 1.0 - 2.0 * np.asarray(codeword, dtype=np.float64)
+    return np.clip(amplitude * clean + rng.normal(0.0, sigma, len(clean)), -25.0, 25.0).astype(np.float32)
+
+
+# ------------------------------------------------------------------ the AP LLR itself
+
+
+def test_ap_magnitude_is_the_frame_peak_times_the_margin():
+    rng = np.random.default_rng(11)
+    for _ in range(20):
+        llr = rng.normal(0.0, 6.0, 216).astype(np.float32)
+        expected = AP_LLR_MARGIN * float(np.max(np.abs(llr)))
+        assert ap_llr_magnitude(llr) == pytest.approx(expected, rel=1e-9)
+
+
+def test_ap_magnitude_strictly_exceeds_every_measured_llr():
+    """
+    The point of the 1.01 margin: an asserted bit has to outrank the strongest thing the
+    demodulator actually saw, or a confident channel bit could out-argue the assertion.
+    """
+    rng = np.random.default_rng(12)
+    llr = rng.normal(0.0, 8.0, 216).astype(np.float32)
+    apmag = ap_llr_magnitude(llr)
+    assert apmag > float(np.max(np.abs(llr)))
+
+
+def test_apply_ap_hypothesis_touches_exactly_the_masked_positions():
+    rng = np.random.default_rng(13)
+    llr = rng.normal(0.0, 5.0, 216).astype(np.float32)
+    mask = np.zeros(216, dtype=np.uint8)
+    mask[7:40] = 1
+    bits = rng.integers(0, 2, 216, dtype=np.uint8)
+
+    out = apply_ap_hypothesis(llr, mask, bits)
+    apmag = ap_llr_magnitude(llr)
+
+    for i in range(216):
+        if mask[i]:
+            assert out[i] == pytest.approx(apmag if bits[i] == 0 else -apmag, rel=1e-6)
+        else:
+            assert out[i] == llr[i], f"unmasked bit {i} was modified"
+
+
+def test_ap_llr_sign_convention_matches_the_decoder_hard_decision(codec):
+    """
+    The one transcription error a port of WSJT-X's \`apsym=2*bit-1\` invites: this codec's hard
+    decision is \`llr < 0 -> 1\`, WSJT-X's is \`zn > 0 -> 1\`. Getting it backwards would assert
+    every AP bit inverted and no hypothesis would ever pass its CRC - a silent, total failure.
+    """
+    llr = np.full(216, 3.0, dtype=np.float32)
+    mask = np.ones(216, dtype=np.uint8)
+    for bit in (0, 1):
+        bits = np.full(216, bit, dtype=np.uint8)
+        out = apply_ap_hypothesis(llr, mask, bits)
+        hard = (out < 0).astype(np.uint8)
+        assert np.all(hard == bit), f"asserting {bit} produced hard decisions of {hard[0]}"
+
+
+def test_apply_ap_hypothesis_is_a_no_op_on_an_all_zero_frame():
+    out = apply_ap_hypothesis(np.zeros(216, dtype=np.float32), np.ones(216, dtype=np.uint8),
+                              np.ones(216, dtype=np.uint8))
+    assert np.all(out == 0.0)
+
+
+# ------------------------------------------------------------------ pinning
+
+
+def test_masked_bits_survive_every_iteration(codec):
+    """
+    A pinned bit must come back with the value that was asserted even when the assertion is
+    wrong and the whole rest of the frame argues against it. This is the property WSJT-X's
+    \`zn(i)=llr(i)\` provides and the reason a wrong hypothesis fails loudly (CRC) rather than
+    quietly (a decoder that talked itself into a third answer).
+    """
+    rng = np.random.default_rng(21)
+    payload = rng.integers(0, 2, 63, dtype=np.uint8)
+    codeword = codec.encode(payload)
+    llr = noisy_llrs(codeword, 2.0, rng)
+
+    # Assert the OPPOSITE of the truth on the first 28 bits.
+    mask = np.zeros(216, dtype=np.uint8)
+    mask[:28] = 1
+    wrong = np.zeros(216, dtype=np.uint8)
+    wrong[:28] = 1 - codeword[:28]
+
+    ap_llr = apply_ap_hypothesis(llr, mask, wrong)
+    _ok, info, _iters = codec.decode_min_sum(ap_llr, ap_mask=mask)
+    assert np.array_equal(info[:28], wrong[:28]), "a pinned bit was moved by belief propagation"
+
+
+def test_a_wrong_hypothesis_is_rejected(codec):
+    """
+    The CRC is the arbiter. Asserting a callsign that is not in the frame must not produce a
+    decode - if it did, AP would be a machine for inventing QSOs.
+    """
+    rng = np.random.default_rng(22)
+    truth = np.array(pack_payload63(MY_CALL, DX_CALL, EXTRA_RR73), dtype=np.uint8)
+    codeword = codec.encode(truth)
+
+    liar = build_hypothesis(3, "G0ABC", "VK2DEF")
+    assert liar is not None
+
+    accepted = 0
+    for _ in range(25):
+        llr = noisy_llrs(codeword, 4.2, rng)
+        result = decode_with_ap(codec, llr, [liar])
+        if result.success and result.ap_type != 0:
+            accepted += 1
+    assert accepted == 0, f"{accepted} frames were 'decoded' under a hypothesis naming other stations"
+
+
+def test_a_correct_hypothesis_recovers_frames_the_plain_decoder_loses(codec):
+    """
+    The measurement in miniature: same LLRs into both arms, count the disagreements, and require
+    that AP wins strictly more of them than it loses. The counts are produced here, not recalled.
+    """
+    rng = np.random.default_rng(23)
+    truth = np.array(pack_payload63(MY_CALL, DX_CALL, EXTRA_RR73), dtype=np.uint8)
+    codeword = codec.encode(truth)
+    hypotheses = build_ap_hypotheses("SENDING_REPORT", MY_CALL, DX_CALL)
+    assert hypotheses, "the SENDING_REPORT ladder should not be empty for two standard callsigns"
+
+    only_ap = only_plain = 0
+    for _ in range(30):
+        llr = noisy_llrs(codeword, 4.4, rng)
+        plain_ok, plain_info, _ = codec.decode_min_sum(llr)
+        plain_correct = bool(plain_ok and np.array_equal(plain_info[:63], truth))
+
+        ap = decode_with_ap(codec, llr, hypotheses)
+        ap_correct = bool(ap.success and np.array_equal(ap.info_bits[:63], truth))
+
+        only_ap += ap_correct and not plain_correct
+        only_plain += plain_correct and not ap_correct
+
+    assert only_plain == 0, f"AP lost {only_plain} frames the ordinary decoder found"
+    assert only_ap > 0, "AP recovered nothing at a noise level where the ordinary decoder fails"
+
+
+def test_ap_never_loses_a_frame_the_plain_decoder_found(codec):
+    """
+    The structural guarantee, checked over a spread of noise levels: \`decode_with_ap\` tries the
+    ordinary decode FIRST and returns it untouched when it succeeds, so the AP arm's decode set
+    is a superset of the plain arm's. A refactor that reordered those two steps would break this
+    and nothing else would notice.
+    """
+    rng = np.random.default_rng(24)
+    truth = np.array(pack_payload63(MY_CALL, DX_CALL, EXTRA_RRR), dtype=np.uint8)
+    codeword = codec.encode(truth)
+    hypotheses = build_ap_hypotheses("SENDING_REPORT", MY_CALL, DX_CALL)
+
+    for sigma in (2.0, 3.0, 4.0, 5.0):
+        for _ in range(6):
+            llr = noisy_llrs(codeword, sigma, rng)
+            plain_ok, plain_info, _ = codec.decode_min_sum(llr)
+            ap = decode_with_ap(codec, llr, hypotheses)
+            if plain_ok:
+                assert ap.success, f"AP lost a frame the plain decoder decoded at sigma={sigma}"
+                assert np.array_equal(ap.info_bits, plain_info), (
+                    "AP returned a different answer for a frame that decoded on its own"
+                )
+                assert ap.ap_type == 0, "a frame that decoded on its own was tagged as AP"
+
+
+def test_plain_decode_is_unchanged_by_the_ap_parameter(codec):
+    """
+    Bit-identity of the pre-AP path. An empty mask must take the same branches and produce the
+    same numbers as no mask at all, or every published threshold in wiki/16 moved silently.
+    """
+    rng = np.random.default_rng(25)
+    for _ in range(8):
+        payload = rng.integers(0, 2, 63, dtype=np.uint8)
+        codeword = codec.encode(payload)
+        llr = noisy_llrs(codeword, 4.5, rng)
+
+        a_ok, a_info, a_iters = codec.decode_min_sum(llr)
+        b_ok, b_info, b_iters = codec.decode_min_sum(llr, ap_mask=np.zeros(216, dtype=np.uint8))
+        assert (a_ok, a_iters) == (b_ok, b_iters)
+        assert np.array_equal(a_info, b_info)
+
+
+def test_ap_decode_is_deterministic(codec):
+    """
+    AGENTS.md's determinism invariant reaches the AP path too: schedule 4's dither is derived
+    from the LLR vector, and the AP path hands it a *different* vector, so this asserts the
+    derivation still holds when the input has been rewritten by an assertion.
+    """
+    rng = np.random.default_rng(26)
+    truth = np.array(pack_payload63(MY_CALL, DX_CALL, EXTRA_73), dtype=np.uint8)
+    codeword = codec.encode(truth)
+    hypotheses = build_ap_hypotheses("SENDING_REPORT", MY_CALL, DX_CALL)
+
+    for _ in range(5):
+        llr = noisy_llrs(codeword, 4.6, rng)
+        first = decode_with_ap(codec, llr, hypotheses)
+        second = decode_with_ap(codec, llr, hypotheses)
+        assert first.success == second.success
+        assert first.ap_type == second.ap_type
+        assert first.iterations == second.iterations
+        assert np.array_equal(first.info_bits, second.info_bits)
+
+
+# ------------------------------------------------------------------ the hypothesis ladder
+
+
+def test_every_ap_type_asserts_the_fields_its_label_claims():
+    """
+    Each hypothesis is decoded back through the message codec and compared against its own
+    label, so the mask and the claim cannot drift apart. Asserted bit counts are summed from the
+    mask rather than written down.
+    """
+    expectations = {
+        1: (28, "CQ", None, None),
+        2: (28, MY_CALL, None, None),
+        3: (56, MY_CALL, DX_CALL, None),
+        4: (63, MY_CALL, DX_CALL, EXTRA_RRR),
+        5: (63, MY_CALL, DX_CALL, EXTRA_73),
+        6: (63, MY_CALL, DX_CALL, EXTRA_RR73),
+    }
+    assert set(expectations) == set(AP_TYPE_LABELS), "an AP type exists with no expectation here"
+
+    for ap_type, (bit_count, to_call, from_call, extra) in expectations.items():
+        h = build_hypothesis(ap_type, MY_CALL, DX_CALL)
+        assert h is not None, f"type {ap_type} produced no hypothesis for two standard callsigns"
+        assert h.asserted_bit_count == bit_count == sum(h.mask)
+
+        decoded_to, decoded_from, decoded_extra = unpack_payload63(list(h.bits))
+        assert decoded_to == to_call, f"type {ap_type} asserts destination {decoded_to}, not {to_call}"
+        if from_call is not None:
+            assert decoded_from == from_call
+        if extra is not None:
+            assert decoded_extra == extra
+
+        # Nothing outside the payload is ever asserted: parity is what the code derives.
+        assert len(h.mask) == 63 and len(h.bits) == 63
+
+
+def test_deep_types_assert_strictly_more_than_shallow_ones():
+    """
+    The ladder has to be ordered by how much it claims, because that is what makes trying the
+    shallow ones first the cheap move. Computed from the masks, not asserted as a list.
+    """
+    counts = {t: build_hypothesis(t, MY_CALL, DX_CALL).asserted_bit_count for t in AP_TYPE_LABELS}
+    assert counts[1] == counts[2] < counts[3] < counts[4] == counts[5] == counts[6]
+
+
+def test_closing_hypotheses_assert_the_whole_payload_and_leave_the_crc_free():
+    """
+    WSJT-X's \`apmask(1:77)=1\` for types 4-6 pins the message and leaves the FT8 CRC free. The
+    z-30 equivalent pins all 63 payload bits and stops - if the 14 CRC bits were asserted too,
+    there would be nothing left to test the hypothesis against and every hypothesis would
+    "succeed".
+    """
+    for ap_type in (4, 5, 6):
+        h = build_hypothesis(ap_type, MY_CALL, DX_CALL)
+        assert sum(h.mask) == 63, "a closing hypothesis must assert every payload bit"
+        assert len(h.mask) == 63, "the AP mask must not extend into the CRC or the parity bits"
+
+
+def test_hypotheses_are_refused_without_usable_callsigns():
+    """WSJT-X's \`apsym(1).gt.1\` / \`apsym(30).gt.1\` bail-outs, in z-30 terms."""
+    # Type 1 needs neither callsign - a CQ is a CQ.
+    assert build_hypothesis(1, "", "") is not None
+
+    for bad in ("", "NOCAL", "W1AW/P", "EA8/G4XYZ", "3DA0RS"):
+        assert not callsign_round_trips(bad), f"{bad} unexpectedly round-trips"
+        assert build_hypothesis(2, bad, DX_CALL) is None, f"type 2 accepted {bad!r} as my callsign"
+        assert build_hypothesis(3, MY_CALL, bad) is None, f"type 3 accepted {bad!r} as the DX callsign"
+
+    # And a callsign that DOES round-trip is accepted, so the guard is not just always-false.
+    assert build_hypothesis(3, MY_CALL, DX_CALL) is not None
+
+
+def test_the_stage_ladder_only_names_known_types():
+    for stage, ladder in AP_STAGE_LADDER.items():
+        assert ladder, f"stage {stage} has an empty ladder"
+        for ap_type in ladder:
+            assert ap_type in AP_TYPE_LABELS, f"stage {stage} names unknown AP type {ap_type}"
+        assert len(set(ladder)) == len(ladder), f"stage {stage} repeats an AP type"
+
+
+def test_an_unknown_stage_produces_no_hypotheses():
+    assert build_ap_hypotheses("SOME_FUTURE_STAGE", MY_CALL, DX_CALL) == []
+
+
+def test_the_frequency_gate_admits_and_refuses_by_distance():
+    """
+    The gate is measured against \`AP_FREQ_WINDOW_HZ\` at both edges, so a change to the constant
+    moves both assertions together rather than leaving one hard-coded to the old value.
+    """
+    worked = 1500.0
+    inside = build_ap_hypotheses(
+        "SENDING_REPORT", MY_CALL, DX_CALL,
+        candidate_freq_hz=worked + AP_FREQ_WINDOW_HZ - 1.0, worked_freqs_hz=(worked,),
+    )
+    outside = build_ap_hypotheses(
+        "SENDING_REPORT", MY_CALL, DX_CALL,
+        candidate_freq_hz=worked + AP_FREQ_WINDOW_HZ + 1.0, worked_freqs_hz=(worked,),
+    )
+    assert any(h.ap_type >= AP_DEEP_TYPE for h in inside), "deep types refused inside the window"
+    assert not any(h.ap_type >= AP_DEEP_TYPE for h in outside), "deep types allowed outside the window"
+
+    # A split station is working two frequencies; being near either one is enough (WSJT-X
+    # compares against both nfqso and nftx).
+    split = build_ap_hypotheses(
+        "SENDING_REPORT", MY_CALL, DX_CALL,
+        candidate_freq_hz=2400.0, worked_freqs_hz=(1000.0, 2400.0),
+    )
+    assert any(h.ap_type >= AP_DEEP_TYPE for h in split)
+
+
+def test_shallow_types_ignore_the_frequency_gate():
+    """
+    Types 1 and 2 assert 28 bits and are permitted passband-wide, which is what lets a call to
+    you be found in a corner you were not watching.
+    """
+    far = build_ap_hypotheses(
+        "IDLE", MY_CALL, DX_CALL, candidate_freq_hz=250.0, worked_freqs_hz=(2900.0,)
+    )
+    assert [h.ap_type for h in far] == [1, 2]
+
+
+def test_no_candidate_frequency_means_the_gate_does_not_fire():
+    unfiltered = build_ap_hypotheses("SENDING_REPORT", MY_CALL, DX_CALL)
+    assert [h.ap_type for h in unfiltered] == list(AP_STAGE_LADDER["SENDING_REPORT"])
+
+
+# ------------------------------------------------------------------ guards and reporting
+
+
+def test_hypothesis_holds_detects_a_contradicted_assertion():
+    h = build_hypothesis(3, MY_CALL, DX_CALL)
+    truth = np.array(pack_payload63(MY_CALL, DX_CALL, EXTRA_73), dtype=np.uint8)
+    assert hypothesis_holds(truth, h)
+
+    for flip in (0, 13, 27, 28, 55):
+        tampered = truth.copy()
+        tampered[flip] ^= 1
+        assert not hypothesis_holds(tampered, h), f"a flipped asserted bit at {flip} was not caught"
+
+    # A bit OUTSIDE the assertion is none of the hypothesis's business.
+    free = truth.copy()
+    free[60] ^= 1
+    assert hypothesis_holds(free, h)
+
+
+def test_hypothesis_holds_rejects_a_short_payload():
+    h = build_hypothesis(2, MY_CALL)
+    assert not hypothesis_holds(np.zeros(10, dtype=np.uint8), h)
+
+
+def test_describe_ap_decode_labels_only_ap_recovered_frames(codec):
+    from z30_dsp.ap_decode import ApDecodeResult
+
+    ordinary = ApDecodeResult(True, np.zeros(77, dtype=np.uint8), 4, 0, "", 0)
+    assert describe_ap_decode(ordinary) == ""
+
+    for ap_type in AP_TYPE_LABELS:
+        recovered = ApDecodeResult(True, np.zeros(77, dtype=np.uint8), 9, ap_type,
+                                   AP_TYPE_LABELS[ap_type], 1)
+        assert describe_ap_decode(recovered) == f"a{ap_type}"
+
+    failed = ApDecodeResult(False, np.zeros(77, dtype=np.uint8), 150, 0, "", 4)
+    assert describe_ap_decode(failed) == ""
+
+
+def test_payload_extra_code_reads_the_modifier_field():
+    for extra in (0, EXTRA_RRR, EXTRA_73, EXTRA_RR73, 127):
+        payload = pack_payload63(MY_CALL, DX_CALL, extra)
+        assert payload_extra_code(np.array(payload, dtype=np.uint8)) == extra
+
+
+def test_ap_mask_longer_than_the_code_is_refused(codec):
+    llr = np.zeros(216, dtype=np.float32)
+    with pytest.raises(ValueError):
+        codec.decode_min_sum(llr, ap_mask=np.ones(217, dtype=np.uint8))
+
+
+def test_a_63_bit_mask_is_zero_extended_over_the_parity_bits(codec):
+    """
+    Callers assert payload bits and pass a 63-entry mask; the decoder must treat the remaining
+    153 positions as measurements, not as silently asserted zeros.
+    """
+    rng = np.random.default_rng(31)
+    truth = np.array(pack_payload63(MY_CALL, DX_CALL, EXTRA_RR73), dtype=np.uint8)
+    codeword = codec.encode(truth)
+    llr = noisy_llrs(codeword, 3.0, rng)
+    h = build_hypothesis(6, MY_CALL, DX_CALL)
+
+    ap_llr = apply_ap_hypothesis(llr, h.mask, h.bits)
+    assert np.array_equal(ap_llr[63:], llr[63:]), "positions past the mask were rewritten"
+
+    ok, info, _ = codec.decode_min_sum(ap_llr, ap_mask=h.mask)
+    assert ok and np.array_equal(info[:63], truth)
+
+
+# ------------------------------------------------------------------ the statistic
+
+
+def test_mcnemar_matches_an_independently_summed_binomial():
+    """
+    The p-value the AP benchmark reports is checked against the binomial tail summed a different
+    way, for every small table. A statistic nobody can recompute is not evidence, which is the
+    whole point of AGENTS.md section 5 asking for "an exact p-value ... something a reader can
+    check".
+    """
+    from z30_dsp.benchmark import ap_mcnemar_exact_p
+
+    for b in range(0, 13):
+        for c in range(0, 13):
+            n = b + c
+            if n == 0:
+                assert ap_mcnemar_exact_p(b, c) == 1.0
+                continue
+            k = min(b, c)
+            # Independent route to the same number: the probability mass function, term by term.
+            tail = sum(math.factorial(n) / (math.factorial(i) * math.factorial(n - i)) * 0.5 ** n
+                       for i in range(k + 1))
+            assert ap_mcnemar_exact_p(b, c) == pytest.approx(min(1.0, 2.0 * tail), rel=1e-12)
+
+
+def test_mcnemar_is_symmetric_and_bounded():
+    from z30_dsp.benchmark import ap_mcnemar_exact_p
+
+    for b in range(0, 20):
+        for c in range(0, 20):
+            p = ap_mcnemar_exact_p(b, c)
+            assert p == pytest.approx(ap_mcnemar_exact_p(c, b))
+            assert 0.0 <= p <= 1.0
+    # A lopsided table is significant; an even one is not.
+    assert ap_mcnemar_exact_p(20, 0) < 1e-5
+    assert ap_mcnemar_exact_p(10, 10) > 0.5
+
+
+# ------------------------------------------------------------------ the benchmark population
+
+
+def test_scenario_payloads_are_reproducible_and_correctly_labelled():
+    """
+    The AP sweep's band model has to be a pure function of the seed, like everything else in
+    benchmark.py, and its in-QSO flag has to actually describe the payload it returns - the flag
+    is what splits the reported gain from the reported cost.
+    """
+    from z30_dsp.benchmark import (
+        AP_SCENARIO_DX_CALL,
+        AP_SCENARIO_MY_CALL,
+        ap_scenario_payload,
+    )
+
+    first = [ap_scenario_payload(np.random.default_rng(4242)) for _ in range(1)]
+    rng_a = np.random.default_rng(4242)
+    rng_b = np.random.default_rng(4242)
+    for _ in range(40):
+        pa, ia = ap_scenario_payload(rng_a)
+        pb, ib = ap_scenario_payload(rng_b)
+        assert np.array_equal(pa, pb) and ia == ib, "the same seed produced a different band"
+
+        to_call, from_call, _extra = unpack_payload63(pa.tolist())
+        if ia:
+            assert (to_call, from_call) == (AP_SCENARIO_MY_CALL, AP_SCENARIO_DX_CALL)
+        else:
+            assert (to_call, from_call) != (AP_SCENARIO_MY_CALL, AP_SCENARIO_DX_CALL)
+    assert first  # the single draw above is only here to prove a fresh generator is usable
+
+
+def test_scenario_produces_both_populations():
+    """A 'paired' comparison with only one population in it would measure half the question."""
+    from z30_dsp.benchmark import ap_scenario_payload
+
+    rng = np.random.default_rng(2026)
+    flags = [ap_scenario_payload(rng)[1] for _ in range(200)]
+    assert any(flags) and not all(flags), "the modelled band is entirely one kind of traffic"
+
+
+def test_foreign_callsigns_are_drawn_usable_and_distinct():
+    from z30_dsp.benchmark import (
+        AP_SCENARIO_DX_CALL,
+        AP_SCENARIO_MY_CALL,
+        random_standard_callsign,
+    )
+
+    rng = np.random.default_rng(77)
+    excluded = (AP_SCENARIO_MY_CALL, AP_SCENARIO_DX_CALL)
+    drawn = [random_standard_callsign(rng, exclude=excluded) for _ in range(60)]
+    for call in drawn:
+        assert call not in excluded
+        assert callsign_round_trips(call), f"{call} does not survive the 28-bit packing"
+        assert decode_callsign28(encode_callsign28(call)) == call
+    assert len(set(drawn)) > 1, "the foreign population is a single repeated callsign"
+
+
+def test_paired_outcome_shares_one_demodulation():
+    """
+    The pairing itself. \`decode_prepared_frame_paired\` must hand both arms the same LLRs, and
+    the plain arm of the pair must agree with the ordinary \`decode_prepared_frame\` on the same
+    job - otherwise the comparison is between two receivers, not two decoders.
+    """
+    from z30_dsp.benchmark import (
+        _prepare_frame,
+        decode_prepared_frame,
+        decode_prepared_frame_paired,
+    )
+    from z30_dsp.channel import ChannelImpairments
+    from z30_dsp.modem import Z30Config, Z30Modulator
+
+    cfg = Z30Config(sample_rate_hz=6000)
+    codec_local = Z30LdpcCodec()
+    modulator = Z30Modulator(cfg)
+    impairments = ChannelImpairments(max_freq_offset_hz=5.0, max_time_offset_sec=0.5, fading="none")
+    hypotheses = build_ap_hypotheses("SENDING_REPORT", MY_CALL, DX_CALL)
+
+    rng = np.random.default_rng(555)
+    payload = np.array(pack_payload63(MY_CALL, DX_CALL, EXTRA_RR73), dtype=np.uint8)
+    job, _s, _f = _prepare_frame(0, -21.0, codec_local, cfg, modulator, rng, "realistic",
+                                 impairments, 0.5, payload)
+
+    reference = decode_prepared_frame(job, cfg, codec_local)
+    paired = decode_prepared_frame_paired(job, cfg, codec_local, hypotheses, True)
+
+    assert paired.plain_success == reference.success, (
+        "the paired plain arm disagreed with the ordinary decode of the same frame"
+    )
+    assert paired.in_qso is True
+    # AP is a superset by construction, so this holds at every SNR, decoded or not.
+    assert paired.ap_success or not paired.plain_success
+
+
+def test_hypotheses_are_frozen_records():
+    """
+    \`ApHypothesis\` crosses into the decoder, which must not be able to edit the caller's
+    assertion. Frozen and tuple-valued, so an accidental in-place mask edit is a TypeError
+    rather than a hypothesis that quietly means something else on the next frame.
+    """
+    h = build_hypothesis(3, MY_CALL, DX_CALL)
+    assert isinstance(h, ApHypothesis)
+    assert isinstance(h.mask, tuple) and isinstance(h.bits, tuple)
+    with pytest.raises(Exception):
+        h.mask = ()  # type: ignore[misc]
 `,
   },
   {

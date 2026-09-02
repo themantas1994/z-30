@@ -224,6 +224,9 @@ export const DEFAULT_STATION_CONFIG: import('../types/z30').StationConfig = {
   pttLeadInMs: 20,
   pttHangTimeMs: 30,
   autoSeq: true,
+  // Off on first launch: AP buys decodes at the cost of extra CRC-14 rolls per frame, and an
+  // operator should turn that on knowingly. See src/dsp/apDecode.ts.
+  apDecodeEnabled: false,
   call1st: true,
   autoReplyPriority: 'FIRST',
   watchdogCycles: 4,
