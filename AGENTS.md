@@ -292,6 +292,29 @@ the test to match. Full rationale: [`wiki/13`](wiki/13-Operating-Safety-Complian
 - The one deliberate exception is `--mode ideal`, which passes the adaptive weight
   **explicitly**. It is a genie-aided bound and the genie includes the phase reference; that is
   why its result is a bound and not a threshold.
+- **And it means the whole chain, not just the demodulator.** The same invariant caught a
+  second instance in the browser engine on 2026-09-03: `monteCarloEngine.ts` defaulted to a
+  `MATCHED_FILTER_CORRELATOR_BANK` path that synthesized no waveform and called no demodulator,
+  drawing per-tone Gaussians against an assumed signalling model with a pilot weight of its
+  own. It measured ~2 dB better than the physical chain and produced the browser "genie-aided
+  bound" wiki/16 could not reconcile with the Python one. **Neither engine may offer a receive
+  path that is not the shipped one, and neither may take a parameter the shipped receiver does
+  not take** - the modal's 10-120 "Max LDPC Iterations" box went with it, since
+  `realReceiver.ts` decodes at `LDPC_MAX_ITERATIONS` and offers no way to change it.
+- **A benchmark may not name a condition it does not model.** The same pass removed a
+  `RAYLEIGH_FADING` channel documented as "ITU-R F.1487 / two-path Watterson" whose taps were
+  real-valued sinusoids - no Rayleigh envelope, no complex tap, so no Doppler spread on the
+  tones at all - and a `CO_CHANNEL_QRM` channel that no code read, which ran AWGN and labelled
+  the result interference. Fading is `z30_dsp/channel.py`'s, which implements the
+  recommendation; the browser engine models calibrated AWGN and says so. wiki/16's verification
+  pass has the full account, and `tests/test_cross_language_parity.py` holds all of it.
+- **Nothing that was not measured may be reported as if it were.** An unacquired frame used to
+  contribute 108 raw bit errors, 39 post-LDPC bit errors and a full iteration cap to the
+  browser engine's averages - plausible values, measured by nothing, in two published columns.
+  It is a decode failure and it counts as one; it has no per-bit or per-iteration measurement,
+  so it is absent from those averages, the way the timing and frequency RMS columns have always
+  handled it. The same rule removed a "Shannon Capacity Limit" curve, on by default, whose
+  shape had no derivation anywhere in the repository.
 
 **Cross-language parity**
 - `z30_dsp/*.py` and `src/dsp/*.ts` implement one specification twice. A change to the codec,
@@ -343,9 +366,12 @@ the code and the wiki on purpose. Follow the same standard:
   and `RECEIVER_PILOT_COHERENCE` are shared constants, pinned across the two languages by
   `tests/test_cross_language_parity.py`. `RECEIVER_PILOT_COHERENCE` is declared beside each
   language's **demodulator**, not in its benchmark, and that is not cosmetic - see the invariant
-  in section 4. At 200 frames a point and the same seed the two land **0.02 dB apart on the
-  AWGN threshold** and **0.70 dB apart on the genie-aided bound** - the second is unexplained,
-  and is one more reason a bound is not a publishable figure. The Python side used to read
+  in section 4. At 200 frames a point, the same seed and the same sweep extent, the two land
+  **0.10 dB apart on the AWGN threshold** (bands almost entirely overlapping) and **0.51 dB
+  apart on the genie-aided bound** (bands that do not) - the second is unexplained, and is one
+  more reason a bound is not a publishable figure. It read 0.70 dB until 2026-09-03, when most
+  of that turned out to be the browser engine's analytic receive path rather than anything
+  about `ideal` mode; see the verification pass in `wiki/16`. The Python side used to read
   1.8 dB more optimistic than the browser, which `wiki/16` blamed on a narrower timing window;
   measured paired, the timing window accounted for none of it and the Python side's
   semi-coherent demodulator term accounted for all of it. Agreement is still not authority - it

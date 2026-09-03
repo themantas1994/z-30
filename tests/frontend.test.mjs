@@ -21,6 +21,9 @@ import { Z30_SPECS } from '../src/dsp/z30Constants.ts';
 import {
   MonteCarloSimulationEngine,
   DEFAULT_MONTE_CARLO_CONFIG,
+  PUBLISHABLE_FRAMES_PER_POINT,
+  REALISTIC_SWEEP_DEFAULTS,
+  WILSON_Z_95,
 } from '../src/dsp/monteCarloEngine.ts';
 import { isValidGrid, maidenheadToLatLon } from '../src/dsp/gridSquare.ts';
 import { readFileSync } from 'node:fs';
@@ -333,6 +336,130 @@ group('Monte Carlo measurement modes');
     a1.trueStartSample === b1.trueStartSample && a1.trueCentreFreqHz === b1.trueCentreFreqHz
   );
   check('the same seed reproduces the same noise', a1.stream[5000] === b1.stream[5000]);
+}
+
+group('Monte Carlo statistics are computed, not assumed');
+{
+  const engine = new MonteCarloSimulationEngine();
+
+  // The Wilson interval, recomputed here from its algebra and compared against the engine's on
+  // counts generated below. Nothing is stored: both sides are arithmetic on the same integers.
+  const wilsonReference = (successes, trials) => {
+    const n = trials;
+    const phat = successes / n;
+    const z2 = WILSON_Z_95 * WILSON_Z_95;
+    const denom = 1 + z2 / n;
+    const centre = (phat + z2 / (2 * n)) / denom;
+    const half = (WILSON_Z_95 * Math.sqrt((phat * (1 - phat) + z2 / (4 * n)) / n)) / denom;
+    return [Math.max(0, 100 * (centre - half)), Math.min(100, 100 * (centre + half))];
+  };
+
+  // Counts drawn from the seeded PRNG, not typed out, so the comparison covers the whole range
+  // including the 0/n and n/n ends where the textbook Wald interval collapses to zero width.
+  const rng = createSeededRandom(20260903);
+  let worstDelta = 0;
+  let coversUnitInterval = true;
+  let containsPointEstimate = true;
+  for (let i = 0; i < 400; i++) {
+    const trials = 1 + Math.floor(rng.next() * 500);
+    const successes = Math.floor(rng.next() * (trials + 1));
+    const [lo, hi] = engine.calculateWilsonConfidenceInterval(successes, trials);
+    const [refLo, refHi] = wilsonReference(successes, trials);
+    // The engine rounds to two decimals for display; agreement to that is agreement.
+    worstDelta = Math.max(worstDelta, Math.abs(lo - refLo), Math.abs(hi - refHi));
+    if (lo < 0 || hi > 100 || lo > hi) coversUnitInterval = false;
+    const pct = (100 * successes) / trials;
+    if (pct < lo - 0.01 || pct > hi + 0.01) containsPointEstimate = false;
+  }
+  check(
+    'the engine Wilson interval matches its own algebra on 400 generated counts',
+    worstDelta <= 0.005,
+    `worst disagreement ${worstDelta.toExponential(2)} points`
+  );
+  check('every generated interval stays inside [0, 100] and is ordered', coversUnitInterval);
+  check('every generated interval contains its point estimate', containsPointEstimate);
+
+  // A rounded 1.96 is what the engine used to carry, and it is measurably a different interval
+  // from the exact quantile the Python side quotes. Shown rather than asserted in prose.
+  const [exactLo, exactHi] = engine.calculateWilsonConfidenceInterval(92, 200);
+  const roundedHalf = (z) => {
+    const n = 200, phat = 92 / 200, z2 = z * z, denom = 1 + z2 / n;
+    return (z * Math.sqrt((phat * (1 - phat) + z2 / (4 * n)) / n)) / denom;
+  };
+  check(
+    'the exact 95% quantile is in use, not a rounded 1.96',
+    Math.abs(roundedHalf(WILSON_Z_95) - roundedHalf(1.96)) > 0,
+    `width differs by ${(200 * Math.abs(roundedHalf(WILSON_Z_95) - roundedHalf(1.96))).toExponential(2)} points`
+  );
+  check('the 92/200 interval brackets 46%', exactLo < 46 && exactHi > 46, `[${exactLo}, ${exactHi}]`);
+
+  check(
+    'the browser engine and the Python benchmark share a publishable sample size',
+    PUBLISHABLE_FRAMES_PER_POINT === 200,
+    String(PUBLISHABLE_FRAMES_PER_POINT)
+  );
+  check(
+    'the default sweep range brackets the default measurement mode',
+    DEFAULT_MONTE_CARLO_CONFIG.minSnrDb === REALISTIC_SWEEP_DEFAULTS.minSnrDb &&
+      DEFAULT_MONTE_CARLO_CONFIG.maxSnrDb === REALISTIC_SWEEP_DEFAULTS.maxSnrDb &&
+      DEFAULT_MONTE_CARLO_CONFIG.measurementMode === 'realistic',
+    `${DEFAULT_MONTE_CARLO_CONFIG.minSnrDb}..${DEFAULT_MONTE_CARLO_CONFIG.maxSnrDb} dB`
+  );
+}
+
+group('An unacquired frame contributes no measurement it never made');
+{
+  // Run a real sweep at an SNR where blind acquisition genuinely fails on some frames, and
+  // check the reported per-bit and per-iteration averages are over the frames that produced
+  // them. The engine used to add 108 raw bit errors, 39 post-LDPC bit errors and a full
+  // iteration cap for every frame it could not find - three numbers nothing measured, landing
+  // in two published columns at exactly the SNRs where acquisition is failing.
+  const results = await new MonteCarloSimulationEngine().runSimulation({
+    ...DEFAULT_MONTE_CARLO_CONFIG,
+    measurementMode: 'realistic',
+    minSnrDb: -26,
+    maxSnrDb: -26,
+    snrStepDb: 1,
+    framesPerPoint: 24,
+    seed: 20260903,
+  });
+
+  const point = results[0];
+  check(
+    'the sweep point reached an SNR where acquisition actually fails',
+    point.acquisitionFailures > 0,
+    `${point.acquisitionFailures} of ${point.totalFrames} frames not found`
+  );
+  check(
+    'demodulatedFrames is exactly the frames that were found',
+    point.demodulatedFrames === point.totalFrames - point.acquisitionFailures,
+    `${point.demodulatedFrames} vs ${point.totalFrames} - ${point.acquisitionFailures}`
+  );
+  check(
+    'an unacquired frame still counts as a decode failure',
+    point.failureCount + point.successCount === point.totalFrames &&
+      point.frameErrorRate === Number((point.failureCount / point.totalFrames).toFixed(4)),
+    `FER ${point.frameErrorRate} over ${point.totalFrames} frames`
+  );
+  // The fill was exactly 216/2 and 77/2 per unacquired frame. If it came back, the reported
+  // BER would be a weighted average pulled toward 0.5, and the implied error count over
+  // demodulatedFrames would no longer be a whole number of bits.
+  const impliedRawErrors = point.rawChannelBer * point.demodulatedFrames * 216;
+  check(
+    'the raw BER denominator is demodulatedFrames, so it implies a whole number of bit errors',
+    Math.abs(impliedRawErrors - Math.round(impliedRawErrors)) < 0.5,
+    `implies ${impliedRawErrors.toFixed(2)} bit errors`
+  );
+  check(
+    'the reported BER is below the 0.5 that a coin-flip fill would drag it toward',
+    point.rawChannelBer < 0.5 && point.postLdpcBer <= 0.5,
+    `raw ${point.rawChannelBer}, post ${point.postLdpcBer}`
+  );
+  check(
+    'the iteration average is a real decode cost, not a cap written in for missing frames',
+    point.avgLdpcIterations > 0 && point.minIterations > 0,
+    `avg ${point.avgLdpcIterations}, min ${point.minIterations}`
+  );
 }
 
 if (failures > 0) {

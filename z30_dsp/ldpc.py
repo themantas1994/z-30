@@ -368,7 +368,7 @@ class Z30LdpcCodec:
         return H
 
     @staticmethod
-    def compute_crc14(bits: np.ndarray | List[int]) -> int:
+    def compute_crc14(bits: "np.ndarray | List[int]") -> int:
         """
         Computes 14-bit CRC for payload integrity verification.
         Polynomial: g(x) = x^14 + x^13 + x^10 + x^6 + x + 1 (register constant 0x2443, x^14 implicit; Init 0x2757).
@@ -389,7 +389,7 @@ class Z30LdpcCodec:
             crc = ((crc << 1) & 0x3FFF) ^ (poly if (msb ^ (int(b) & 1)) else 0)
         return crc & 0x3FFF
 
-    def encode(self, payload_63_bits: np.ndarray | List[int]) -> np.ndarray:
+    def encode(self, payload_63_bits: "np.ndarray | List[int]") -> np.ndarray:
         """
         Encodes a 63-bit message payload into a 216-bit LDPC codeword.
 
@@ -444,7 +444,7 @@ class Z30LdpcCodec:
         """
         return np.mod(np.dot(self.H, codeword.astype(np.uint8)), 2)
 
-    def reaccumulate_ira_codeword(self, info_bits_77: np.ndarray | List[int]) -> np.ndarray:
+    def reaccumulate_ira_codeword(self, info_bits_77: "np.ndarray | List[int]") -> np.ndarray:
         """
         Fast Trellis-IRA Parity Reconstruction.
         Re-accumulates all 139 parity bits from 77 information bits in linear time O(m).

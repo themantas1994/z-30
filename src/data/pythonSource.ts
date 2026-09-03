@@ -395,7 +395,7 @@ class Z30LdpcCodec:
         return H
 
     @staticmethod
-    def compute_crc14(bits: np.ndarray | List[int]) -> int:
+    def compute_crc14(bits: "np.ndarray | List[int]") -> int:
         """
         Computes 14-bit CRC for payload integrity verification.
         Polynomial: g(x) = x^14 + x^13 + x^10 + x^6 + x + 1 (register constant 0x2443, x^14 implicit; Init 0x2757).
@@ -416,7 +416,7 @@ class Z30LdpcCodec:
             crc = ((crc << 1) & 0x3FFF) ^ (poly if (msb ^ (int(b) & 1)) else 0)
         return crc & 0x3FFF
 
-    def encode(self, payload_63_bits: np.ndarray | List[int]) -> np.ndarray:
+    def encode(self, payload_63_bits: "np.ndarray | List[int]") -> np.ndarray:
         """
         Encodes a 63-bit message payload into a 216-bit LDPC codeword.
 
@@ -471,7 +471,7 @@ class Z30LdpcCodec:
         """
         return np.mod(np.dot(self.H, codeword.astype(np.uint8)), 2)
 
-    def reaccumulate_ira_codeword(self, info_bits_77: np.ndarray | List[int]) -> np.ndarray:
+    def reaccumulate_ira_codeword(self, info_bits_77: "np.ndarray | List[int]") -> np.ndarray:
         """
         Fast Trellis-IRA Parity Reconstruction.
         Re-accumulates all 139 parity bits from 77 information bits in linear time O(m).
@@ -2865,7 +2865,12 @@ def add_calibrated_awgn(
     noisy_wave = clean_wave + noise
     return noisy_wave, sigma
 
-def _log_sum_exp(vals: List[float] | np.ndarray) -> float:
+# Quoted, like the unions in ldpc.py. AGENTS.md section 7 puts the support floor at Python
+# 3.9, where PEP 604's \`X | Y\` does not exist on \`typing.List\` or on a class object, so an
+# unquoted union here is evaluated at def time and raises TypeError on import - taking the
+# whole benchmark module, and everything that imports it, down on a supported interpreter.
+# CI runs 3.10 and up, so nothing here would have caught it.
+def _log_sum_exp(vals: "List[float] | np.ndarray") -> float:
     arr = np.array(vals, dtype=np.float64)
     max_val = np.max(arr)
     return float(max_val + np.log(np.sum(np.exp(arr - max_val))))
@@ -3847,27 +3852,53 @@ def run_ap_paired_sweep(
 
 def ap_threshold_shift(results: List[Dict]) -> Dict[str, Optional[float]]:
     """
-    Each arm's 50% crossing over the in-QSO frames, and the difference between them.
+    Each arm's 50% crossing over the in-QSO frames, the band the sample supports for each, and
+    the difference between the point estimates.
 
     Reported only over the in-QSO population, because that is the population the ladder makes a
     claim about. A crossing computed over the whole band mix would move with the mix rather than
     with the decoder, and would read as a sensitivity figure while being a statement about how
     busy the band is.
+
+    The two bands are the same pointwise-Wilson propagation \`decode_threshold_interval_db\`
+    applies to every other crossing this file reports. They are here because this function used
+    to return three bare numbers and the \`--ap\` summary printed them to two decimal places: the
+    in-QSO half of a sweep is HALF the frames, so its interval is wider than the sweep's, and a
+    bare crossing off ~20 in-QSO frames a point claims a precision the sample cannot support.
+    AGENTS.md section 5 asks for the interval rather than the crossing, and this is the one
+    instrument in the file that was not giving one.
+
+    \`shift_db\` is a difference of two point estimates and deliberately carries no interval of
+    its own: the two arms are paired frame by frame, so the honest statement of whether the
+    ladder changed anything is the exact McNemar p-value the sweep already prints, not a band
+    built by differencing two curves' independent intervals.
     """
-    plain_curve = [
-        {"snr_db": r["snr_db"], "decode_pct": 100.0 * r["in_qso_plain"] / max(1, r["in_qso_frames"])}
-        for r in results
-    ]
-    ap_curve = [
-        {"snr_db": r["snr_db"], "decode_pct": 100.0 * r["in_qso_ap"] / max(1, r["in_qso_frames"])}
-        for r in results
-    ]
-    plain_threshold = decode_threshold_db(plain_curve)
-    ap_threshold = decode_threshold_db(ap_curve)
+    def curve(successes_key: str) -> List[Dict]:
+        return [
+            {
+                "snr_db": r["snr_db"],
+                "decode_pct": 100.0 * r[successes_key] / max(1, r["in_qso_frames"]),
+                # Wilson needs the counts, not the percentage it was derived from.
+                "successes": r[successes_key],
+                "total_frames": r["in_qso_frames"],
+            }
+            for r in results
+        ]
+
+    plain_lo, plain_pt, plain_hi = decode_threshold_interval_db(curve("in_qso_plain"))
+    ap_lo, ap_pt, ap_hi = decode_threshold_interval_db(curve("in_qso_ap"))
     shift = None
-    if plain_threshold is not None and ap_threshold is not None:
-        shift = plain_threshold - ap_threshold
-    return {"plain_db": plain_threshold, "ap_db": ap_threshold, "shift_db": shift}
+    if plain_pt is not None and ap_pt is not None:
+        shift = plain_pt - ap_pt
+    return {
+        "plain_db": plain_pt,
+        "plain_low_db": plain_lo,
+        "plain_high_db": plain_hi,
+        "ap_db": ap_pt,
+        "ap_low_db": ap_lo,
+        "ap_high_db": ap_hi,
+        "shift_db": shift,
+    }
 
 
 # =============================================================================================
@@ -4195,16 +4226,15 @@ def decode_threshold_db(results: List[Dict]) -> Optional[float]:
     """
     The SNR at which 50% of frames decode, linearly interpolated between the two swept points
     that bracket the crossing. Returns None when the sweep never crosses 50%.
+
+    Delegates to \`_crossing_db\` rather than interpolating again. It used to carry its own copy
+    of the same arithmetic, which is the shape AGENTS.md's "one source of truth per rule" is
+    about: two implementations of "where does this curve cross 50%" agreeing today and drifting
+    the day one of them learns about a curve that dips, or about points arriving out of order.
+    The \`--ap\` instrument read this one and every published threshold read the other, so a
+    divergence would have moved an AP result away from the sweep it is meant to be compared to.
     """
-    ordered = sorted(results, key=lambda r: r["snr_db"])
-    for lower, upper in zip(ordered, ordered[1:]):
-        if lower["decode_pct"] < 50.0 <= upper["decode_pct"]:
-            span = upper["decode_pct"] - lower["decode_pct"]
-            if span <= 0:
-                return float(upper["snr_db"])
-            frac = (50.0 - lower["decode_pct"]) / span
-            return float(lower["snr_db"] + frac * (upper["snr_db"] - lower["snr_db"]))
-    return None
+    return _crossing_db([(r["snr_db"], r["decode_pct"]) for r in results], 50.0)
 
 def plot_ascii_curves(results: List[Dict]):
     """Renders ASCII plots for Decode Probability (%) and Frame Error Rate (FER) vs SNR."""
@@ -4296,12 +4326,17 @@ if __name__ == "__main__":
                         help="Decode processes (default: 1, serial). 0 or less means one per CPU. "
                              "Affects wall-clock time only: the curve is identical at every "
                              "worker count, and the test suite asserts it.")
-    parser.add_argument("--compare-demod", action="store_true",
+    # Mutually exclusive rather than first-one-wins. Both flags select a paired instrument
+    # instead of a sweep, and passing both used to run --compare-demod and discard --ap in
+    # silence - so a run asked for one measurement, was given a different one, and said nothing
+    # about the substitution in its header or its output.
+    paired = parser.add_mutually_exclusive_group()
+    paired.add_argument("--compare-demod", action="store_true",
                         help="Measure the demodulator instead of sweeping a curve: every frame "
                              "is acquired once and demodulated twice, non-coherently and with "
                              "the pilot-distance-adaptive coherent term, and the discordant "
                              "pairs are tested exactly. Serial; --workers is ignored.")
-    parser.add_argument("--ap", action="store_true",
+    paired.add_argument("--ap", action="store_true",
                         help="Measure a priori (AP) decoding instead of sweeping a curve: every "
                              "frame is decoded twice off one demodulation, with and without the "
                              "QSO-state hypothesis ladder, and the discordant pairs are tested "
@@ -4341,8 +4376,19 @@ if __name__ == "__main__":
             print("  In-QSO 50% crossing is outside the swept range for at least one arm -")
             print("  widen --min-snr / --max-snr before quoting a threshold shift.")
         else:
-            print(f"  In-QSO 50% crossing: plain {shift['plain_db']:+.2f} dB, "
-                  f"AP {shift['ap_db']:+.2f} dB -> {shift['shift_db']:+.2f} dB deeper with AP")
+            def band(low: Optional[float], high: Optional[float]) -> str:
+                if low is None or high is None:
+                    return "[interval extends past the swept range]"
+                return f"[{low:+.2f}, {high:+.2f}]"
+
+            print(f"  In-QSO 50% crossing: plain {shift['plain_db']:+.2f} dB "
+                  f"{band(shift['plain_low_db'], shift['plain_high_db'])}, "
+                  f"AP {shift['ap_db']:+.2f} dB "
+                  f"{band(shift['ap_low_db'], shift['ap_high_db'])}")
+            print(f"  -> {shift['shift_db']:+.2f} dB deeper with AP (a difference of two point")
+            print("     estimates; the McNemar p above, not this number, is what says the ladder")
+            print("     changed something. The brackets are 95% Wilson bands over the IN-QSO")
+            print("     frames only, which are about half the frames the sweep ran.)")
             print(f"  (seed {args.seed}, {args.frames} frames/point, mode {args.mode}, "
                   f"fading {args.fading}. Quote all four with the figure.)")
         raise SystemExit(0)

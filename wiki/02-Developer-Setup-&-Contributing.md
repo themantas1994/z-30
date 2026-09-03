@@ -129,7 +129,7 @@ python3 build_all_platforms.py
 │   ├── rf_time_sync.py           # FIR matched filter time station demodulator
 │   ├── paths.py                  # Per-user config / logbook directory resolution
 │   ├── auto_logger.py            # ADIF 3.1.4 logbook engine
-│   ├── benchmark.py              # Monte Carlo AWGN/Rayleigh simulation suite
+│   ├── benchmark.py              # Monte Carlo sweeps: AWGN + ITU-R F.1487 (see channel.py)
 │   ├── gui_tkinter.py            # Zero-dependency desktop GUI
 │   └── web_server.py             # Local HTTP server: token-authed hardware API, rigctld relay
 │

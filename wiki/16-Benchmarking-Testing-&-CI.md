@@ -195,7 +195,9 @@ sensitivity figure that is not honest.
 Any of these takes `--workers N` to spread the decoding over processes without changing what it
 measures — see [`--workers`](#-workers-the-same-curve-in-less-time) below.
 
-Sample output from the AWGN command above, verbatim:
+Sample output from the AWGN command above. It is the run's own output with the two ASCII
+plots elided — `plot_ascii_curves` prints a decode-probability and an FER panel between the
+table and the summary block, and they are a shape check rather than a result:
 
 ```
 ================================================================================================
@@ -426,9 +428,11 @@ trying more.
 in the browser, over `src/dsp/monteCarloEngine.ts`. It has a **Measurement mode** selector, and
 it defaults to `realistic` for the same reason the Python benchmark does.
 
-Short version, both re-measured at 200 frames per point: **the two engines land 0.02 dB apart
-on the decode threshold and 0.70 dB apart on the genie-aided bound.** The tables below are that
-result and what it does and does not license.
+**It models calibrated AWGN and nothing else.** It used to offer a "Rayleigh Fading (0.5 Hz
+Doppler)" channel and, in its type surface, a co-channel QRM one;
+[neither was what its name said](#-a-verification-pass-over-the-benchmark-module) and both are
+gone. The ITU-R F.1487 conditions are the reference instrument's, which implements the
+recommendation — see [`z30_dsp/channel.py`](../z30_dsp/channel.py).
 
 In realistic mode the browser engine gives every frame a random carrier offset (±5 Hz) and
 timing offset (±0.5 s), searches for the frame using only the 21 Costas symbols
@@ -436,29 +440,56 @@ timing offset (±0.5 s), searches for the frame using only the 21 Costas symbols
 counts a frame it cannot find as a failure. The `Acq Fail`, `Timing RMS` and `Freq RMS` columns
 of the results table are the same diagnostics the Python table carries.
 
-The two engines model the same receiver, and the two constants that say so are shared and
-pinned by `tests/test_cross_language_parity.py`:
+The two engines model the same receiver, and the constants that say so are shared and pinned by
+`tests/test_cross_language_parity.py`:
 
 | Constant | Value | What it fixes |
 | :--- | :--- | :--- |
 | `SLOT_SEARCH_MARGIN_SEC` | 0.05 s | The timing search half-width is the station's timing uncertainty plus this margin — ±0.55 s at the default ±0.5 s offset. z-30 is slot-synchronised, so a real receiver knows where the frame should start and searches a window, not an arbitrary stream. |
 | `RECEIVER_PILOT_COHERENCE` | 0.0 | Purely non-coherent demodulation, which is what z-30's receiver is specified to be. `ideal` mode keeps the pilot-adaptive weight, because it is handed perfect timing. It is declared in `src/dsp/realReceiver.ts` and in `z30_dsp/benchmark.py` — **beside each language's demodulator, not in its benchmark** — and `monteCarloEngine.ts` imports it. It used to be declared here, in the benchmark, and [that is how the on-air decoders came to be running a different one](#-a-benchmark-challenging-the-code-the-receiver-measured-was-not-the-receiver-that-shipped). |
+| `LDPC_MAX_ITERATIONS` | 45 | The decoder's per-schedule cap. Neither engine takes one: the Python sweep builds its codec with `Z30LdpcCodec(max_iterations=LDPC_MAX_ITERATIONS)` and the browser engine calls `decodeMinSum(llrs)` with no cap argument, so both get the one `realReceiver.ts`'s decode path uses. The modal had a 10–120 input box wired straight into it. |
+| `WILSON_Z_95` | 1.959963984540054 | The exact two-sided 95% normal quantile, written out so a published interval does not depend on a library version. The browser side used a rounded 1.96 — a different interval on the same counts, and the intervals are what the table below compares. |
+| `PUBLISHABLE_FRAMES_PER_POINT` | 200 | The sample size below which a run prints an `EXPLORATORY` notice. The Python benchmark always has; the browser engine defaults to 50, offers a 25-frame quick sweep, and used to print nothing either way. |
 
-Measured at seed `20260830`, **200 frames per point**, AWGN, blind acquisition, over the three
-points that bracket the crossing (-24, -23, -22 dB) — the same frames-per-point and the same
-interpolation rule on both sides, so this is a like-for-like comparison and not two different
-measurements put in one table:
+Re-measured on 2026-09-03 at seed `20260830`, **200 frames per point**, AWGN, blind
+acquisition, **both engines swept over the same three points** (-24, -23, -22 dB) — same
+frames per point, same sweep extent, same interpolation rule, so this is a like-for-like
+comparison and not two different measurements put in one table:
 
 | | Python (`z30_dsp/benchmark.py`) | Browser (`monteCarloEngine.ts`) |
 | :--- | :--- | :--- |
-| Decodes at -24 dB | 17/200 | 11/200 |
-| Decodes at -23 dB | 92/200 | 94/200 |
-| Decodes at -22 dB | 189/200 | 188/200 |
-| **50% crossing** | **-22.92 dB [-23.07, -22.79]** | **-22.94 dB [-23.09, -22.80]** |
+| Decodes at -24 dB | 11/200 [3.1, 9.6] | 11/200 [3.1, 9.6] |
+| Decodes at -23 dB | 103/200 [44.6, 58.3] | 94/200 [40.2, 53.9] |
+| Decodes at -22 dB | 174/200 [81.6, 91.0] | 174/200 [81.6, 91.0] |
+| **50% crossing** | **-23.03 dB [-23.17, -22.85]** | **-22.93 dB [-23.09, -22.76]** |
 
-**0.02 dB apart, with 95% bands that essentially coincide.** The previous version of this table
-put them 0.1 dB apart at 40 frames per point, which was as much precision as 40 frames could
-support; at 200 the agreement is tighter than the interval on either figure.
+**0.10 dB apart, with 95% bands that almost entirely overlap.**
+
+The sweep extent is why this table moved, and it is worth stating because it is easy to get
+wrong. The sweep draws every random value it needs from **one** generator consumed in order
+(see [`--workers`](#-workers-the-same-curve-in-less-time)), so the frames a point gets depend
+on how many points ran before it: -24 dB in a `-28 … -17` sweep is a different 200 frames from
+-24 dB in a `-24 … -22` sweep. The previous version of this table took its Python column from
+the twelve-point sweep at the top of this page and its browser column from a three-point run,
+and called the result like-for-like. Both columns were valid samples; the comparison was not
+quite the one it claimed to be. Both columns above come from three-point sweeps.
+
+Two consequences, both stated rather than smoothed over:
+
+- **The published AWGN threshold is unchanged**, because it is the twelve-point sweep's:
+  -22.92 dB [-23.07, -22.79]. The three-point Python run above gives -23.03 dB
+  [-23.17, -22.85] — a different 200 frames a point, overlapping bands, the same instrument.
+  That difference is what a 200-frame sample looks like, and it is the reason the interval is
+  printed next to the crossing.
+- **The browser column's -22 dB row was 188/200 here and measures 174/200 now.** The removal of
+  the analytic path provably did not cause it: `realistic` mode never used that path — the
+  branch order put `realistic` first — and the engine was run before and after the change over
+  AWGN at -25 to -21 dB, 40 frames a point, seed `20260830`, producing an identical success
+  count, FER, decode rate, acquisition-failure count and timing/frequency RMS at every point.
+  The -24 and -23 rows also reproduce exactly. So the old -22 row came from a run configured
+  differently from the one this page describes, and it is not reproducible from the seed,
+  sample size and sweep extent stated beside it — which is the whole reason those three things
+  are stated beside it.
 
 This is worth stating carefully, because agreement between two engines is the thing that
 [hid the demodulator defect](#-a-benchmark-challenging-the-code-the-receiver-measured-was-not-the-receiver-that-shipped)
@@ -501,8 +532,8 @@ test.
 > larger on a fading path (p = 5 × 10⁻¹¹⁹). See
 > [A benchmark challenging the code](#-a-benchmark-challenging-the-code-the-receiver-measured-was-not-the-receiver-that-shipped).
 
-Both engines run the same receiver model in `realistic` mode and land 0.02 dB apart on the
-threshold — tighter than the interval on either figure. **The Python benchmark is still the
+Both engines run the same receiver model in `realistic` mode and land 0.10 dB apart on the
+threshold — well inside the interval on either figure. **The Python benchmark is still the
 reference**: it is the one CI runs, the one the seed defaults are pinned to, the one whose
 output the tables above are copied from, and — as the `ideal`-mode table shows — the two are
 not interchangeable everywhere. Use the browser engine to see which way a change moved the
@@ -511,34 +542,195 @@ documentation.
 
 ### And where they do not agree: `ideal` mode
 
-Re-measured the same way — 200 frames per point, the three SNRs that bracket the crossing,
-seed `20260830` — the genie-aided bound does **not** agree between the two engines:
+Re-measured the same way — 200 frames per point, seed `20260830`, both engines swept over the
+same four points, one more than the crossing needs so that the pessimistic Wilson curve
+crosses inside the range too — the genie-aided bound still does **not** agree between the two
+engines:
 
 | | Python | Browser |
 | :--- | :--- | :--- |
-| Decodes at -26 dB | 7/200 | 30/200 |
-| Decodes at -25 dB | 55/200 | 127/200 |
-| Decodes at -24 dB | 163/200 | 192/200 |
-| **50% crossing** | **-24.58 dB [-24.69, -24.48]** | **-25.28 dB [-25.40, -25.14]** |
+| Decodes at -26 dB | 8/200 | 5/200 |
+| Decodes at -25 dB | 63/200 | 33/200 |
+| Decodes at -24 dB | 165/200 | 110/200 |
+| Decodes at -23 dB | 198/200 | 178/200 |
+| **50% crossing** | **-24.64 dB [-24.76, -24.52]** | **-24.13 dB [-24.30, -23.95]** |
 
-**0.70 dB apart, with bands that do not overlap** — against 0.02 dB in `realistic` mode on the
-same runs. So the two engines agree, to well inside their own measurement error, on the figure
-this project publishes, and disagree on the one it does not.
+**0.51 dB apart, with bands that do not overlap** — against 0.10 dB in `realistic` mode, whose
+bands almost entirely do. So the two engines agree, to inside their own measurement error, on
+the figure this project publishes, and disagree on the one it does not.
 
-That is not a coincidence worth hand-waving past, but nor is the mechanism established here.
-What can be said is what `ideal` mode *is*: the mode where each engine hands its demodulator
-things a receiver would have to work out, and "the exact noise sigma, the exact carrier and
-perfect symbol timing" is a specification with implementation slack in it — how the sigma is
-derived, where sample zero is taken to be, what the pilot-adaptive weight sees. `realistic`
-mode has far less of that slack, because the receiver is told nothing and both engines then
-have to do the same work. **Which of those differences accounts for the 0.70 dB has not been
-measured**, and until it has, the useful conclusion is the narrow one: the browser bound is not
-interchangeable with the Python bound, and neither is a threshold. The published bound is the
-Python one, as it always was.
+**This table used to read -25.28 dB in the browser column, 0.70 dB the other way.** That figure
+was the removed analytic receive path's, measured 1.07 dB away from the physical chain at
+p = 3.7 × 10⁻²⁸ — see
+[the verification pass](#-a-verification-pass-over-the-benchmark-module). So *most* of what
+this page could not explain was not a mystery about `ideal` mode at all; it was a benchmark
+measuring a model. What is left is 0.51 dB, in the opposite direction, between two engines that
+now both run a waveform through a demodulator.
+
+That remainder is not explained here either, and the honest thing to say about it is what
+`ideal` mode *is*: the mode where each engine hands its demodulator things a receiver would
+have to work out, and "the exact noise sigma, the exact carrier and perfect symbol timing" is a
+specification with implementation slack in it — how the sigma is derived, where sample zero is
+taken to be, what the pilot-adaptive weight sees. `realistic` mode has far less of that slack,
+because the receiver is told nothing and both engines then have to do the same work.
+**Which of those differences accounts for the remaining 0.51 dB has not been measured**, and
+until it has, the useful conclusion is the narrow one: the browser bound is not interchangeable
+with the Python bound, and neither is a threshold. The published bound is the Python one, as it
+always was — -24.58 dB from the ten-point sweep at the top of this page, which the four-point
+run above reproduces to within its interval at -24.64 dB [-24.76, -24.52].
 
 One thing the browser engine is *not* free to differ on: `ideal` and `realistic` mean exactly
 what they mean here. A browser run in `ideal` mode is a bound, is labelled a bound in the UI,
 and the FT8 overlay is off by default and marked not-comparable when switched on.
+
+---
+
+## 🔎 A verification pass over the benchmark module
+
+Everything above describes what the two instruments are supposed to be. This section is what an
+audit of them actually found, on 2026-09-03: every tool on the benchmark surface checked
+against [the standard this benchmark follows](#-the-standard-this-benchmark-follows) and
+against the invariant in [`AGENTS.md` §4](../AGENTS.md#4-invariants-you-must-not-break) that a
+benchmark must measure the receiver that ships.
+
+The reference instrument came through it. `z30_dsp/benchmark.py` calibrates its noise to the
+2500 Hz reference bandwidth, sweeps AWGN and the recommendation's own named channels, quotes
+Wilson intervals on every point and a propagated band on every crossing, counts false decodes
+separately, refuses to call an `ideal` result a threshold, and reduces its counts in frame
+order. Its paired instruments use the exact two-sided McNemar test computed from `math.comb`.
+Those are the conventions the modes z-30 gets compared against use, and the instrument follows
+them.
+
+**The browser engine did not**, and the two things that were wrong with it were both the same
+mistake in different clothing: a tool whose name asserted something its arithmetic did not do.
+
+### The analytic receive path
+
+`monteCarloEngine.ts` had a **`simulationMode` selector**, and its default —
+`MATCHED_FILTER_CORRELATOR_BANK`, presented as "Exact Matched Filter Bank (Fast)" — never
+synthesized a waveform and never called the demodulator. It drew per-tone complex Gaussians
+against an assumed 16-ary orthogonal signalling model, applied a pilot-phase-error standard
+deviation and a pilot weight of its own (`esN0/(esN0 + 1.5)`, clamped to 0.2–0.95) that exist
+nowhere in the shipped receiver, and handed the resulting LLRs to the real LDPC decoder. Half
+the receive chain was a model, and the model was the default.
+
+It also mixed the two: the branch condition was `realistic || FULL_PHYSICAL_DSP || f === 0`, so
+frame 0 of every SNR point ran the physical chain — for the waveform preview — and frames 1
+onward ran the analytic one. A default `ideal` curve was 1 frame per point of one receiver and
+the rest of another.
+
+Measured at the sample size this project publishes at — seed `20260830`, `ideal` mode, AWGN,
+**200 frames per point**, the removed path run from its own file as it stood in git:
+
+| SNR | analytic path | physical chain | Fisher exact *p* (two-sided) |
+| :--- | ---: | ---: | ---: |
+| -26 dB | 30/200 | 5/200 | 9.7 × 10⁻⁶ |
+| -25 dB | 117/200 | 33/200 | 2.0 × 10⁻¹⁸ |
+| -24 dB | 187/200 | 110/200 | 1.1 × 10⁻¹⁹ |
+| **pooled** | **334/600** | **148/600** | **3.7 × 10⁻²⁸** |
+| **50% crossing** | **-25.20 dB** | **-24.13 dB** | |
+
+**1.07 dB, pooled exact two-sided *p* = 3.7 × 10⁻²⁸** — past the ≥99% confidence
+[`AGENTS.md` §5](../AGENTS.md#5-honest-numbers) requires of a result that changes a published
+figure by twenty-five orders of magnitude. Fisher's exact test rather than McNemar's because
+these two arms are genuinely *unpaired*: the analytic path never synthesizes a waveform, so
+there is no channel realisation for the two to share. It is computed from factorials in the
+measurement script for the same reason `mcnemar_exact_p` is computed from `math.comb` — so a
+reader can recompute it rather than trust a library version.
+
+And **-25.20 dB is the browser "genie-aided bound of -25.28 dB" this page published**, to
+within 0.08 dB, while the physical chain lands 1.07 dB away from it. That settles the
+attribution: the browser bound was the analytic path's, which is why it could not be reconciled
+with the Python benchmark's. The section below this one records the last time a benchmark
+measured a receiver nobody ran, and what it cost. This was the same defect, in the other
+language, in the more obvious place.
+
+The analytic path is gone. The engine has one receive path and it synthesizes a waveform and
+demodulates it. `tests/test_cross_language_parity.py` asserts the reimplementation cannot come
+back under its own name and that the surviving path still calls the real synthesiser and the
+real demodulator.
+
+### The fading model that was not one
+
+The engine offered a `RAYLEIGH_FADING` channel — "Rayleigh Fading (0.5 Hz Doppler)" in the
+modal — implemented by a function headed *"Applies Rayleigh / ITU-R F.1487 Ionospheric
+Multipath Fading"* and commented *"Two-path Watterson model"*. Its two path gains were:
+
+```js
+gain1 = 0.8 + 0.4 * Math.sin(phase1);   // real-valued, bounded to [0.4, 1.2]
+gain2 = 0.5 + 0.3 * Math.cos(phase2);   // real-valued, bounded to [0.2, 0.8]
+```
+
+A Watterson tap is a **complex** Gaussian process — Rayleigh envelope, uniform phase, Gaussian
+Doppler spectrum. This one was real-valued and deterministic in amplitude: no deep fades, no
+Rayleigh envelope, and — the part that matters here — no phase rotation, so it could not spread
+a tone in frequency at all. Doppler spread against the 3.125 Hz tone spacing is the entire
+mechanism [this page records](#the-channel-z-30-cannot-use) for what happens to this waveform on
+a disturbed path, and the model named after the recommendation could not produce it.
+
+A third channel, `CO_CHANNEL_QRM`, was in the type and carried two configuration fields
+(`qrmOffsetHz`, `qrmSirDb`) that **no code anywhere read**. Selecting it ran a plain AWGN sweep
+and labelled the result co-channel interference — the same shape as the withdrawn SIC collision
+figures in [`AGENTS.md` §5](../AGENTS.md#5-honest-numbers): a number for a condition no
+instrument here measures.
+
+Both are removed. The browser engine models calibrated AWGN and says so, and
+`z30_dsp/channel.py` — which implements the recommendation properly, against its own named test
+conditions — is where fading is measured.
+
+### Four smaller things, all in the same family
+
+| Found | Why it is not cosmetic |
+| :--- | :--- |
+| An unacquired frame was given **108 raw bit errors, 39 post-LDPC bit errors and a full iteration cap**, on the reasoning that a frame nobody found carries no information | Nothing measured those numbers: no demodulator ran on that frame. They landed in two published columns at exactly the SNRs where acquisition is failing and the columns are most read. Measured at -25 dB on AWGN with 4 of 40 frames unacquired, the fill was moving the reported raw BER from 0.3004 to 0.3204 and the post-LDPC BER from 0.2998 to 0.3205. The averages now run over the frames that produced them, as `Timing RMS` and `Freq RMS` always have; the frames are still counted as failures in the FER, whose denominator is unchanged |
+| A **"Max LDPC Iterations" input box**, 10–120, wired straight into the decoder's cap | `realReceiver.ts`'s decode path takes `LDPC_MAX_ITERATIONS` and offers no way to change it. A benchmark that can choose the cap can measure a decoder nobody runs — the same reasoning that removed the `alphaMinSum` slider, except that one could not move the curve |
+| A **"Shannon Capacity Limit"** curve, `100 * exp(1.8 * (snr + 30.51))`, drawn on the decode-probability chart **and on by default** | Shannon's theorem gives an SNR below which no reliable code exists. It does not give a decode probability, and nothing in this repository derives that exponential, its slope or its intercept. A curve whose shape nobody computed, labelled a fundamental limit, drawn beside measured points. [11. Physics & Comparative Analysis](11-Physics-&-Comparative-Analysis-z30-vs-FT8.md) computes the real Shannon threshold for both modes and states it as a threshold, which is what it is |
+| The modal printed a **bare crossing to two decimal places**, from as few as 25 frames a point, with no interval and no exploratory notice | The reference instrument has printed the band and the `EXPLORATORY RUN` notice since the figures existed. `WILSON_Z_95` and `PUBLISHABLE_FRAMES_PER_POINT` are now shared constants, pinned across the two languages, and the modal prints both |
+
+Two defects in the Python half, neither affecting a published number:
+
+- **`benchmark._log_sum_exp` and three methods on `Z30LdpcCodec` carried unquoted PEP 604
+  annotations** (`List[float] | np.ndarray`). [`AGENTS.md` §7](../AGENTS.md#7-house-rules) puts
+  the support floor at Python 3.9, `pyproject.toml` declares `requires-python = ">=3.9"`, and
+  ruff lints at `target-version = "py39"` — but `|` on `typing.List` and on a class object
+  arrives in 3.10, so on the declared floor those annotations are evaluated at def time and
+  raise `TypeError`, taking down the import of `z30_dsp.ldpc` and `z30_dsp.benchmark` and
+  everything downstream of them. CI runs 3.10, 3.12 and 3.13 and so could never see it. They
+  are quoted now, as the rest of `ldpc.py` already did, and
+  `tests/test_cross_language_parity.py` walks the AST of every file ruff lints so the next one
+  is caught in the language that has the problem.
+- **`decode_threshold_db` carried a second copy of the 50% crossing rule**, and the `--ap`
+  instrument read that one while every published threshold read `_crossing_db`. They agreed, so
+  nothing was wrong — which is the state `AGENTS.md`'s "one source of truth per rule" describes
+  the day before one of them meets a curve that dips. It delegates now. `--ap` also reported
+  its in-QSO crossings as bare numbers off half the sweep's frames; it reports the Wilson band
+  with them.
+
+`--ap` and `--compare-demod` were also mutually exclusive in practice and not in `argparse`:
+passing both ran `--compare-demod` and discarded `--ap` in silence, so a run asked for one
+measurement, got another, and said nothing about the substitution.
+
+### What did not change
+
+**No published threshold moved.** The browser engine's `realistic` path never used the analytic
+receiver — the branch order put `realistic` first — so removing it left that path untouched.
+Verified rather than argued: the engine was run before and after over AWGN at -25 to -21 dB,
+40 frames a point, seed `20260830`, and every success count, FER, decode rate, acquisition
+failure count and timing/frequency RMS is **identical in every field**. The only fields that
+moved are the two BER columns and the iteration average at -25 dB, the one point with
+acquisition failures — which is the fabricated fill being removed, and is the correction.
+
+The genie-aided bound this page published for the browser engine *did* move, because it was the
+analytic path's: **-25.28 dB becomes -24.13 dB [-24.30, -23.95]**, re-measured at 200 frames a
+point over -26 to -23 dB at the same seed. That closes most of the
+[0.70 dB the two engines' bounds disagreed by](#and-where-they-do-not-agree-ideal-mode) — it is
+0.51 dB now, and in the other direction. The Python bound, which is the one this project
+publishes, is untouched.
+
+The `realistic` comparison table also moved, for a reason that has nothing to do with any of
+this: its two columns had been measured over different sweep extents, which draws different
+frames. Both engines are now measured over the same three points. The published AWGN threshold
+is unchanged.
 
 ---
 
@@ -720,7 +912,7 @@ What the suite covers, and why each test is there:
 | `tests/test_cross_language_parity.py` and `tests/crc14.test.mjs` | The Python and TypeScript codecs silently drifting apart — each half keeps working perfectly on its own while losing the ability to decode the other. Shared known-answer vectors live in `tests/vectors/crc14_vectors.json` |
 | `tests/test_web_server_api.py` | The local API losing its token, `Origin` or `Host` checks; the GPIO pin whitelist; the PTT dead-man switch actually releasing |
 | `tests/test_time_sync_guards.py` | The system clock becoming settable by default, or an unbounded step from a spoofed time signal |
-| `tests/frontend.test.mjs` | The transmit gate admitting an out-of-band frequency, an unseeded benchmark PRNG, an amplitude-gated waveform, unvalidated station config, Maidenhead decoding, and the browser benchmark's acquisition stage (that it finds a displaced frame, estimates its own noise floor, refuses to "find" one in pure noise, and reproduces its offsets from the seed) |
+| `tests/frontend.test.mjs` | The transmit gate admitting an out-of-band frequency, an unseeded benchmark PRNG, an amplitude-gated waveform, unvalidated station config, Maidenhead decoding, and the browser benchmark's acquisition stage (that it finds a displaced frame, estimates its own noise floor, refuses to "find" one in pure noise, and reproduces its offsets from the seed). Also the browser benchmark's statistics: that its Wilson interval matches its own algebra over 400 seeded counts including the 0/n and n/n ends, and that a frame acquisition never found contributes no bit-error or iteration measurement — run against a real sweep at an SNR where acquisition genuinely fails, so the check cannot pass on a curve that never exercises it |
 | `tests/transmitPath.test.mjs` | The three defects that only appear with a radio attached: a PTT release that drops a different pin than the key drove, a "Test PTT" that reports success without addressing the hardware, and the raw rigctl console keying without the transmit gate. Also the rigctl verb table, where case is significant |
 | `tests/test_config_wizard.py` and `tests/frontend.test.mjs` | The Python setup wizard and the browser transmit gate disagreeing about which callsigns are valid — a wizard that blesses a callsign the gate will refuse at slot start. Shared vectors in `tests/vectors/callsign_vectors.json` |
 | `tests/rigReadback.test.mjs` | `RigStateTracker`, the WSJT-X-ported closed-loop rig model that `AGENTS.md` §4 names explicitly. Guards both directions: that a settled rig reporting a different dial blocks transmit, and that an unverifiable rig, an unsettled QSY and a difference inside the rig's measured tuning resolution do **not** — a check that grounds correctly-working stations is one its operator switches off |
@@ -728,6 +920,7 @@ What the suite covers, and why each test is there:
 | `tests/dspDeterminism.test.mjs` | An unseeded generator anywhere the decode path can reach — the defect class that has now recurred twice, in the LDPC dither and again in `addCalibratedAwgn`. Asserts byte-identical output across two runs, and checks the noise is still *calibrated* noise by measuring its variance and Gaussian shape off the produced samples, so "deterministic" cannot be achieved by returning a constant |
 | `tests/test_benchmark_parallel.py` | `--workers` becoming more than a wall-clock knob. Asserts the sweep produces an identical curve on one process and on several, that frame generation is unaffected by the batch size frames are dispatched in, that the receive chain is a pure function of its input and leaves that input alone, and that results are filed by frame index rather than by the order an executor hands them back — driven by an executor that deliberately returns them backwards, because `concurrent.futures.map` re-imposes input order and would hide the bug |
 | `tests/test_ldpc_vectorized_equivalence.py` | The decoder's check-node sweep being optimised into a *different* decoder. Pins the shipped sweep against a transcription of the scalar one **bit for bit** — `np.array_equal` on the float32 LLR and message state after each of six consecutive sweeps, for all four schedules, on real frames from -19 to -26 dB — plus a full-cascade comparison covering the hard-decision, CRC-field and parity-accumulation paths rewritten alongside it. A speed change that moves a decoded bit is a change to the published thresholds, and this is what makes that impossible to do by accident |
+| `tests/test_cross_language_parity.py` (benchmark-integrity group) | The benchmark surface drifting back to measuring something other than the shipped receiver, or reporting something nothing measured. Pins that the browser engine has no analytic receive path and no channel it does not model, that neither engine takes a decoder iteration cap, that `WILSON_Z_95` and `PUBLISHABLE_FRAMES_PER_POINT` agree across the two languages, that the modal plots no unmeasured curve, that the 50% crossing has one implementation in Python (driven over 200 generated curves, not asserted by reading), that `ap_threshold_shift` returns the Wilson band and not a bare crossing (recomputed from counts the test makes up), and that no runtime-evaluated PEP 604 annotation is left anywhere ruff lints — the form that raises `TypeError` on the Python 3.9 floor while CI, which runs 3.10 and up, sees nothing |
 | `tests/test_sic_candidate_detection.py` | The SIC candidate detector inventing carriers out of noise, and the two languages' detectors diverging again. The raw-bin detector this replaced produced ~52 spurious candidates per frame from pure noise |
 | `tests/test_git_sync.py` | The updater doing anything other than a fast-forward — a self-update that could discard an operator's local changes or move the checkout to an unrelated history |
 | `tests/test_updater_cli.py` | The layer above that engine: `run_updater` turning a `SyncStatus` into the wrong exit code, so a startup script never notices the box is behind or reports failure forever on a current one — and an interrupted prompt or a closed stdin being read as consent to update |
