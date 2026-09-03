@@ -28,11 +28,34 @@ decode threshold. The demodulator is handed things a real receiver has to work o
 Every one of those is a real loss in a real contact, and none of them is present in `ideal`.
 Quoting that figure beside a mode's published over-the-air threshold - FT8's -21 dB, say,
 which is WSJT-X's measured number and *includes* all of those losses - compares two different
-quantities and flatters this one. Measured on this code at seed DEFAULT_BENCHMARK_SEED, 40
-frames per point: the bound is -24.6 dB, while the blind-acquisition threshold is -23.1 dB on
-AWGN. The gap between them - 1.5 dB - is the acquisition loss, what it costs to *find* a
-3.125 Hz-spaced signal rather than be told where it is. wiki/16 carries the full set,
-including the two fading presets, and the README states the comparison in the same terms.
+quantities and flatters this one. Measured on this code at seed DEFAULT_BENCHMARK_SEED, 200
+frames per point: the bound is -24.58 dB [-24.69, -24.48], while the blind-acquisition
+threshold is -22.92 dB [-23.07, -22.79] on AWGN. The gap between them - 1.66 dB - is the
+acquisition loss, what it costs to *find* a 3.125 Hz-spaced signal rather than be told where
+it is. wiki/16 carries the full set, including the ITU-R F.1487 fading conditions, and the
+README states the comparison in the same terms.
+
+THE METHOD IS NOT INVENTED HERE
+-------------------------------
+Everything about how these numbers are produced is the convention the modes z-30 is compared
+against already use, so that the figures mean the same thing:
+
+  * Sensitivity is the SNR in a 2500 Hz reference noise bandwidth at which decode probability
+    reaches 50%. That is how WSJT-X publishes every one of its modes, and it is the only
+    reason an FT8 figure and a z-30 figure can sit in the same column.
+  * It is measured by Monte Carlo simulation through the decoder that SHIPS, not through a
+    model of it. `demodulate_mfsk_llrs` and `Z30LdpcCodec.decode_min_sum` here are the same
+    functions `sic_decoder.py` calls on live audio. A benchmark that reimplements the receiver
+    measures the reimplementation - see RECEIVER_PILOT_COHERENCE for what that cost when the
+    two drifted apart.
+  * The channels are AWGN plus the named test conditions of Recommendation ITU-R F.1487; see
+    channel.WATTERSON_PRESETS.
+  * A published sensitivity figure excludes a priori information. The sweep runs the ordinary
+    decoder; the hypothesis ladder is a separate instrument (`--ap`) reported separately, the
+    same way WSJT-X's tables give "no AP" and "max AP" as two different numbers.
+  * A simulated error rate is quoted with a confidence interval, not as a bare point estimate.
+    Every decode rate here carries its 95% Wilson score interval and every crossing carries the
+    band those intervals imply - see wilson_interval and PUBLISHABLE_FRAMES_PER_POINT.
 
 Reproducibility: every run is seeded (`--seed`, default DEFAULT_BENCHMARK_SEED). Record the
 seed alongside any published curve; an unseeded number cannot be reproduced, bisected, or
@@ -49,7 +72,7 @@ from typing import List, Optional, Sequence, Tuple, Dict
 import numpy as np
 
 from z30_dsp.modem import Z30Modulator, Z30Config, codeword_to_symbols
-from z30_dsp.ldpc import Z30LdpcCodec, LDPC_MAX_ITERATIONS
+from z30_dsp.ldpc import Z30LdpcCodec, LDPC_MAX_ITERATIONS, DECODE_SCHEDULES
 from z30_dsp.channel import ChannelImpairments, impair_frame, WATTERSON_PRESETS
 from z30_dsp.acquisition import acquire_frame, slot_timing_search_sec
 from z30_dsp.ap_decode import ApHypothesis, build_ap_hypotheses, decode_with_ap
@@ -82,37 +105,74 @@ DEFAULT_BENCHMARK_WORKERS: int = 1
 #: 1000, while still keeping every worker fed.
 PARALLEL_CHUNK_PER_WORKER: int = 4
 
-#: Weight of the coherent term in the per-tone likelihood, in `realistic` mode.
+#: Frames per SNR point below which a run is exploratory rather than publishable.
 #:
-#: Zero: z-30's receiver is specified to demodulate non-coherently, and under the timing error
-#: a blind acquisition actually leaves, the pilot-aided "coherent" contribution subtracts
-#: performance rather than adding it. A few milliseconds of timing error rotates each tone by
-#: 2*pi*f*dt, so the term is measured against the wrong phase reference and starts cancelling
-#: signal instead of reinforcing it.
+#: 200 is not a round number picked for comfort. A decode rate is a binomial proportion, and at
+#: 200 frames its 95% Wilson interval is at worst +/-6.9 percentage points, which at the slope
+#: this mode's decode curve has near threshold is about +/-0.3 dB on the interpolated crossing -
+#: the precision a figure quoted to one decimal place is claiming. At the 40 frames the
+#: published table used to be measured at, the same interval is +/-15 points and the crossing is
+#: uncertain by most of a dB, so two runs of the same code could differ by more than most of the
+#: changes anyone would want to measure. Monte Carlo error-rate estimation has quoted intervals
+#: alongside point estimates for decades, and the sample sizes that make a percentage-point
+#: interval usable are in the hundreds; this is that, at the lower end.
 #:
-#: This is not a preference. It was measured paired - the same frame, fading realisation,
-#: carrier offset, timing offset, noise and acquisition result decoded twice, once with the
-#: pilot-distance-adaptive weight (0.35 to 0.85) this benchmark used to apply and once with
-#: zero - at SNR -24/-23/-22/-21 dB, 40 frames per point, seed DEFAULT_BENCHMARK_SEED:
+#: Enforced as a printed notice rather than a refusal: a 20-frame run is the right tool for
+#: "did I break the decoder", and the run itself is not wrong - only the act of publishing its
+#: crossing as a sensitivity figure would be.
+PUBLISHABLE_FRAMES_PER_POINT: int = 200
+
+
+#: Weight of the coherent term in the per-tone likelihood, for the receiver z-30 actually runs.
 #:
-#:      SNR     semi-coherent   non-coherent   semi-only wins   non-coherent-only wins
-#:     -24 dB       10.0%           2.5%             3                    0
-#:     -23 dB        7.5%          37.5%             1                   13
-#:     -22 dB       27.5%          90.0%             0                   25
-#:     -21 dB       57.5%         100.0%             0                   17
+#: Zero. z-30's receiver is specified to demodulate non-coherently (AGENTS.md section 1), and
+#: under the timing error a real receiver is left with after finding the frame itself, the
+#: pilot-aided "coherent" contribution subtracts performance instead of adding it: a few
+#: milliseconds of residual timing error rotates a tone at f by 2*pi*f*dt relative to the pilot
+#: it is being projected onto, so the term is measured against the wrong phase reference and
+#: begins cancelling signal.
 #:
-#: Pooled: 59 discordant pairs, 55 won by the non-coherent receiver and 4 by the semi-coherent
-#: one. An exact two-sided McNemar test gives p = 1.7e-12 - better than 99.9999999% confidence
-#: that the non-coherent receiver decodes more frames at these operating points, clearing the
-#: >=99% bar AGENTS.md section 5 sets for a result that changes a published figure. The -24 dB
-#: row is recorded rather than dropped: both receivers are near zero there, below the point
-#: where the Costas pattern is reliably findable at all, and the semi-coherent one took that
-#: point 3-0.
+#: THIS CONSTANT IS THE RECEIVER'S, NOT THE BENCHMARK'S. It was called
+#: RECEIVER_PILOT_COHERENCE, which named a benchmark mode, and that name is exactly how the
+#: defect it now prevents went unnoticed: the two benchmarks passed 0.0 while the two on-air
+#: decoders - `sic_decoder._estimate_llrs`, which took `demodulate_mfsk_llrs`'s default, and
+#: realReceiver.ts's `demodulateReal`, which hardcoded the weight - went on applying the
+#: pilot-distance-adaptive 0.35-0.85. The published decode threshold therefore described a
+#: receiver that did not ship, and the receiver that did ship had never been measured. It is
+#: now the default of `demodulate_mfsk_llrs`, so a caller has to ask for anything else.
 #:
-#: `ideal` mode keeps the adaptive weight. It hands the demodulator perfect symbol timing, so
-#: the phase reference is exact and the coherent term is worth having - which is why the bound
-#: is a bound.
-REALISTIC_PILOT_COHERENCE: float = 0.0
+#: Measured paired with `--compare-demod`: one channel realisation, one acquisition and one
+#: noise draw per frame, demodulated twice and decoded twice, so nothing but the weight differs
+#: between the arms. Seed DEFAULT_BENCHMARK_SEED, 100 frames per point, AWGN, blind
+#: acquisition, carrier offset +/-5 Hz, timing offset +/-0.5 s:
+#:
+#:      SNR      non-coherent   semi-coherent   non-coh only   semi only   timing RMS
+#:     -25 dB        1/100           1/100            1             1        19.8 ms
+#:     -24 dB        4/100          13/100            3            12        18.2 ms
+#:     -23 dB       51/100          18/100           41             8        14.8 ms
+#:     -22 dB       93/100          35/100           58             0        12.0 ms
+#:     -21 dB      100/100          55/100           45             0         8.7 ms
+#:     -20 dB      100/100          76/100           24             0         6.9 ms
+#:     -19 dB      100/100          78/100           22             0         5.9 ms
+#:
+#: Pooled over the 700 frames: 194 discordant pairs won by the non-coherent receiver against
+#: 21 by the semi-coherent one, exact two-sided McNemar p = 2.9e-36. The 50% crossings are
+#: -23.02 dB [-23.21, -22.81] against -21.25 dB [-21.73, -20.78], 95% Wilson bands that do not
+#: overlap: the coherent term was costing the shipped receiver 1.77 dB.
+#:
+#: The -24 dB row is recorded rather than dropped, and it goes the other way (12 to 3 for the
+#: semi-coherent arm). Both arms are under 15% there, below the SNR at which the Costas pattern
+#: is reliably findable at all, which is not an SNR a station operates at.
+#:
+#: The mechanism was confirmed rather than assumed, by running the identical comparison with
+#: perfect symbol timing handed to the demodulator (`--compare-demod --mode ideal`, 100 frames
+#: per point, -27 to -22 dB): with an exact phase reference the coherent term is worth having,
+#: and the result reverses completely - 136 discordant pairs to 1 for the semi-coherent arm,
+#: p = 1.6e-39, 50% crossings -24.58 dB against -23.29 dB. So the term is worth +1.29 dB when
+#: the timing is exact and costs -1.77 dB when the receiver has to find the frame itself. That
+#: is why `ideal` mode keeps the pilot-distance-adaptive weight and passes it explicitly: it is
+#: a genie-aided bound, and the genie includes the phase reference.
+RECEIVER_PILOT_COHERENCE: float = 0.0
 
 
 def generate_random_frame(
@@ -188,16 +248,22 @@ def demodulate_mfsk_llrs(
     sigma: float,
     audio_center_hz: float = 1250.0,
     start_sample: int = 0,
-    pilot_coherence: Optional[float] = None,
+    pilot_coherence: Optional[float] = RECEIVER_PILOT_COHERENCE,
 ) -> np.ndarray:
     """
-    Pilot-Aided Semi-Coherent 16-tone matched filter bank with exact Log-MAP LLR calculation.
+    16-tone matched filter bank with exact Log-MAP LLR calculation.
 
     Args:
-        pilot_coherence: weight of the coherent term in the per-tone likelihood, 0 to 1. `None`
-            keeps the pilot-distance-adaptive weight (0.35 to 0.85). Pass 0.0 for a purely
-            non-coherent receiver, which is what z-30 is specified to be (AGENTS.md section 1)
-            and what `realistic` mode measures - see NON_COHERENT_PILOT_WEIGHT.
+        pilot_coherence: weight of the coherent term in the per-tone likelihood, 0 to 1.
+            Defaults to RECEIVER_PILOT_COHERENCE - the receiver z-30 ships, non-coherent, and
+            the one every published threshold describes. `None` selects the
+            pilot-distance-adaptive weight (0.35 to 0.85) instead, which is worth having only
+            when the caller can hand the demodulator exact symbol timing; `benchmark.py`'s
+            `ideal` mode is the only caller that can, and it asks for it explicitly.
+
+            The default used to be `None`, which is how the on-air decoder and the benchmark
+            ended up running different receivers - see RECEIVER_PILOT_COHERENCE for the paired
+            measurement of what that cost.
     """
     samples_per_symbol = int(cfg.sample_rate_hz * cfg.symbol_duration_sec)
     sync_positions = cfg.sync_positions
@@ -352,7 +418,7 @@ class PreparedFrame:
     known_base_freq_hz: float
     #: Half-width of the blind timing search, or None in `ideal` mode where nothing is searched.
     search_timing_sec: Optional[float]
-    #: The pilot-coherence weight for this mode; see REALISTIC_PILOT_COHERENCE.
+    #: The pilot-coherence weight for this mode; see RECEIVER_PILOT_COHERENCE.
     pilot_coherence: Optional[float]
 
 
@@ -366,6 +432,12 @@ class FrameOutcome:
     #: values handed in, so the caller's error accounting reads the same field either way.
     start_sample: int
     base_freq_hz: float
+    #: A codeword that converged and passed CRC-14 while carrying a payload that was never
+    #: transmitted. Not a success, and not the same thing as a failure either: the shipped
+    #: decoder has no transmitted payload to compare against, so a frame in this state is one
+    #: the software would accept, display and log. It has a default so the field could be added
+    #: without changing every positional construction of this record.
+    false_decode: bool = False
 
 
 def _prepare_frame(
@@ -406,6 +478,10 @@ def _prepare_frame(
                 known_start_sample=0,
                 known_base_freq_hz=1250.0,
                 search_timing_sec=None,
+                # The genie's phase reference, explicitly: `ideal` mode hands the demodulator
+                # exact symbol timing, which is the only condition under which the coherent
+                # term pays. Passed rather than defaulted so that reading this record tells you
+                # which receiver the frame will be decoded by.
                 pilot_coherence=None,
             ),
             0,
@@ -425,7 +501,7 @@ def _prepare_frame(
             known_start_sample=0,
             known_base_freq_hz=1250.0,
             search_timing_sec=slot_timing_search_sec(max_time_offset_sec),
-            pilot_coherence=REALISTIC_PILOT_COHERENCE,
+            pilot_coherence=RECEIVER_PILOT_COHERENCE,
         ),
         true_start,
         true_foff,
@@ -469,14 +545,23 @@ def decode_prepared_frame(job: PreparedFrame, cfg: Z30Config, codec: Z30LdpcCode
         pilot_coherence=job.pilot_coherence,
     )
 
-    success, decoded_info, iters = codec.decode_min_sum(channel_llrs)
-    if success:
+    converged, decoded_info, iters = codec.decode_min_sum(channel_llrs)
+    success = False
+    false_decode = False
+    if converged:
         # Validate CRC-14, and check the payload really is the one transmitted: a converged
         # codeword with a matching CRC that decoded to the wrong message is a false decode,
         # not a success.
         rcvd_crc = int("".join(str(b) for b in decoded_info[63:]), 2)
         comp_crc = codec.compute_crc14(decoded_info[:63])
-        success = bool(rcvd_crc == comp_crc and np.array_equal(decoded_info[:63], job.payload_63))
+        crc_ok = bool(rcvd_crc == comp_crc)
+        success = bool(crc_ok and np.array_equal(decoded_info[:63], job.payload_63))
+        # Counted, not merged into the failures. Everything the shipped decoder can see about
+        # this frame says it decoded - so this is the rate at which the software on the air puts
+        # a callsign that was never sent in front of an operator and into a logbook, and a
+        # sensitivity table that folds it into the FER column reports it as caution rather than
+        # as the risk it is.
+        false_decode = bool(crc_ok and not success)
 
     return FrameOutcome(
         index=job.index,
@@ -484,6 +569,7 @@ def decode_prepared_frame(job: PreparedFrame, cfg: Z30Config, codec: Z30LdpcCode
         iters=int(iters),
         start_sample=int(start_sample),
         base_freq_hz=float(base_freq),
+        false_decode=false_decode,
     )
 
 
@@ -615,19 +701,31 @@ def run_monte_carlo_snr_sweep(
         print(f"  Carrier offset +/-{max_freq_offset_hz:.1f} Hz | timing offset +/-{max_time_offset_sec:.2f} s | "
               f"fading: {preset.name} ({preset.delay_spread_ms:.1f} ms / {preset.doppler_spread_hz:.1f} Hz)")
         print("  The receiver is given only audio: it finds the frame and estimates the noise itself.")
+    # Quoted from the schedule table rather than retyped. The literal that used to sit here
+    # said "Max Iterations: 45", which was wrong in both halves: it would have gone on reading
+    # 45 after ldpc.py's cap changed, and 45 is only schedule 1's cap - a frame that fails runs
+    # all four schedules and pays for every one of them.
+    caps = [min(int(s["iters"]), codec.max_iterations) for s in DECODE_SCHEDULES]
     print(f"  {frames_per_snr} frames/point | Sample Rate: {sample_rate_hz} Hz | "
-          f"Max Iterations: 45 | Seed: {seed}")
+          f"Iteration cap: {' + '.join(str(c) for c in caps)} = {sum(caps)} "
+          f"over {len(caps)} schedules | Seed: {seed}")
+    print(f"  Decode % is a proportion from {frames_per_snr} frames; the bracket is its 95% "
+          f"Wilson score interval.")
+    if frames_per_snr < PUBLISHABLE_FRAMES_PER_POINT:
+        print(f"  EXPLORATORY RUN: {frames_per_snr} frames/point is below the "
+              f"{PUBLISHABLE_FRAMES_PER_POINT} this project requires behind a published")
+        print("  figure. Read the intervals, not the crossing. See PUBLISHABLE_FRAMES_PER_POINT.")
     if worker_count > 1:
         # Printed only when it is true, so the default run's output stays the one wiki/16 quotes.
         print(f"  Decoding across {worker_count} worker processes. The curve is unchanged by this;")
         print("  the per-point elapsed time below is now wall clock across the pool, not serial CPU time.")
     print("=" * 96)
     header = (f"{'SNR (2500Hz)':<14} | {'Frames':<7} | {'Success':<8} | {'FER':<9} | "
-              f"{'Decode %':<9} | {'Avg Iters':<10}")
+              f"{'Decode % (95% CI)':<21} | {'Avg Iters':<10}")
     if mode == "realistic":
         header += f" | {'Acq fail':<8} | {'Timing RMS':<11} | {'Freq RMS':<9}"
     print(header)
-    print("-" * 96)
+    print("-" * 112)
     
     executor: Optional[Executor] = None
     if worker_count > 1:
@@ -642,6 +740,7 @@ def run_monte_carlo_snr_sweep(
             t_start = time.time()
             successes = 0
             failures = 0
+            false_decodes = 0
             acq_failures = 0
             total_iters = 0
             timing_errs: List[float] = []
@@ -689,9 +788,12 @@ def run_monte_carlo_snr_sweep(
                     successes += 1
                 else:
                     failures += 1
+                if outcome.false_decode:
+                    false_decodes += 1
 
             fer = failures / frames_per_snr
             decode_pct = (successes / frames_per_snr) * 100.0
+            ci_lo, ci_hi = wilson_interval(successes, frames_per_snr)
             avg_iters = total_iters / frames_per_snr
             elapsed = time.time() - t_start
 
@@ -702,6 +804,12 @@ def run_monte_carlo_snr_sweep(
                 "failures": failures,
                 "fer": fer,
                 "decode_pct": decode_pct,
+                # The interval the sample supports, as percentages. Carried in the result rather
+                # than only printed, so anything that reduces these rows - the threshold
+                # interpolation below, a test, a plot - reads the same numbers the table shows.
+                "decode_pct_ci_low": 100.0 * ci_lo,
+                "decode_pct_ci_high": 100.0 * ci_hi,
+                "false_decodes": false_decodes,
                 "avg_iters": avg_iters,
                 # Wall clock for this point. With workers > 1 that is elapsed time across the
                 # pool, not CPU time - do not read it as a per-frame cost.
@@ -717,8 +825,9 @@ def run_monte_carlo_snr_sweep(
                 res["freq_rms_hz"] = float(np.sqrt(np.mean(np.square(freq_errs)))) if freq_errs else 0.0
             results.append(res)
 
+            ci = f"{decode_pct:>5.1f}% [{100.0 * ci_lo:>4.1f}-{100.0 * ci_hi:>5.1f}]"
             row = (f"{snr:+6.1f} dB      | {frames_per_snr:<7} | {successes:<8} | {fer:<9.4f} | "
-                   f"{decode_pct:>7.1f}%  | {avg_iters:>6.1f}    ")
+                   f"{ci:<21} | {avg_iters:>6.1f}    ")
             if mode == "realistic":
                 row += f" | {acq_failures:<8} | {res['timing_rms_ms']:>8.1f} ms | {res['freq_rms_hz']:>6.2f} Hz"
             print(row)
@@ -731,13 +840,22 @@ def run_monte_carlo_snr_sweep(
     # ASCII Plot of Decode Probability and FER against SNR
     plot_ascii_curves(results)
 
-    threshold = decode_threshold_db(results)
+    total_false = sum(r["false_decodes"] for r in results)
+    total_swept = sum(r["total_frames"] for r in results)
+    print(f"  False decodes across the sweep: {total_false} of {total_swept} frames "
+          f"(CRC-14 valid, payload never transmitted).")
+
     label = ("decode threshold (50% frame decode, blind acquisition)" if mode == "realistic"
              else "idealised AWGN bound (50% frame decode, genie-aided sync)")
-    if threshold is None:
-        print("  50% crossing is outside the swept range - widen --min-snr / --max-snr.")
-    else:
-        print(f"  {label}: {threshold:+.1f} dB (2500 Hz reference bandwidth), seed {seed}")
+    for level, name in ((50.0, label), (90.0, "90% frame decode")):
+        low, point, high = decode_threshold_interval_db(results, level)
+        if point is None:
+            print(f"  {level:.0f}% crossing is outside the swept range - widen --min-snr / --max-snr.")
+            continue
+        band = (f"[{low:+.2f}, {high:+.2f}]" if low is not None and high is not None
+                else "[interval extends past the swept range]")
+        print(f"  {name}: {point:+.2f} dB {band} (2500 Hz reference bandwidth), "
+              f"seed {seed}, {frames_per_snr} frames/point")
     if mode == "ideal":
         print("  Reminder: this excludes every acquisition loss and is NOT comparable with the")
         print("  published on-air sensitivity figures for FT8, JS8 or WSPR.")
@@ -767,7 +885,7 @@ def run_monte_carlo_snr_sweep(
 # halves are reported separately, so anyone who thinks their own band is busier or quieter than
 # 50/50 can reweight the result instead of taking this one on trust. AGENTS.md section 5 sets
 # the bar for a benchmark that changes a published figure at >=99% confidence stated as
-# something checkable; that is what `ap_mcnemar_exact_p` is for.
+# something checkable; that is what `mcnemar_exact_p` is for.
 
 
 #: The station this sweep's receiver is, the station it is working, and where its QSO state
@@ -940,10 +1058,10 @@ def decode_prepared_frame_paired(
     )
 
 
-def ap_mcnemar_exact_p(only_ap: int, only_plain: int) -> float:
+def mcnemar_exact_p(only_a: int, only_b: int) -> float:
     """
-    Two-sided exact McNemar p-value for `only_ap` frames won by AP against `only_plain` won by
-    the ordinary decoder.
+    Two-sided exact McNemar p-value for `only_a` frames won by one arm against `only_b` won by
+    the other.
 
     Under the null hypothesis that the ladder changes nothing, each discordant frame is an
     independent coin flip, so the count of one kind is Binomial(n_discordant, 0.5). This is the
@@ -955,10 +1073,10 @@ def ap_mcnemar_exact_p(only_ap: int, only_plain: int) -> float:
     Computed from `math.comb`, so it is exact rational arithmetic up to the final division; no
     tabulated critical values and no library-version-dependent answer.
     """
-    n = only_ap + only_plain
+    n = only_a + only_b
     if n == 0:
         return 1.0
-    k = min(only_ap, only_plain)
+    k = min(only_a, only_b)
     tail = sum(math.comb(n, i) for i in range(0, k + 1))
     return min(1.0, 2.0 * tail / (2 ** n))
 
@@ -1078,7 +1196,7 @@ def run_ap_paired_sweep(
 
     total_only_ap = sum(r["only_ap"] for r in results)
     total_only_plain = sum(r["only_plain"] for r in results)
-    p_value = ap_mcnemar_exact_p(total_only_ap, total_only_plain)
+    p_value = mcnemar_exact_p(total_only_ap, total_only_plain)
     total_frames = sum(r["total_frames"] for r in results)
     total_in_qso = sum(r["in_qso_frames"] for r in results)
 
@@ -1122,6 +1240,327 @@ def ap_threshold_shift(results: List[Dict]) -> Dict[str, Optional[float]]:
     if plain_threshold is not None and ap_threshold is not None:
         shift = plain_threshold - ap_threshold
     return {"plain_db": plain_threshold, "ap_db": ap_threshold, "shift_db": shift}
+
+
+# =============================================================================================
+# THE DEMODULATOR COMPARISON - IS THE BENCHMARK MEASURING THE RECEIVER THAT SHIPS?
+# =============================================================================================
+#
+# `demodulate_mfsk_llrs` takes a `pilot_coherence` weight, and for a long time the project ran
+# two different values of it at once without noticing:
+#
+#   * The two benchmarks (this file's `realistic` mode, and monteCarloEngine.ts) passed 0.0 -
+#     a purely non-coherent receiver, which is what AGENTS.md section 1 specifies z-30 to be.
+#   * The two on-air decoders (sic_decoder.py's `_estimate_llrs`, which took the parameter's
+#     default, and realReceiver.ts's `demodulateReal`, which hardcoded it) applied the
+#     pilot-distance-adaptive weight, 0.35 to 0.85.
+#
+# So the published decode threshold described a receiver nobody could actually run, and the
+# receiver people did run had never been measured. That is the failure this instrument exists
+# to make impossible to reintroduce: it decodes the same frame through both configurations and
+# reports which one decodes more of them, with a p-value.
+#
+# Paired for the same reason `--ap` is paired. The two arms share one channel realisation, one
+# acquisition and one noise draw, and differ only in the weight, so the frame-to-frame scatter
+# that would otherwise bury a sub-dB effect cancels out of the comparison entirely.
+
+
+@dataclass(frozen=True)
+class DemodArm:
+    """One demodulator configuration under test."""
+    key: str
+    label: str
+    #: Passed straight to `demodulate_mfsk_llrs`. None selects its pilot-distance-adaptive
+    #: weight; a float pins the coherent term's weight for every symbol.
+    pilot_coherence: Optional[float]
+
+
+#: The two configurations that were live in the shipped software simultaneously.
+DEMOD_ARMS: Dict[str, DemodArm] = {
+    "non-coherent": DemodArm("non-coherent", "non-coherent (pilot_coherence = 0.0)", 0.0),
+    "semi-coherent": DemodArm("semi-coherent", "semi-coherent (pilot-distance-adaptive 0.35-0.85)", None),
+}
+
+
+@dataclass(frozen=True)
+class DemodPairedOutcome:
+    """One frame demodulated twice off one acquisition and decoded twice."""
+    index: int
+    a_success: bool
+    b_success: bool
+    a_false_decode: bool
+    b_false_decode: bool
+    a_iters: int
+    b_iters: int
+    #: Acquisition's residual timing error in seconds, signed. Both arms share it - it is
+    #: reported because it is the quantity the coherent term's usefulness depends on.
+    timing_error_sec: float
+
+
+def decode_prepared_frame_two_demodulators(
+    job: PreparedFrame,
+    cfg: Z30Config,
+    codec: Z30LdpcCodec,
+    arm_a: DemodArm,
+    arm_b: DemodArm,
+    true_start_sample: int,
+) -> DemodPairedOutcome:
+    """
+    Acquires once, demodulates twice with the two weights, decodes both.
+
+    Acquiring once is what makes this a comparison of demodulators. Running the front end twice
+    would let it land the arms on different samples and the result would be part acquisition.
+
+    A pure function of its arguments, like `decode_prepared_frame`: no PRNG, no state.
+    `true_start_sample` is used only to report the acquisition error alongside the outcome; it
+    never reaches either demodulator.
+    """
+    if job.search_timing_sec is not None:
+        acq = acquire_frame(
+            job.noisy_wave,
+            cfg,
+            nominal_base_freq_hz=job.known_base_freq_hz,
+            time_search_sec=job.search_timing_sec,
+        )
+        start_sample, base_freq, sigma = acq.start_sample, acq.base_freq_hz, acq.noise_sigma
+    else:
+        if job.known_sigma is None:
+            raise ValueError("a frame with no timing search must carry the sigma it was made with")
+        start_sample, base_freq, sigma = job.known_start_sample, job.known_base_freq_hz, job.known_sigma
+
+    def decode(arm: DemodArm) -> Tuple[bool, bool, int]:
+        llrs = demodulate_mfsk_llrs(
+            job.noisy_wave, cfg, sigma,
+            audio_center_hz=base_freq,
+            start_sample=start_sample,
+            pilot_coherence=arm.pilot_coherence,
+        )
+        ok, info, iters = codec.decode_min_sum(llrs)
+        correct = bool(ok and np.array_equal(info[:63], job.payload_63))
+        return correct, bool(ok and not correct), int(iters)
+
+    a_correct, a_false, a_iters = decode(arm_a)
+    b_correct, b_false, b_iters = decode(arm_b)
+
+    return DemodPairedOutcome(
+        index=job.index,
+        a_success=a_correct,
+        b_success=b_correct,
+        a_false_decode=a_false,
+        b_false_decode=b_false,
+        a_iters=a_iters,
+        b_iters=b_iters,
+        timing_error_sec=(start_sample - true_start_sample) / float(cfg.sample_rate_hz),
+    )
+
+
+def run_demod_paired_sweep(
+    min_snr_db: float = -25.0,
+    max_snr_db: float = -20.0,
+    step_snr_db: float = 1.0,
+    frames_per_snr: int = 60,
+    sample_rate_hz: int = 6000,
+    seed: int = DEFAULT_BENCHMARK_SEED,
+    mode: str = "realistic",
+    fading: str = "none",
+    max_freq_offset_hz: float = 5.0,
+    max_time_offset_sec: float = 0.5,
+    arm_a_key: str = "non-coherent",
+    arm_b_key: str = "semi-coherent",
+) -> List[Dict]:
+    """
+    The paired demodulator measurement. Serial by construction, like `--ap`: both arms of a pair
+    are decoded in one place off one acquisition, so there is nothing to spread over processes
+    that would not also be a chance for the arms to diverge.
+    """
+    if mode not in ("realistic", "ideal"):
+        raise ValueError(f"mode must be 'realistic' or 'ideal'; got {mode!r}")
+    if fading not in WATTERSON_PRESETS:
+        raise ValueError(f"fading must be one of {sorted(WATTERSON_PRESETS)}; got {fading!r}")
+    if arm_a_key not in DEMOD_ARMS or arm_b_key not in DEMOD_ARMS:
+        raise ValueError(f"arms must be from {sorted(DEMOD_ARMS)}")
+
+    arm_a, arm_b = DEMOD_ARMS[arm_a_key], DEMOD_ARMS[arm_b_key]
+    rng = np.random.default_rng(seed)
+    impairments = ChannelImpairments(
+        max_freq_offset_hz=max_freq_offset_hz,
+        max_time_offset_sec=max_time_offset_sec,
+        fading=fading,
+    )
+    cfg = Z30Config(sample_rate_hz=sample_rate_hz)
+    modulator = Z30Modulator(cfg)
+    codec = Z30LdpcCodec(max_iterations=LDPC_MAX_ITERATIONS)
+
+    print("=" * 104)
+    print("  z-30 DEMODULATOR COMPARISON - PAIRED")
+    print(f"  A: {arm_a.label}")
+    print(f"  B: {arm_b.label}")
+    print("  One channel realisation, one acquisition and one noise draw per frame; the two arms")
+    print("  differ only in the coherent term's weight.")
+    print(f"  {frames_per_snr} frames/point | mode: {mode} | fading: {fading} | "
+          f"sample rate: {sample_rate_hz} Hz | seed: {seed}")
+    print("=" * 104)
+    print(f"{'SNR':<12} | {'A decodes':<12} | {'B decodes':<12} | {'A only':<7} | {'B only':<7} | "
+          f"{'p (exact)':<11} | {'Timing RMS':<11}")
+    print("-" * 104)
+
+    results: List[Dict] = []
+    for snr in np.arange(min_snr_db, max_snr_db + 1e-4, step_snr_db):
+        outcomes: List[DemodPairedOutcome] = []
+        for f in range(frames_per_snr):
+            job, true_start, _true_foff = _prepare_frame(
+                f, float(snr), codec, cfg, modulator, rng, mode,
+                impairments, max_time_offset_sec,
+            )
+            outcomes.append(
+                decode_prepared_frame_two_demodulators(job, cfg, codec, arm_a, arm_b, true_start)
+            )
+
+        a_total = sum(1 for o in outcomes if o.a_success)
+        b_total = sum(1 for o in outcomes if o.b_success)
+        only_a = sum(1 for o in outcomes if o.a_success and not o.b_success)
+        only_b = sum(1 for o in outcomes if o.b_success and not o.a_success)
+        timing_rms_ms = float(np.sqrt(np.mean([o.timing_error_sec ** 2 for o in outcomes])) * 1000.0)
+        point_p = mcnemar_exact_p(only_a, only_b)
+
+        results.append({
+            "snr_db": float(snr),
+            "total_frames": frames_per_snr,
+            "arm_a": arm_a.key,
+            "arm_b": arm_b.key,
+            "a_successes": a_total,
+            "b_successes": b_total,
+            "only_a": only_a,
+            "only_b": only_b,
+            "a_false_decodes": sum(1 for o in outcomes if o.a_false_decode),
+            "b_false_decodes": sum(1 for o in outcomes if o.b_false_decode),
+            "a_avg_iters": sum(o.a_iters for o in outcomes) / frames_per_snr,
+            "b_avg_iters": sum(o.b_iters for o in outcomes) / frames_per_snr,
+            "timing_rms_ms": timing_rms_ms,
+            "mcnemar_p": point_p,
+            "seed": seed,
+            "mode": mode,
+            "fading": fading,
+        })
+
+        print(f"{snr:+6.1f} dB    | {a_total:>3}/{frames_per_snr:<8} | {b_total:>3}/{frames_per_snr:<8} | "
+              f"{only_a:<7} | {only_b:<7} | {point_p:<11.3e} | {timing_rms_ms:>8.1f} ms")
+
+    print("=" * 104)
+    total_only_a = sum(r["only_a"] for r in results)
+    total_only_b = sum(r["only_b"] for r in results)
+    pooled_p = mcnemar_exact_p(total_only_a, total_only_b)
+    frames = sum(r["total_frames"] for r in results)
+    print(f"  Frames: {frames} | A decodes {sum(r['a_successes'] for r in results)}, "
+          f"B decodes {sum(r['b_successes'] for r in results)}")
+    print(f"  Discordant pairs: {total_only_a} won by A, {total_only_b} won by B")
+    print(f"  Pooled exact two-sided McNemar p = {pooled_p:.6e}")
+    print(f"  False decodes (CRC-valid codeword, wrong payload): "
+          f"A {sum(r['a_false_decodes'] for r in results)}, B {sum(r['b_false_decodes'] for r in results)}")
+
+    a_curve = [{"snr_db": r["snr_db"], "decode_pct": 100.0 * r["a_successes"] / r["total_frames"],
+                "successes": r["a_successes"], "total_frames": r["total_frames"]} for r in results]
+    b_curve = [{"snr_db": r["snr_db"], "decode_pct": 100.0 * r["b_successes"] / r["total_frames"],
+                "successes": r["b_successes"], "total_frames": r["total_frames"]} for r in results]
+    a_lo, a_pt, a_hi = decode_threshold_interval_db(a_curve)
+    b_lo, b_pt, b_hi = decode_threshold_interval_db(b_curve)
+    if a_pt is not None and b_pt is not None:
+        print(f"  50% crossing: A {a_pt:+.2f} dB [{a_lo:+.2f}, {a_hi:+.2f}], "
+              f"B {b_pt:+.2f} dB [{b_lo:+.2f}, {b_hi:+.2f}] "
+              f"-> A is {b_pt - a_pt:+.2f} dB deeper")
+    else:
+        print("  At least one arm never crosses 50% in this range - widen --min-snr/--max-snr")
+        print("  before quoting a threshold difference.")
+    print("  A p-value says the two demodulators are not the same, not by how much. The crossing")
+    print("  difference above is the size of it, and the interval is what the sample supports.")
+    print("=" * 104)
+    return results
+
+
+# =============================================================================================
+# BINOMIAL CONFIDENCE - EVERY NUMBER ON A DECODE CURVE IS A PROPORTION FROM A FINITE SAMPLE
+# =============================================================================================
+#
+# "22 of 40 frames decoded" is not 55%; it is a sample from a Bernoulli process whose true rate
+# lies in a range. At 40 frames that range is roughly +/-15 percentage points, which at the
+# slope of this mode's decode curve is most of a dB - so a threshold quoted from 40 frames to
+# one decimal place claims a precision the sample cannot support. Monte Carlo error-rate
+# estimation in digital communications has carried an interval alongside the point estimate for
+# decades (see e.g. Jeruchim's interval-estimation work and MATLAB's `berconfint`); this is that
+# convention, applied to a decode-probability curve instead of a BER curve.
+#
+# Wilson's score interval rather than the textbook normal ("Wald") one: Wald is the interval
+# that returns +/-0.0 at 0/40 and 40/40, which is exactly where a sensitivity sweep spends most
+# of its points. Wilson stays inside [0, 1] and keeps its stated coverage at the extremes and at
+# small n, which is the regime this benchmark actually runs in.
+
+
+#: Two-sided standard-normal quantile for a 95% interval, to the precision float64 carries.
+#: Written out rather than pulled from SciPy so the interval a published figure quotes does not
+#: depend on which SciPy version produced it.
+WILSON_Z_95: float = 1.959963984540054
+
+
+def wilson_interval(successes: int, trials: int, z: float = WILSON_Z_95) -> Tuple[float, float]:
+    """
+    Wilson score interval for a binomial proportion, returned as fractions of 1.
+
+    `trials` of zero returns the whole unit interval - no frames is no evidence, and returning
+    (0.0, 0.0) there would read as "measured zero" rather than "measured nothing".
+    """
+    if trials <= 0:
+        return (0.0, 1.0)
+    n = float(trials)
+    phat = successes / n
+    denom = 1.0 + (z * z) / n
+    centre = (phat + (z * z) / (2.0 * n)) / denom
+    half = (z * math.sqrt((phat * (1.0 - phat) + (z * z) / (4.0 * n)) / n)) / denom
+    return (max(0.0, centre - half), min(1.0, centre + half))
+
+
+def _crossing_db(points: Sequence[Tuple[float, float]], level_pct: float) -> Optional[float]:
+    """
+    Linear interpolation of the SNR at which a decode-percentage curve first reaches `level_pct`.
+
+    `points` is (snr_db, decode_pct), in any order. Returns None when the curve never crosses.
+    """
+    ordered = sorted(points, key=lambda pt: pt[0])
+    for (lo_snr, lo_pct), (hi_snr, hi_pct) in zip(ordered, ordered[1:]):
+        if lo_pct < level_pct <= hi_pct:
+            span = hi_pct - lo_pct
+            if span <= 0:
+                return float(hi_snr)
+            return float(lo_snr + ((level_pct - lo_pct) / span) * (hi_snr - lo_snr))
+    return None
+
+
+def decode_threshold_interval_db(
+    results: List[Dict], level_pct: float = 50.0, z: float = WILSON_Z_95
+) -> Tuple[Optional[float], Optional[float], Optional[float]]:
+    """
+    The `level_pct` crossing and the SNR range the sample supports, as (low, point, high).
+
+    The point estimate is the crossing of the measured curve. The two bounds are the crossings
+    of the pointwise Wilson band: the upper bound of every point makes the most optimistic curve
+    the data allow, and it crosses at the lowest (best) SNR; the lower bound makes the most
+    pessimistic curve, and it crosses highest. Reporting the pair is what stops a 40-frame run
+    reading as a measurement to a tenth of a dB.
+
+    This is a band on the decode *rate* propagated through the interpolation, not a confidence
+    interval on the threshold parameter of a fitted curve - it makes no distributional
+    assumption about the curve's shape, and it is computed from the same counts the table
+    prints, so a reader can redo it by hand.
+    """
+    point = _crossing_db([(r["snr_db"], r["decode_pct"]) for r in results], level_pct)
+    optimistic = _crossing_db(
+        [(r["snr_db"], 100.0 * wilson_interval(r["successes"], r["total_frames"], z)[1]) for r in results],
+        level_pct,
+    )
+    pessimistic = _crossing_db(
+        [(r["snr_db"], 100.0 * wilson_interval(r["successes"], r["total_frames"], z)[0]) for r in results],
+        level_pct,
+    )
+    return (optimistic, point, pessimistic)
 
 
 def decode_threshold_db(results: List[Dict]) -> Optional[float]:
@@ -1229,12 +1668,32 @@ if __name__ == "__main__":
                         help="Decode processes (default: 1, serial). 0 or less means one per CPU. "
                              "Affects wall-clock time only: the curve is identical at every "
                              "worker count, and the test suite asserts it.")
+    parser.add_argument("--compare-demod", action="store_true",
+                        help="Measure the demodulator instead of sweeping a curve: every frame "
+                             "is acquired once and demodulated twice, non-coherently and with "
+                             "the pilot-distance-adaptive coherent term, and the discordant "
+                             "pairs are tested exactly. Serial; --workers is ignored.")
     parser.add_argument("--ap", action="store_true",
                         help="Measure a priori (AP) decoding instead of sweeping a curve: every "
                              "frame is decoded twice off one demodulation, with and without the "
                              "QSO-state hypothesis ladder, and the discordant pairs are tested "
                              "exactly. Serial; --workers is ignored.")
     args = parser.parse_args()
+
+    if args.compare_demod:
+        run_demod_paired_sweep(
+            min_snr_db=args.min_snr,
+            max_snr_db=args.max_snr,
+            step_snr_db=args.step,
+            frames_per_snr=args.frames,
+            sample_rate_hz=args.sample_rate,
+            seed=args.seed,
+            mode=args.mode,
+            fading=args.fading,
+            max_freq_offset_hz=args.freq_offset,
+            max_time_offset_sec=args.time_offset,
+        )
+        raise SystemExit(0)
 
     if args.ap:
         ap_results = run_ap_paired_sweep(

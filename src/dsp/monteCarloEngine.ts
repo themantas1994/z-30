@@ -21,6 +21,7 @@ import { synthesizeFrameSamples } from './z30Waveform';
 import { Z30_SPECS } from './z30Constants';
 import { Z30LdpcEngine } from './ldpcCodec';
 import { encodeLdpc216_77, computeCrc14 } from './z30Codec';
+import { RECEIVER_PILOT_COHERENCE } from './realReceiver';
 
 export type ChannelModelType = 'AWGN' | 'RAYLEIGH_FADING' | 'CO_CHANNEL_QRM';
 
@@ -163,28 +164,23 @@ const ACQUISITION_SYNC_THRESHOLD_DB = 4.0;
  * instead, and wiki/16 named that difference as the reason the two engines' thresholds
  * disagreed by 1.8 dB. It was not: measured paired over 200 frames from -26 to -22 dB, the two
  * search widths produced zero discordant decodes. The engines now search the same window, and
- * the real cause of the gap turned out to be the demodulator - see REALISTIC_PILOT_COHERENCE.
+ * the real cause of the gap turned out to be the demodulator - see RECEIVER_PILOT_COHERENCE.
  */
 export const SLOT_SEARCH_MARGIN_SEC = 0.05;
 
 /**
- * Weight of the coherent term in the per-tone likelihood, in `realistic` mode.
+ * The benchmark demodulates with the weight the shipped receiver uses, and reads it from the
+ * shipped receiver rather than declaring its own.
  *
- * Zero: z-30's receiver is specified to demodulate non-coherently (AGENTS.md section 1), and
- * under the timing error a blind acquisition actually leaves, the pilot-aided "coherent"
- * contribution subtracts performance rather than adding it - a few milliseconds of timing
- * error rotates each tone by 2*pi*f*dt, so the term is measured against the wrong phase
- * reference and starts cancelling signal.
- *
- * The twin of `REALISTIC_PILOT_COHERENCE` in z30_dsp/benchmark.py, which carries the paired
- * measurement that settled it: 59 discordant pairs across SNR -24/-23/-22/-21 dB at 40 frames
- * per point, 55 won by the non-coherent receiver and 4 by the semi-coherent one, exact
- * two-sided McNemar p = 1.7e-12.
- *
- * `ideal` mode keeps the pilot-distance-adaptive weight: it is handed perfect symbol timing,
- * so the phase reference is exact and the coherent term is worth having.
+ * This constant used to be declared here, in the benchmark, under the name
+ * RECEIVER_PILOT_COHERENCE - and that is precisely how realReceiver.ts's `demodulateReal` and
+ * sic_decoder.py went on applying a different weight for months without anything noticing: a
+ * benchmark that owns the receiver's parameters can be perfectly self-consistent while
+ * measuring software nobody runs. Importing it in this direction makes that impossible.
+ * `ideal` mode still applies the pilot-distance-adaptive weight, because it is handed exact
+ * symbol timing and is a bound rather than a threshold.
  */
-export const REALISTIC_PILOT_COHERENCE = 0.0;
+export { RECEIVER_PILOT_COHERENCE };
 
 export const DEFAULT_MONTE_CARLO_CONFIG: MonteCarloConfig = {
   minSnrDb: -32.0,
@@ -445,7 +441,11 @@ public synthesizePhysicalWaveform(
   /**
    * Builds the audio stream a receiver would actually be handed in realistic mode.
    *
-   * Three things the ideal path does not do, and which together cost about 1.5 dB:
+   * Three things the ideal path does not do, and which together cost about 2.3 dB in this
+   * engine (measured: this engine's 50% crossings are -22.94 dB realistic against -25.28 dB
+   * ideal, 200 frames a point, seed 20260830; the Python benchmark's own gap is 1.66 dB, and
+   * wiki/16 records that the two engines' BOUNDS differ by 0.70 dB while their thresholds
+   * differ by 0.02 dB):
    *   - the frame sits at a RANDOM carrier offset, not exactly on the nominal centre;
    *   - it starts at a RANDOM time, not at sample zero;
    *   - it is surrounded by noise-only audio, so the receiver has to find it.
@@ -566,8 +566,8 @@ public synthesizePhysicalWaveform(
   /**
    * Finds a z-30 frame in a stream using only the 21 Costas sync symbols.
    *
-   * The twin of z30_dsp/acquisition.py, and the reason a realistic run is worth about 1.5 dB
-   * less than the genie-aided bound. Two stages, because a search fine enough to be useful is
+   * The twin of z30_dsp/acquisition.py, and the reason a realistic run in this engine measures
+   * about 2.3 dB worse than its genie-aided bound. Two stages, because a search fine enough to be useful is
    * too large to run directly:
    *   1. Coarse: a grid over start time (one fifth of a symbol) and carrier offset (1 Hz),
    *      scored by summing the matched-filter power at the 21 known sync tones.
@@ -1221,9 +1221,9 @@ public synthesizePhysicalWaveform(
             acq.centreFreqHz,
             estimatedSigma,
             acq.startSample,
-            // See REALISTIC_PILOT_COHERENCE. z30_dsp/benchmark.py applies the same weight in
+            // See RECEIVER_PILOT_COHERENCE. z30_dsp/benchmark.py applies the same weight in
             // realistic mode, which is what makes the two engines measure the same quantity.
-            REALISTIC_PILOT_COHERENCE
+            RECEIVER_PILOT_COHERENCE
           );
           channelLlrs = demod.channelLlrs;
 

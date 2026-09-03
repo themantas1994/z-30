@@ -474,32 +474,32 @@ def test_mcnemar_matches_an_independently_summed_binomial():
     whole point of AGENTS.md section 5 asking for "an exact p-value ... something a reader can
     check".
     """
-    from z30_dsp.benchmark import ap_mcnemar_exact_p
+    from z30_dsp.benchmark import mcnemar_exact_p
 
     for b in range(0, 13):
         for c in range(0, 13):
             n = b + c
             if n == 0:
-                assert ap_mcnemar_exact_p(b, c) == 1.0
+                assert mcnemar_exact_p(b, c) == 1.0
                 continue
             k = min(b, c)
             # Independent route to the same number: the probability mass function, term by term.
             tail = sum(math.factorial(n) / (math.factorial(i) * math.factorial(n - i)) * 0.5 ** n
                        for i in range(k + 1))
-            assert ap_mcnemar_exact_p(b, c) == pytest.approx(min(1.0, 2.0 * tail), rel=1e-12)
+            assert mcnemar_exact_p(b, c) == pytest.approx(min(1.0, 2.0 * tail), rel=1e-12)
 
 
 def test_mcnemar_is_symmetric_and_bounded():
-    from z30_dsp.benchmark import ap_mcnemar_exact_p
+    from z30_dsp.benchmark import mcnemar_exact_p
 
     for b in range(0, 20):
         for c in range(0, 20):
-            p = ap_mcnemar_exact_p(b, c)
-            assert p == pytest.approx(ap_mcnemar_exact_p(c, b))
+            p = mcnemar_exact_p(b, c)
+            assert p == pytest.approx(mcnemar_exact_p(c, b))
             assert 0.0 <= p <= 1.0
     # A lopsided table is significant; an even one is not.
-    assert ap_mcnemar_exact_p(20, 0) < 1e-5
-    assert ap_mcnemar_exact_p(10, 10) > 0.5
+    assert mcnemar_exact_p(20, 0) < 1e-5
+    assert mcnemar_exact_p(10, 10) > 0.5
 
 
 # ------------------------------------------------------------------ the benchmark population

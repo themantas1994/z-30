@@ -13,11 +13,14 @@
  * - Channel Coding: Systematic Irregular Repeat Accumulate (IRA) Low-Density Parity-Check code: (N=216, K=77), rate R = 77/216 ~ 0.356.
  * - Payload: 63 user information bits + a 14-bit CRC, g(x) = x^14 + x^13 + x^10 + x^6 + x + 1
  *   (register constant 0x2443 with x^14 implicit, init 0x2757, MSB-first).
- * - Sensitivity: the seeded AWGN benchmark crosses 50% decode near -23.1 dB SNR in a 2500 Hz
- *   reference bandwidth through blind acquisition - the figure comparable with FT8's published
- *   -21.0 dB, because both include the acquisition, AFC and timing losses. With perfect
- *   synchronisation handed to the demodulator it crosses near -24.6 dB; that is an idealised
- *   bound, not an over-the-air threshold, and must never be quoted beside another mode's.
+ * - Sensitivity: the seeded AWGN benchmark crosses 50% decode at -22.92 dB SNR in a 2500 Hz
+ *   reference bandwidth through blind acquisition (seed 20260830, 200 frames/point) - the figure
+ *   comparable with FT8's published -21.0 dB, because both include the acquisition, AFC and
+ *   timing losses. With perfect synchronisation handed to the demodulator it crosses at
+ *   -24.58 dB; that is an idealised bound, not an over-the-air threshold, and must never be
+ *   quoted beside another mode's. On the ITU-R F.1487 high-latitude moderate channel
+ *   (3 ms / 10 Hz) it does not decode at any SNR - 10 Hz of Doppler spread is wider than the
+ *   3.125 Hz tone spacing. See wiki/16.
  */
 
 import { BandDef, TxSlot } from '../types/z30';
@@ -25,6 +28,21 @@ import { BandDef, TxSlot } from '../types/z30';
 /**
  * Fundamental physical layer and DSP constants governing the z-30 amateur digital mode protocol.
  */
+/**
+ * FT8's published over-the-air decode threshold: 50% decode probability at this SNR in a
+ * 2500 Hz reference noise bandwidth, from WSJT-X's own measurements.
+ *
+ * Named rather than typed into prose because the z-30-vs-FT8 delta is the single number this
+ * project has had to retract before, and a delta computed from two literals in two different
+ * files is a delta nobody can check. Anything that states the comparison subtracts
+ * `Z30_SPECS.SNR_THRESHOLD_AWGN` from this, so the two move together.
+ *
+ * It is an ON-AIR figure and may only ever be compared against z-30's on-air figure. Computing
+ * a delta from `SNR_IDEAL_BOUND_AWGN` is what produced the withdrawn "+4.0 dB advantage"
+ * claim - see AGENTS.md section 5.
+ */
+export const FT8_ONAIR_THRESHOLD_DB = -21.0;
+
 export const Z30_SPECS = {
   /** Mode identifier string */
   MODE_NAME: 'z-30',
@@ -88,23 +106,32 @@ export const Z30_SPECS = {
   // ---------------------------------------------------------------------------
   // Empirical Performance & Sensitivity Benchmarks
   // ---------------------------------------------------------------------------
-  // The measured decode thresholds, seed 20260830, referenced to a 2500 Hz noise bandwidth.
-  // Copied from wiki/16, which is the source of truth: if a DSP change moves the curve, the
-  // wiki table and these move together or one of them is lying. They held -25.0 / -24.0 / -22.5
-  // for years - values from no run anyone can identify, contradicting every other figure in
-  // the project - which they could, because nothing reads them.
+  // The measured decode thresholds, seed 20260830, 200 frames per point, referenced to a
+  // 2500 Hz noise bandwidth. Copied from wiki/16, which is the source of truth: if a DSP change
+  // moves the curve, the wiki table and these move together or one of them is lying. They held
+  // -25.0 / -24.0 / -22.5 for years - values from no run anyone can identify, contradicting
+  // every other figure in the project - which they could, because nothing reads them.
+  //
+  // Rounded to one decimal from the crossings wiki/16 publishes with their 95% intervals. The
+  // intervals are the reason these are quoted to one decimal and not two: at 200 frames a point
+  // the AWGN 50% crossing is -22.92 dB [-23.07, -22.79], and a second decimal here would be
+  // claiming a precision the sample does not carry.
   /** 50% decode, AWGN, blind acquisition. The figure comparable with other modes' on-air numbers. */
-  SNR_THRESHOLD_AWGN: -23.1,
+  SNR_THRESHOLD_AWGN: -22.9,
   /** 90% decode, AWGN, blind acquisition. */
-  SNR_THRESHOLD_90_AWGN: -21.7,
-  /** 50% decode under CCIR 520 / ITU-R F.1487 moderate fading (1.0 ms delay / 0.5 Hz Doppler). */
-  SNR_THRESHOLD_RAYLEIGH: -21.3,
+  SNR_THRESHOLD_90_AWGN: -22.1,
+  /** 50% decode under ITU-R F.1487 mid-latitude moderate fading (1.0 ms delay / 0.5 Hz Doppler). */
+  SNR_THRESHOLD_RAYLEIGH: -21.4,
   /**
    * 50% decode with exact noise sigma, carrier and timing handed to the demodulator.
    * A genie-aided BOUND, never an on-air threshold: never subtract another mode's published
    * figure from this one. See AGENTS.md section 5.
    */
   SNR_IDEAL_BOUND_AWGN: -24.6,
+  /**
+   * 90% decode with the same genie-aided synchronisation. A BOUND, like the line above.
+   */
+  SNR_IDEAL_BOUND_90_AWGN: -23.5,
   // No FT8_COMPARISON_GAIN_DB. It held 4.0 - the retracted "+4.0 dB advantage over FT8", which
   // was obtained by subtracting FT8's published on-air threshold from z-30's genie-aided bound,
   // two different quantities. AGENTS.md section 5 names a "Gain vs FT8" tile computed that way

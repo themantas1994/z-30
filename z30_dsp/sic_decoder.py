@@ -3,8 +3,9 @@ z-30 Multi-Signal Successive Interference Cancellation (SIC) Decoder
 =====================================================================
 Pipeline:
 - Real FFT-based candidate carrier peak detection across the 200 - 3000 Hz passband.
-- Pilot-aided semi-coherent LLR demodulation on each candidate, sharing the exact
-  matched-filter / Log-MAP math validated in z30_dsp.benchmark.demodulate_mfsk_llrs.
+- Non-coherent LLR demodulation on each candidate, sharing the exact matched-filter /
+  Log-MAP math measured in z30_dsp.benchmark.demodulate_mfsk_llrs, at that function's
+  default weight - which is the receiver every published threshold describes.
 - Real Systematic (216, 77) multi-schedule Min-Sum / Log-SPA LDPC decode with CRC-14
   verification (z30_dsp.ldpc.Z30LdpcCodec).
 - Reconstructs decoded signals (carrier frequency, amplitude, phase-continuous waveform)
@@ -432,9 +433,17 @@ class Z30SicMultiSignalDecoder:
 
     def _estimate_llrs(self, buffer: np.ndarray, freq_hz: float) -> Tuple[np.ndarray, float, float]:
         """
-        Demodulates the candidate carrier at `freq_hz` into 216 soft channel LLRs using the
-        same pilot-aided semi-coherent matched-filter bank validated in
-        z30_dsp.benchmark.demodulate_mfsk_llrs.
+        Demodulates the candidate carrier at `freq_hz` into 216 soft channel LLRs through
+        z30_dsp.benchmark.demodulate_mfsk_llrs, at its default coherence weight.
+
+        Taking the default is the point rather than an omission. This call used to inherit a
+        default of `None` - the pilot-distance-adaptive semi-coherent weight - while both
+        benchmarks passed 0.0, so the decoder that ran on the air was not the decoder any
+        published figure described. Measured paired at 100 frames per point (see
+        benchmark.RECEIVER_PILOT_COHERENCE), that cost 1.77 dB on AWGN and very much more on a
+        fading path: on ITU-R F.1487 mid-latitude disturbed the adaptive weight took 66 frames
+        of 800 against 460, 394 discordant pairs to nil, exact two-sided McNemar p = 5e-119.
+        A pilot phase reference does not survive a channel that is rotating it.
 
         Noise sigma is estimated robustly from the whole-buffer sample statistics (median
         absolute deviation), consistent with `sigma` in benchmark.py's calibrated-AWGN model:

@@ -13,7 +13,8 @@ acquisition losses this used to exclude.
 
 Fading follows the Watterson model (CCIR 520-2 / ITU-R F.1487): two independent paths, each
 multiplied by a complex Gaussian tap whose spectrum is Gaussian with a specified Doppler
-spread, separated by a fixed differential delay.
+spread, separated by a fixed differential delay. The named presets are the recommendation's
+own test conditions - see WATTERSON_PRESETS.
 """
 
 from dataclasses import dataclass
@@ -25,18 +26,44 @@ from scipy.signal import hilbert
 
 @dataclass(frozen=True)
 class WattersonPreset:
-    """Named CCIR 520-2 channel condition."""
+    """One named ITU-R F.1487 / CCIR 520-2 channel condition."""
     name: str
     delay_spread_ms: float
     doppler_spread_hz: float
 
 
-#: The three standard CCIR 520-2 HF channel conditions, plus a no-fading reference.
+#: The ITU-R F.1487 test conditions this benchmark sweeps, plus a no-fading reference.
+#:
+#: The three that were already here are the recommendation's whole MID-LATITUDE row - they were
+#: labelled "CCIR good / moderate / poor", which is not a designation the recommendation uses
+#: and which hid the fact that all three describe the same latitude band. Their delay and
+#: Doppler figures are unchanged, so every curve measured under them still stands; only the
+#: name a run prints is different.
+#:
+#: `high-moderate` is new, and it is here because it is half of what the leading published
+#: practice for this class of mode actually reports. WSJT-X's sensitivity tables give each mode
+#: on three channels - AWGN, ITU mid-latitude disturbed, and ITU high-latitude moderate - and
+#: the third is the one that separates modes with different symbol durations, because its 10 Hz
+#: Doppler spread is wider than a narrow mode's whole tone spacing. Sweeping only the
+#: mid-latitude row publishes a mode's best case and calls it the set.
+#:
+#: Recommendation ITU-R F.1487 (05/2000), "Testing of HF modems with bandwidths of up to about
+#: 12 kHz using ionospheric channel simulators", differential time delay / frequency spread:
+#:
+#:      Latitude    Quiet          Moderate        Disturbed
+#:      Low         0.5 ms/0.5 Hz  2 ms/1.5 Hz     6 ms/10 Hz
+#:      Mid         0.5 ms/0.1 Hz  1 ms/0.5 Hz     2 ms/1 Hz
+#:      High        1 ms/0.5 Hz    3 ms/10 Hz      7 ms/30 Hz
+#:
+#: The keys stay as they are. Renaming `poor` to `mid-disturbed` would be tidier and would
+#: silently change what a reproduction command means: every published curve, every CI
+#: invocation and every wiki page names these presets by key.
 WATTERSON_PRESETS = {
     "none": WattersonPreset("No fading (AWGN only)", 0.0, 0.0),
-    "good": WattersonPreset("CCIR good", 0.5, 0.1),
-    "moderate": WattersonPreset("CCIR moderate", 1.0, 0.5),
-    "poor": WattersonPreset("CCIR poor", 2.0, 1.0),
+    "good": WattersonPreset("ITU-R F.1487 mid-latitude quiet", 0.5, 0.1),
+    "moderate": WattersonPreset("ITU-R F.1487 mid-latitude moderate", 1.0, 0.5),
+    "poor": WattersonPreset("ITU-R F.1487 mid-latitude disturbed", 2.0, 1.0),
+    "high-moderate": WattersonPreset("ITU-R F.1487 high-latitude moderate", 3.0, 10.0),
 }
 
 

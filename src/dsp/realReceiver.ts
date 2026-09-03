@@ -381,9 +381,36 @@ export function refineFineFrequency(buffer: Float32Array, sampleRateHz: number, 
 }
 
 /**
- * Demodulates a captured carrier at baseFreqHz into 216 soft channel LLRs via a pilot-aided
- * semi-coherent matched-filter bank with exact Log-MAP demapping - the tone0-anchored,
- * phase-step-corrected TS counterpart of z30_dsp.benchmark.demodulate_mfsk_llrs.
+ * Weight of the coherent term in the per-tone likelihood, for the receiver z-30 ships.
+ *
+ * Zero. z-30's receiver is specified to demodulate non-coherently (AGENTS.md section 1), and
+ * under the timing error a receiver is left with after finding the frame itself, the
+ * pilot-aided coherent contribution subtracts performance instead of adding it: residual
+ * timing error dt rotates a tone at f by 2*pi*f*dt relative to the pilot it is projected onto,
+ * so the term is measured against the wrong phase reference and cancels signal.
+ *
+ * This line used to read
+ *   `Math.max(0.35, Math.min(0.85, 1.0 / (1.0 + 0.15 * minDist)))`
+ * inside demodulateReal, while both benchmark engines - monteCarloEngine.ts here and
+ * benchmark.py's realistic mode - passed 0.0. So the published decode threshold described a
+ * receiver that never ran on the air, and the receiver that did had never been measured.
+ *
+ * The twin of `RECEIVER_PILOT_COHERENCE` in z30_dsp/benchmark.py, which carries the paired
+ * measurement, and pinned across the two languages by tests/test_cross_language_parity.py.
+ * Headline: on AWGN with blind acquisition, 700 frames, 194 discordant pairs to 21 for the
+ * non-coherent receiver, exact two-sided McNemar p = 2.9e-36, 50% crossings -23.02 dB against
+ * -21.25 dB. On ITU-R F.1487 mid-latitude disturbed, 800 frames, 394 discordant pairs to nil,
+ * p = 5e-119 - a pilot phase reference does not survive a channel that is rotating it.
+ *
+ * It is the receiver's constant, not the benchmark's, which is why it lives here beside the
+ * demodulator rather than in the Monte Carlo engine that used to own it.
+ */
+export const RECEIVER_PILOT_COHERENCE = 0.0;
+
+/**
+ * Demodulates a captured carrier at baseFreqHz into 216 soft channel LLRs via a 16-tone
+ * matched-filter bank with exact Log-MAP demapping - the tone0-anchored, phase-step-corrected
+ * TS counterpart of z30_dsp.benchmark.demodulate_mfsk_llrs.
  */
 export function demodulateReal(
   buffer: Float32Array,
@@ -441,7 +468,6 @@ export function demodulateReal(
     }
     const rawPhase = pilotPhases[closestP] - basePhaseStep * (frameSymIdx - pilotFrames[closestP]);
     const interpPhase = Math.atan2(Math.sin(rawPhase), Math.cos(rawPhase));
-    const pilotCoherence = Math.max(0.35, Math.min(0.85, 1.0 / (1.0 + 0.15 * minDist)));
 
     const start = frameSymIdx * samplesPerSymbol;
     const toneLogLikes = new Float64Array(NUM_TONES);
@@ -462,7 +488,8 @@ export function demodulateReal(
       const proj = corrCos * Math.cos(interpPhase) + corrSin * Math.sin(interpPhase);
       const coherent = proj * sCorr;
 
-      toneLogLikes[tone] = pilotCoherence * coherent + (1.0 - pilotCoherence) * nonCoherent;
+      toneLogLikes[tone] =
+        RECEIVER_PILOT_COHERENCE * coherent + (1.0 - RECEIVER_PILOT_COHERENCE) * nonCoherent;
     }
 
     for (let bit = 0; bit < 4; bit++) {

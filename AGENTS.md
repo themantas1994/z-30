@@ -274,6 +274,25 @@ the test to match. Full rationale: [`wiki/13`](wiki/13-Operating-Safety-Complian
   `Z30_SPECS`. SpecsModal said "up to 50 iterations" for years while both codecs stopped at 45,
   and Settings printed FT8's `(174, 91)` as z-30's code.
 
+**The benchmark measures the receiver that ships**
+- A sensitivity figure is a claim about the program someone downloads, so every parameter of
+  the receive chain the benchmark exercises must be the one the on-air decoder uses. The
+  demodulator is one function per language - `demodulate_mfsk_llrs` and `demodulateReal` - and
+  its coherence weight is one named constant per language, `RECEIVER_PILOT_COHERENCE`,
+  **declared beside the demodulator, never in a benchmark**.
+- This is an invariant because it has already failed. Both benchmarks passed 0.0 while both
+  on-air decoders applied the pilot-distance-adaptive 0.35-0.85 - `sic_decoder._estimate_llrs`
+  by taking a default, `realReceiver.ts` by hardcoding it - so the published threshold described
+  a receiver nobody ran. Nothing caught it, because the parity test compared benchmark against
+  benchmark. Measured paired, it was worth 1.77 dB on AWGN (p = 2.9e-36) and the difference
+  between working and not working on a fading path (p = 5e-119).
+- `tests/test_cross_language_parity.py::test_the_benchmark_demodulates_like_the_receiver_that_ships`
+  is the guard: the constant is declared beside the shipped demodulator, the Python default
+  equals it, and `demodulateReal` applies it rather than computing a weight of its own.
+- The one deliberate exception is `--mode ideal`, which passes the adaptive weight
+  **explicitly**. It is a genie-aided bound and the genie includes the phase reference; that is
+  why its result is a bound and not a threshold.
+
 **Cross-language parity**
 - `z30_dsp/*.py` and `src/dsp/*.ts` implement one specification twice. A change to the codec,
   the LDPC code, the waveform or the Costas pattern must land in **both**, in the same commit.
@@ -294,22 +313,44 @@ the code and the wiki on purpose. Follow the same standard:
 
 - **`--mode realistic`** (random carrier and timing offsets, blind acquisition, non-coherent
   demodulation, receiver estimates its own noise floor) produces a **decode threshold**:
-  -23.1 dB at 50%, -21.7 dB at 90% on AWGN, 2500 Hz reference. This is the only figure
-  comparable with other modes' published numbers. It is **2.1 dB deeper than FT8's -21.0 dB,
-  bought with 2.8 dB more airtime (24.0 s against 12.64 s) and 14 fewer message bits** - quote
-  both halves or neither.
+  -22.92 dB [-23.07, -22.79] at 50%, -22.09 dB [-22.16, -22.01] at 90% on AWGN, 2500 Hz
+  reference, seed `20260830`, 200 frames/point. This is the only figure comparable with other
+  modes' published numbers. It is **1.9 dB deeper than FT8's -21.0 dB, bought with 2.8 dB more
+  airtime (24.0 s against 12.64 s) and 14 fewer message bits** - quote both halves or neither.
 - **`--mode ideal`** (exact noise sigma, carrier and timing handed to the demodulator) produces
-  a **genie-aided bound**: -24.6 dB. Never compare it with another mode's on-air figure. The
-  1.5 dB gap is acquisition loss.
-- Quote the seed, the frame count and the mode with any figure. Default seed: `20260830`.
+  a **genie-aided bound**: -24.58 dB. Never compare it with another mode's on-air figure. The
+  1.66 dB gap is acquisition loss.
+- **There is a third half, and it is not optional either: on ITU-R F.1487 high-latitude
+  moderate (3 ms / 10 Hz) z-30 does not decode at any SNR.** 10 Hz of Doppler spread is wider
+  than the whole 3.125 Hz tone spacing, so tone orthogonality is gone; acquisition still finds
+  the frame. That channel is one of the three the leading published practice reports every mode
+  against, and the long narrow symbol that buys the AWGN depth is the same thing that loses it.
+  A sensitivity claim that quotes only the AWGN row is the same class of error as quoting the
+  genie-aided bound was.
+- Quote the seed, the frame count, the channel and the mode with any figure, and quote the
+  **interval**, not a bare crossing. Default seed: `20260830`. Minimum
+  `PUBLISHABLE_FRAMES_PER_POINT` (200) frames per point behind anything published - the
+  benchmark prints an `EXPLORATORY RUN` notice below that, because a crossing from 40 frames is
+  uncertain by most of a dB.
+- **Comparing two decoders, two demodulators or two decode paths? Pair them.** `--ap` and
+  `--compare-demod` put both arms through one channel realisation and report the exact
+  two-sided McNemar p-value over the discordant frames. Two independent sweeps differenced
+  cannot resolve an effect of a dB, and both of the results that have changed shipped code here
+  were established this way.
 - **`z30_dsp/benchmark.py` is the reference instrument.** The in-app benchmark
   (`src/dsp/monteCarloEngine.ts`, Station Settings -> 5. Experimental Testing) runs the same two
   modes, defaults to `realistic` too, and now models the same receiver: `SLOT_SEARCH_MARGIN_SEC`
-  and `REALISTIC_PILOT_COHERENCE` are shared constants, pinned across the two languages by
-  `tests/test_cross_language_parity.py`. The two land 0.1 dB apart on the AWGN threshold at the
-  same seed. It used to read 1.8 dB more optimistic, which `wiki/16` blamed on a narrower timing
-  window; measured paired, the timing window accounted for none of it and the Python side's
-  semi-coherent demodulator term accounted for all of it. Agreement is still not authority: use
+  and `RECEIVER_PILOT_COHERENCE` are shared constants, pinned across the two languages by
+  `tests/test_cross_language_parity.py`. `RECEIVER_PILOT_COHERENCE` is declared beside each
+  language's **demodulator**, not in its benchmark, and that is not cosmetic - see the invariant
+  in section 4. At 200 frames a point and the same seed the two land **0.02 dB apart on the
+  AWGN threshold** and **0.70 dB apart on the genie-aided bound** - the second is unexplained,
+  and is one more reason a bound is not a publishable figure. The Python side used to read
+  1.8 dB more optimistic than the browser, which `wiki/16` blamed on a narrower timing window;
+  measured paired, the timing window accounted for none of it and the Python side's
+  semi-coherent demodulator term accounted for all of it. Agreement is still not authority - it
+  is what hid the demodulator defect in section 4 for months, since the parity test compared
+  benchmark against benchmark. Use
   the browser engine to see which way a change moved the curve, and confirm with a seeded Python
   run before any number reaches documentation.
   [`wiki/16`](wiki/16-Benchmarking-Testing-&-CI.md) has the side-by-side table.

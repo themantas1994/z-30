@@ -239,3 +239,116 @@ class TestEndToEnd:
                 decoded += 1
 
         assert decoded == trials, f"only {decoded}/{trials} strong frames survived the blind chain"
+
+
+# ---------------------------------------------------------------------------------------------
+# The ITU-R F.1487 presets
+#
+# The named presets are a table of numbers, and a table of numbers is the easiest thing in a DSP
+# project to get wrong without anything failing: a preset whose Doppler figure never reaches the
+# waveform still produces a curve, and the curve is then a measurement of the wrong channel
+# under the right label. These measure the impairment off the produced samples instead.
+# ---------------------------------------------------------------------------------------------
+
+#: Analysis window for the Doppler measurements below. Long enough that the FFT's own resolution
+#: (1/16 s = 0.0625 Hz) is small against the spreads being measured, which is why the
+#: mid-latitude quiet preset (0.05 Hz sigma) is excluded from the tolerance check rather than
+#: measured badly.
+_DOPPLER_WINDOW_SEC = 16.0
+
+
+def _measured_doppler_spread_hz(preset, seed, centre_hz=1250.0):
+    """
+    RMS spectral width a preset actually imposes on a pure tone, in Hz.
+
+    Computed from the faded samples: the power spectrum around the carrier is normalised into a
+    distribution and its standard deviation taken. Nothing here reads the preset's own numbers,
+    so a preset whose parameters never reach the tap generator measures as unfaded.
+    """
+    n = int(SAMPLE_RATE * _DOPPLER_WINDOW_SEC)
+    t = np.arange(n) / SAMPLE_RATE
+    tone = np.cos(2.0 * np.pi * centre_hz * t).astype(np.float32)
+    faded = apply_watterson_fading(tone, SAMPLE_RATE, preset, np.random.default_rng(seed))
+
+    spectrum = np.abs(np.fft.rfft(faded.astype(np.float64) * np.hanning(n))) ** 2
+    freqs = np.fft.rfftfreq(n, 1.0 / SAMPLE_RATE)
+    band = (freqs > centre_hz - 150.0) & (freqs < centre_hz + 150.0)
+    power = spectrum[band]
+    power = power / power.sum()
+    f = freqs[band]
+    mean = float((power * f).sum())
+    return float(np.sqrt((power * (f - mean) ** 2).sum()))
+
+
+def test_each_preset_imposes_the_doppler_spread_it_names():
+    """
+    The Doppler figure in the preset table has to reach the waveform.
+
+    Watterson's model shapes each tap's spectrum as a Gaussian of standard deviation
+    doppler_spread_hz / 2 - the CCIR convention, where the quoted spread is the 2-sigma width -
+    so that sigma is what a measurement of the faded carrier should recover. Averaged over
+    several seeds to keep this a property of the model rather than of one realisation.
+    """
+    resolvable = [
+        (key, preset) for key, preset in WATTERSON_PRESETS.items()
+        # 0.1 Hz is below what a 16 s window resolves; it is covered by the ordering check.
+        if preset.doppler_spread_hz >= 0.5
+    ]
+    assert resolvable, "no preset with a resolvable Doppler spread"
+
+    for key, preset in resolvable:
+        measured = float(np.mean([
+            _measured_doppler_spread_hz(preset, 1000 + s) for s in range(4)
+        ]))
+        expected_sigma = preset.doppler_spread_hz / 2.0
+        assert 0.5 * expected_sigma <= measured <= 1.5 * expected_sigma, (
+            f"{key}: spectrum spread {measured:.3f} Hz is not the {expected_sigma:.3f} Hz "
+            f"sigma its {preset.doppler_spread_hz} Hz Doppler figure specifies"
+        )
+
+
+def test_doppler_spread_is_ordered_by_preset_severity():
+    """
+    A harsher preset must actually be harsher, which the tolerance check above cannot see: four
+    presets could each sit at the top of their own band and come out in the wrong order.
+    """
+    faded = [
+        (preset.doppler_spread_hz,
+         float(np.mean([_measured_doppler_spread_hz(preset, 2000 + s) for s in range(3)])))
+        for preset in WATTERSON_PRESETS.values()
+        if preset.doppler_spread_hz > 0.0
+    ]
+    faded.sort(key=lambda pair: pair[0])
+    measured = [m for _spec, m in faded]
+    assert measured == sorted(measured), (
+        f"measured Doppler spreads {measured} are not ordered by the presets' own figures"
+    )
+
+
+def test_high_latitude_moderate_spreads_a_tone_across_the_tone_spacing(cfg):
+    """
+    Why z-30 cannot use the ITU high-latitude moderate channel, measured rather than asserted.
+
+    The mode's 16 tones are spaced at 1 / symbol duration = 3.125 Hz, which is exactly what
+    makes them orthogonal over one symbol. This preset's 10 Hz Doppler spread smears a carrier
+    by more than that spacing, so a transmitted tone lands energy in its neighbours and the
+    orthogonality the demodulator's matched filters depend on is gone. The published sweep on
+    this channel decodes nothing at any SNR, and this is the reason.
+    """
+    preset = WATTERSON_PRESETS["high-moderate"]
+    measured = float(np.mean([_measured_doppler_spread_hz(preset, 3000 + s) for s in range(4)]))
+    assert measured > cfg.tone_spacing_hz, (
+        f"high-latitude moderate spreads a tone by {measured:.2f} Hz, which is inside the "
+        f"{cfg.tone_spacing_hz} Hz tone spacing - the published 'not decodable' result on this "
+        f"channel would then need a different explanation"
+    )
+
+    # And the contrast: the mid-latitude row stays well inside the tone spacing, which is why
+    # those channels degrade the threshold instead of removing it.
+    mid = float(np.mean([
+        _measured_doppler_spread_hz(WATTERSON_PRESETS["poor"], 3000 + s) for s in range(4)
+    ]))
+    assert mid < cfg.tone_spacing_hz / 2.0, (
+        f"mid-latitude disturbed spreads a tone by {mid:.2f} Hz, which is no longer small "
+        f"against the {cfg.tone_spacing_hz} Hz tone spacing"
+    )
