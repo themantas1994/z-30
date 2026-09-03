@@ -138,7 +138,7 @@ class Z30TkinterApp:
         header.pack(fill="x", padx=6, pady=4)
         
         tk.Label(header, text="z-30 RF TRANSCEIVER", font=("Fira Code", 12, "bold"), fg="#00FF41", bg="#0F0F0F").pack(side="left", padx=10)
-        self.vfo_label = tk.Label(header, text="VFO: 14.074.000 MHz (20m)", font=("Fira Code", 11, "bold"), fg="#38BDF8", bg="#0F0F0F")
+        self.vfo_label = tk.Label(header, text="VFO: 14.076.000 MHz (20m)", font=("Fira Code", 11, "bold"), fg="#38BDF8", bg="#0F0F0F")
         self.vfo_label.pack(side="left", padx=15)
         
         self.utc_label = tk.Label(header, text="UTC: 00:00:00 [CYCLE: 00s / RX]", font=("Fira Code", 11, "bold"), fg="#FCD34D", bg="#0F0F0F")
@@ -300,7 +300,7 @@ class Z30TkinterApp:
             callsign=call,
             grid=grid,
             band="20m",
-            freq_mhz=14.074,
+            freq_mhz=14.076,
             rst_sent="-14",
             rst_rcvd="-16",
             notes="z-30 16-MFSK LDPC / SIC Pass 1"
@@ -380,7 +380,7 @@ class Z30TkinterApp:
         self.config = new_config
         self.logger.my_call = new_config.callsign
         self.logger.my_grid = new_config.grid
-        self.vfo_label.config(text=f"VFO: 14.074.000 MHz (20m) [{new_config.callsign} / {new_config.grid}]")
+        self.vfo_label.config(text=f"VFO: 14.076.000 MHz (20m) [{new_config.callsign} / {new_config.grid}]")
 
     def _start_threads(self) -> None:
         def update_clock():

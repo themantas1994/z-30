@@ -14,6 +14,7 @@
 import React, { useState, useMemo } from 'react';
 import { LogEntry } from '../types/z30';
 import { qsoLogger } from '../dsp/qsoLogger';
+import { HAM_BANDS } from '../dsp/z30Constants';
 import {
   BookOpen,
   Download,
@@ -58,7 +59,6 @@ export const LogbookModal: React.FC<LogbookModalProps> = ({
   const [manualCall, setManualCall] = useState<string>('');
   const [manualGrid, setManualGrid] = useState<string>('');
   const [manualBand, setManualBand] = useState<string>('20m');
-  const [manualFreq] = useState<number>(14.074);
   const [manualRstSent, setManualRstSent] = useState<string>('-14');
   const [manualRstRcvd, setManualRstRcvd] = useState<string>('-16');
   const [manualNotes] = useState<string>('Manual z-30 QSO');
@@ -158,7 +158,9 @@ export const LogbookModal: React.FC<LogbookModalProps> = ({
       mode: 'z-30',
       submode: '16-MFSK',
       band: manualBand,
-      freqMhz: manualFreq,
+      // Derived from the selected band rather than a fixed constant - a logged QSO on 6m used
+      // to be saved with the 20m dial frequency because this field never tracked the dropdown.
+      freqMhz: (HAM_BANDS.find((b) => b.name === manualBand)?.dialFreqHz ?? HAM_BANDS[5].dialFreqHz) / 1e6,
       rstSent: manualRstSent,
       rstRcvd: manualRstRcvd,
       distanceKm: 0,
@@ -311,13 +313,11 @@ export const LogbookModal: React.FC<LogbookModalProps> = ({
                   onChange={(e) => setManualBand(e.target.value)}
                   className="w-full bg-[#141414] border border-[#333] px-2 py-1 text-xs text-[#D4D4D4]"
                 >
-                  <option value="160m">160m (1.840 MHz)</option>
-                  <option value="80m">80m (3.573 MHz)</option>
-                  <option value="40m">40m (7.074 MHz)</option>
-                  <option value="20m">20m (14.074 MHz)</option>
-                  <option value="15m">15m (21.074 MHz)</option>
-                  <option value="10m">10m (28.074 MHz)</option>
-                  <option value="6m">6m (50.313 MHz)</option>
+                  {HAM_BANDS.map((b) => (
+                    <option key={b.name} value={b.name}>
+                      {b.name} ({(b.dialFreqHz / 1e6).toFixed(3)} MHz)
+                    </option>
+                  ))}
                 </select>
               </div>
               <div>

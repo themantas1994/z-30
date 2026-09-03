@@ -4,6 +4,7 @@
 
 import React, { useState, useMemo, useEffect } from 'react';
 import { DecodedSignal } from '../types/z30';
+import { apTag } from '../dsp/apDecode';
 import { Radio, Sparkles, Search, Trash2, ArrowUpRight, ShieldCheck, Zap } from 'lucide-react';
 
 interface ActivityLogTableProps {
@@ -275,7 +276,7 @@ export const ActivityLogTable: React.FC<ActivityLogTableProps> = ({
                             className="text-[10px] font-bold text-amber-400 border border-amber-400/40 px-1"
                             title={`Recovered with a priori information: ${d.apLabel || `type ${d.apType}`}`}
                           >
-                            a{d.apType}
+                            {apTag(d.apType)}
                           </span>
                         )}
                         {d.ldpcIterations && (
