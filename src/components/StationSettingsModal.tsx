@@ -2156,7 +2156,7 @@ export const StationSettingsModal: React.FC<StationSettingsModalProps> = ({
                         onClick={() => {
                           setIsVerifyingDecode(true);
                           const result = sicDecoderEngine.runSicDecodeCycle(
-                            14074000,
+                            14076000,
                             form.myCall,
                             form.myGrid,
                             false

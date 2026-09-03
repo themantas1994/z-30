@@ -333,6 +333,15 @@ export function decodeWithAp(
 }
 
 /**
+ * The operator-facing `a1`..`a6` tag for an AP type, or '' for 0 (no AP involved). The single
+ * place that spells the tag format, so the activity log and any other AP-aware surface render
+ * the same label WSJT-X's `iaptype` inspired instead of re-deriving it and risking drift.
+ */
+export function apTag(apType: number): string {
+  return apType ? `a${apType}` : '';
+}
+
+/**
  * A short operator-facing tag for a decode, or the empty string for an ordinary one.
  *
  * WSJT-X prints `iaptype` next to each decode for a reason: a frame recovered by assuming your
@@ -341,5 +350,5 @@ export function decodeWithAp(
  */
 export function describeApDecode(outcome: ApDecodeOutcome): string {
   if (!outcome.result.success || outcome.apType === 0) return '';
-  return `a${outcome.apType}`;
+  return apTag(outcome.apType);
 }

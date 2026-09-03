@@ -76,7 +76,7 @@ class StationConfig:
 
     # Operational Defaults
     tx_power_watts: int = 50
-    dial_freq_hz: int = 14074000
+    dial_freq_hz: int = 14076000  # z-30's own 20 m primary-activity dial, not FT8's 14.074 MHz
     tx_audio_freq_hz: int = 1250
     rx_audio_freq_hz: int = 1250
     split_tx: bool = False

@@ -11,11 +11,15 @@
  */
 
 import { LogEntry, AutoLogConfig } from '../types/z30';
-import { PLACEHOLDER_CALLSIGN } from './z30Constants';
+import { PLACEHOLDER_CALLSIGN, DEFAULT_BANDS } from './z30Constants';
 import { isLocalServerAvailable, readServerLogbook, writeServerLogbook } from './localServerApi';
 
 const STORAGE_KEY = 'z30_qso_logbook_v1';
 const CONFIG_STORAGE_KEY = 'z30_autolog_config_v1';
+
+// z-30's own 20 m primary-activity dial (see z30Constants.DEFAULT_BANDS), not FT8's 14.074 -
+// this is only the fallback used when an entry or an imported ADIF record carries no frequency.
+const FALLBACK_FREQ_MHZ = DEFAULT_BANDS['20m'] / 1e6;
 
 export const DEFAULT_AUTOLOG_CONFIG: AutoLogConfig = {
   enabled: true,
@@ -402,7 +406,7 @@ Generated on: ${new Date().toUTCString()}
       const call = e.callsign.toUpperCase();
       const grid = (e.grid || '').toUpperCase();
       const band = (e.band || '20m').toUpperCase();
-      const freq = e.freqMhz ? e.freqMhz.toFixed(6) : '14.074000';
+      const freq = e.freqMhz ? e.freqMhz.toFixed(6) : FALLBACK_FREQ_MHZ.toFixed(6);
       const rstSent = e.rstSent || '-15';
       const rstRcvd = e.rstRcvd || '-15';
       // ADIF 3.1.4's MODE field is a closed enumeration - "z-30" is not a member of it, and
@@ -654,7 +658,7 @@ BEGIN TRANSACTION;
       const call = e.callsign.toUpperCase().replace(/'/g, "''");
       const grid = (e.grid || '').replace(/'/g, "''");
       const band = e.band.replace(/'/g, "''");
-      const freq = e.freqMhz || 14.074;
+      const freq = e.freqMhz || FALLBACK_FREQ_MHZ;
       const audioFreq = e.audioFreqHz || 1250;
       const rstS = (e.rstSent || '').replace(/'/g, "''");
       const rstR = (e.rstRcvd || '').replace(/'/g, "''");
@@ -717,7 +721,7 @@ BEGIN TRANSACTION;
         mode: 'MFSK',
         submode: 'Z30',
         band: bandMatch ? bandMatch[1].toUpperCase() : '20m',
-        freqMhz: freqMatch ? parseFloat(freqMatch[1]) : 14.074,
+        freqMhz: freqMatch ? parseFloat(freqMatch[1]) : FALLBACK_FREQ_MHZ,
         rstSent: rstSentMatch ? rstSentMatch[1] : '-15',
         rstRcvd: rstRcvdMatch ? rstRcvdMatch[1] : '-15',
         distanceKm: 0,
