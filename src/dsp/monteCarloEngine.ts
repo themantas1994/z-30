@@ -14,6 +14,17 @@
  * 6. Runs the actual Systematic (216, 77) Normalized Min-Sum LDPC Belief Propagation Decoder.
  * 7. Measures and tallies real decode successes, failures, Frame Error Rate (FER), pre/post-LDPC BER,
  *    and LDPC iteration convergence across user-configured SNR sweeps.
+ *
+ * Every one of those steps runs on a real waveform. There is exactly one receive path here, and
+ * it is the shipped one: there was a second, faster path that drew per-tone Gaussians against
+ * an assumed signalling model, it was the default, and it measured about 2 dB better than the
+ * software anyone actually runs. See the note where `generateChannelLlrsFast` used to be, and
+ * the verification pass in wiki/16.
+ *
+ * This is a bench instrument, not the reference benchmark. `z30_dsp/benchmark.py` is what CI
+ * runs and what the published tables are copied from; this one exists to show which way a
+ * change moved the curve without leaving the app. It models calibrated AWGN only - the ITU-R
+ * F.1487 conditions belong to `z30_dsp/channel.py`, which implements them.
  */
 
 import { createSeededRandom, DEFAULT_MONTE_CARLO_SEED, RandomSource } from './seededRandom';
@@ -23,7 +34,28 @@ import { Z30LdpcEngine } from './ldpcCodec';
 import { encodeLdpc216_77, computeCrc14 } from './z30Codec';
 import { RECEIVER_PILOT_COHERENCE } from './realReceiver';
 
-export type ChannelModelType = 'AWGN' | 'RAYLEIGH_FADING' | 'CO_CHANNEL_QRM';
+/**
+ * The channel this engine models: calibrated AWGN, and nothing else.
+ *
+ * It used to offer `RAYLEIGH_FADING` and `CO_CHANNEL_QRM` as well, and neither was what its
+ * name said:
+ *
+ *  - `RAYLEIGH_FADING` ran `applyRayleighFading`, whose own comments called it a "two-path
+ *    Watterson model" and "ITU-R F.1487". It was neither. Each path's gain was
+ *    `0.8 + 0.4*sin(phase)` and `0.5 + 0.3*cos(phase)` - a deterministic sinusoid bounded away
+ *    from zero, so the channel had no deep fades, no Rayleigh-distributed envelope, and no
+ *    complex tap at all, which means it never rotated the carrier phase and so never spread a
+ *    tone in frequency. Doppler spread is the one parameter this waveform can actually see
+ *    (wiki/16), and that model did not produce it. z30_dsp/channel.py has the real thing:
+ *    independent complex-Gaussian taps with a Gaussian Doppler spectrum, and the
+ *    recommendation's own named test conditions. Fading belongs to the reference instrument.
+ *  - `CO_CHANNEL_QRM` was selectable in the type and carried two configuration fields, and no
+ *    code anywhere read either of them. Choosing it ran a plain AWGN sweep and labelled the
+ *    result co-channel interference. That is the same defect AGENTS.md section 5 records
+ *    against the withdrawn SIC collision figures: a number for a condition no instrument here
+ *    measures.
+ */
+export type ChannelModelType = 'AWGN';
 
 /**
  * What the run measures. The distinction is the whole of wiki/16's opening section, and it is
@@ -43,7 +75,6 @@ export type ChannelModelType = 'AWGN' | 'RAYLEIGH_FADING' | 'CO_CHANNEL_QRM';
  * "50% Empirical Decode Threshold" and drew an FT8 reference line next to it.
  */
 export type MeasurementModeType = 'ideal' | 'realistic';
-export type SimulationModeType = 'MATCHED_FILTER_CORRELATOR_BANK' | 'FULL_PHYSICAL_DSP';
 
 export interface SnrPointResult {
   snrDb: number; // in 2500 Hz reference bandwidth
@@ -52,9 +83,23 @@ export interface SnrPointResult {
   failureCount: number;
   frameErrorRate: number; // FER = failureCount / totalFrames
   decodeSuccessRate: number; // Success % = successCount / totalFrames * 100
-  rawChannelBer: number; // Pre-LDPC uncoded bit error rate
-  postLdpcBer: number; // Residual post-LDPC bit error rate
+  /**
+   * Pre-LDPC uncoded bit error rate, post-LDPC residual bit error rate, and mean decoder
+   * iterations - all averaged over `demodulatedFrames`, not over `totalFrames`.
+   *
+   * A realistic-mode frame the acquisition stage never found produces no LLRs, so it has no
+   * bit errors and no iteration count. It used to be given 108 raw errors, 39 post-LDPC errors
+   * and a full iteration cap - plausible values, measured by nothing - which put invented
+   * numbers into these three columns at exactly the SNRs where acquisition is failing and the
+   * columns are most read. Those frames are counted as failures in `frameErrorRate` and
+   * `decodeSuccessRate`, which have `totalFrames` underneath them; they are simply absent from
+   * these averages.
+   */
+  rawChannelBer: number;
+  postLdpcBer: number;
   avgLdpcIterations: number;
+  /** Frames that reached the demodulator: `totalFrames` minus `acquisitionFailures`. */
+  demodulatedFrames: number;
   minIterations: number;
   maxIterations: number;
   confidenceInterval95: [number, number]; // [lower %, upper %] Wilson score interval
@@ -103,15 +148,26 @@ export interface MonteCarloConfig {
   framesPerPoint: number;
   sampleRateHz: number;
   audioCenterFreqHz: number;
+  /** Calibrated AWGN. The only channel this engine models - see ChannelModelType. */
   channelModel: ChannelModelType;
-  simulationMode: SimulationModeType;
-  fadingDopplerHz?: number; // e.g. 0.5 Hz for ITU-R F.1487
-  qrmOffsetHz?: number; // e.g. +12.5 Hz co-channel interference
-  qrmSirDb?: number; // Signal to Interference Ratio in dB
-  maxLdpcIterations: number;
-  // No alphaMinSum. It was a live input in the benchmark modal that fed a decoder which has
-  // never read it: the four schedules of Z30_DECODE_SCHEDULES carry their own alphas. Moving
-  // the slider changed the curve's label and nothing about the curve.
+  // No simulationMode. `MATCHED_FILTER_CORRELATOR_BANK` was the DEFAULT, and it never
+  // synthesized a waveform or ran the shipped demodulator: it drew per-tone complex Gaussians
+  // against an assumed 16-ary orthogonal signalling model and built its own pilot-phase-error
+  // and pilot-weight schedule out of Es/N0. Measured against the physical chain at seed
+  // 20260830, ideal mode, 200 frames a point, it decoded 334/600 frames from -26 to -24 dB
+  // against the physical chain's 148/600 - a 50% crossing of -25.20 dB against -24.13 dB,
+  // Fisher exact two-sided p = 3.7e-28 - and it is the source of the browser engine's
+  // -25.28 dB "genie-aided bound" that wiki/16 could not reconcile with the Python one.
+  // AGENTS.md
+  // section 4 puts it plainly: a benchmark that reimplements the receiver measures the
+  // reimplementation. There is now one path, and it is the physical one.
+  //
+  // No maxLdpcIterations either. It was a 10-120 input box wired straight into
+  // `decodeMinSum`'s iteration cap, so a benchmark run could measure a decoder with a cap the
+  // shipped receiver does not use - `decodeWithAp` in realReceiver.ts takes
+  // LDPC_MAX_ITERATIONS and offers no way to change it. The Python benchmark reads the same
+  // constant rather than taking one. Same reasoning that removed the alphaMinSum slider, which
+  // at least could not move the curve; this one could.
   /**
    * `realistic` (default) measures a decode threshold; `ideal` measures a genie-aided bound.
    * See MeasurementModeType. Mirrors the Python benchmark's `--mode` flag.
@@ -182,28 +238,6 @@ export const SLOT_SEARCH_MARGIN_SEC = 0.05;
  */
 export { RECEIVER_PILOT_COHERENCE };
 
-export const DEFAULT_MONTE_CARLO_CONFIG: MonteCarloConfig = {
-  minSnrDb: -32.0,
-  maxSnrDb: -22.0,
-  snrStepDb: 1.0,
-  framesPerPoint: 50,
-  sampleRateHz: 6000, // 6 kHz fast high-res simulation rate (sub-Nyquist over 50Hz audio band)
-  audioCenterFreqHz: 1250,
-  channelModel: 'AWGN',
-  simulationMode: 'MATCHED_FILTER_CORRELATOR_BANK',
-  fadingDopplerHz: 0.5,
-  qrmOffsetHz: 15.0,
-  qrmSirDb: -6.0,
-  maxLdpcIterations: 45,
-  // The honest default, matching `python -m z30_dsp.benchmark`'s own default. A benchmark
-  // whose default mode produces a bound, presented in a modal that calls the result a
-  // threshold, is how the retracted "+4 dB over FT8" claim happened the first time.
-  measurementMode: 'realistic',
-  carrierOffsetHz: 5.0,
-  timingOffsetSec: 0.5,
-  seed: DEFAULT_MONTE_CARLO_SEED,
-};
-
 /**
  * Sweep range that brackets the documented AWGN threshold, for the realistic mode.
  * The old default (-32 .. -22 dB) brackets the genie-aided bound instead, and in realistic
@@ -212,6 +246,49 @@ export const DEFAULT_MONTE_CARLO_CONFIG: MonteCarloConfig = {
 export const REALISTIC_SWEEP_DEFAULTS = { minSnrDb: -26.0, maxSnrDb: -16.0 };
 /** Sweep range that brackets the genie-aided bound, for the ideal mode. */
 export const IDEAL_SWEEP_DEFAULTS = { minSnrDb: -30.0, maxSnrDb: -20.0 };
+
+/**
+ * Frames per SNR point below which a run is exploratory rather than publishable.
+ *
+ * The twin of `PUBLISHABLE_FRAMES_PER_POINT` in z30_dsp/benchmark.py, pinned across the two
+ * languages by tests/test_cross_language_parity.py. The Python benchmark has printed an
+ * `EXPLORATORY RUN` notice below this figure for as long as the figure has existed; the
+ * browser engine, which defaults to a quarter of it and offers a "Start Quick Sweep (25
+ * frames/pt)" button, printed nothing at all and reported its crossing to two decimal places
+ * either way. A decode rate is a binomial proportion: at 200 frames its 95% Wilson interval is
+ * at worst +/-6.9 points, and at 25 it is +/-20, which is more than a dB on the crossing.
+ */
+export const PUBLISHABLE_FRAMES_PER_POINT = 200;
+
+/**
+ * Two-sided standard-normal quantile for a 95% interval, to the precision float64 carries.
+ *
+ * The twin of `WILSON_Z_95` in z30_dsp/benchmark.py, pinned by
+ * tests/test_cross_language_parity.py. This side used to use a rounded 1.96, so the two
+ * engines put slightly different intervals on the same counts - and the intervals are what
+ * wiki/16 compares when it reports the two engines landing 0.10 dB apart.
+ */
+export const WILSON_Z_95 = 1.959963984540054;
+
+export const DEFAULT_MONTE_CARLO_CONFIG: MonteCarloConfig = {
+  // Bracketing the default MODE's crossing, not the other one's. This used to be -32 .. -22,
+  // which is the ideal-mode range: opening the modal and pressing Run swept nine points below
+  // the SNR at which the Costas pattern is findable at all and one above it, so the default
+  // run could not produce a crossing to interpolate.
+  ...REALISTIC_SWEEP_DEFAULTS,
+  snrStepDb: 1.0,
+  framesPerPoint: 50,
+  sampleRateHz: 6000, // 6 kHz fast high-res simulation rate (sub-Nyquist over 50Hz audio band)
+  audioCenterFreqHz: 1250,
+  channelModel: 'AWGN',
+  // The honest default, matching `python -m z30_dsp.benchmark`'s own default. A benchmark
+  // whose default mode produces a bound, presented in a modal that calls the result a
+  // threshold, is how the retracted "+4 dB over FT8" claim happened the first time.
+  measurementMode: 'realistic',
+  carrierOffsetHz: 5.0,
+  timingOffsetSec: 0.5,
+  seed: DEFAULT_MONTE_CARLO_SEED,
+};
 
 export class MonteCarloSimulationEngine {
   /**
@@ -441,11 +518,12 @@ public synthesizePhysicalWaveform(
   /**
    * Builds the audio stream a receiver would actually be handed in realistic mode.
    *
-   * Three things the ideal path does not do, and which together cost about 2.3 dB in this
-   * engine (measured: this engine's 50% crossings are -22.94 dB realistic against -25.28 dB
-   * ideal, 200 frames a point, seed 20260830; the Python benchmark's own gap is 1.66 dB, and
-   * wiki/16 records that the two engines' BOUNDS differ by 0.70 dB while their thresholds
-   * differ by 0.02 dB):
+   * Three things the ideal path does not do, and which together cost about 1.2 dB in this
+   * engine (measured 2026-09-03: this engine's 50% crossings are -22.93 dB realistic against
+   * -24.13 dB ideal, 200 frames a point, seed 20260830; the Python benchmark's own acquisition
+   * loss is 1.66 dB, and wiki/16 records that the two engines' BOUNDS differ by 0.51 dB while
+   * their thresholds differ by 0.10 dB). This used to read 2.3 dB, against an ideal crossing of
+   * -25.28 dB that came from the removed analytic receive path rather than from this one:
    *   - the frame sits at a RANDOM carrier offset, not exactly on the nominal centre;
    *   - it starts at a RANDOM time, not at sample zero;
    *   - it is surrounded by noise-only audio, so the receiver has to find it.
@@ -471,11 +549,7 @@ public synthesizePhysicalWaveform(
     const timingOffsetSec = (this.rng.next() * 2 - 1) * timingHalfSec;
 
     const trueCentreFreqHz = config.audioCenterFreqHz + carrierOffsetHz;
-    let clean = this.synthesizePhysicalWaveform(symbols75, sampleRateHz, trueCentreFreqHz);
-
-    if (config.channelModel === 'RAYLEIGH_FADING') {
-      clean = this.applyRayleighFading(clean, sampleRateHz, config.fadingDopplerHz || 0.5);
-    }
+    const clean = this.synthesizePhysicalWaveform(symbols75, sampleRateHz, trueCentreFreqHz);
 
     // Guard either side, wide enough that the true start can move by the full timing offset
     // and still leave noise-only audio at both ends - which is what gives the search
@@ -676,41 +750,17 @@ public synthesizePhysicalWaveform(
     };
   }
 
-  /**
-   * Applies Rayleigh / ITU-R F.1487 Ionospheric Multipath Fading
-   */
-  public applyRayleighFading(
-    cleanWaveform: Float32Array,
-    sampleRateHz: number = 6000,
-    dopplerHz: number = 0.5,
-    delayMs: number = 1.0
-  ): Float32Array {
-    const len = cleanWaveform.length;
-    const delaySamples = Math.max(1, Math.round((delayMs / 1000.0) * sampleRateHz));
-    const faded = new Float32Array(len);
-
-    // Two-path Watterson model: Direct path + Delayed path with slow random Rayleigh amplitude & phase
-    let phase1 = this.rng.next() * 2 * Math.PI;
-    let phase2 = this.rng.next() * 2 * Math.PI;
-    let gain1 = 1.0;
-    let gain2 = 0.7;
-
-    const dt = 1.0 / sampleRateHz;
-    const dPhi = 2 * Math.PI * dopplerHz * dt;
-
-    for (let i = 0; i < len; i++) {
-      phase1 += dPhi * (0.8 + 0.4 * this.rng.next());
-      phase2 += dPhi * 1.3 * (0.8 + 0.4 * this.rng.next());
-      gain1 = 0.8 + 0.4 * Math.sin(phase1);
-      gain2 = 0.5 + 0.3 * Math.cos(phase2);
-
-      const path1 = cleanWaveform[i] * gain1;
-      const path2 = (i >= delaySamples ? cleanWaveform[i - delaySamples] : 0.0) * gain2;
-      faded[i] = (path1 + path2) * 0.707;
-    }
-
-    return faded;
-  }
+  // No applyRayleighFading. It was headed "Applies Rayleigh / ITU-R F.1487 Ionospheric
+  // Multipath Fading" and commented "Two-path Watterson model", and it was none of those: its
+  // two path gains were `0.8 + 0.4*sin(phase)` and `0.5 + 0.3*cos(phase)`, real-valued
+  // sinusoids bounded away from zero. A Watterson tap is a complex Gaussian process - Rayleigh
+  // envelope, uniform phase, Gaussian Doppler spectrum - and the phase half is the half that
+  // matters here, because Doppler spread against a 3.125 Hz tone spacing is the mechanism
+  // wiki/16 records as the reason this mode loses the high-latitude channel. A real-valued
+  // gain cannot spread a tone at all, so the model could not produce the one effect it was
+  // there to produce, while its output was labelled with the recommendation's number.
+  // z30_dsp/channel.py implements the real model against ITU-R F.1487's own test conditions;
+  // fading is measured there.
 
   /**
    * High-Precision Abramowitz-Stegun Log Modified Bessel Function of the First Kind ln(I0(x))
@@ -971,111 +1021,25 @@ public synthesizePhysicalWaveform(
     };
   }
 
-  /**
-   * Exact Matched-Filter Bank & Log-MAP Soft LLR Demodulator (High-Throughput Rigorous Monte Carlo)
-   * Implements the exact 16-ary orthogonal signaling matched filter receiver model (Proakis):
-   *   Y_t = delta_{t, tx} * sqrt(2 * Es/N0) * exp(j*theta) + N_t, where N_t ~ CN(0, 2)
-   *   Es/N0 = SNR_2500_linear * 2500 * Ts = SNR_2500_linear * 800
-   *   Exact Log-MAP bit LLRs via Log-Sum-Exp over 16-tone log-likelihoods.
-   */
-  public generateChannelLlrsFast(
-    codeword216: number[],
-    dataSymbols54: number[],
-    snr2500HzDb: number,
-    channelModel: ChannelModelType = 'AWGN'
-  ): { channelLlrs: Float32Array; rawBitErrors: number } {
-    // Amateur radio standard: SNR is referenced to 2500 Hz audio bandwidth.
-    // Symbol duration Ts = 0.320 s (Tone spacing df = 3.125 Hz).
-    // Matched filter processing gain = 2500 * 0.320 = 800 (+29.0309 dB).
-    const snrLinear = Math.pow(10, snr2500HzDb / 10.0);
-    const esN0Linear = Math.max(1e-9, snrLinear * 800.0);
-    const signalAmp = Math.sqrt(2.0 * esN0Linear);
-
-    const channelLlrs = new Float32Array(216);
-    let rawBitErrors = 0;
-
-    for (let s = 0; s < 54; s++) {
-      const txTone = dataSymbols54[s];
-      const toneLogLikes: number[] = new Array(16).fill(0);
-
-      // Fading channel amplitude multiplier: Rayleigh distribution
-      let fadeAmp = 1.0;
-      if (channelModel === 'RAYLEIGH_FADING') {
-        const g1 = Math.max(1e-12, this.rng.next());
-        const g2 = this.rng.next();
-        const rI = Math.sqrt(-Math.log(g1)) * Math.cos(2.0 * Math.PI * g2);
-        const rQ = Math.sqrt(-Math.log(g1)) * Math.sin(2.0 * Math.PI * g2);
-        fadeAmp = Math.sqrt(rI * rI + rQ * rQ);
-      }
-
-      const effAmp = signalAmp * fadeAmp;
-      // Carrier phase on current symbol
-      const carrierPhase = this.rng.next() * 2.0 * Math.PI;
-
-      // Pilot phase estimation tracking variance from 21 Costas sync symbols
-      const pilotPhaseErrorStd = 1.0 / Math.sqrt(Math.max(0.1, 2.0 * esN0Linear * 1.5));
-      const estCarrierPhase = carrierPhase + (this.rng.next() - 0.5) * 2.0 * pilotPhaseErrorStd;
-      const pilotWeight = Math.max(0.2, Math.min(0.95, esN0Linear / (esN0Linear + 1.5)));
-
-      for (let t = 0; t < 16; t++) {
-        // Complex circular Gaussian noise: N_I, N_Q ~ N(0, 1)
-        const u1 = Math.max(1e-12, this.rng.next());
-        const u2 = this.rng.next();
-        const u3 = Math.max(1e-12, this.rng.next());
-        const u4 = this.rng.next();
-
-        const nI = Math.sqrt(-2.0 * Math.log(u1)) * Math.cos(2.0 * Math.PI * u2);
-        const nQ = Math.sqrt(-2.0 * Math.log(u3)) * Math.sin(2.0 * Math.PI * u4);
-
-        const isTx = t === txTone;
-        const sI = isTx ? effAmp * Math.cos(carrierPhase) : 0.0;
-        const sQ = isTx ? effAmp * Math.sin(carrierPhase) : 0.0;
-
-        const totalI = sI + nI;
-        const totalQ = sQ + nQ;
-
-        // Non-coherent envelope: R = sqrt(I^2 + Q^2)
-        const envelope = Math.sqrt(totalI * totalI + totalQ * totalQ);
-        const nonCoherentMetric = this.logBesselI0(envelope * effAmp);
-
-        // Pilot-aided coherent projection: Re{ Y * exp(-j*estCarrierPhase) }
-        const coherentProj = totalI * Math.cos(estCarrierPhase) + totalQ * Math.sin(estCarrierPhase);
-        const coherentMetric = coherentProj * effAmp;
-
-        // Joint log-likelihood metric
-        toneLogLikes[t] = pilotWeight * coherentMetric + (1.0 - pilotWeight) * nonCoherentMetric;
-      }
-
-      // Exact Log-MAP demapping from 16 tone log-likelihoods to 4 soft bit LLRs
-      for (let b = 0; b < 4; b++) {
-        const bitIdx = s * 4 + b;
-        const bitMask = 1 << (3 - b);
-        const logLikes0: number[] = [];
-        const logLikes1: number[] = [];
-
-        for (let t = 0; t < 16; t++) {
-          if ((t & bitMask) === 0) {
-            logLikes0.push(toneLogLikes[t]);
-          } else {
-            logLikes1.push(toneLogLikes[t]);
-          }
-        }
-
-        const lse0 = this.logSumExpArray(logLikes0);
-        const lse1 = this.logSumExpArray(logLikes1);
-        const llr = lse0 - lse1;
-
-        channelLlrs[bitIdx] = Math.max(-30.0, Math.min(30.0, llr));
-
-        const hardDecision = llr < 0 ? 1 : 0;
-        if (hardDecision !== codeword216[bitIdx]) {
-          rawBitErrors++;
-        }
-      }
-    }
-
-    return { channelLlrs, rawBitErrors };
-  }
+  // No generateChannelLlrsFast. It was headed "Exact Matched-Filter Bank & Log-MAP Soft LLR
+  // Demodulator" and was the DEFAULT simulation path, and it never touched a waveform: it drew
+  // per-tone complex Gaussians against an assumed 16-ary orthogonal signalling model
+  // (Y_t = delta * sqrt(2 Es/N0) e^{j theta} + N_t) and applied a pilot-phase-error standard
+  // deviation and a pilot weight of its own invention - `esN0/(esN0 + 1.5)`, clamped to
+  // 0.2..0.95 - neither of which exists anywhere in the shipped receiver.
+  //
+  // Measured at seed 20260830, ideal mode, AWGN, 200 frames a point over -26/-25/-24 dB, with
+  // the removed path run from its own file as it stood in git: the analytic path decoded 30,
+  // 117 and 187 of 200 where the physical chain decoded 5, 33 and 110. 50% crossings -25.20 dB
+  // against -24.13 dB, pooled Fisher exact two-sided p = 3.7e-28 - unpaired, because the
+  // analytic path never synthesizes a waveform and so has no channel realisation to share.
+  // -25.20 dB is where wiki/16's "browser genie-aided bound of -25.28 dB", the figure it could
+  // not reconcile with the Python benchmark's -24.58 dB, actually came from.
+  //
+  // AGENTS.md section 4 states the rule this broke: a sensitivity figure is a claim about the
+  // program someone downloads, so the benchmark must run the receive chain that ships. The
+  // same section records the last time this failed and what it cost (1.77 dB, p = 2.9e-36).
+  // The engine now has one path, and it synthesizes a waveform and demodulates it.
 
   /**
    * Calculates 95% Wilson Score Confidence Interval for binomial proportion
@@ -1083,7 +1047,11 @@ public synthesizePhysicalWaveform(
   public calculateWilsonConfidenceInterval(successes: number, total: number): [number, number] {
     if (total === 0) return [0, 0];
     const p = successes / total;
-    const z = 1.96; // 95% confidence
+    // The exact two-sided 95% quantile, shared with z30_dsp/benchmark.py's WILSON_Z_95 and
+    // pinned across the two languages. A rounded 1.96 used to live here, so the two engines
+    // put measurably different intervals on identical counts - and the intervals are what
+    // wiki/16 compares when it reports the engines landing 0.10 dB apart.
+    const z = WILSON_Z_95;
     const z2 = z * z;
     const denominator = 1 + z2 / total;
     const center = (p + z2 / (2 * total)) / denominator;
@@ -1146,6 +1114,12 @@ public synthesizePhysicalWaveform(
       let timingSqErrSumMs = 0;
       let freqSqErrSumHz = 0;
       let acquiredCount = 0;
+      // Frames that actually reached the demodulator and the decoder, and so actually produced
+      // a bit-error count and an iteration count. Equal to framesPerPoint everywhere except a
+      // realistic-mode point where acquisition failed on some frames; those frames are still
+      // failures in the FER, they simply have no per-bit or per-iteration measurement to
+      // average. See the acquisition-failure branch below.
+      let demodulatedCount = 0;
 
       // Update progress state
       this.currentProgress.currentSnrIdx = ptIdx;
@@ -1169,11 +1143,7 @@ public synthesizePhysicalWaveform(
         let channelLlrs: Float32Array;
         let rawErrors = 0;
 
-        // Realistic mode always runs the full physical chain: the fast correlator-bank path
-        // models an ideal matched-filter receiver analytically and has nowhere to put an
-        // acquisition stage, so it cannot produce a threshold - only a bound.
         const realistic = config.measurementMode === 'realistic';
-        const runFullDsp = realistic || config.simulationMode === 'FULL_PHYSICAL_DSP' || f === 0;
 
         if (realistic) {
           const { stream, trueStartSample, trueCentreFreqHz } = this.synthesizeReceivedStream(
@@ -1189,13 +1159,23 @@ public synthesizePhysicalWaveform(
           if (!acq.found) {
             // Nothing found. Counted as a failed frame, not retried at the true position -
             // that retry is exactly the gift that turns a threshold back into a bound.
+            //
+            // And counted ONLY as a failed frame. This used to add 108 raw bit errors
+            // (216/2), 39 post-LDPC bit errors (77/2) and a full iteration cap to the running
+            // totals, on the reasoning that a frame nobody found carries no information. Those
+            // are three numbers nothing measured: no demodulator ran on this frame, so it has
+            // no bit errors and no iteration count, and writing in the value they "should"
+            // have had put invented data into two published columns. At -25 dB on AWGN, where
+            // 4 frames in 40 fail to acquire, the fill was moving the reported raw BER by
+            // about a point and the post-LDPC BER by more.
+            //
+            // The frame is still a failure - it counts in failureCount, in the FER and in the
+            // decode rate, all of which have the full frame count as their denominator. It is
+            // the per-bit and per-iteration averages that now run over the frames that
+            // actually produced a bit and an iteration, which is the convention timingRmsMs
+            // and freqRmsHz have always used for the same reason.
             acquisitionFailures++;
             failureCount++;
-            totalRawBitErrors += 108; // half of 216 bits: no information was recovered
-            totalPostLdpcBitErrors += 39;
-            totalIterations += config.maxLdpcIterations;
-            if (config.maxLdpcIterations > maxIter) maxIter = config.maxLdpcIterations;
-            if (config.maxLdpcIterations < minIter) minIter = config.maxLdpcIterations;
 
             completedFramesOverall++;
             this.currentProgress.currentFrameInPoint = f + 1;
@@ -1233,7 +1213,7 @@ public synthesizePhysicalWaveform(
           }
 
           if (f === 0) {
-            const decResult = customCodec.decodeMinSum(channelLlrs, config.maxLdpcIterations);
+            const decResult = customCodec.decodeMinSum(channelLlrs);
             const previewStart = acq.startSample;
             this.currentProgress.latestWaveformPreview = {
               timeDomainClean: stream.slice(previewStart, previewStart + 300),
@@ -1250,21 +1230,13 @@ public synthesizePhysicalWaveform(
               iterations: decResult.iterations,
             };
           }
-        } else if (runFullDsp) {
+        } else {
           // Synthesize physical 16-MFSK continuous-phase waveform
-          let cleanWaveform = this.synthesizePhysicalWaveform(
+          const cleanWaveform = this.synthesizePhysicalWaveform(
             fullSymbols75,
             config.sampleRateHz,
             config.audioCenterFreqHz
           );
-
-          if (config.channelModel === 'RAYLEIGH_FADING') {
-            cleanWaveform = this.applyRayleighFading(
-              cleanWaveform,
-              config.sampleRateHz,
-              config.fadingDopplerHz || 0.5
-            );
-          }
 
           // Add calibrated Gaussian noise (AWGN in 2500 Hz reference bandwidth)
           const { noisyWaveform, noiseOnly, sigma } = this.addCalibratedAwgn(
@@ -1307,7 +1279,7 @@ public synthesizePhysicalWaveform(
               magsDb.push(Number((10 * Math.log10(Math.max(1e-9, pwr))).toFixed(1)));
             }
 
-            const decResult = customCodec.decodeMinSum(channelLlrs, config.maxLdpcIterations);
+            const decResult = customCodec.decodeMinSum(channelLlrs);
 
             this.currentProgress.latestWaveformPreview = {
               timeDomainClean: cleanWaveform.slice(0, 300),
@@ -1324,22 +1296,17 @@ public synthesizePhysicalWaveform(
               iterations: decResult.iterations,
             };
           }
-        } else {
-          // Accelerated Exact Matched-Filter Correlator Bank
-          const fastRes = this.generateChannelLlrsFast(
-            codeword216,
-            dataSymbols54,
-            snr,
-            config.channelModel
-          );
-          channelLlrs = fastRes.channelLlrs;
-          rawErrors = fastRes.rawBitErrors;
         }
 
         totalRawBitErrors += rawErrors;
+        demodulatedCount++;
 
-        // 3. Run Actual Systematic (216, 77) Normalized Min-Sum LDPC Decoder
-        const decodeResult = customCodec.decodeMinSum(channelLlrs, config.maxLdpcIterations);
+        // 3. Run the shipped Systematic (216, 77) LDPC decoder, at the iteration cap the
+        // shipped receiver uses. `decodeMinSum` defaults to LDPC_MAX_ITERATIONS, which is what
+        // realReceiver.ts's decode path takes and what z30_dsp/benchmark.py reads from
+        // ldpc.py. Passing a cap from the run configuration is how a benchmark ends up
+        // measuring a decoder nobody runs.
+        const decodeResult = customCodec.decodeMinSum(channelLlrs);
 
         totalIterations += decodeResult.iterations;
         if (decodeResult.iterations < minIter) minIter = decodeResult.iterations;
@@ -1373,9 +1340,11 @@ public synthesizePhysicalWaveform(
       const elapsed = performance.now() - tStart;
       const fer = failureCount / config.framesPerPoint;
       const successRate = (successCount / config.framesPerPoint) * 100;
-      const rawBer = totalRawBitErrors / (config.framesPerPoint * 216);
-      const postBer = totalPostLdpcBitErrors / (config.framesPerPoint * 77);
-      const avgIter = totalIterations / config.framesPerPoint;
+      // Per-bit and per-iteration averages over the frames that produced them; FER and the
+      // decode rate keep the full frame count, because an unacquired frame IS a failed frame.
+      const rawBer = demodulatedCount > 0 ? totalRawBitErrors / (demodulatedCount * 216) : 0;
+      const postBer = demodulatedCount > 0 ? totalPostLdpcBitErrors / (demodulatedCount * 77) : 0;
+      const avgIter = demodulatedCount > 0 ? totalIterations / demodulatedCount : 0;
       const ci = this.calculateWilsonConfidenceInterval(successCount, config.framesPerPoint);
 
       const pointResult: SnrPointResult = {
@@ -1388,6 +1357,7 @@ public synthesizePhysicalWaveform(
         rawChannelBer: Number(rawBer.toFixed(4)),
         postLdpcBer: Number(postBer.toFixed(5)),
         avgLdpcIterations: Number(avgIter.toFixed(1)),
+        demodulatedFrames: demodulatedCount,
         minIterations: minIter === 999 ? 0 : minIter,
         maxIterations: maxIter,
         confidenceInterval95: ci,

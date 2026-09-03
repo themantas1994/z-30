@@ -16,6 +16,7 @@ file checks the constants without needing a JavaScript runtime, so a Python-only
 still catches a drifted table.
 """
 
+import ast
 import json
 import inspect
 import os
@@ -49,6 +50,7 @@ from z30_dsp.message_codec import (
     encode_callsign28,
 )
 from z30_dsp.modem import Z30Config
+from z30_dsp.channel import WATTERSON_PRESETS
 from z30_dsp import acquisition, benchmark, sic_decoder
 
 REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
@@ -65,6 +67,22 @@ CALLSIGN_PACK_VECTORS = os.path.join(
 def read(path: str) -> str:
     with open(path, "r", encoding="utf-8") as handle:
         return handle.read()
+
+
+def strip_comments_ts(source: str) -> str:
+    """
+    TypeScript source with `//` and `/* */` comments removed.
+
+    The tests below assert that a removed construct has not come back, and every removal in
+    this project leaves a comment behind naming what went and why - so a naive substring search
+    would match the tombstone and pass forever. Stripping first means the assertion is about
+    the code.
+
+    Deliberately simple: it does not know about `//` inside a string literal. Nothing in these
+    two files has one, and a parser here would be more machinery than the check is worth.
+    """
+    without_block = re.sub(r"/\*.*?\*/", "", source, flags=re.S)
+    return re.sub(r"//[^\n]*", "", without_block)
 
 
 def parse_ts_check_table() -> list:
@@ -417,6 +435,316 @@ def test_the_benchmark_demodulates_like_the_receiver_that_ships():
     default = inspect.signature(benchmark.demodulate_mfsk_llrs).parameters["pilot_coherence"].default
     assert default == benchmark.RECEIVER_PILOT_COHERENCE, (
         "demodulate_mfsk_llrs defaults to something other than the shipped receiver's weight"
+    )
+
+
+def test_the_two_engines_agree_on_the_statistics_they_publish():
+    """
+    The confidence interval and the publishable sample size are one rule, not two.
+
+    Both are printed next to a sensitivity figure, and wiki/16 compares the two engines' 95%
+    bands directly when it reports them landing 0.02 dB apart - so a band computed from a
+    rounded z on one side and the exact quantile on the other is a comparison of two slightly
+    different statements. The browser engine used a hardcoded 1.96; the Python side has always
+    written the quantile out in full precisely so the interval does not depend on which library
+    version produced it.
+
+    PUBLISHABLE_FRAMES_PER_POINT is pinned for the same reason. The Python benchmark has
+    printed an EXPLORATORY notice below it for as long as it has existed; the browser engine
+    defaults to a quarter of it and offers a 25-frame quick sweep, and used to print nothing.
+    """
+    engine = read(os.path.join(REPO_ROOT, "src", "dsp", "monteCarloEngine.ts"))
+
+    z = re.search(r"export const WILSON_Z_95\s*=\s*([0-9.]+);", engine)
+    assert z, "WILSON_Z_95 not found in monteCarloEngine.ts"
+    assert float(z.group(1)) == benchmark.WILSON_Z_95
+
+    frames = re.search(r"export const PUBLISHABLE_FRAMES_PER_POINT\s*=\s*([0-9]+);", engine)
+    assert frames, "PUBLISHABLE_FRAMES_PER_POINT not found in monteCarloEngine.ts"
+    assert int(frames.group(1)) == benchmark.PUBLISHABLE_FRAMES_PER_POINT
+
+    # And the constant has to be the one the arithmetic uses, not a literal declared beside a
+    # hardcoded 1.96. This is the shape the RECEIVER_PILOT_COHERENCE defect took.
+    assert "const z = WILSON_Z_95;" in engine, (
+        "calculateWilsonConfidenceInterval no longer reads WILSON_Z_95"
+    )
+
+
+def test_the_browser_engine_measures_the_receiver_that_ships():
+    """
+    The browser benchmark must run the waveform and the shipped demodulator, not a model.
+
+    It used to default to a `MATCHED_FILTER_CORRELATOR_BANK` path that synthesized no waveform
+    and called no demodulator: it drew per-tone complex Gaussians against an assumed 16-ary
+    orthogonal signalling model and applied a pilot weight of its own (`esN0/(esN0 + 1.5)`,
+    clamped). Measured at seed 20260830 in ideal mode over -26/-25/-24 dB, 20 frames a point,
+    it decoded 6/11/19 of 20 where the physical chain decoded 0/2/11 - roughly 2 dB optimistic,
+    and the origin of the browser "genie-aided bound" wiki/16 could not reconcile with the
+    Python one.
+
+    AGENTS.md section 4 states the rule: a benchmark that reimplements the receiver measures
+    the reimplementation. This asserts the reimplementation is gone and cannot come back under
+    its own name, and that the one surviving path still calls the real synthesiser and the real
+    demodulator.
+    """
+    engine = read(os.path.join(REPO_ROOT, "src", "dsp", "monteCarloEngine.ts"))
+    code = strip_comments_ts(engine)
+
+    for banned in ("generateChannelLlrsFast", "MATCHED_FILTER_CORRELATOR_BANK", "SimulationModeType"):
+        assert banned not in code, (
+            f"{banned} is back in monteCarloEngine.ts: the browser benchmark can once again "
+            f"measure an analytic model instead of the shipped receive chain"
+        )
+
+    # The surviving path synthesizes a waveform and demodulates it.
+    assert "this.synthesizePhysicalWaveform(" in code
+    assert "this.demodulateToLlrs(" in code
+
+
+def test_the_browser_engine_claims_no_channel_it_does_not_model():
+    """
+    The browser engine models calibrated AWGN, and says so.
+
+    It used to offer `RAYLEIGH_FADING`, whose implementation was headed "Rayleigh / ITU-R
+    F.1487 Ionospheric Multipath Fading" and commented "Two-path Watterson model", and which
+    multiplied each path by a REAL-VALUED sinusoid (`0.8 + 0.4*sin`, `0.5 + 0.3*cos`). A
+    Watterson tap is a complex Gaussian process, and the complex half is the half that matters:
+    a real gain cannot rotate the carrier, so it cannot spread a tone, and Doppler spread
+    against the 3.125 Hz tone spacing is the entire mechanism wiki/16 records for this mode's
+    behaviour on a disturbed path. It also offered `CO_CHANNEL_QRM`, which no code anywhere
+    read - selecting it ran AWGN and labelled the result interference.
+
+    z30_dsp/channel.py implements the recommendation properly, against its own named test
+    conditions, and this test pins that the browser engine does not claim to.
+    """
+    engine = read(os.path.join(REPO_ROOT, "src", "dsp", "monteCarloEngine.ts"))
+    code = strip_comments_ts(engine)
+
+    for banned in ("applyRayleighFading", "RAYLEIGH_FADING", "CO_CHANNEL_QRM", "fadingDopplerHz"):
+        assert banned not in code, (
+            f"{banned} is back in monteCarloEngine.ts without the Watterson model behind it"
+        )
+
+    # The Python side, meanwhile, must still carry the real thing and the real presets - the
+    # named conditions are what makes a fading figure comparable with anyone else's.
+    assert set(WATTERSON_PRESETS) >= {"none", "good", "moderate", "poor", "high-moderate"}
+    for key, preset in WATTERSON_PRESETS.items():
+        if key == "none":
+            continue
+        assert "ITU-R F.1487" in preset.name, (
+            f"fading preset {key!r} no longer names the recommendation it comes from"
+        )
+
+
+def test_the_browser_engine_uses_the_shipped_decoder_iteration_cap():
+    """
+    A benchmark may not choose the decoder's iteration cap.
+
+    The modal had a 10-120 input box wired straight into `decodeMinSum`'s cap, so a run could
+    measure a decoder the shipped receiver is not: `decodeWithAp` in realReceiver.ts takes
+    LDPC_MAX_ITERATIONS and offers no way to override it, and z30_dsp/benchmark.py reads the
+    same constant from ldpc.py rather than taking one. Same reasoning that removed the
+    alphaMinSum slider, except that one could not move the curve and this one could.
+    """
+    engine = read(os.path.join(REPO_ROOT, "src", "dsp", "monteCarloEngine.ts"))
+    modal = read(os.path.join(REPO_ROOT, "src", "components", "MonteCarloBenchmarkModal.tsx"))
+
+    assert "maxLdpcIterations" not in strip_comments_ts(engine)
+    assert "maxLdpcIterations" not in strip_comments_ts(modal)
+    # Every decode in the engine takes the codec's own default.
+    assert not re.search(r"decodeMinSum\(channelLlrs\s*,", engine), (
+        "the browser benchmark passes an iteration cap to decodeMinSum again"
+    )
+
+    # The Python sweep does the same, from ldpc.py's constant rather than a retyped literal.
+    source = inspect.getsource(benchmark.run_monte_carlo_snr_sweep)
+    assert "Z30LdpcCodec(max_iterations=LDPC_MAX_ITERATIONS)" in source
+
+
+def test_the_ui_plots_no_curve_nothing_measured():
+    """
+    The decode-probability chart carries measured points and one sanctioned reference.
+
+    It used to draw a "Shannon Capacity Limit", ON BY DEFAULT, as
+    `100 * exp(1.8 * (snr + 30.51))`. Shannon's theorem gives an SNR below which no reliable
+    code exists; it does not give a decode probability, and nothing in this repository derives
+    that exponential, its slope or its intercept. A curve whose shape nobody computed, labelled
+    a fundamental limit and drawn beside measured points, is the failure mode AGENTS.md
+    section 5 is written against - the withdrawn "+4.0 dB advantage" came back into this same
+    modal once already.
+
+    The FT8 logistic stays because wiki/16 sanctions it under conditions this asserts: it is
+    opt-in, and it defaults to off.
+    """
+    modal = read(os.path.join(REPO_ROOT, "src", "components", "MonteCarloBenchmarkModal.tsx"))
+    code = strip_comments_ts(modal)
+
+    for banned in ("shannonLimit", "includeShannonLimit", "ft4DecodePct"):
+        assert banned not in code, f"{banned} is back in the benchmark modal"
+
+    assert re.search(
+        r"const \[includeFt8Comparison, setIncludeFt8Comparison\] = useState<boolean>\(false\)",
+        code,
+    ), "the FT8 reference overlay is no longer off by default"
+    # And it is still drawn only behind that opt-in.
+    assert "{includeFt8Comparison && (" in code
+
+
+def test_the_crossing_rule_has_one_implementation_in_python():
+    """
+    "Where does this curve reach N%" is one rule, and `_crossing_db` is it.
+
+    `decode_threshold_db` used to carry a second copy of the same interpolation, and the `--ap`
+    instrument read that one while every published threshold read the other. They agreed by
+    inspection, which is the state AGENTS.md's "one source of truth per rule" describes: two
+    implementations agreeing today and drifting the day one of them meets a curve that dips.
+
+    Asserted by construction rather than by reading: the two entry points are driven over
+    randomly generated monotone curves and must return the same number every time.
+    """
+    assert "_crossing_db(" in inspect.getsource(benchmark.decode_threshold_db)
+
+    rng = np.random.default_rng(20260903)
+    for _ in range(200):
+        n = int(rng.integers(3, 12))
+        snrs = np.sort(rng.uniform(-30.0, -10.0, n))
+        # A monotone decode curve with a genuine crossing somewhere inside it.
+        pcts = np.sort(rng.uniform(0.0, 100.0, n))
+        results = [
+            {"snr_db": float(s), "decode_pct": float(p), "successes": int(round(p)), "total_frames": 100}
+            for s, p in zip(snrs, pcts)
+        ]
+        via_helper = benchmark._crossing_db([(r["snr_db"], r["decode_pct"]) for r in results], 50.0)
+        via_public = benchmark.decode_threshold_db(results)
+        _lo, via_interval, _hi = benchmark.decode_threshold_interval_db(results, 50.0)
+        assert via_public == via_helper
+        assert via_interval == via_helper
+
+
+def test_the_ap_instrument_reports_a_band_and_not_a_bare_crossing():
+    """
+    Every crossing this project prints carries the range its sample supports.
+
+    `ap_threshold_shift` used to return three bare numbers, printed to two decimal places, off
+    the IN-QSO half of a sweep - about half the frames the sweep ran, so a wider interval than
+    the sweep's own and no interval shown at all. AGENTS.md section 5 asks for the interval
+    rather than the crossing.
+
+    The bands are checked for the property that defines them rather than against stored values:
+    the optimistic curve (every point at its upper Wilson bound) must cross at or below the
+    measured curve, and the pessimistic one at or above it. That is computed here from counts
+    this test makes up, so it cannot be satisfied by a hardcoded return.
+    """
+    rng = np.random.default_rng(20260903)
+    for _ in range(50):
+        in_qso = int(rng.integers(20, 120))
+        # A rising curve of in-QSO decode counts, with AP at least as good as plain.
+        fractions = np.sort(rng.uniform(0.0, 1.0, 6))
+        results = []
+        for i, frac in enumerate(fractions):
+            plain = int(round(frac * in_qso))
+            ap = min(in_qso, plain + int(rng.integers(0, 4)))
+            results.append({
+                "snr_db": -27.0 + i,
+                "in_qso_frames": in_qso,
+                "in_qso_plain": plain,
+                "in_qso_ap": ap,
+            })
+
+        shift = benchmark.ap_threshold_shift(results)
+        for arm, counts_key in (("plain", "in_qso_plain"), ("ap", "in_qso_ap")):
+            point, low, high = shift[f"{arm}_db"], shift[f"{arm}_low_db"], shift[f"{arm}_high_db"]
+
+            # Recomputed here from the counts this test made up, through the same two public
+            # helpers, so the assertion is arithmetic on real data rather than a stored answer.
+            expected_point = benchmark._crossing_db(
+                [(r["snr_db"], 100.0 * r[counts_key] / r["in_qso_frames"]) for r in results], 50.0
+            )
+            expected_low = benchmark._crossing_db(
+                [(r["snr_db"],
+                  100.0 * benchmark.wilson_interval(r[counts_key], r["in_qso_frames"])[1])
+                 for r in results], 50.0
+            )
+            expected_high = benchmark._crossing_db(
+                [(r["snr_db"],
+                  100.0 * benchmark.wilson_interval(r[counts_key], r["in_qso_frames"])[0])
+                 for r in results], 50.0
+            )
+            assert point == expected_point
+            assert low == expected_low, f"{arm} optimistic bound is not the Wilson band's"
+            assert high == expected_high, f"{arm} pessimistic bound is not the Wilson band's"
+
+            if point is None:
+                continue
+            # A more optimistic curve crosses at a LOWER (better) SNR, and vice versa. When the
+            # band's own crossing runs off the end of the sweep it is None, which is reported
+            # rather than silently clipped to the point estimate.
+            if low is not None:
+                assert low <= point + 1e-9, f"{arm} optimistic bound is worse than the estimate"
+            if high is not None:
+                assert high >= point - 1e-9, f"{arm} pessimistic bound is better than the estimate"
+
+        if shift["shift_db"] is not None:
+            assert shift["shift_db"] == pytest.approx(shift["plain_db"] - shift["ap_db"])
+
+
+def test_the_python_sources_stay_importable_on_the_supported_floor():
+    """
+    AGENTS.md section 7 puts the support floor at Python 3.9, and CI runs 3.10 and up.
+
+    So nothing in CI evaluates a module-level annotation the way 3.9 would, and
+    `benchmark._log_sum_exp` carried `List[float] | np.ndarray` unquoted for exactly that
+    reason. PEP 604's `|` on `typing.List` and on a class object arrives in 3.10: on 3.9 that
+    expression is evaluated at def time and raises TypeError, taking down the import of
+    z30_dsp.benchmark and everything that imports it - the whole benchmark, on a supported
+    interpreter, from an annotation.
+
+    Scanned rather than asserted about one function, because the next one will be somewhere
+    else. A file that opts in with `from __future__ import annotations` is exempt, since that
+    is exactly what makes the form safe.
+    """
+    # Every tree ruff lints at target-version py39, not just the runtime package: a helper in
+    # tests/ or scripts/ that cannot be imported on the floor is the same defect one step out.
+    # Parsed rather than grepped, so the check cannot be fooled by a `|` inside a string or a
+    # comment, and so a quoted annotation - which is never evaluated - correctly passes.
+    offenders = []
+    sources = [
+        (directory, name)
+        for directory in ("z30_dsp", "tests", "scripts")
+        for name in sorted(os.listdir(os.path.join(REPO_ROOT, directory)))
+        if name.endswith(".py")
+    ]
+    for directory, name in sources:
+        source = read(os.path.join(REPO_ROOT, directory, name))
+        if "from __future__ import annotations" in source:
+            continue
+        tree = ast.parse(source, filename=name)
+        for node in ast.walk(tree):
+            if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.AnnAssign)):
+                continue
+            annotations = []
+            if isinstance(node, ast.AnnAssign):
+                annotations.append(node.annotation)
+            else:
+                annotations.append(node.returns)
+                args = node.args
+                for arg in (*args.posonlyargs, *args.args, *args.kwonlyargs,
+                            args.vararg, args.kwarg):
+                    if arg is not None:
+                        annotations.append(arg.annotation)
+            for annotation in annotations:
+                if annotation is None:
+                    continue
+                # ast.BinOp with BitOr IS the runtime-evaluated PEP 604 union. A string
+                # annotation parses as ast.Constant and is never evaluated.
+                for sub in ast.walk(annotation):
+                    if isinstance(sub, ast.BinOp) and isinstance(sub.op, ast.BitOr):
+                        offenders.append(f"{directory}/{name}:{annotation.lineno}")
+
+    assert len(sources) > 20, "the scan found almost no sources - it would pass vacuously"
+    assert not offenders, (
+        "PEP 604 `X | Y` annotations evaluated at runtime, which raises TypeError on the "
+        f"Python 3.9 floor AGENTS.md section 7 sets: {offenders}. Quote them, as ldpc.py does."
     )
 
 
