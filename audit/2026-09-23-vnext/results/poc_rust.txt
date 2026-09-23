@@ -1,0 +1,5 @@
+RUST LDPC  frames=280  same_success=280 same_info_bits=280 same_iterations=280
+  mismatches (frame, ref_ok, rust_ok, ref_iters, rust_iters): []
+  decode (success): n=109 mean=0.1664ms p50=0.0103ms p99=6.2844ms max=6.9462ms
+  decode (failure, all 4 schedules + OSD): n=171 mean=7.0106ms p50=6.9035ms p99=9.1958ms max=9.2106ms
+RUST DEMOD fs=12000  max|LLR_rust - LLR_python| = 0.000e0   n=50 mean=4.0339ms p50=4.0959ms p99=5.1265ms max=5.1265ms

@@ -1,0 +1,4 @@
+PYTHON LDPC success: n=109 mean=16.47ms p50=2.94ms p99=226.28ms max=571.98ms
+PYTHON LDPC failure: n=171 mean=521.92ms p50=515.25ms p99=602.25ms max=627.58ms
+PYTHON DEMOD (shipped) fs=12000: n=5 mean=122.17ms p50=122.44ms p99=125.56ms max=126.84ms
+NUMPY-VECTORISED DEMOD fs=12000: max|diff vs shipped| = 0.000e+00  n=50 mean=3.37ms p50=2.64ms p99=14.06ms max=16.49ms

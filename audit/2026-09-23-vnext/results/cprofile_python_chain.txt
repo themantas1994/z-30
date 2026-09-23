@@ -1,0 +1,24 @@
+outcomes: [(False, 150), (False, 150), (True, 1)]
+         1053980 function calls (1053972 primitive calls) in 4.036 seconds
+
+   Ordered by: internal time
+   List reduced from 143 to 14 due to restriction <14>
+
+   ncalls  tottime  percall  cumtime  percall filename:lineno(function)
+        6    1.351    0.225    1.351    0.225 <venv>/lib/python3.11/site-packages/numpy/fft/_pocketfft.py:51(_raw_fft)
+        3    0.704    0.235    2.041    0.680 /home/user/z-30/z30_dsp/acquisition.py:109(_spectrogram)
+    66640    0.585    0.000    0.599    0.000 /home/user/z-30/z30_dsp/ldpc.py:468(_box_plus_into)
+      301    0.510    0.002    1.339    0.004 /home/user/z-30/z30_dsp/ldpc.py:558(_sweep_checks)
+        3    0.217    0.072    0.452    0.151 /home/user/z-30/z30_dsp/benchmark.py:250(demodulate_mfsk_llrs)
+        3    0.139    0.046    2.225    0.742 /home/user/z-30/z30_dsp/acquisition.py:129(acquire_frame)
+    11120    0.128    0.000    0.774    0.000 /home/user/z-30/z30_dsp/ldpc.py:513(_spa_messages)
+     2573    0.099    0.000    0.099    0.000 <venv>/lib/python3.11/site-packages/numpy/lib/_function_base_impl.py:3530(_chbevl)
+   217431    0.035    0.000    0.035    0.000 {built-in method builtins.max}
+     2573    0.028    0.000    0.166    0.000 <venv>/lib/python3.11/site-packages/numpy/lib/_function_base_impl.py:658(piecewise)
+   359374    0.026    0.000    0.026    0.000 {built-in method builtins.abs}
+    11768    0.020    0.000    0.020    0.000 <venv>/lib/python3.11/site-packages/numpy/_core/_methods.py:99(_clip)
+    10802    0.020    0.000    0.020    0.000 {method 'reduce' of 'numpy.ufunc' objects}
+        6    0.013    0.002    0.015    0.002 <venv>/lib/python3.11/site-packages/numpy/lib/_function_base_impl.py:3265(hanning)
+
+
+

@@ -1,0 +1,8 @@
+{"trial":0,"carrierPhaseDeg":335,"timingErrMs":1,"freqErrHz":0,"shippedSuppressionDb":1.1,"leastSquaresSuppressionDb":17.2}
+{"trial":1,"carrierPhaseDeg":1,"timingErrMs":3,"freqErrHz":0,"shippedSuppressionDb":-1.2,"leastSquaresSuppressionDb":11.3}
+{"trial":2,"carrierPhaseDeg":181,"timingErrMs":5,"freqErrHz":0.001,"shippedSuppressionDb":-5.4,"leastSquaresSuppressionDb":6.1}
+{"trial":3,"carrierPhaseDeg":309,"timingErrMs":1,"freqErrHz":0,"shippedSuppressionDb":4.3,"leastSquaresSuppressionDb":21.3}
+{"trial":4,"carrierPhaseDeg":116,"timingErrMs":6,"freqErrHz":0.001,"shippedSuppressionDb":-5,"leastSquaresSuppressionDb":5.2}
+{"trial":5,"carrierPhaseDeg":206,"timingErrMs":0,"freqErrHz":0,"shippedSuppressionDb":-5.5,"leastSquaresSuppressionDb":35.1}
+{"trial":6,"carrierPhaseDeg":272,"timingErrMs":4,"freqErrHz":0,"shippedSuppressionDb":-5,"leastSquaresSuppressionDb":7.3}
+{"trial":7,"carrierPhaseDeg":47,"timingErrMs":3,"freqErrHz":0,"shippedSuppressionDb":-4.1,"leastSquaresSuppressionDb":10.3}

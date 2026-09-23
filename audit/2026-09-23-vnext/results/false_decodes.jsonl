@@ -1,0 +1,8 @@
+{"seed":11,"trials":2500,"ordinary":{"falseDecodes":0,"viaOsd":0,"viaBpOrTrellis":0,"viaRawHard":0},"ap":{"falseDecodes":0,"byType":{}},"decodeMs":{"mean":20.76736502599953,"p50":18.81040899999789,"p99":44.06444800004829,"max":118.098523},"apDecodeMs":{"mean":99.29585641959932,"p99":191.2068520000321,"max":366.664526},"examples":[]}
+
+{"seed":12,"trials":2500,"ordinary":{"falseDecodes":0,"viaOsd":0,"viaBpOrTrellis":0,"viaRawHard":0},"ap":{"falseDecodes":0,"byType":{}},"decodeMs":{"mean":20.76133351039871,"p50":18.859113999991678,"p99":44.07247400001506,"max":130.78470199999992},"apDecodeMs":{"mean":99.3506750931999,"p99":190.36329300003126,"max":469.15704400000004},"examples":[]}
+
+{"seed":13,"trials":2500,"ordinary":{"falseDecodes":0,"viaOsd":0,"viaBpOrTrellis":0,"viaRawHard":0},"ap":{"falseDecodes":0,"byType":{}},"decodeMs":{"mean":20.447840210000415,"p50":18.45771099999547,"p99":46.35055500001181,"max":120.47903100000002},"apDecodeMs":{"mean":97.31161149239988,"p99":184.26517599995714,"max":514.5297940000002},"examples":[]}
+
+{"seed":14,"trials":2500,"ordinary":{"falseDecodes":0,"viaOsd":0,"viaBpOrTrellis":0,"viaRawHard":0},"ap":{"falseDecodes":0,"byType":{}},"decodeMs":{"mean":20.466708442400762,"p50":18.626103999995394,"p99":44.664145999995526,"max":111.07766500000002},"apDecodeMs":{"mean":97.64074248040053,"p99":192.11784100002842,"max":507.143414},"examples":[]}
+

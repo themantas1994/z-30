@@ -1,0 +1,6 @@
+PYTHON acquire_frame fs=6000 benchmark window (+/-12 Hz, +/-0.55 s): 493 ms  found start err=0.0 ms f=1250.15 Hz
+PYTHON acquire_frame fs=6000 whole passband (200-2800 Hz, +/-1.5 s): 166 ms  found start err=0.0 ms f=1250.15 Hz
+PYTHON acquire_frame fs=12000 benchmark window (+/-12 Hz, +/-0.55 s): 605 ms  found start err=-5.0 ms f=1250.00 Hz
+PYTHON acquire_frame fs=12000 whole passband (200-2800 Hz, +/-1.5 s): 299 ms  found start err=-5.0 ms f=1250.00 Hz
+TS fs=6000: findCandidates 50 ms (1 cands) | refineTimingAndFreq per candidate 317 ms | refineFineFrequency 7 ms
+TS fs=12000: findCandidates 55 ms (1 cands) | refineTimingAndFreq per candidate 611 ms | refineFineFrequency 14 ms

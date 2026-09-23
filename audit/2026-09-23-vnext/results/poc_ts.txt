@@ -1,0 +1,4 @@
+TS LDPC agreement with Python reference: same_success=280 same_info=199 same_iters=277 of 280
+TS LDPC success: n=109 mean=0.578ms p50=0.361ms p99=1.864ms max=8.569ms
+TS LDPC failure: n=171 mean=20.059ms p50=19.771ms p99=42.494ms max=50.779ms
+TS DEMOD fs=12000 max|LLR_ts - LLR_python| = 4.768e-7  n=20 mean=69.544ms p50=68.000ms p99=73.735ms max=84.677ms

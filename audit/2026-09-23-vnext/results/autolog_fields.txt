@@ -1,0 +1,5 @@
+TX "W1AW K1ABC -16.3" type=REPORT -> RX "W1AW K1ABC -16"
+TX "W1AW K1ABC +012" type=REPORT -> RX "W1AW K1ABC +12"
+TX "W1AW K1ABC +05.3" type=REPORT -> RX "W1AW K1ABC +5"
+auto-logged: {"id":"log-1790198517158","utcDate":"2026-09-23","utcTime":"14:21:57","callsign":"K1ABC","grid":"FN31","mode":"z-30","band":"20m","freqMhz":14.08125,"rstSent":"-18.4","rstRcvd":"-16","distanceKm":2625,"azimuthDeg":251,"notes":"z-30 16-MFSK LDPC / SIC Pass 1"}
+process TZ: America/Los_Angeles  real UTC now: 2026-09-23T21:21:57.188Z

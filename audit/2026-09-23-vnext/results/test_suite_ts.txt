@@ -1,0 +1,14 @@
+npm run lint (tsc --noEmit, strict): clean
+npm run test:ts: 469 checks passed, 0 failed
+All TypeScript codec checks passed.
+All frontend module checks passed.
+All transmit-path checks passed.
+All rig-readback checks passed.
+All rig-probe and watchdog checks passed.
+All DSP determinism checks passed.
+All audio-channel safety checks passed.
+All a priori decoding checks passed.
+real	1m8.995s
+user	0m29.845s
+sys	0m0.704s
+npm run build: OK in 2.4 s; dist/assets/index-*.js 1,995,139 bytes (591.97 kB gzip), single chunk
