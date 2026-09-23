@@ -1,0 +1,32 @@
+........................................................................ [100%]
+============================= slowest 25 durations =============================
+25.77s call     tests/test_ap_decode.py::test_a_correct_hypothesis_recovers_frames_the_plain_decoder_loses
+11.39s call     tests/test_ap_decode.py::test_a_wrong_hypothesis_is_rejected
+7.67s call     tests/test_ap_decode.py::test_ap_never_loses_a_frame_the_plain_decoder_found
+6.73s call     tests/test_ap_decode.py::test_plain_decode_is_unchanged_by_the_ap_parameter
+5.00s call     tests/test_ldpc_vectorized_equivalence.py::test_full_decode_matches_a_reference_cascade[-25.0]
+4.89s call     tests/test_benchmark_parallel.py::test_realistic_sweep_is_identical_across_worker_counts
+4.24s call     tests/test_ap_decode.py::test_ap_decode_is_deterministic
+2.14s call     tests/test_benchmark_parallel.py::test_ideal_sweep_is_identical_across_worker_counts
+1.84s call     tests/test_benchmark_parallel.py::test_decoding_a_frame_is_pure
+1.61s call     tests/test_channel_acquisition.py::TestEndToEnd::test_a_strong_frame_decodes_through_the_full_blind_chain
+1.21s call     tests/test_benchmark_parallel.py::test_decode_order_does_not_change_any_frame_outcome
+1.15s call     tests/test_cross_language_parity.py::test_decoder_reaches_the_dither_schedule_and_stays_reproducible
+1.02s call     tests/test_channel_acquisition.py::TestAcquisition::test_recovers_carrier_and_timing_offsets_at_usable_snr
+1.01s call     tests/test_web_server_api.py::test_hard_ceiling_releases_even_with_keepalives
+0.95s call     tests/test_ap_decode.py::test_paired_outcome_shares_one_demodulation
+0.75s call     tests/test_web_server_api.py::test_keepalive_holds_the_pin_up
+0.70s call     tests/test_web_server_api.py::test_the_watchdog_never_keys_an_active_low_station
+0.70s call     tests/test_web_server_api.py::test_the_watchdog_releases_a_keyed_active_low_station
+0.70s call     tests/test_web_server_api.py::test_watchdog_releases_the_pin_when_keepalives_stop
+0.68s call     tests/test_ldpc_vectorized_equivalence.py::test_sweep_is_bit_identical_to_the_scalar_reference[-26.0-SPA]
+0.65s call     tests/test_benchmark_parallel.py::test_frame_preparation_does_not_depend_on_batch_size
+0.62s call     tests/test_ldpc_codec.py::test_end_to_end_round_trip_at_working_snr[-20.0]
+0.62s call     tests/test_ldpc_codec.py::test_end_to_end_round_trip_at_working_snr[-18.0]
+0.61s call     tests/test_ldpc_vectorized_equivalence.py::test_sweep_is_bit_identical_to_the_scalar_reference[-23.0-SPA]
+0.53s call     tests/test_ldpc_vectorized_equivalence.py::test_sweep_is_bit_identical_to_the_scalar_reference[-19.0-SPA]
+288 passed in 107.88s (0:01:47)
+
+real	1m48.157s
+user	1m27.494s
+sys	0m4.081s

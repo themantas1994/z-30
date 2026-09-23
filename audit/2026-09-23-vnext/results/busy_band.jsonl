@@ -1,0 +1,8 @@
+{"K":1,"trial":0,"ms":1485,"uniqueCorrect":1,"duplicateDecodes":2,"falseDecodes":0,"passes":[1,1,1]}
+{"K":1,"trial":1,"ms":1050,"uniqueCorrect":1,"duplicateDecodes":0,"falseDecodes":0,"passes":[1,0]}
+{"K":5,"trial":0,"ms":2918,"uniqueCorrect":2,"duplicateDecodes":3,"falseDecodes":0,"passes":[2,2,1]}
+{"K":5,"trial":1,"ms":4082,"uniqueCorrect":2,"duplicateDecodes":4,"falseDecodes":0,"passes":[2,2,2]}
+{"K":10,"trial":0,"ms":7077,"uniqueCorrect":6,"duplicateDecodes":10,"falseDecodes":0,"passes":[6,5,5]}
+{"K":10,"trial":1,"ms":9071,"uniqueCorrect":6,"duplicateDecodes":12,"falseDecodes":0,"passes":[6,6,6]}
+{"K":20,"trial":0,"ms":18044,"uniqueCorrect":13,"duplicateDecodes":21,"falseDecodes":0,"passes":[13,11,10]}
+{"K":20,"trial":1,"ms":13975,"uniqueCorrect":11,"duplicateDecodes":14,"falseDecodes":0,"passes":[11,8,6]}

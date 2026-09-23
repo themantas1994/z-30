@@ -1,0 +1,15 @@
+{"drift_hz": 0.0, "snr_db": -20.0, "decoded": 40, "frames": 40}
+{"drift_hz": 0.5, "snr_db": -20.0, "decoded": 40, "frames": 40}
+{"drift_hz": 1.0, "snr_db": -20.0, "decoded": 40, "frames": 40}
+{"drift_hz": 2.0, "snr_db": -20.0, "decoded": 40, "frames": 40}
+{"clock_ppm": 100.0, "snr_db": -20.0, "decoded": 40, "frames": 40}
+{"clock_ppm": 1000.0, "snr_db": -20.0, "decoded": 40, "frames": 40}
+{"clock_ppm": 3000.0, "snr_db": -20.0, "decoded": 40, "frames": 40}
+{"drift_hz": 0.0, "snr_db": -22.0, "decoded": 37, "frames": 40}
+{"drift_hz": 1.0, "snr_db": -22.0, "decoded": 34, "frames": 40}
+{"drift_hz": 2.0, "snr_db": -22.0, "decoded": 27, "frames": 40}
+{"drift_hz": 4.0, "snr_db": -22.0, "decoded": 1, "frames": 40}
+{"clock_ppm": 1000.0, "snr_db": -22.0, "decoded": 34, "frames": 40}
+{"clock_ppm": 3000.0, "snr_db": -22.0, "decoded": 35, "frames": 40}
+{"drift_hz": 6.0, "snr_db": -22.0, "decoded": 0, "frames": 40}
+{"clock_ppm": 5000.0, "snr_db": -22.0, "decoded": 24, "frames": 40}

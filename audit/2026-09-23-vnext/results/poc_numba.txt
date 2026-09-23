@@ -1,0 +1,9 @@
+numba first call (JIT compile or cache load): 7.43 s
+NUMBA success: n=109 mean=0.215ms p50=0.029ms p99=3.186ms max=7.667ms
+NUMBA failure: n=171 mean=8.193ms p50=8.177ms p99=9.572ms max=10.643ms
+NUMBA agreement: same_success=280 same_info=280 same_iters=280 of 280
+
+Separate runs with the on-disk cache enabled (the script's Z30_NUMBA_CACHE=1 mode):
+  run 1 (compile + write cache): exit 0, same output as above
+  run 2 (load cache):            Segmentation fault, exit 139 - reproduced on 3 of 3 attempts
+  (numba 0.67.0, NumPy 2.2.6, Python 3.11.15)
