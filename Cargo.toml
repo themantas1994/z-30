@@ -9,7 +9,7 @@ version = "0.9.0"
 edition = "2021"
 license = "MIT"
 repository = "https://github.com/themantas1994/z-30"
-rust-version = "1.80"
+rust-version = "1.82"
 
 [workspace.dependencies]
 z30-protocol = { path = "crates/z30-protocol" }

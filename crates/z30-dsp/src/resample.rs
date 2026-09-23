@@ -42,8 +42,9 @@ impl Resampler {
         let down = (in_rate as u64 / g) as usize;
         let nyq = in_rate.min(out_rate) as f64 / 2.0;
         let pass = passband_hz.unwrap_or(0.95 * nyq).min(0.99 * nyq);
-        let stop = 2.0 * nyq - pass; // aliases of [stop, ...] fold to below... at most `pass`
-        let stop = stop.min(nyq + (nyq - pass));
+        // Transition band [pass, stop], symmetric about the output Nyquist, so everything that
+        // folds lands above `pass`.
+        let stop = 2.0 * nyq - pass;
         let hi_rate = in_rate as f64 * up as f64;
         let cutoff = 0.5 * (pass + stop.min(2.0 * nyq)) / hi_rate; // cycles per high-rate sample
         let atten = 80.0;
@@ -77,10 +78,20 @@ impl Resampler {
         }
     }
 
-    /// Group delay in output samples (constant; subtract it when mapping sample time).
-    pub fn delay_out_samples(&self) -> f64 {
+    /// Output sample `k` (counted from the first output) is centred on input sample
+    /// `k * in_rate / out_rate + input_delay()`. The receiver's clock model uses this to put
+    /// every resampled sample at the instant it actually represents.
+    pub fn input_delay(&self) -> f64 {
+        // The history starts with `taps_per_phase` zeros, so history index h is input index
+        // h - tpp; output k's newest tap is history pos + tpp - 1 and the prototype's centre sits
+        // (N - 1) / 2 high-rate samples behind it.
         let n = (self.taps_per_phase * self.up) as f64;
-        (n - 1.0) / 2.0 / self.up as f64 * self.out_rate as f64 / self.in_rate as f64
+        -1.0 - (n - 1.0) / (2.0 * self.up as f64)
+    }
+
+    /// Input rate / output rate.
+    pub fn ratio(&self) -> f64 {
+        self.in_rate as f64 / self.out_rate as f64
     }
 
     /// Resamples `input`, appending to `out`. Keeps state between calls; the output sample
@@ -148,6 +159,21 @@ mod tests {
                 let p = power(&out[2000..5000]);
                 assert!(p < 0.5e-7, "{rate}: alias power {p}");
             }
+        }
+    }
+
+    #[test]
+    fn input_delay_locates_an_impulse() {
+        for &rate in &[48_000u32, 44_100, 12_000] {
+            let mut r = Resampler::new(rate, 6000, Some(2850.0));
+            let i0 = 50_000usize;
+            let mut x = vec![0.0f32; 100_000];
+            x[i0] = 1.0;
+            let mut out = Vec::new();
+            r.process(&x, &mut out);
+            let (k, _) = out.iter().enumerate().fold((0, 0.0f32), |b, (i, &v)| if v > b.1 { (i, v) } else { b });
+            let located = k as f64 * r.ratio() + r.input_delay();
+            assert!((located - i0 as f64).abs() <= r.ratio(), "{rate}: {located} vs {i0}");
         }
     }
 
