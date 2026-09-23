@@ -1,0 +1,1 @@
+paired receiver comparison | seed 20260830 | 200 frames/point | fading none | carrier +-5.0 Hz | timing +-0.5 s | vNext 0.9.0 @ 8be9e00

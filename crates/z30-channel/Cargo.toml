@@ -1,0 +1,14 @@
+[package]
+name = "z30-channel"
+description = "Seeded, deterministic channel models for testing and benchmarking z-30: calibrated AWGN, carrier offset and drift, timing offset, sound-card clock error, Watterson fading, CW interference and multi-station bands. Test tooling, never in the receive path."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+z30-protocol.workspace = true
+rand.workspace = true
+rand_chacha.workspace = true
+rand_distr.workspace = true
+rustfft.workspace = true

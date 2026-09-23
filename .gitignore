@@ -12,3 +12,6 @@ __pycache__/
 .pytest_cache/
 # Per-machine clock calibration; resolved to ~/.z30/config.json at runtime.
 config.json
+
+# Rust build output
+/target/

@@ -1,0 +1,46 @@
+[workspace]
+resolver = "2"
+members = ["crates/*"]
+# The audit's language proof-of-concept is its own throwaway crate; it is evidence, not product.
+exclude = ["audit"]
+
+[workspace.package]
+version = "0.9.0"
+edition = "2021"
+license = "MIT"
+repository = "https://github.com/themantas1994/z-30"
+rust-version = "1.80"
+
+[workspace.dependencies]
+z30-protocol = { path = "crates/z30-protocol" }
+z30-dsp = { path = "crates/z30-dsp" }
+z30-channel = { path = "crates/z30-channel" }
+z30-engine = { path = "crates/z30-engine" }
+z30-io = { path = "crates/z30-io" }
+libm = "0.2"
+rustfft = "6"
+realfft = "3"
+rayon = "1"
+rand = "0.8"
+rand_chacha = "0.3"
+rand_distr = "0.4"
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["float_roundtrip"] }
+toml = "0.8"
+crossbeam-channel = "0.5"
+arc-swap = "1"
+rtrb = "0.3"
+proptest = "1"
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+debug = 1
+
+# Tests run the DSP on real frame sizes; unoptimised they take minutes instead of seconds.
+[profile.test]
+opt-level = 3
+
+[profile.dev.package."*"]
+opt-level = 3
