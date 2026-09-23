@@ -181,7 +181,7 @@ pub fn migrate_config(dir: &Path) -> (Config, Report) {
     }
 
     // PTT.
-    let polarity_high = str_of(&web, "pttPolarity").or_else(|| str_of(&tk, "ptt_polarity")).map_or(true, |p| p != "ACTIVE_LOW");
+    let polarity_high = str_of(&web, "pttPolarity").or_else(|| str_of(&tk, "ptt_polarity")).is_none_or(|p| p != "ACTIVE_LOW");
     let serial_port = str_of(&web, "pttPort")
         .or_else(|| str_of(&tk, "ptt_port"))
         .or_else(|| str_of(&web, "serialPort"))

@@ -61,7 +61,7 @@ impl Modulator {
     /// (6000, 8000, 11025, 12000, 16000, 22050, 24000, 44100, 48000, 96000 ... all do).
     pub fn new(sample_rate_hz: f64) -> Result<Self, ModulatorError> {
         let exact = sample_rate_hz * SYMBOL_SEC;
-        if !(sample_rate_hz > 0.0) || (exact - exact.round()).abs() > 1e-6 || exact.round() < 16.0 {
+        if !sample_rate_hz.is_finite() || sample_rate_hz <= 0.0 || (exact - exact.round()).abs() > 1e-6 || exact.round() < 16.0 {
             return Err(ModulatorError::BadSampleRate(sample_rate_hz));
         }
         let nsps = crate::samples_per_symbol(sample_rate_hz);
@@ -88,7 +88,7 @@ impl Modulator {
             return Err(ModulatorError::BadSymbol(s));
         }
         let top = f0 + (NUM_TONES - 1) as f64 * TONE_SPACING_HZ + 10.0;
-        if !(f0 > 0.0) || top >= self.fs / 2.0 {
+        if !f0.is_finite() || f0 <= 0.0 || top >= self.fs / 2.0 {
             return Err(ModulatorError::BadFrequency(f0));
         }
         Ok(())

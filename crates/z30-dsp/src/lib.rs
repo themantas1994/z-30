@@ -13,6 +13,10 @@
 //!   -> least-squares SIC of every decode, repeat              (sic.rs)
 //! ```
 #![forbid(unsafe_code)]
+// Index loops are kept where they transcribe the reference implementation line for line: the
+// LDPC decoder is bit-exact with the oracle, and reviewing that is easier against loops that
+// look like the loops they reproduce. The Cephes Bessel coefficients are copied digit for digit.
+#![allow(clippy::needless_range_loop, clippy::excessive_precision, clippy::large_enum_variant)]
 
 pub mod ap;
 pub mod baseband;

@@ -1,0 +1,13 @@
+  200 slots, 13413 LDPC attempts, 0 false (170 s)
+  400 slots, 26770 LDPC attempts, 0 false (345 s)
+  600 slots, 40162 LDPC attempts, 0 false (519 s)
+  800 slots, 53625 LDPC attempts, 0 false (666 s)
+  1000 slots, 66942 LDPC attempts, 0 false (796 s)
+  1200 slots, 80331 LDPC attempts, 0 false (958 s)
+  1400 slots, 93731 LDPC attempts, 0 false (1123 s)
+  1600 slots, 107103 LDPC attempts, 0 false (1272 s)
+  1800 slots, 120528 LDPC attempts, 0 false (1419 s)
+  2000 slots, 133911 LDPC attempts, 0 false (1566 s)
+noise-only slots: 2000; candidates: 100000
+gate off (every candidate decoded): 0 false decodes in 133911 LDPC attempts; rate 0.00e0, 95% upper bound 2.24e-5
+production config: 0 false decodes in 1130 LDPC attempts over the same slots; per slot 0.00e0, 95% upper bound per slot 1.50e-3

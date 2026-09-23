@@ -244,6 +244,10 @@ pub struct FineSync {
     pub drift_hz: f64,
     /// Sum of sync-tone energies.
     pub metric: f64,
+    /// Sub-sample timing correction, baseband samples in [-0.5, 0.5], from a parabola through
+    /// the metric at start - 1, start, start + 1. Reported timing and SIC use it; the
+    /// demodulator's symbol windows stay on the integer start.
+    pub frac: f64,
 }
 
 /// A uniform grid: `first + i * step` for `i in 0..count`.
@@ -323,8 +327,8 @@ fn search(bb: &[Complex32], tones: &ToneTable, starts: std::ops::RangeInclusive<
                     }
                     metric += acc.norm_sqr() as f64;
                 }
-                if best.map_or(true, |b| metric > b.metric) {
-                    best = Some(FineSync { start: s, df_hz: df, drift_hz: drift, metric });
+                if best.is_none_or(|b| metric > b.metric) {
+                    best = Some(FineSync { start: s, df_hz: df, drift_hz: drift, metric, frac: 0.0 });
                 }
             }
         }
@@ -332,9 +336,27 @@ fn search(bb: &[Complex32], tones: &ToneTable, starts: std::ops::RangeInclusive<
     best
 }
 
+/// Parabolic interpolation of the timing peak.
+fn with_frac(bb: &[Complex32], tones: &ToneTable, f: FineSync) -> FineSync {
+    let at = |s: usize| {
+        search(bb, tones, s..=s, Grid { first: f.df_hz, step: 1.0, count: 1 }, Grid { first: f.drift_hz, step: 1.0, count: 1 })
+            .map(|x| x.metric)
+    };
+    let (Some(a), Some(c)) = (f.start.checked_sub(1).and_then(at), at(f.start + 1)) else { return f };
+    let b = f.metric;
+    let den = a - 2.0 * b + c;
+    let frac = if den < 0.0 { (0.5 * (a - c) / den).clamp(-0.5, 0.5) } else { 0.0 };
+    FineSync { frac, ..f }
+}
+
 /// Fine search around a coarse candidate. Returns the best zero-drift hypothesis and, when
 /// `max_drift_hz > 0`, the best hypothesis over drift in [-max, +max] (which may be the same).
 pub fn fine_sync(bb: &[Complex32], tones: &ToneTable, coarse_start: usize, max_drift_hz: f64) -> (FineSync, Option<FineSync>) {
+    let (z, d) = fine_sync_grid(bb, tones, coarse_start, max_drift_hz);
+    (with_frac(bb, tones, z), d.map(|d| with_frac(bb, tones, d)))
+}
+
+fn fine_sync_grid(bb: &[Complex32], tones: &ToneTable, coarse_start: usize, max_drift_hz: f64) -> (FineSync, Option<FineSync>) {
     let none = Grid { first: 0.0, step: 0.5, count: 1 };
     // Stage 1: +-8 samples (+-40 ms, one coarse hop) and +-0.8 Hz in 0.1 Hz, no drift.
     let lo = coarse_start.saturating_sub(8);

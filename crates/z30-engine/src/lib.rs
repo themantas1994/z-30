@@ -6,6 +6,7 @@
 //! one of its tested scenarios. No OS I/O here: audio, rig, PTT and storage are traits that
 //! `z30-io` implements and tests fake.
 #![forbid(unsafe_code)]
+#![allow(clippy::needless_range_loop)]
 
 pub mod api;
 pub mod bandplan;

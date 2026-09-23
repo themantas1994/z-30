@@ -5,6 +5,7 @@
 //! fed through the real `RxPipeline` - resampler, store, clock model, scheduler - from a
 //! simulated sound card whose clock is wrong, whose timestamps jitter, and which drops samples,
 //! and every slot must come out exactly once, aligned to UTC.
+#![allow(clippy::field_reassign_with_default)]
 
 use z30_channel::stretch;
 use z30_dsp::slot::Receiver;
@@ -146,8 +147,7 @@ fn closed_loop_qso_through_the_real_pipeline_decoder_gate_sequencer_and_logger()
 
     // What the partner sends in each (even) slot. Slot parity: the partner calls CQ in even slots.
     let first_slot = 59_666_667i64; // 1_790_000_010 / 30 rounded up
-    let mut partner: Vec<(i64, String)> = Vec::new();
-    partner.push((first_slot, "CQ K1ABC FN31".into()));
+    let partner: Vec<(i64, String)> = vec![(first_slot, "CQ K1ABC FN31".into())];
     let partner_dt = 0.27;
     let partner_f0 = 1100.0;
     let partner_snr = -14.0;

@@ -68,8 +68,7 @@ fn frequency_drift_up_to_4_hz_is_tracked_h9() {
         assert!(ok >= 11, "drift {drift} Hz: {ok}/12 at -20 dB");
     }
     // ...and the drift search is what does it.
-    let mut no_drift = RxConfig::default();
-    no_drift.max_drift_hz = 0.0;
+    let no_drift = RxConfig { max_drift_hz: 0.0, ..Default::default() };
     let mut with = 0;
     let mut without = 0;
     for i in 0..12 {

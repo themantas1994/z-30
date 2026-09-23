@@ -330,7 +330,7 @@ impl Decoder {
                 let damped = c_old * old + c_new * new_msg;
                 let diff = damped - old;
                 self.msgs[lo + i] = damped;
-                if pinned.map_or(true, |p| !p[v]) {
+                if pinned.is_none_or(|p| !p[v]) {
                     self.total[v] += diff;
                 }
             }
@@ -431,7 +431,7 @@ impl Decoder {
         if fail.min_syndrome > OSD_MAX_SYNDROME {
             return None;
         }
-        let mut ranked: Vec<usize> = (0..K).filter(|&i| pinned.map_or(true, |p| !p[i])).collect();
+        let mut ranked: Vec<usize> = (0..K).filter(|&i| pinned.is_none_or(|p| !p[i])).collect();
         ranked.sort_by(|&a, &b| fail.best_total[a].abs().partial_cmp(&fail.best_total[b].abs()).unwrap_or(std::cmp::Ordering::Equal));
         let test = &ranked[..ranked.len().min(OSD_TEST_BITS)];
         let base: [u8; K] = info_of(&fail.best_cw);

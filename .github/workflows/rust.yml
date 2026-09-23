@@ -1,0 +1,124 @@
+name: vNext (Rust)
+
+# The Rust workspace: one implementation of the protocol and receiver, tested on all three
+# desktop platforms, against the frozen oracle's golden vectors, and through the Python harness
+# that publishes its sensitivity figures - so the receiver that is benchmarked is the one that
+# ships (VNEXT_IMPLEMENTATION_PLAN.md).
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: rust-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  workspace:
+    name: Build and test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - name: Linux system libraries (ALSA, udev, X11/Wayland for the GUI)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libasound2-dev libudev-dev libxkbcommon-dev libwayland-dev libx11-dev libxcursor-dev libxrandr-dev libxi-dev libgl1-mesa-dev
+      - uses: Swatinem/rust-cache@v2
+      - name: Formatting
+        if: runner.os == 'Linux'
+        run: cargo fmt --all --check
+      - name: Clippy (warnings are errors)
+        run: cargo clippy --workspace --all-targets --exclude z30-py -- -D warnings
+      - name: Tests (golden vectors, property tests, safety scenarios, channel scenarios, virtual-clock soak)
+        run: cargo test --workspace --exclude z30-py
+      - name: Tests, release profile
+        run: cargo test --workspace --exclude z30-py --release
+      - name: Release binaries
+        run: cargo build --release -p z30-cli -p z30-gui
+      - name: The binary is the commit it claims to be
+        shell: bash
+        run: |
+          set -e
+          v=$(./target/release/z30 --version)
+          echo "$v"
+          short=$(git rev-parse --short=12 HEAD)
+          case "$v" in *"$short"*) ;; *) echo "z30 --version does not name HEAD ($short)"; exit 1;; esac
+          case "$v" in *dirty*) echo "built from a dirty tree"; exit 1;; esac
+      - name: Benchmark smoke (latency is measured, not asserted, on shared runners)
+        run: ./target/release/z30 --benchmark perf --frames 2
+      - name: Decode round trip through the CLI
+        shell: bash
+        run: |
+          ./target/release/z30 --encode "CQ K1ABC FN31" --wav cq.wav --rate 44100 --f0 1400
+          ./target/release/z30 --decode cq.wav | tee out.txt
+          grep -q "CQ K1ABC FN31" out.txt
+      - uses: actions/upload-artifact@v5
+        with:
+          name: z30-${{ matrix.os }}-${{ github.sha }}
+          path: |
+            target/release/z30
+            target/release/z30.exe
+            target/release/z30-gui
+            target/release/z30-gui.exe
+          if-no-files-found: ignore
+
+  golden:
+    name: Golden vectors reproduce from the oracle
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.11'
+          cache: pip
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+          cache: npm
+      - run: python -m pip install -r requirements.txt && npm ci
+      - name: Python oracle vectors are byte-identical to fixtures/golden
+        run: python reference/golden/generate.py --check
+      - name: TypeScript codec vectors are identical to fixtures/golden/messages.json
+        run: npx tsx reference/golden/generate_messages.mts --check
+
+  harness:
+    name: Research harness measures the shipped decode_slot
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.11'
+          cache: pip
+      - run: python -m pip install -r requirements.txt maturin
+      - name: Build and install the bindings
+        run: |
+          cd crates/z30-py && maturin build --release -o ../../wheels
+          python -m pip install ../../wheels/z30-*.whl
+      - name: Paired oracle-vs-vNext smoke run (exploratory size)
+        run: |
+          python research/paired_receiver.py --min-snr -20 --max-snr -20 --frames 4 --workers 2 --out smoke.json
+          python - <<'PY'
+          import json
+          s = json.load(open("smoke.json"))
+          row = s["rows"][0]
+          assert row["vnext"] == 4 and row["oracle"] == 4, row
+          assert row["vnext_false"] == 0, row
+          print("harness drives the production receiver:", row)
+          PY

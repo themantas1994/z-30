@@ -1,6 +1,7 @@
 //! Transmit safety, ported scenario by scenario from the TypeScript suites
 //! (tests/transmitPath.test.mjs, tests/rigReadback.test.mjs, tests/rigProbeAndWatchdog.test.mjs)
 //! plus the audit's C5. If one of these fails, the change is wrong - do not edit the test.
+#![allow(clippy::field_reassign_with_default)]
 
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -322,4 +323,62 @@ fn p4c_the_limit_can_never_be_raised() {
     ptt.key().unwrap();
     clock.advance(MAX_TX_SECONDS * 1000);
     assert!(ptt.watchdog_tick(), "a 10-minute limit request is clamped to MAX_TX_SECONDS");
+}
+
+// ------------------------------------------------------ H: uncertain hardware is a refusal
+
+#[test]
+fn h1_no_ptt_method_or_unavailable_tx_hardware_refuses_before_keying() {
+    use z30_engine::api::{Command, Event};
+    use z30_engine::config::{Config, PttConfig};
+    use z30_engine::engine::Engine;
+    let mut cfg = Config::default();
+    cfg.station = station("K1ABC");
+    cfg.station.grid = "FN31".into();
+    cfg.operating.tx_audio_hz = 1500.0;
+    // PTT not configured.
+    let mut e = Engine::new(cfg.clone());
+    e.apply(Command::CallCq, 0);
+    let slot = 2; // even
+    assert!(e.plan_tx(slot, 0).is_none());
+    assert!(e.take_events().iter().any(|ev| matches!(ev, Event::TxRefused(v) if v.contains(&Violation::PttNotConfigured))));
+    // PTT configured, but the output device could not be opened.
+    cfg.ptt = PttConfig::Vox;
+    let mut e = Engine::new(cfg.clone());
+    e.set_tx_hardware_problem(Some("audio output: no device".into()));
+    e.apply(Command::CallCq, 0);
+    assert!(e.plan_tx(slot, 0).is_none());
+    assert!(!e.snapshot(0).tx_blockers.is_empty());
+    // Everything present: the same request is planned.
+    let mut e = Engine::new(cfg);
+    e.apply(Command::CallCq, 0);
+    let plan = e.plan_tx(slot, 0).expect("a configured station calls CQ");
+    assert_eq!(plan.text, "CQ K1ABC FN31");
+}
+
+#[test]
+fn h2_a_halt_between_plan_and_key_abandons_the_transmission() {
+    use z30_engine::api::Command;
+    use z30_engine::config::{Config, PttConfig};
+    use z30_engine::engine::Engine;
+    use z30_engine::runtime::{TxAction, TxScheduler};
+    let mut cfg = Config::default();
+    cfg.station = station("K1ABC");
+    cfg.station.grid = "FN31".into();
+    cfg.ptt = PttConfig::Vox;
+    let mut e = Engine::new(cfg);
+    e.apply(Command::CallCq, 0);
+    let mut txs = TxScheduler::new(0.02);
+    let slot = 60_000_000i64; // even
+    let t = z30_engine::slots::slot_start(slot);
+    let actions = txs.tick(t - 0.5);
+    assert_eq!(actions, vec![TxAction::Plan(slot)]);
+    let plan = e.plan_tx(slot, 0).unwrap();
+    txs.accept(slot, 24.0);
+    // The operator halts before the key time: the engine must say "abandon".
+    assert!(e.apply(Command::HaltTx, 0), "halt must abandon a planned transmission");
+    txs.abort();
+    assert!(txs.tick(t).is_empty(), "nothing is keyed after the halt");
+    assert!(!txs.busy());
+    let _ = plan;
 }

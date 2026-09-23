@@ -220,6 +220,21 @@ pub struct RuntimeParts {
     pub mono: Arc<dyn MonotonicClock>,
     /// Logbook.
     pub log: Box<dyn LogSink>,
+    /// Optional copy of every decoded slot (bounded; dropped when the reader is slow).
+    pub slot_tap: Option<Sender<SlotCapture>>,
+    /// Why transmitting is impossible with these parts (no output device, no keying line), if
+    /// it is. The engine refuses every transmission while this is set.
+    pub tx_unavailable: Option<String>,
+}
+
+/// A decoded slot's window and report, for `--capture-slots` and diagnostics.
+pub struct SlotCapture {
+    /// Slot number.
+    pub slot: i64,
+    /// The 27 s window at 6 kHz.
+    pub samples: Vec<f32>,
+    /// What the decoder made of it.
+    pub report: SlotReport,
 }
 
 /// Handles for a user interface.
@@ -273,7 +288,8 @@ pub fn start(config: Config, parts: RuntimeParts) -> RuntimeHandle {
     let mono = parts.mono.clone();
     let ptt = PttController::new(parts.ptt, mono.clone());
     let watchdog = ptt.spawn_watchdog(Duration::from_millis(50));
-    let engine = Engine::new(config);
+    let mut engine = Engine::new(config);
+    engine.set_tx_hardware_problem(parts.tx_unavailable.clone());
     let snapshot = Arc::new(ArcSwap::from_pointee(engine.snapshot(mono.now_ms())));
     let rx_cfg = Arc::new(ArcSwap::from_pointee(engine.rx_config()));
     let (cmd_tx, cmd_rx) = bounded::<Command>(64);
@@ -347,6 +363,7 @@ pub fn start(config: Config, parts: RuntimeParts) -> RuntimeHandle {
     // Decode thread.
     {
         let (stop, int_tx, wall, rx_cfg) = (stop.clone(), int_tx.clone(), parts.wall.clone(), rx_cfg.clone());
+        let tap = parts.slot_tap;
         threads.push(
             std::thread::Builder::new()
                 .name("z30-decode".into())
@@ -359,6 +376,10 @@ pub fn start(config: Config, parts: RuntimeParts) -> RuntimeHandle {
                         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| rx.decode_slot(&job.samples, &cfg)));
                         match result {
                             Ok(report) => {
+                                if let Some(t) = &tap {
+                                    let _ =
+                                        t.try_send(SlotCapture { slot: job.slot, samples: job.samples.clone(), report: report.clone() });
+                                }
                                 let _ = int_tx.send(Internal::Decoded(job.slot, Box::new(report), wall.utc_now()));
                             }
                             Err(_) => {
@@ -414,14 +435,12 @@ pub fn start(config: Config, parts: RuntimeParts) -> RuntimeHandle {
                         select! {
                             recv(cmd_rx) -> c => if let Ok(c) = c {
                                 if let Command::SetDial(hz) = c { let _ = dial_tx.try_send(hz); }
-                                if engine.apply(c, mono2.now_ms()) {
-                                    if txs.busy() {
-                                        output.stop();
-                                        let _ = ptt2.unkey();
-                                        engine.note_ptt(false, mono2.now_ms());
-                                        if let Some(p) = plan.take() { engine.tx_finished(p.slot, false, mono2.now_ms()); }
-                                        txs.abort();
-                                    }
+                                if engine.apply(c, mono2.now_ms()) && txs.busy() {
+                                    output.stop();
+                                    let _ = ptt2.unkey();
+                                    engine.note_ptt(false, mono2.now_ms());
+                                    if let Some(p) = plan.take() { engine.tx_finished(p.slot, false, mono2.now_ms()); }
+                                    txs.abort();
                                 }
                                 rx_cfg.store(Arc::new(engine.rx_config()));
                                 dirty = true;

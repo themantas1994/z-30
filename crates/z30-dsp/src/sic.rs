@@ -107,19 +107,27 @@ fn fit(x: &[f32], rep: &Replica, start: i64, w: usize) -> (Vec<f64>, f64) {
     (comp, resid)
 }
 
-/// Subtracts one decoded frame from `residual` (6 kHz samples) in place.
-///
-/// `start` is the fine-sync estimate of the frame's first sample in `residual`; `f0_hz` the
-/// absolute tone-0 frequency; `drift_hz` the total linear drift across the frame.
-pub fn subtract(
-    residual: &mut [f32],
+/// A decoded frame to remove, and where the timing search put it.
+pub struct Planned {
+    rep: Replica,
+    w: usize,
+    /// Timing correction chosen, samples.
+    pub offset: i64,
+    start: i64,
+}
+
+/// The expensive half of a subtraction: builds the replica and searches timing against
+/// `residual` without modifying it. Independent per decode, so a pass can plan every decode in
+/// parallel and then apply them in order.
+pub fn plan(
+    residual: &[f32],
     modulator: &Modulator,
     symbols: &[u8; TOTAL_SYMBOLS],
     f0_hz: f64,
     drift_hz: f64,
     start: i64,
     params: &SicParams,
-) -> Subtraction {
+) -> Planned {
     let w = (((params.window_sec * modulator.sample_rate()) / 2.0) as usize) | 1;
     let rep = replica(modulator, symbols, f0_hz, drift_hz, w);
     // Coarse-to-fine timing: every 4 samples across the window, then +-1, +-2 around the best.
@@ -139,9 +147,13 @@ pub fn subtract(
     for d in [-2, -1, 1, 2] {
         probe(centre + d, &mut best);
     }
-    let offset = best.1;
-    let at = start + offset;
-    let (comp, _) = fit(residual, &rep, at, w);
+    Planned { rep, w, offset: best.1, start }
+}
+
+/// The cheap half: fits the gain on the current residual at the planned timing and subtracts.
+pub fn apply(residual: &mut [f32], p: &Planned) -> Subtraction {
+    let at = p.start + p.offset;
+    let (comp, _) = fit(residual, &p.rep, at, p.w);
     let before: f64 = comp.iter().map(|v| v * v).sum();
     for (i, v) in comp.iter().enumerate() {
         let j = at + i as i64;
@@ -149,7 +161,29 @@ pub fn subtract(
             residual[j as usize] -= *v as f32;
         }
     }
-    let (after_comp, _) = fit(residual, &rep, at, w);
+    let (after_comp, _) = fit(residual, &p.rep, at, p.w);
     let after: f64 = after_comp.iter().map(|v| v * v).sum::<f64>().max(1e-30);
-    Subtraction { component_before: before, component_after: after, suppression_db: 10.0 * (before / after).log10(), timing_offset: offset }
+    Subtraction {
+        component_before: before,
+        component_after: after,
+        suppression_db: 10.0 * (before / after).log10(),
+        timing_offset: p.offset,
+    }
+}
+
+/// Subtracts one decoded frame from `residual` (6 kHz samples) in place.
+///
+/// `start` is the fine-sync estimate of the frame's first sample in `residual`; `f0_hz` the
+/// absolute tone-0 frequency; `drift_hz` the total linear drift across the frame.
+pub fn subtract(
+    residual: &mut [f32],
+    modulator: &Modulator,
+    symbols: &[u8; TOTAL_SYMBOLS],
+    f0_hz: f64,
+    drift_hz: f64,
+    start: i64,
+    params: &SicParams,
+) -> Subtraction {
+    let p = plan(residual, modulator, symbols, f0_hz, drift_hz, start, params);
+    apply(residual, &p)
 }

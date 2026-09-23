@@ -1,6 +1,8 @@
+//! Fine-sync statistics on noise and on signals: the data behind RxConfig::min_fine_sync and
+//! RxConfig::drift_gain. `cargo run --release -p z30-dsp --example syncstats -- <snr> <drift_hz> <frames>`
 use std::time::Instant;
-use z30_channel::*;
-use z30_dsp::baseband::*;
+use z30_channel::{random_station, rng, synthesize, Band};
+use z30_dsp::baseband::{Plans, SlotSpectrum, SLOT_ZERO_INDEX};
 use z30_dsp::demod::*;
 use z30_dsp::ldpc::Decoder;
 use z30_dsp::sync::*;

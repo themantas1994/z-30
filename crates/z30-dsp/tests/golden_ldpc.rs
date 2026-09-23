@@ -36,7 +36,7 @@ fn legacy_osd(f: &BpFailure, input: &Llrs, pinned: Option<&ApMask>) -> Option<[u
     if f.min_syndrome > 14 {
         return None;
     }
-    let mut ranked: Vec<usize> = (0..PAYLOAD_BITS).filter(|&i| pinned.map_or(true, |p| !p[i])).collect();
+    let mut ranked: Vec<usize> = (0..PAYLOAD_BITS).filter(|&i| pinned.is_none_or(|p| !p[i])).collect();
     ranked.sort_by(|&a, &b| f.best_total[a].abs().partial_cmp(&f.best_total[b].abs()).unwrap());
     let test = &ranked[..ranked.len().min(14)];
     let base: [u8; PAYLOAD_BITS] = f.best_cw[..PAYLOAD_BITS].try_into().unwrap();

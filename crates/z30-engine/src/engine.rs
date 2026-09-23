@@ -57,6 +57,7 @@ pub struct Engine {
     audio: AudioHealth,
     events: Vec<Event>,
     clock_status: String,
+    tx_hardware_problem: Option<String>,
 }
 
 impl Engine {
@@ -76,6 +77,7 @@ impl Engine {
             audio: AudioHealth::default(),
             events: Vec::new(),
             clock_status: "unknown".into(),
+            tx_hardware_problem: None,
         };
         e.rebuild_sequencer();
         e.rig.note_requested_dial(e.commanded_dial as f64);
@@ -113,7 +115,8 @@ impl Engine {
         self.active_tx.is_some()
     }
 
-    /// Applies a command. Returns true if the runtime must unkey immediately.
+    /// Applies a command. Returns true if the runtime must abandon any planned or keyed
+    /// transmission immediately.
     pub fn apply(&mut self, cmd: Command, now_ms: u64) -> bool {
         match cmd {
             Command::UpdateConfig(c) => {
@@ -187,8 +190,10 @@ impl Engine {
         false
     }
 
+    /// Every command that calls this must stop a transmission that is planned as well as one
+    /// that is keyed: a halt that lands between the plan and the key would otherwise key anyway.
     fn halt_tx(&mut self) -> bool {
-        self.active_tx.is_some()
+        true
     }
 
     /// The receiver configuration for the next slot, including the AP context when enabled.
@@ -313,9 +318,27 @@ impl Engine {
         self.clock_status = s;
     }
 
+    /// Records that the transmit hardware could not be opened (None = it was). While set, every
+    /// transmission is refused: a gate that passes a station that cannot key is uncertainty
+    /// reported as permission.
+    pub fn set_tx_hardware_problem(&mut self, problem: Option<String>) {
+        self.tx_hardware_problem = problem;
+    }
+
+    fn hardware_violations(&self) -> Vec<crate::txgate::Violation> {
+        let mut v = Vec::new();
+        if self.config.ptt == crate::config::PttConfig::None {
+            v.push(crate::txgate::Violation::PttNotConfigured);
+        }
+        if let Some(p) = &self.tx_hardware_problem {
+            v.push(crate::txgate::Violation::HardwareUnavailable(p.clone()));
+        }
+        v
+    }
+
     fn blockers_now(&self, now_ms: u64) -> Vec<crate::txgate::Violation> {
         let msg = self.seq.as_ref().and_then(|s| s.next_message());
-        can_transmit(
+        let mut v = can_transmit(
             &TxRequest {
                 station: &self.config.station,
                 dial_hz: self.commanded_dial as f64,
@@ -325,7 +348,9 @@ impl Engine {
             &self.rig,
             now_ms,
         )
-        .violations
+        .violations;
+        v.extend(self.hardware_violations());
+        v
     }
 
     /// Decides what, if anything, to transmit in `slot`. Runs the gate; a refusal is an event
@@ -342,7 +367,7 @@ impl Engine {
         if !tune && msg.is_none() {
             return None;
         }
-        let perm = can_transmit(
+        let mut perm = can_transmit(
             &TxRequest {
                 station: &self.config.station,
                 dial_hz: self.commanded_dial as f64,
@@ -352,7 +377,8 @@ impl Engine {
             &self.rig,
             now_ms,
         );
-        if !perm.allowed {
+        perm.violations.extend(self.hardware_violations());
+        if !perm.violations.is_empty() {
             self.tx_enabled = false;
             self.tune_pending = false;
             self.events.push(Event::TxRefused(perm.violations));

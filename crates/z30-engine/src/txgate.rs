@@ -59,6 +59,10 @@ pub enum Violation {
     MessageNotEncodable(CodecError),
     /// The message's sender field is not this station.
     MessageNotFromStation(String),
+    /// No keying method is configured.
+    PttNotConfigured,
+    /// The transmit hardware (audio output, keying line) could not be opened.
+    HardwareUnavailable(String),
 }
 
 impl fmt::Display for Violation {
@@ -95,6 +99,8 @@ impl fmt::Display for Violation {
             ),
             MessageNotEncodable(e) => write!(f, "The message cannot be sent: {e}"),
             MessageNotFromStation(c) => write!(f, "The message is sent from {c}, not from this station's callsign."),
+            PttNotConfigured => write!(f, "No PTT method is configured (Settings: PTT)."),
+            HardwareUnavailable(why) => write!(f, "Transmit hardware unavailable: {why}"),
         }
     }
 }

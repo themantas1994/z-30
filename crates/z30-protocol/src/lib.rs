@@ -7,6 +7,7 @@
 //!
 //! Changing anything here is a protocol break: every station on the air stops decoding you.
 #![forbid(unsafe_code)]
+#![allow(clippy::needless_range_loop)]
 #![deny(missing_docs)]
 
 pub mod codec;

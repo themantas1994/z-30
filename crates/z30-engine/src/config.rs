@@ -25,8 +25,8 @@ impl TxSlot {
     }
 }
 
-/// Station identity and licence.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+/// Station identity and licence. The default is unconfigured, which the gate refuses.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, Default)]
 #[serde(default)]
 pub struct StationConfig {
     /// Operator callsign. Empty = unconfigured (transmit refused).
@@ -41,12 +41,6 @@ pub struct StationConfig {
     /// The power the operator has SET on the radio, W. Configuration, never displayed or logged
     /// as a measurement (audit M13).
     pub configured_tx_power_w: Option<f64>,
-}
-
-impl Default for StationConfig {
-    fn default() -> Self {
-        StationConfig { callsign: String::new(), grid: String::new(), region: None, license_class: None, configured_tx_power_w: None }
-    }
 }
 
 /// How PTT is keyed.

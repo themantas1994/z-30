@@ -6,7 +6,7 @@ use crate::ap::{build_ladder, decode_with_ap, ApContext};
 use crate::baseband::{Plans, SlotSpectrum, BB_DECIMATION, SLOT_SAMPLES, SLOT_ZERO_INDEX};
 use crate::demod::{FrameSpectra, SymbolFft};
 use crate::ldpc::{DecodeMethod, Decoder};
-use crate::sic::{subtract, SicParams};
+use crate::sic::{self, SicParams};
 use crate::sync::{fine_sync, Candidate, Spectrogram, ToneTable};
 use crate::DSP_RATE_HZ;
 use std::time::Instant;
@@ -101,12 +101,20 @@ pub struct PassStats {
     pub candidates: usize,
     /// New decodes.
     pub decoded: usize,
+    /// LDPC decodes run (every sync hypothesis and every AP hypothesis counts one).
+    pub ldpc_attempts: usize,
     /// Decodes of a message already decoded in an earlier pass or candidate (dropped).
     pub duplicates: usize,
     /// Suppression achieved on each subtraction of this pass, dB.
     pub suppression_db: Vec<f64>,
     /// Wall-clock time of the pass.
     pub elapsed_ms: f64,
+    /// Of which: slot FFT and spectrogram, ms.
+    pub spectra_ms: f64,
+    /// Of which: candidates (fine sync, demodulation, LDPC, AP), ms.
+    pub candidates_ms: f64,
+    /// Of which: SIC, ms.
+    pub sic_ms: f64,
 }
 
 /// Everything decode_slot learned about one slot.
@@ -153,7 +161,28 @@ impl Receiver {
         }
     }
 
-    fn try_candidate(&self, spec: &SlotSpectrum, cand: &Candidate, cfg: &RxConfig, pass: u8, dec: &mut Decoder) -> Option<Attempt> {
+    fn try_candidate(
+        &self,
+        spec: &SlotSpectrum,
+        cand: &Candidate,
+        cfg: &RxConfig,
+        pass: u8,
+        dec: &mut Decoder,
+    ) -> (Option<Attempt>, usize) {
+        let mut attempts = 0usize;
+        let r = self.try_candidate_inner(spec, cand, cfg, pass, dec, &mut attempts);
+        (r, attempts)
+    }
+
+    fn try_candidate_inner(
+        &self,
+        spec: &SlotSpectrum,
+        cand: &Candidate,
+        cfg: &RxConfig,
+        pass: u8,
+        dec: &mut Decoder,
+        attempts: &mut usize,
+    ) -> Option<Attempt> {
         let (bb, centre) = spec.baseband(&self.plans, cand.f0_hz);
         let coarse = ((SLOT_ZERO_INDEX as f64 + cand.dt_sec * DSP_RATE_HZ) / BB_DECIMATION as f64).round() as usize;
         let (zero, drifted) = fine_sync(&bb, &self.tones, coarse, cfg.max_drift_hz);
@@ -176,13 +205,14 @@ impl Receiver {
             let f0_abs = centre + sync.df_hz;
             let hyps = cfg.ap.as_ref().map(|ctx| build_ladder(ctx, Some(f0_abs))).unwrap_or_default();
             let r = decode_with_ap(dec, &llr, &hyps);
+            *attempts += 1 + r.hypotheses_tried;
             if !r.result.success {
                 continue;
             }
             let Some(message) = unpack_info(&r.result.info) else { continue };
             let cw = encode_info(&r.result.info);
             let symbols = codeword_to_symbols(&cw);
-            let start_sample = (sync.start * BB_DECIMATION) as i64;
+            let start_sample = ((sync.start as f64 + sync.frac) * BB_DECIMATION as f64).round() as i64;
             return Some(Attempt {
                 decode: Decode {
                     message,
@@ -220,16 +250,27 @@ impl Receiver {
             let spec = SlotSpectrum::new(&self.plans, &residual);
             let sg = Spectrogram::new(&residual, cfg.band_lo_hz, cfg.band_hi_hz);
             let mut cands = sg.candidates(cfg.sync_threshold, usize::MAX, cfg.band_lo_hz, cfg.band_hi_hz);
+            let spectra_ms = t_pass.elapsed().as_secs_f64() * 1e3;
             if let Some(regions) = &changed {
                 // A frame lasts 24 of the window's 27 s, so a subtraction changes the residual at
                 // every DT; only frequency decides whether a candidate can have changed.
                 cands.retain(|c| regions.iter().any(|&(f, _)| (c.f0_hz - f).abs() < 60.0));
+                // What is left exactly where a decoded station was is that station's residue: it
+                // can only decode as the station already decoded.
+                cands.retain(|c| !report.decodes.iter().any(|d| (c.f0_hz - d.freq_hz).abs() <= 1.6 && (c.dt_sec - d.dt_sec).abs() <= 0.1));
             }
             cands.truncate(cfg.max_candidates);
+            let t_cand = Instant::now();
             let attempts = self.run_candidates(&spec, &cands, cfg, pass);
-            let mut stats = PassStats { candidates: cands.len(), ..Default::default() };
+            let mut stats = PassStats {
+                candidates: cands.len(),
+                spectra_ms,
+                candidates_ms: t_cand.elapsed().as_secs_f64() * 1e3,
+                ..Default::default()
+            };
+            stats.ldpc_attempts = attempts.iter().map(|a| a.1).sum();
             let mut new: Vec<Attempt> = Vec::new();
-            for a in attempts.into_iter().flatten() {
+            for a in attempts.into_iter().filter_map(|a| a.0) {
                 let dup = report.decodes.iter().chain(new.iter().map(|n| &n.decode)).any(|d| d.info == a.decode.info);
                 if dup {
                     stats.duplicates += 1;
@@ -239,11 +280,16 @@ impl Receiver {
             }
             let mut regions = Vec::new();
             if pass < cfg.passes {
-                for a in &new {
-                    let s = subtract(&mut residual, &self.modulator, &a.symbols, a.f0_abs, a.decode.drift_hz, a.start_sample, &cfg.sic);
+                let t_sic = Instant::now();
+                // Timing searches in parallel against this pass's residual; fits and
+                // subtractions in decode order, each on what the previous one left.
+                let plans = self.plan_subtractions(&residual, &new, cfg);
+                for (a, p) in new.iter().zip(&plans) {
+                    let s = sic::apply(&mut residual, p);
                     stats.suppression_db.push(s.suppression_db);
                     regions.push((a.f0_abs, a.start_sample));
                 }
+                stats.sic_ms = t_sic.elapsed().as_secs_f64() * 1e3;
             }
             stats.decoded = new.len();
             report.decodes.extend(new.into_iter().map(|a| a.decode));
@@ -259,7 +305,22 @@ impl Receiver {
     }
 
     #[cfg(feature = "parallel")]
-    fn run_candidates(&self, spec: &SlotSpectrum, cands: &[Candidate], cfg: &RxConfig, pass: u8) -> Vec<Option<Attempt>> {
+    fn plan_subtractions(&self, residual: &[f32], new: &[Attempt], cfg: &RxConfig) -> Vec<sic::Planned> {
+        use rayon::prelude::*;
+        new.par_iter()
+            .map(|a| sic::plan(residual, &self.modulator, &a.symbols, a.f0_abs, a.decode.drift_hz, a.start_sample, &cfg.sic))
+            .collect()
+    }
+
+    #[cfg(not(feature = "parallel"))]
+    fn plan_subtractions(&self, residual: &[f32], new: &[Attempt], cfg: &RxConfig) -> Vec<sic::Planned> {
+        new.iter()
+            .map(|a| sic::plan(residual, &self.modulator, &a.symbols, a.f0_abs, a.decode.drift_hz, a.start_sample, &cfg.sic))
+            .collect()
+    }
+
+    #[cfg(feature = "parallel")]
+    fn run_candidates(&self, spec: &SlotSpectrum, cands: &[Candidate], cfg: &RxConfig, pass: u8) -> Vec<(Option<Attempt>, usize)> {
         use rayon::prelude::*;
         // Order is preserved by collect(), and each candidate is a pure function of its input, so
         // the report is identical at any thread count.
@@ -267,7 +328,7 @@ impl Receiver {
     }
 
     #[cfg(not(feature = "parallel"))]
-    fn run_candidates(&self, spec: &SlotSpectrum, cands: &[Candidate], cfg: &RxConfig, pass: u8) -> Vec<Option<Attempt>> {
+    fn run_candidates(&self, spec: &SlotSpectrum, cands: &[Candidate], cfg: &RxConfig, pass: u8) -> Vec<(Option<Attempt>, usize)> {
         let mut dec = Decoder::new();
         cands.iter().map(|c| self.try_candidate(spec, c, cfg, pass, &mut dec)).collect()
     }
