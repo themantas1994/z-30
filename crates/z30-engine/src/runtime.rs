@@ -125,7 +125,12 @@ impl TxScheduler {
     /// Accepts a plan for `slot` with an audio duration.
     pub fn accept(&mut self, slot: i64, duration_sec: f64) {
         let s = slot_start(slot);
-        self.phase = TxPhase::Planned { slot, key_at: s - PTT_LEAD_SEC - self.output_latency, audio_at: s - self.output_latency, end_at: s + duration_sec + PTT_TAIL_SEC };
+        self.phase = TxPhase::Planned {
+            slot,
+            key_at: s - PTT_LEAD_SEC - self.output_latency,
+            audio_at: s - self.output_latency,
+            end_at: s + duration_sec + PTT_TAIL_SEC,
+        };
     }
 
     /// Abandons everything (halt). The caller unkeys and stops audio.
@@ -185,7 +190,13 @@ pub fn tx_audio(plan: &TxPlan, rate: u32, level: f32) -> Result<Vec<f32>, String
             let ramp = (0.02 * rate as f64) as usize;
             Ok((0..n)
                 .map(|i| {
-                    let e = if i < ramp { i as f64 / ramp as f64 } else if i >= n - ramp { (n - i) as f64 / ramp as f64 } else { 1.0 };
+                    let e = if i < ramp {
+                        i as f64 / ramp as f64
+                    } else if i >= n - ramp {
+                        (n - i) as f64 / ramp as f64
+                    } else {
+                        1.0
+                    };
                     ((std::f64::consts::TAU * f * i as f64 / rate as f64).sin() * e) as f32 * level
                 })
                 .collect())
@@ -294,7 +305,10 @@ pub fn start(config: Config, parts: RuntimeParts) -> RuntimeHandle {
                                             Err(TrySendError::Full(job)) => {
                                                 // The decoder is still on the previous slot: say so rather than queue
                                                 // without bound.
-                                                let _ = int_tx.try_send(Internal::Slot(SlotEvent::Missed(job.slot, crate::slots::MissReason::DecoderBusy)));
+                                                let _ = int_tx.try_send(Internal::Slot(SlotEvent::Missed(
+                                                    job.slot,
+                                                    crate::slots::MissReason::DecoderBusy,
+                                                )));
                                             }
                                             Err(TrySendError::Disconnected(_)) => return,
                                         },
@@ -448,7 +462,9 @@ pub fn start(config: Config, parts: RuntimeParts) -> RuntimeHandle {
                                 TxAction::Key => match ptt2.key() {
                                     Ok(_) => {
                                         engine.note_ptt(true, mono2.now_ms());
-                                        if let Some(p) = &plan { engine.tx_started(p); }
+                                        if let Some(p) = &plan {
+                                            engine.tx_started(p);
+                                        }
                                     }
                                     Err(e) => {
                                         txs.abort();
@@ -462,7 +478,9 @@ pub fn start(config: Config, parts: RuntimeParts) -> RuntimeHandle {
                                         if let Err(e) = output.play(a) {
                                             let _ = ptt2.unkey();
                                             txs.abort();
-                                            if let Some(p) = plan.take() { engine.tx_finished(p.slot, false, mono2.now_ms()); }
+                                            if let Some(p) = plan.take() {
+                                                engine.tx_finished(p.slot, false, mono2.now_ms());
+                                            }
                                             engine.tx_fault(format!("audio output failed: {e}"));
                                         }
                                     }
@@ -471,7 +489,9 @@ pub fn start(config: Config, parts: RuntimeParts) -> RuntimeHandle {
                                     output.stop();
                                     let _ = ptt2.unkey();
                                     engine.note_ptt(false, mono2.now_ms());
-                                    if let Some(p) = plan.take() { engine.tx_finished(p.slot, completed && !ptt2.watchdog_fired(), mono2.now_ms()); }
+                                    if let Some(p) = plan.take() {
+                                        engine.tx_finished(p.slot, completed && !ptt2.watchdog_fired(), mono2.now_ms());
+                                    }
                                 }
                             }
                             dirty = true;
@@ -479,7 +499,9 @@ pub fn start(config: Config, parts: RuntimeParts) -> RuntimeHandle {
                         if ptt2.watchdog_fired() && txs.busy() {
                             output.stop();
                             txs.abort();
-                            if let Some(p) = plan.take() { engine.tx_finished(p.slot, false, mono2.now_ms()); }
+                            if let Some(p) = plan.take() {
+                                engine.tx_finished(p.slot, false, mono2.now_ms());
+                            }
                             engine.tx_fault("PTT watchdog released the transmitter".into());
                         }
                         for e in engine.take_events() {

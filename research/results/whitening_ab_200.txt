@@ -1,0 +1,11 @@
+paired receiver comparison | seed 20260830 | 200 frames/point | fading none | carrier +-5.0 Hz | timing +-0.5 s | vNext 0.9.0 @ f76ca76
+ -25.0 dB  vNext    1/200 [  0.1-  2.8%]  arm B    1 (A-only 0, B-only 0)  false v/o 0/-  279 ms/slot (1 thread)
+ -24.0 dB  vNext   18/200 [  5.8- 13.8%]  arm B   18 (A-only 0, B-only 0)  false v/o 0/-  306 ms/slot (1 thread)
+ -23.0 dB  vNext  102/200 [ 44.1- 57.8%]  arm B  102 (A-only 0, B-only 0)  false v/o 0/-  390 ms/slot (1 thread)
+ -22.0 dB  vNext  191/200 [ 91.7- 97.6%]  arm B  191 (A-only 0, B-only 0)  false v/o 0/-  487 ms/slot (1 thread)
+ -21.0 dB  vNext  200/200 [ 98.1-100.0%]  arm B  200 (A-only 0, B-only 0)  false v/o 0/-  516 ms/slot (1 thread)
+ vnext 50% crossing: -23.02 dB [-23.18, -22.88]
+ vnext 90% crossing: -22.12 dB [-22.19, -22.04]
+     b 50% crossing: -23.02 dB [-23.18, -22.88]
+     b 90% crossing: -22.12 dB [-22.19, -22.04]
+arm A (defaults) vs arm B {"whiten": false}: A-only 0, B-only 0; exact two-sided McNemar p = 1

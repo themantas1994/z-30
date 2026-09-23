@@ -169,7 +169,8 @@ pub fn can_transmit(req: &TxRequest<'_>, rig: &RigStateTracker, now_ms: u64) -> 
                 None => v.push(Violation::OutOfBand {
                     low_hz: centre - OCCUPIED_40DB_HZ / 2.0,
                     high_hz: centre + OCCUPIED_40DB_HZ / 2.0,
-                    nearest: nearest_permitted_segment(r, c, centre).map(|(s, d)| (format!("{} {:.3}-{:.3} MHz", s.band, s.start_hz as f64 / 1e6, s.end_hz as f64 / 1e6), d)),
+                    nearest: nearest_permitted_segment(r, c, centre)
+                        .map(|(s, d)| (format!("{} {:.3}-{:.3} MHz", s.band, s.start_hz as f64 / 1e6, s.end_hz as f64 / 1e6), d)),
                 }),
             }
         }

@@ -41,6 +41,8 @@ pub struct RxConfig {
     /// frames at -24 dB (below the decode threshold) score 3 to 5. A failing LDPC cascade costs
     /// ~12 ms, so this is where the receiver's time goes on a quiet band.
     pub min_fine_sync: f64,
+    /// Per-tone interference whitening in the demodulator (see `FrameSpectra::tone_sigma2`).
+    pub whiten: bool,
     /// A priori decoding context. `None` (the default) is the ordinary decoder.
     pub ap: Option<ApContext>,
     /// SIC tuning.
@@ -58,6 +60,7 @@ impl Default for RxConfig {
             max_drift_hz: 4.0,
             drift_gain: 1.05,
             min_fine_sync: 2.5,
+            whiten: true,
             ap: None,
             sic: SicParams::default(),
         }
@@ -169,7 +172,7 @@ impl Receiver {
         }
         for (sync, spectra) in hypotheses {
             let spectra = spectra.unwrap_or_else(|| FrameSpectra::new(&bb, &self.symfft, &sync));
-            let llr = spectra.llrs();
+            let llr = spectra.llrs_with(cfg.whiten);
             let f0_abs = centre + sync.df_hz;
             let hyps = cfg.ap.as_ref().map(|ctx| build_ladder(ctx, Some(f0_abs))).unwrap_or_default();
             let r = decode_with_ap(dec, &llr, &hyps);

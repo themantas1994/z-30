@@ -14,7 +14,13 @@ use z30_protocol::codec::{Callsign, Extra, Message};
 // ------------------------------------------------------------------------------------ helpers
 
 fn station(call: &str) -> StationConfig {
-    StationConfig { callsign: call.into(), grid: "FN31pr".into(), region: Some(Region::Us), license_class: Some(LicenseClass::UsGeneral), configured_tx_power_w: None }
+    StationConfig {
+        callsign: call.into(),
+        grid: "FN31pr".into(),
+        region: Some(Region::Us),
+        license_class: Some(LicenseClass::UsGeneral),
+        configured_tx_power_w: None,
+    }
 }
 
 fn gate(st: &StationConfig, dial: f64, audio: f64, rig: &RigStateTracker, now: u64) -> z30_engine::txgate::Permission {
@@ -267,7 +273,8 @@ fn z1b_replacing_the_line_while_keyed_releases_the_old_line_first() {
 #[test]
 fn z2_a_key_the_hardware_refused_leaves_nothing_keyed() {
     let log = Arc::new(Mutex::new(Vec::new()));
-    let ptt = PttController::new(Box::new(RecordingLine { name: "serial", log: log.clone(), fail_key: true }), Arc::new(VirtualClock::default()));
+    let ptt =
+        PttController::new(Box::new(RecordingLine { name: "serial", log: log.clone(), fail_key: true }), Arc::new(VirtualClock::default()));
     assert!(ptt.key().is_err());
     assert!(!ptt.is_keyed());
     assert_eq!(log.lock().unwrap().last(), Some(&("serial", false)), "a release is still sent in case the line half-changed");
@@ -316,4 +323,3 @@ fn p4c_the_limit_can_never_be_raised() {
     clock.advance(MAX_TX_SECONDS * 1000);
     assert!(ptt.watchdog_tick(), "a 10-minute limit request is clamped to MAX_TX_SECONDS");
 }
-

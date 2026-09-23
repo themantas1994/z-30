@@ -94,15 +94,48 @@ impl FrameSpectra {
 
     /// Channel LLRs for the 216 coded bits.
     pub fn llrs(&self) -> Llrs {
+        self.llrs_with(false)
+    }
+
+    /// Per-tone noise variance: the global estimate, raised for any tone bin whose median energy
+    /// across the frame is well above it. A frame occupies each tone in only ~1/16 of its
+    /// symbols, so a tone's median is the noise in that bin - unless something stationary sits
+    /// there (a carrier, a birdie, another station's steady tone), which is exactly what should
+    /// be discounted.
+    pub fn tone_sigma2(&self) -> [f64; NUM_TONES] {
+        let sigma2 = self.noise_sigma2();
+        let mut out = [sigma2; NUM_TONES];
+        let mut col = [0.0f32; TOTAL_SYMBOLS];
+        for (t, o) in out.iter_mut().enumerate() {
+            for (s, c) in col.iter_mut().enumerate() {
+                *c = self.tone(s, t).norm_sqr();
+            }
+            let med = *col.select_nth_unstable_by(TOTAL_SYMBOLS / 2, |a, b| a.partial_cmp(b).unwrap()).1 as f64;
+            let est = med / (2.0 * std::f64::consts::LN_2);
+            // 2x the global estimate is ~6 standard deviations of a 75-symbol median on pure
+            // noise: only real stationary interference crosses it.
+            if est > 2.0 * sigma2 {
+                *o = est;
+            }
+        }
+        out
+    }
+
+    /// Channel LLRs, optionally with per-tone interference whitening. With per-tone noise
+    /// variances the exact non-coherent metric is `ln I0(a |r_k| / s_k^2) - a^2 / (2 s_k^2)`;
+    /// with equal variances the second term is common to all tones and drops out, which is the
+    /// reference metric exactly.
+    pub fn llrs_with(&self, whiten: bool) -> Llrs {
         let sigma2 = self.noise_sigma2();
         let amp = self.pilot_amplitude().max(1e-30);
-        let s_corr = amp / sigma2;
+        let tone_s2 = if whiten { self.tone_sigma2() } else { [sigma2; NUM_TONES] };
         let mut out = [0.0f32; N];
         let mut likes = [0.0f64; NUM_TONES];
         for (d, &pos) in DATA_POSITIONS.iter().enumerate() {
             for (t, l) in likes.iter_mut().enumerate() {
-                let z = self.tone(pos, t).norm() as f64 * s_corr;
-                *l = ln_i0_metric(z);
+                let s2 = tone_s2[t];
+                let z = self.tone(pos, t).norm() as f64 * amp / s2;
+                *l = ln_i0_metric(z) - amp * amp / (2.0 * s2) + amp * amp / (2.0 * sigma2);
             }
             out[d * 4..d * 4 + 4].copy_from_slice(&demap16(&likes));
         }

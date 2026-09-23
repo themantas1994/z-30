@@ -256,7 +256,11 @@ pub struct NoPtt;
 
 impl PttLine for NoPtt {
     fn set(&mut self, keyed: bool) -> Result<PttAck, PttError> {
-        if keyed { Err(PttError("no PTT method is configured".into())) } else { Ok(PttAck::Confirmed) }
+        if keyed {
+            Err(PttError("no PTT method is configured".into()))
+        } else {
+            Ok(PttAck::Confirmed)
+        }
     }
 
     fn describe(&self) -> String {

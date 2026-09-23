@@ -184,7 +184,14 @@ impl Sequencer {
     /// square only when the square is in the v1 table.
     pub fn new(my_call: Callsign, grid: &str, watchdog_cycles: u32) -> Self {
         let my_grid = grid.get(..4).and_then(|g| Grid4::new(g).ok());
-        Sequencer { my_call, my_grid, state: QsoState::Idle, dx: DxInfo::default(), tx_without_progress: 0, watchdog_cycles: watchdog_cycles.max(1) }
+        Sequencer {
+            my_call,
+            my_grid,
+            state: QsoState::Idle,
+            dx: DxInfo::default(),
+            tx_without_progress: 0,
+            watchdog_cycles: watchdog_cycles.max(1),
+        }
     }
 
     /// Current state.
@@ -268,13 +275,25 @@ impl Sequencer {
             self.dx.ap_assisted |= d.ap_type > 0;
             match (&self.state, &d.message.extra) {
                 (QsoState::CallingCq, Extra::Grid(g)) => {
-                    self.dx = DxInfo { grid: Some(g.clone()), last_snr: Some(d.snr_db), first_slot: Some(slot), ap_assisted: d.ap_type > 0, ..Default::default() };
+                    self.dx = DxInfo {
+                        grid: Some(g.clone()),
+                        last_snr: Some(d.snr_db),
+                        first_slot: Some(slot),
+                        ap_assisted: d.ap_type > 0,
+                        ..Default::default()
+                    };
                     self.dx.rst_sent = Some(report_for(d.snr_db));
                     self.set(QsoState::SendingReport(from));
                 }
                 (QsoState::CallingCq, Extra::Report(r)) => {
                     // They skipped the grid and sent a report: ours is the roger report.
-                    self.dx = DxInfo { rst_rcvd: Some(*r), last_snr: Some(d.snr_db), first_slot: Some(slot), ap_assisted: d.ap_type > 0, ..Default::default() };
+                    self.dx = DxInfo {
+                        rst_rcvd: Some(*r),
+                        last_snr: Some(d.snr_db),
+                        first_slot: Some(slot),
+                        ap_assisted: d.ap_type > 0,
+                        ..Default::default()
+                    };
                     self.dx.rst_sent = Some(report_for(d.snr_db));
                     self.set(QsoState::SendingRogerReport(from));
                 }

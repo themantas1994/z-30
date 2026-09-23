@@ -231,7 +231,8 @@ pub fn is_valid_callsign(call: &str) -> bool {
     if !first_part.bytes().any(|b| b.is_ascii_uppercase()) {
         return false;
     }
-    let alnum = |s: &str, lo: usize, hi: usize| (lo..=hi).contains(&s.len()) && s.bytes().all(|b| b.is_ascii_uppercase() || b.is_ascii_digit());
+    let alnum =
+        |s: &str, lo: usize, hi: usize| (lo..=hi).contains(&s.len()) && s.bytes().all(|b| b.is_ascii_uppercase() || b.is_ascii_digit());
     let parts: Vec<&str> = t.split('/').collect();
     let (prefix, core, suffix) = match parts.len() {
         1 => (None, parts[0], None),

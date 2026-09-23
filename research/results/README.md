@@ -14,3 +14,4 @@ Provenance notes:
   `decode_slot`'s code is unchanged between that tree and `f180122`. Host: 4 vCPU Intel Xeon
   @ 2.80 GHz, Linux 6.18, Rust 1.94.1, Python 3.11.15, NumPy 2.2.6. The oracle arm reproduces the
   published `--mode realistic` table frame for frame (-22.92 dB [-23.07, -22.79]).
+| `whitening_ab_200.txt` / `.json` | Per-tone interference whitening on (A) vs off (B), same buffers, AWGN, 200 frames/point, -25..-21 dB: 0 discordant of 1000 | `python research/paired_receiver.py --min-snr -25 --max-snr -21 --frames 200 --workers 4 --vnext-only --arm-b '{"whiten": false}' --out research/results/whitening_ab_200.json` |

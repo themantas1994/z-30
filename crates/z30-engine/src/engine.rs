@@ -269,7 +269,8 @@ impl Engine {
                     };
                     rec.tx_audio_hz = self.config.operating.tx_audio_hz;
                     rec.band = self.config.station.region.zip(self.config.station.license_class).and_then(|(r, c)| {
-                        find_permitted_segment(r, c, rec.dial_hz.value + rec.tx_audio_hz + 23.4, OCCUPIED_40DB_HZ).map(|s| s.band.to_string())
+                        find_permitted_segment(r, c, rec.dial_hz.value + rec.tx_audio_hz + 23.4, OCCUPIED_40DB_HZ)
+                            .map(|s| s.band.to_string())
                     });
                     rec.tx_power_w = self.config.station.configured_tx_power_w.map(|p| Sourced::new(p, Provenance::Configured));
                     if self.config.operating.auto_log {
@@ -315,7 +316,12 @@ impl Engine {
     fn blockers_now(&self, now_ms: u64) -> Vec<crate::txgate::Violation> {
         let msg = self.seq.as_ref().and_then(|s| s.next_message());
         can_transmit(
-            &TxRequest { station: &self.config.station, dial_hz: self.commanded_dial as f64, tx_audio_hz: self.config.operating.tx_audio_hz, message: msg.as_ref() },
+            &TxRequest {
+                station: &self.config.station,
+                dial_hz: self.commanded_dial as f64,
+                tx_audio_hz: self.config.operating.tx_audio_hz,
+                message: msg.as_ref(),
+            },
             &self.rig,
             now_ms,
         )
@@ -337,7 +343,12 @@ impl Engine {
             return None;
         }
         let perm = can_transmit(
-            &TxRequest { station: &self.config.station, dial_hz: self.commanded_dial as f64, tx_audio_hz: self.config.operating.tx_audio_hz, message: msg.as_ref() },
+            &TxRequest {
+                station: &self.config.station,
+                dial_hz: self.commanded_dial as f64,
+                tx_audio_hz: self.config.operating.tx_audio_hz,
+                message: msg.as_ref(),
+            },
             &self.rig,
             now_ms,
         );

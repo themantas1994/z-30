@@ -37,7 +37,7 @@ impl PyReceiver {
     /// Decodes one 27 s slot window at 6 kHz, passed as float32 little-endian bytes
     /// (`numpy_array.astype('<f4').tobytes()`). Keyword arguments override RxConfig defaults.
     #[pyo3(signature = (samples, *, band_lo_hz=None, band_hi_hz=None, max_candidates=None, sync_threshold=None, passes=None,
-                        max_drift_hz=None, min_fine_sync=None, drift_gain=None, ap_stage=None, my_call=None, dx_call=None, worked_freqs_hz=None))]
+                        max_drift_hz=None, min_fine_sync=None, drift_gain=None, whiten=None, ap_stage=None, my_call=None, dx_call=None, worked_freqs_hz=None))]
     #[allow(clippy::too_many_arguments)]
     fn decode_slot<'py>(
         &self,
@@ -51,6 +51,7 @@ impl PyReceiver {
         max_drift_hz: Option<f64>,
         min_fine_sync: Option<f64>,
         drift_gain: Option<f64>,
+        whiten: Option<bool>,
         ap_stage: Option<String>,
         my_call: Option<String>,
         dx_call: Option<String>,
@@ -84,6 +85,9 @@ impl PyReceiver {
         }
         if let Some(v) = drift_gain {
             cfg.drift_gain = v
+        }
+        if let Some(v) = whiten {
+            cfg.whiten = v
         }
         if let Some(stage) = ap_stage {
             let stage = ApStage::from_reference_name(&stage).ok_or_else(|| PyValueError::new_err(format!("unknown AP stage {stage}")))?;

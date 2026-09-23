@@ -39,7 +39,15 @@ pub struct SampleClock {
 impl SampleClock {
     /// A clock for a stream at `nominal_rate` samples per second.
     pub fn new(nominal_rate: f64) -> Self {
-        SampleClock { nominal_rate, window: VecDeque::new(), window_sec: 120.0, epoch: 0, epoch_start_index: 0, fit: None, jump_tolerance_sec: 0.25 }
+        SampleClock {
+            nominal_rate,
+            window: VecDeque::new(),
+            window_sec: 120.0,
+            epoch: 0,
+            epoch_start_index: 0,
+            fit: None,
+            jump_tolerance_sec: 0.25,
+        }
     }
 
     /// Current epoch (incremented at every discontinuity).

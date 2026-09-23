@@ -75,7 +75,11 @@ fn soak_24_hours_every_slot_once_aligned_to_utc_through_drift_jitter_and_a_dropo
                     assert!(err.abs() < 0.010, "slot {}: window misaligned by {:.1} ms", job.slot, err * 1e3);
                     // ...and it may only be emitted once the whole window has been captured.
                     let captured_until = card.true_utc(card.next as f64);
-                    assert!(captured_until >= slot_start(job.slot) + 25.5 - 0.01, "slot {} emitted before its window was complete (C1)", job.slot);
+                    assert!(
+                        captured_until >= slot_start(job.slot) + 25.5 - 0.01,
+                        "slot {} emitted before its window was complete (C1)",
+                        job.slot
+                    );
                     ready.push(job.slot);
                 }
                 SlotEvent::Missed(s, r) => missed.push((s, r)),
@@ -95,7 +99,14 @@ fn soak_24_hours_every_slot_once_aligned_to_utc_through_drift_jitter_and_a_dropo
     assert!(missed.len() <= 3, "{missed:?}");
     let drift = pipe.clock().drift_ppm().unwrap();
     assert!((drift - 150.0).abs() < 5.0, "estimated drift {drift} ppm");
-    eprintln!("24 h: {} slots, {} missed ({:?}), worst alignment {:.2} ms, drift estimate {:.1} ppm", ready.len(), missed.len(), missed, worst * 1e3, drift);
+    eprintln!(
+        "24 h: {} slots, {} missed ({:?}), worst alignment {:.2} ms, drift estimate {:.1} ppm",
+        ready.len(),
+        missed.len(),
+        missed,
+        worst * 1e3,
+        drift
+    );
 }
 
 /// The partner station: answers whatever we sent last, like a real operator's sequencer would.

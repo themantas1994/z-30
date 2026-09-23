@@ -251,7 +251,11 @@ impl RigStateTracker {
 
     /// The dial the radio vouches for, if any.
     pub fn verified_dial_hz(&self, now_ms: u64) -> Option<f64> {
-        if self.has_fresh_reading(now_ms) { self.reported_dial } else { None }
+        if self.has_fresh_reading(now_ms) {
+            self.reported_dial
+        } else {
+            None
+        }
     }
 
     /// A settled, fresh disagreement with `commanded_hz`, or None. Only positive evidence of a

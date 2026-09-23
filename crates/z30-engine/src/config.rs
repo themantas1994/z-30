@@ -142,7 +142,15 @@ pub struct OperatingConfig {
 
 impl Default for OperatingConfig {
     fn default() -> Self {
-        OperatingConfig { dial_hz: 14_076_000, rx_audio_hz: 1250.0, tx_audio_hz: 1250.0, tx_slot: TxSlot::Even, auto_sequence: true, watchdog_cycles: 6, auto_log: true }
+        OperatingConfig {
+            dial_hz: 14_076_000,
+            rx_audio_hz: 1250.0,
+            tx_audio_hz: 1250.0,
+            tx_slot: TxSlot::Even,
+            auto_sequence: true,
+            watchdog_cycles: 6,
+            auto_log: true,
+        }
     }
 }
 
@@ -167,7 +175,14 @@ pub struct ReceiverConfig {
 impl Default for ReceiverConfig {
     fn default() -> Self {
         let d = z30_dsp::slot::RxConfig::default();
-        ReceiverConfig { band_lo_hz: d.band_lo_hz, band_hi_hz: d.band_hi_hz, max_candidates: d.max_candidates, passes: d.passes, max_drift_hz: d.max_drift_hz, ap_enabled: false }
+        ReceiverConfig {
+            band_lo_hz: d.band_lo_hz,
+            band_hi_hz: d.band_hi_hz,
+            max_candidates: d.max_candidates,
+            passes: d.passes,
+            max_drift_hz: d.max_drift_hz,
+            ap_enabled: false,
+        }
     }
 }
 
