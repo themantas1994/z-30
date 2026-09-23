@@ -37,6 +37,7 @@ import {
   describeRigResolution,
 } from './rigStateTracker';
 import { StationConfig, PttMethodType } from '../types/z30';
+import { decodeCallsign28, encodeCallsign28 } from './z30Codec';
 import { getRigByName, CURRENT_HAMLIB_VERSION } from './hamlibCatalog';
 import {
   CatProtocolFamily,
@@ -784,6 +785,16 @@ export class CatController {
       );
     } else if (!isValidCallsign(call)) {
       violations.push(`"${call}" is not a syntactically valid amateur callsign.`);
+    } else if (decodeCallsign28(encodeCallsign28(call)) !== call) {
+      // A well-formed callsign the 28-bit v1 packer cannot carry goes out on the air as a
+      // DIFFERENT callsign - ZY2ABC as 24BWE (ZV-ZZ wrap modulo 2^28), G4XYZ/P as EY6ACQ,
+      // EA8/G4XYZ as Y43OAP (audit 2026-09-23, C5). That is transmitting under another
+      // station's call, so it is refused here rather than left to the packer to mangle.
+      violations.push(
+        `"${call}" cannot be carried by the z-30 v1 message format: it would be transmitted as ` +
+        `"${decodeCallsign28(encodeCallsign28(call))}". v1 carries only [1-2 character prefix][digit]` +
+        '[1-3 letter suffix] callsigns below the ZV prefix, with no /P or compound form.'
+      );
     }
 
     // 2. Regulatory region and licence class must both be chosen. Guessing either one on the
