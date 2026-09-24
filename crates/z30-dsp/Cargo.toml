@@ -20,4 +20,5 @@ parallel = ["dep:rayon"]
 
 [dev-dependencies]
 z30-channel = { path = "../z30-channel" }
+rand.workspace = true
 serde_json.workspace = true

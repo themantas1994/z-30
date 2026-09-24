@@ -279,7 +279,10 @@ impl Engine {
                     });
                     rec.tx_power_w = self.config.station.configured_tx_power_w.map(|p| Sourced::new(p, Provenance::Configured));
                     if self.config.operating.auto_log {
-                        self.events.push(Event::Logged(rec));
+                        match rec.validate() {
+                            Ok(()) => self.events.push(Event::Logged(rec)),
+                            Err(why) => self.events.push(Event::TxFault(format!("contact not logged: {why}"))),
+                        }
                     }
                 }
             }

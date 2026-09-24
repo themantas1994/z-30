@@ -46,7 +46,7 @@ pub struct DecodeRow {
     /// Message text; unrepresentable fields are shown as such.
     pub text: String,
     /// SNR in 2500 Hz, dB (measured).
-    pub snr_db: f64,
+    pub snr_db: Option<f64>,
     /// DT, s.
     pub dt_sec: f64,
     /// Tone-0 audio frequency, Hz.
@@ -182,4 +182,30 @@ pub enum Event {
     Rig(String),
     /// Audio status changed.
     Audio(String),
+}
+
+/// How a reported SNR is displayed: the value inside the range its accuracy has been measured
+/// over (z30-dsp `SNR_VALIDATED_MIN_DB..=SNR_VALIDATED_MAX_DB`), a bound outside it, and
+/// "--" when there was no signal estimate. Never a floor or a default shown as a number.
+pub fn snr_text(snr_db: Option<f64>) -> String {
+    use z30_dsp::demod::{SNR_VALIDATED_MAX_DB, SNR_VALIDATED_MIN_DB};
+    match snr_db {
+        None => "--".into(),
+        Some(v) if v < SNR_VALIDATED_MIN_DB => format!("<{SNR_VALIDATED_MIN_DB:+.0}"),
+        Some(v) if v > SNR_VALIDATED_MAX_DB => format!(">{SNR_VALIDATED_MAX_DB:+.0}"),
+        Some(v) => format!("{v:+.1}"),
+    }
+}
+
+#[cfg(test)]
+mod snr_text_tests {
+    use super::snr_text;
+
+    #[test]
+    fn unmeasured_and_out_of_range_values_are_not_shown_as_measurements() {
+        assert_eq!(snr_text(None), "--");
+        assert_eq!(snr_text(Some(-7.26)), "-7.3");
+        assert_eq!(snr_text(Some(-26.0)), "<-22");
+        assert_eq!(snr_text(Some(41.0)), ">+30");
+    }
 }

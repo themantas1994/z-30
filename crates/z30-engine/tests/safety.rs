@@ -10,7 +10,7 @@ use z30_engine::config::StationConfig;
 use z30_engine::ptt::*;
 use z30_engine::rig::*;
 use z30_engine::txgate::{can_transmit, TxRequest, Violation};
-use z30_protocol::codec::{Callsign, Extra, Message};
+use z30_protocol::codec::{CallField, Callsign, CodecError, Extra, Grid4, Message};
 
 // ------------------------------------------------------------------------------------ helpers
 
@@ -140,6 +140,40 @@ fn g5_the_frame_must_encode_and_be_sent_from_this_station() {
     assert!(p.violations.iter().any(|v| matches!(v, Violation::MessageNotFromStation(_))));
     let mine = Message::directed(Callsign::new("W1AW").unwrap(), Callsign::new("K1ABC").unwrap(), Extra::Rr73).unwrap();
     assert!(can_transmit(&TxRequest { station: &st, dial_hz: 14_076_000.0, tx_audio_hz: 1500.0, message: Some(&mine) }, &rig, 0).allowed);
+}
+
+#[test]
+fn g6_the_whole_frame_is_checked_partner_call_grid_and_report_not_just_our_call() {
+    // Audit C-06: the legacy gate checked only the station's own callsign, so a reply to
+    // ZY2ABC went out addressed to 24BWE and FN42 went out as RE78.
+    let rig = RigStateTracker::new();
+    let st = station("K1ABC");
+    let me = Callsign::new("K1ABC").unwrap();
+    let ask =
+        |m: &Message| can_transmit(&TxRequest { station: &st, dial_hz: 14_076_000.0, tx_audio_hz: 1500.0, message: Some(m) }, &rig, 0);
+    let not_encodable = |p: &z30_engine::txgate::Permission| p.violations.iter().any(|v| matches!(v, Violation::MessageNotEncodable(_)));
+
+    // A partner field that is not the canonical encoding of any callsign.
+    let to_nobody = Message { to: CallField::Unrepresentable(0x0FFF_FFF0), from: me.clone(), extra: Extra::report(-10).unwrap() };
+    assert!(not_encodable(&ask(&to_nobody)) && !ask(&to_nobody).allowed);
+    // Hand-built fields that bypass the validating constructors.
+    let off_table = Message { to: CallField::Cq, from: me.clone(), extra: Extra::Grid(Grid4::new("FN42").unwrap()) };
+    let p = ask(&off_table);
+    assert!(p.violations.contains(&Violation::MessageNotEncodable(CodecError::GridNotInTable("FN42".into()))), "{:?}", p.violations);
+    let too_loud = Message { to: CallField::Call(Callsign::new("G4XYZ").unwrap()), from: me.clone(), extra: Extra::Report(31) };
+    assert!(not_encodable(&ask(&too_loud)));
+    // Partner calls v1 cannot carry never get as far as a Message.
+    for partner in ["ZY2ABC", "G4XYZ/P", "EA8/G4XYZ", "3DA0XYZ"] {
+        assert!(Callsign::new(partner).is_err(), "{partner}");
+    }
+    // And every form v1 does carry, sent from this station, passes.
+    let dx = Callsign::new("G4XYZ").unwrap();
+    for db in -30..=30 {
+        assert!(ask(&Message::directed(dx.clone(), me.clone(), Extra::report(db).unwrap()).unwrap()).allowed, "{db}");
+    }
+    for e in [Extra::Rrr, Extra::SeventyThree, Extra::Rr73, Extra::grid(&Grid4::new("FN31").unwrap()).unwrap()] {
+        assert!(ask(&Message::directed(dx.clone(), me.clone(), e).unwrap()).allowed);
+    }
 }
 
 #[test]

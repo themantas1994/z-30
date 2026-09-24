@@ -4,6 +4,7 @@
 //! GUI, where the operator sees the gate's verdict before every transmission.
 
 mod bench;
+mod suite;
 
 use clap::Parser;
 use std::path::{Path, PathBuf};
@@ -39,8 +40,15 @@ pub(crate) fn allocations() -> u64 {
 }
 
 #[derive(Parser, Debug)]
-#[command(name = "z30", version = concat!(env!("CARGO_PKG_VERSION"), " (", env!("Z30_BUILD_COMMIT"), ")"), about = "z-30 vNext: headless receiver, decoder, benchmark and diagnostics (never transmits)")]
+#[command(
+    name = "z30",
+    disable_version_flag = true,
+    about = "z-30 vNext: headless receiver, decoder, benchmark and diagnostics (never transmits)"
+)]
 struct Cli {
+    /// Print the version, the commit and build this binary came from, and exit.
+    #[arg(short = 'V', long)]
+    version: bool,
     /// Configuration file (default: the z-30 data directory's config.toml).
     #[arg(long, value_name = "PATH")]
     config: Option<PathBuf>,
@@ -60,12 +68,18 @@ struct Cli {
     /// Write each received slot window (WAV) and its report (JSON) to this directory.
     #[arg(long, value_name = "DIR")]
     capture_slots: Option<PathBuf>,
-    /// Benchmarks: perf (latency/CPU/allocations at K = 1, 5, 20, 50), false-decodes, sweep.
+    /// Benchmarks, all through decode_slot: perf (latency/CPU/allocations at K = 1, 5, 20, 50),
+    /// false-decodes, sweep, and the measurement suite - `suite` runs all of awgn, drift,
+    /// timing, clock, impair, snr, busy, false, sic, fading and writes JSON with provenance.
     #[arg(long, value_name = "WHAT", num_args = 0..=1, default_missing_value = "perf")]
     benchmark: Option<String>,
-    /// Frames/slots per point for --benchmark.
-    #[arg(long, default_value_t = 20)]
-    frames: usize,
+    /// Frames/slots per point for --benchmark (default: 20 for perf/false-decodes/sweep; each
+    /// suite benchmark's own publishable size otherwise).
+    #[arg(long)]
+    frames: Option<usize>,
+    /// Output directory for suite results (default: research/results/<commit>).
+    #[arg(long, value_name = "DIR")]
+    out: Option<PathBuf>,
     /// Report configuration, clock, audio, rig and transmit-gate status.
     #[arg(long)]
     diagnostics: bool,
@@ -95,9 +109,31 @@ struct Cli {
     import_adif: Option<PathBuf>,
 }
 
+/// What this binary is: every field a release artefact must carry (version, commit, build
+/// date, target platform and architecture, profile, optional features, protocol).
+pub(crate) fn version_text() -> String {
+    format!(
+        "z30 {} (z-30 vNext, Rust)\ncommit:       {}\nbuilt:        {} with {}\ntarget:       {}\narchitecture: {} ({})\nprofile:      {}\nfeatures:     {}\nprotocol:     v{}\nruntime:      native; no Python, Node or browser component",
+        env!("CARGO_PKG_VERSION"),
+        env!("Z30_BUILD_COMMIT"),
+        env!("Z30_BUILD_DATE"),
+        env!("Z30_BUILD_RUSTC"),
+        env!("Z30_BUILD_TARGET"),
+        std::env::consts::ARCH,
+        std::env::consts::OS,
+        env!("Z30_BUILD_PROFILE"),
+        if cfg!(feature = "cm108") { "cm108 (CM108/CM119 GPIO PTT)" } else { "none (CM108 GPIO PTT not built in)" },
+        z30_protocol::PROTOCOL_VERSION,
+    )
+}
+
 fn main() {
     z30_engine::ptt::install_panic_release();
     let cli = Cli::parse();
+    if cli.version {
+        println!("{}", version_text());
+        return;
+    }
     let config_path = cli.config.clone().unwrap_or_else(paths::config_path);
     let result = run(&cli, &config_path);
     if let Err(e) = result {
@@ -148,7 +184,7 @@ fn run(cli: &Cli, config_path: &Path) -> Result<(), String> {
         return Ok(());
     }
     if let Some(what) = &cli.benchmark {
-        return bench::run(what, cli.frames);
+        return bench::run(what, cli.frames, cli.out.as_deref());
     }
     let cfg = paths::load_config(config_path)?;
     if cli.diagnostics {
@@ -172,20 +208,16 @@ fn migrate(config_path: &Path, force: bool) -> Result<(), String> {
         paths::save_config(config_path, &cfg)?;
         println!("wrote {}", config_path.display());
     }
-    let lb = paths::logbook_path();
-    if lb.exists() {
-        println!("{} exists; logbook not re-imported.", lb.display());
-    } else {
-        std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
-        let mut book = Logbook::open(&lb)?;
-        z30_io::migrate::migrate_logbook(&dir, &mut book, &mut rep);
-    }
+    // Idempotent: a contact already in the vNext logbook is not imported again.
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    let mut book = Logbook::open(&paths::logbook_path())?;
+    z30_io::migrate::migrate_logbook(&dir, &mut book, &mut rep);
     print!("{}", rep.text());
     Ok(())
 }
 
 fn diagnostics(cfg: &z30_engine::config::Config, config_path: &Path) -> Result<(), String> {
-    println!("z30 {} ({}) (protocol v{})", env!("CARGO_PKG_VERSION"), env!("Z30_BUILD_COMMIT"), z30_protocol::PROTOCOL_VERSION);
+    println!("{}", version_text());
     println!("config:   {}{}", config_path.display(), if config_path.exists() { "" } else { " (not found: defaults, transmit refused)" });
     println!("data dir: {}", paths::data_dir().display());
     let wall = z30_io::wallclock::SystemWallClock::default();
@@ -219,7 +251,7 @@ fn diagnostics(cfg: &z30_engine::config::Config, config_path: &Path) -> Result<(
 fn print_decode(slot: i64, d: &z30_dsp::slot::Decode) {
     let (date, time) = z30_io::logbook::utc_parts(z30_engine::slots::slot_start(slot));
     let ap = if d.ap_type > 0 { format!(" a{}", d.ap_type) } else { String::new() };
-    println!("{date} {time}  {:+5.1} dB  DT {:+5.2}  {:7.1} Hz  {}{ap}", d.snr_db, d.dt_sec, d.freq_hz, d.message);
+    println!("{date} {time}  {:>5} dB  DT {:+5.2}  {:7.1} Hz  {}{ap}", z30_engine::api::snr_text(d.snr_db), d.dt_sec, d.freq_hz, d.message);
 }
 
 fn decode_wav(path: &Path, start_utc: Option<f64>, cfg: &z30_engine::config::Config, capture: Option<&Path>) -> Result<(), String> {
@@ -266,7 +298,7 @@ fn decode_wav(path: &Path, start_utc: Option<f64>, cfg: &z30_engine::config::Con
         rep.decodes.iter().for_each(|d| print_decode(label, d));
         total += rep.decodes.len();
         if let Some(dir) = capture {
-            capture_slot(dir, slot, &win, &rep)?;
+            capture_slot(dir, slot, &win, &rep, "recording")?;
         }
         slot += 1;
     }
@@ -274,17 +306,22 @@ fn decode_wav(path: &Path, start_utc: Option<f64>, cfg: &z30_engine::config::Con
     Ok(())
 }
 
-fn capture_slot(dir: &Path, slot: i64, window: &[f32], rep: &z30_dsp::slot::SlotReport) -> Result<(), String> {
+fn capture_slot(dir: &Path, slot: i64, window: &[f32], rep: &z30_dsp::slot::SlotReport, source: &str) -> Result<(), String> {
     std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
     let (d, t) = z30_io::logbook::utc_parts(z30_engine::slots::slot_start(slot));
     let base = dir.join(format!("z30_{d}_{t}"));
     z30_io::wav::write_mono(&base.with_extension("wav"), window, 6000)?;
     let json = serde_json::json!({
         "slot": slot, "window_start_utc": z30_engine::slots::slot_start(slot) - 1.5, "rate_hz": 6000,
+        // Where the samples came from: "live-audio" (a sound card) or "recording" (a WAV file).
+        "source": source, "receiver": format!("z30 {}", env!("Z30_BUILD_COMMIT")),
         "elapsed_ms": rep.elapsed_ms,
         "decodes": rep.decodes.iter().map(|d| serde_json::json!({
             "message": d.message.to_string(), "snr_db": d.snr_db, "dt_sec": d.dt_sec, "freq_hz": d.freq_hz,
             "drift_hz": d.drift_hz, "iterations": d.iterations, "ap_type": d.ap_type, "pass": d.pass,
+            // No per-decode confidence is reported: the decoder has no calibrated one. The CRC
+            // passed; `method`, `iterations` and `ap_type` say how.
+            "method": format!("{:?}", d.method),
         })).collect::<Vec<_>>(),
         "passes": rep.passes.iter().map(|p| serde_json::json!({"candidates": p.candidates, "decoded": p.decoded,
             "duplicates": p.duplicates, "suppression_db": p.suppression_db, "elapsed_ms": p.elapsed_ms})).collect::<Vec<_>>(),
@@ -369,7 +406,7 @@ fn receive(cfg: z30_engine::config::Config, capture: Option<PathBuf>) -> Result<
         while handle.waterfall.try_recv().is_ok() {}
         if let Some(dir) = &capture {
             while let Ok(c) = tap_rx.try_recv() {
-                if let Err(e) = capture_slot(dir, c.slot, &c.samples, &c.report) {
+                if let Err(e) = capture_slot(dir, c.slot, &c.samples, &c.report, "live-audio") {
                     eprintln!("-- capture failed: {e}");
                 }
             }

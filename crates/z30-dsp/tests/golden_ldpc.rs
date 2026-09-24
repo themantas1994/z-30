@@ -22,9 +22,8 @@ fn load(name: &str) -> Value {
 }
 
 fn read_llrs(name: &str) -> Vec<Llrs> {
-    let raw: Vec<f32> =
-        std::fs::read(golden(name)).unwrap().chunks_exact(4).map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]])).collect();
-    raw.chunks_exact(N).map(|c| c.try_into().unwrap()).collect()
+    let raw: Vec<f32> = std::fs::read(golden(name)).unwrap().as_chunks::<4>().0.iter().map(|b| f32::from_le_bytes(*b)).collect();
+    raw.as_chunks::<N>().0.to_vec()
 }
 
 fn bits_str(b: &[u8]) -> String {
@@ -256,11 +255,11 @@ fn ap_decode_is_bit_exact_on_the_corpus() {
 #[ignore]
 fn screen_osd_pool() {
     let path = std::env::var("Z30_POOL").expect("Z30_POOL");
-    let raw: Vec<f32> = std::fs::read(path).unwrap().chunks_exact(4).map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]])).collect();
+    let raw: Vec<f32> = std::fs::read(path).unwrap().as_chunks::<4>().0.iter().map(|b| f32::from_le_bytes(*b)).collect();
     let mut dec = Decoder::new();
     let (mut legacy, mut fixed, mut both, mut failures) = (vec![], vec![], 0, 0);
-    for (i, c) in raw.chunks_exact(N).enumerate() {
-        let llr: Llrs = c.try_into().unwrap();
+    for (i, c) in raw.as_chunks::<N>().0.iter().enumerate() {
+        let llr: Llrs = *c;
         if let BpOutcome::Failure(f) = dec.decode_bp(&llr, None) {
             failures += 1;
             let l = legacy_osd(&f, &llr, None).is_some();

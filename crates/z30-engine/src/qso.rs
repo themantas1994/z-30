@@ -142,6 +142,31 @@ pub struct QsoRecord {
     pub comment: String,
 }
 
+/// The earliest UTC a record may carry: 2020-01-01T00:00:00Z. Anything earlier is a clock
+/// that was never set, or a local time mistaken for UTC somewhere upstream, not a z-30 contact.
+pub const EARLIEST_QSO_UTC: f64 = 1_577_836_800.0;
+
+impl QsoRecord {
+    /// Why this record must not be written to a logbook, if it must not. A logbook holds only
+    /// contacts that happened: a real partner callsign (one v1 can carry, so one that was
+    /// actually decoded or imported as such), a UTC time that is plausible, and an end that is
+    /// not before the start. Absent optional fields are fine - they stay absent.
+    pub fn validate(&self) -> Result<(), String> {
+        if self.call.trim().is_empty() {
+            return Err("no partner callsign: nothing was received from a station".into());
+        }
+        if !self.start_utc.is_finite() || self.start_utc < EARLIEST_QSO_UTC {
+            return Err(format!("start time {} is not a plausible UTC time", self.start_utc));
+        }
+        if !self.end_utc.is_finite() || self.end_utc < self.start_utc {
+            return Err(format!("end time {} is before the start {}", self.end_utc, self.start_utc));
+        }
+        // `my_call` may be empty: a legacy logbook entry does not say which callsign the station
+        // used, and guessing the current one would be inventing it.
+        Ok(())
+    }
+}
+
 /// Something the sequencer wants the application to know.
 #[derive(Clone, Debug, PartialEq)]
 pub enum QsoNote {
@@ -175,8 +200,15 @@ pub struct Sequencer {
 }
 
 /// Report value for a measured SNR: rounded, and clamped to the -30..+30 dB v1 can carry.
-pub fn report_for(snr_db: f64) -> i8 {
-    snr_db.round().clamp(-30.0, 30.0) as i8
+/// `None` when the receiver had no signal estimate: then there is no report to send, and the
+/// sequencer sends nothing rather than a made-up one.
+///
+/// The estimate's accuracy is measured from `SNR_VALIDATED_MIN_DB` to `SNR_VALIDATED_MAX_DB`
+/// (z30-dsp `tests/snr_accuracy.rs`); the upper edge is also v1's largest report, so a clamp
+/// there is the protocol's limit, not the estimator's. Before that test existed the estimate
+/// saturated near +6.6 dB and a +20 dB station was sent "+07" (2026-09-24 audit, M-07).
+pub fn report_for(snr_db: Option<f64>) -> Option<i8> {
+    snr_db.filter(|v| v.is_finite()).map(|v| v.round().clamp(-30.0, 30.0) as i8)
 }
 
 impl Sequencer {
@@ -224,7 +256,7 @@ impl Sequencer {
             return Err(CodecError::Unparseable(cq.message.to_string()));
         }
         self.grid_extra()?;
-        self.dx = DxInfo { last_snr: Some(cq.snr_db), first_slot: Some(slot), ap_assisted: cq.ap_type > 0, ..Default::default() };
+        self.dx = DxInfo { last_snr: cq.snr_db, first_slot: Some(slot), ap_assisted: cq.ap_type > 0, ..Default::default() };
         if let Extra::Grid(g) = &cq.message.extra {
             self.dx.grid = Some(g.clone());
         }
@@ -271,30 +303,30 @@ impl Sequencer {
                 }
             }
             let before = self.state.clone();
-            self.dx.last_snr = Some(d.snr_db);
+            self.dx.last_snr = d.snr_db;
             self.dx.ap_assisted |= d.ap_type > 0;
             match (&self.state, &d.message.extra) {
                 (QsoState::CallingCq, Extra::Grid(g)) => {
                     self.dx = DxInfo {
                         grid: Some(g.clone()),
-                        last_snr: Some(d.snr_db),
+                        last_snr: d.snr_db,
                         first_slot: Some(slot),
                         ap_assisted: d.ap_type > 0,
                         ..Default::default()
                     };
-                    self.dx.rst_sent = Some(report_for(d.snr_db));
+                    self.dx.rst_sent = report_for(d.snr_db);
                     self.set(QsoState::SendingReport(from));
                 }
                 (QsoState::CallingCq, Extra::Report(r)) => {
                     // They skipped the grid and sent a report: ours is the roger report.
                     self.dx = DxInfo {
                         rst_rcvd: Some(*r),
-                        last_snr: Some(d.snr_db),
+                        last_snr: d.snr_db,
                         first_slot: Some(slot),
                         ap_assisted: d.ap_type > 0,
                         ..Default::default()
                     };
-                    self.dx.rst_sent = Some(report_for(d.snr_db));
+                    self.dx.rst_sent = report_for(d.snr_db);
                     self.set(QsoState::SendingRogerReport(from));
                 }
                 (QsoState::SendingReport(_), Extra::Report(r)) => {
@@ -304,7 +336,7 @@ impl Sequencer {
                 }
                 (QsoState::Replying(_), Extra::Report(r)) => {
                     self.dx.rst_rcvd = Some(*r);
-                    self.dx.rst_sent = Some(report_for(d.snr_db));
+                    self.dx.rst_sent = report_for(d.snr_db);
                     self.set(QsoState::SendingRogerReport(from));
                 }
                 (QsoState::SendingRogerReport(_), Extra::Rr73 | Extra::Rrr) => {

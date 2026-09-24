@@ -122,13 +122,11 @@ impl App {
             let (cfg, rep) = z30_io::migrate::migrate_config(&paths::data_dir());
             if !rep.sources.is_empty() {
                 let _ = paths::save_config(&config_path, &cfg);
-                if !paths::logbook_path().exists() {
-                    if let Ok(mut book) = z30_io::logbook::Logbook::open(&paths::logbook_path()) {
-                        let mut rep2 = rep.clone();
-                        z30_io::migrate::migrate_logbook(&paths::data_dir(), &mut book, &mut rep2);
-                        messages
-                            .push((format!("Imported {} logbook entries from the legacy app.", rep2.log_imported), Color32::LIGHT_BLUE));
-                    }
+                // Idempotent: contacts already in the vNext logbook are not imported again.
+                if let Ok(mut book) = z30_io::logbook::Logbook::open(&paths::logbook_path()) {
+                    let mut rep2 = rep.clone();
+                    z30_io::migrate::migrate_logbook(&paths::data_dir(), &mut book, &mut rep2);
+                    messages.push((format!("Imported {} logbook entries from the legacy app.", rep2.log_imported), Color32::LIGHT_BLUE));
                 }
                 for line in rep.text().lines() {
                     messages.push((format!("migration: {line}"), Color32::LIGHT_BLUE));
@@ -431,7 +429,7 @@ impl eframe::App for App {
                     for r in snap.decodes.iter().rev().take(200).rev() {
                         let (_, t) = z30_io::logbook::utc_parts(z30_engine::slots::slot_start(r.slot));
                         ui.monospace(&t);
-                        ui.monospace(format!("{:+4.0}", r.snr_db));
+                        ui.monospace(z30_engine::api::snr_text(r.snr_db));
                         ui.monospace(format!("{:+.1}", r.dt_sec));
                         ui.monospace(format!("{:.0}", r.freq_hz));
                         let color = if r.to_me {

@@ -500,6 +500,11 @@ impl Message {
         match (&self.to, &self.extra) {
             (CallField::Unrepresentable(v), _) => Err(CodecError::Unparseable(format!("<?{v:07X}>"))),
             (_, Extra::Unassigned) => Err(CodecError::Unparseable("<?127>".into())),
+            // The enum's variants are public, so a caller can build these without going through
+            // `Extra::grid` / `Extra::report`; refuse them here rather than panic in `code()` on
+            // the way to the transmitter.
+            (_, Extra::Grid(g)) if g.v1_code().is_none() => Err(CodecError::GridNotInTable(g.to_string())),
+            (_, Extra::Report(db)) if !(-30..=30).contains(db) => Err(CodecError::BadReport(db.to_string())),
             // A CQ carries a grid; the reference unpacker renders any other extra on a CQ as a
             // grid, so anything else would be displayed as something that was not sent.
             (CallField::Cq | CallField::CqDx | CallField::CqTest, e) if !matches!(e, Extra::Grid(_)) => {
@@ -553,6 +558,37 @@ impl Message {
         let info = info_from_payload(&payload);
         let codeword = encode_info(&info);
         Ok(EncodedMessage { message: self.clone(), info, codeword, symbols: codeword_to_symbols(&codeword) })
+    }
+}
+
+impl EncodedMessage {
+    /// Proves the emission says what it claims, the way a receiver would read it: the 75
+    /// channel symbols carry the Costas pattern, their data symbols demap to a codeword that
+    /// satisfies every parity check, its systematic bits pass the CRC and unpack to exactly
+    /// `self.message`, and the message's own text parses back to the same message. The
+    /// transmit gate runs this on every frame (2026-09-24 audit, C-06: the legacy packer
+    /// transmitted FN42 as RE78 and replied to ZY2ABC as 24BWE, and its gate checked only the
+    /// station's own callsign).
+    pub fn verify_round_trip(&self) -> Result<(), CodecError> {
+        let fail = || CodecError::RoundTripFailed(self.message.to_string());
+        if crate::SYNC_POSITIONS.iter().zip(crate::SYNC_TONES.iter()).any(|(&p, &t)| self.symbols[p] != t) {
+            return Err(fail());
+        }
+        if self.symbols.iter().any(|&t| t as usize >= crate::NUM_TONES) {
+            return Err(fail());
+        }
+        let cw = crate::symbols::symbols_to_codeword(&self.symbols);
+        if cw != self.codeword || crate::ldpc::syndrome_weight(&cw) != 0 {
+            return Err(fail());
+        }
+        let decoded = unpack_info(&cw[..K]).ok_or_else(fail)?;
+        if decoded.to_message().as_ref() != Some(&self.message) {
+            return Err(fail());
+        }
+        if Message::parse(&self.message.to_string()).as_ref() != Ok(&self.message) {
+            return Err(fail());
+        }
+        Ok(())
     }
 }
 

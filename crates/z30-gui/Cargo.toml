@@ -4,7 +4,7 @@ description = "z-30 desktop GUI (egui/eframe). Renders EngineSnapshot and sends 
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-rust-version = "1.95"
+rust-version.workspace = true
 
 [[bin]]
 name = "z30-gui"

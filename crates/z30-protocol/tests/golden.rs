@@ -21,7 +21,7 @@ fn bits(s: &str) -> Vec<u8> {
 }
 
 fn read_f32(name: &str) -> Vec<f32> {
-    std::fs::read(golden(name)).unwrap().chunks_exact(4).map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]])).collect()
+    std::fs::read(golden(name)).unwrap().as_chunks::<4>().0.iter().map(|b| f32::from_le_bytes(*b)).collect()
 }
 
 #[test]

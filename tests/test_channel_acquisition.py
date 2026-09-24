@@ -89,16 +89,37 @@ class TestTimeOffset:
 
 class TestWattersonFading:
     @pytest.mark.parametrize("preset_name", sorted(WATTERSON_PRESETS))
-    def test_average_power_is_preserved(self, preset_name):
+    def test_average_power_is_preserved_over_the_ensemble(self, preset_name):
         """
-        The channel must neither add nor remove average power, or the SNR the caller asked for
-        is not the SNR the receiver sees and every point on the curve is mislabelled.
+        Averaged over realisations the channel must neither add nor remove power, or the SNR the
+        caller asked for is not the SNR the receiver sees and every point on the curve is
+        mislabelled. It is an ENSEMBLE property: this test used to check a single realisation
+        against 0.5-2x, which only a per-realisation normalisation can guarantee - and that
+        normalisation was the defect (2026-09-24 audit, H-10; see the next test).
         """
-        rng = np.random.default_rng(4)
-        wave = np.sin(2 * np.pi * 1250.0 * np.arange(SAMPLE_RATE * 20) / SAMPLE_RATE).astype(np.float32)
-        faded = apply_watterson_fading(wave, SAMPLE_RATE, WATTERSON_PRESETS[preset_name], rng)
-        ratio = float(np.mean(faded ** 2)) / float(np.mean(wave ** 2))
-        assert 0.5 < ratio < 2.0, f"{preset_name} changed average power by {ratio:.2f}x"
+        wave = np.sin(2 * np.pi * 1250.0 * np.arange(SAMPLE_RATE * 24) / SAMPLE_RATE).astype(np.float32)
+        ratios = []
+        for seed in range(60):
+            faded = apply_watterson_fading(wave, SAMPLE_RATE, WATTERSON_PRESETS[preset_name],
+                                           np.random.default_rng(1000 + seed))
+            ratios.append(float(np.mean(faded ** 2)) / float(np.mean(wave ** 2)))
+        mean = float(np.mean(ratios))
+        # 60 realisations of a (two-path) Rayleigh power: the ensemble mean is within ~20%.
+        assert 0.75 < mean < 1.25, f"{preset_name} changed ensemble-average power by {mean:.2f}x"
+
+    def test_slow_fading_varies_from_frame_to_frame(self):
+        """
+        On the 'good' path (0.1 Hz Doppler) the taps barely move within a 24 s frame, so each
+        frame's received power is close to an exponential draw. Per-realisation normalisation
+        made it exactly 1.0 every time, and the fading results it produced were optimistic by
+        about 3 dB at the 50% point on this preset (audit E025b).
+        """
+        wave = np.sin(2 * np.pi * 1250.0 * np.arange(SAMPLE_RATE * 24) / SAMPLE_RATE).astype(np.float32)
+        powers = [float(np.mean(apply_watterson_fading(wave, SAMPLE_RATE, WATTERSON_PRESETS["good"],
+                                                       np.random.default_rng(2000 + s)) ** 2))
+                  for s in range(60)]
+        cv = float(np.std(powers) / np.mean(powers))
+        assert cv > 0.4, f"frame powers vary by only {cv:.2f} on a 0.1 Hz channel"
 
     def test_no_fading_preset_is_a_no_op(self):
         rng = np.random.default_rng(0)
