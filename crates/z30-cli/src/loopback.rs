@@ -1,35 +1,39 @@
-//! `z30 --loopback-test`: audio loopback validation on real hardware (docs/hardware-validation.md
-//! test A1). A known frame is played through the configured output device at a slot boundary,
-//! recorded through the configured input device by the production receive pipeline
-//! (`RxPipeline`: resampler, sample clock, slot scheduler) and decoded by `decode_slot`.
+//! `z30 --loopback-test`: the SOFTWARE loopback. A known frame goes through the production
+//! transmit synthesis (`Message::frame` -> the gate's `VerifiedFrame` type -> `runtime::tx_audio`),
+//! is handed as device-rate samples (48 kHz and 44.1 kHz) to the production receive pipeline
+//! (`RxPipeline`: resampler, sample clock, slot scheduler) and decoded by `decode_slot`. The
+//! "cable" is a `Vec<f32>` in memory.
 //!
-//! What it measures - from the recording, nothing assumed:
+//! What it measures - from the received window, nothing assumed:
 //!
-//! - whether the frame decoded, and anything else that decoded (a false decode on a cable);
-//! - DT against the slot boundary, and against the instant this program predicted the first
-//!   sample would leave the output (play call + the device's reported output latency) - the
-//!   second is the audio chain's own timing error;
-//! - frequency error, reported SNR, the sound card's clock error as the sample-clock model
-//!   estimated it;
-//! - the recorded frame's 99% and -40 dB occupied bandwidth (Welch, stated parameters);
+//! - whether the frame decoded, and anything else that decoded (a false decode);
+//! - DT against the slot boundary, and against the instant the frame was placed;
+//! - frequency error, reported SNR against the SNR the noise was added at, the sample-clock
+//!   model's estimate;
+//! - the received frame's 99% and -40 dB occupied bandwidth (Welch, stated parameters);
 //! - the peak level (clipping).
 //!
-//! It keys nothing. It refuses to run without `--confirm-no-transmitter`, because a radio on VOX
-//! connected to the output WOULD transmit this audio. The result file says `source:
-//! hardware-loopback` and carries the binary's provenance; it is evidence only for the devices
-//! and cable it names.
+//! It cannot reach a transmitter. This module has no audio output, no PTT line, no rig
+//! control and no `z30-io` in it at all - not a check that could be skipped, but nothing to
+//! call - and `tests/loopback_isolation.rs` fails the build's tests if any of them is added.
+//! The previous `--loopback-test` played the frame through the configured sound card with no
+//! transmit gate in front of it, so a radio on VOX would have radiated it with no callsign or
+//! band-plan check (2026-09-24 post-remediation audit, N-04). Playing audio through a real
+//! sound card is now the separately named `--audio-loopback-test` (`audio_loopback.rs`), which
+//! refuses to run with any PTT method or rig control configured.
+//!
+//! The result says `source: software-loopback`. It is software evidence about the transmit
+//! synthesis and receive chain, not about any sound card, cable or radio: NOT HARDWARE VALIDATED.
 
+use rand::Rng;
 use rustfft::num_complex::Complex32;
 use rustfft::FftPlanner;
 use serde_json::{json, Value};
-use std::path::Path;
-use std::time::{Duration, Instant};
 use z30_dsp::slot::{Receiver, RxConfig, SlotReport};
-use z30_engine::pipeline::RxPipeline;
-use z30_engine::runtime::{AudioInput, AudioOutput, WallClock};
-use z30_engine::slots::{slot_of, slot_start, SlotEvent};
+use z30_engine::engine::{TxKind, TxPlan};
+use z30_engine::pipeline::{AudioBlock, RxPipeline};
+use z30_engine::slots::{slot_start, SlotEvent};
 use z30_protocol::codec::Message;
-use z30_protocol::gfsk::Modulator;
 
 /// Tone-0 frequency the test frame is sent at.
 pub const TEST_F0_HZ: f64 = 1500.0;
@@ -99,7 +103,7 @@ pub fn occupied_bandwidth(x: &[f32], f0: f64) -> (f64, f64) {
 
 /// Analyses one recorded slot window. Pure, so it is tested without a sound card.
 pub fn analyse(window: &[f32], report: &SlotReport, expected: &Message, predicted_dt_sec: f64) -> Value {
-    let want = expected.encode().expect("the test message encodes").info;
+    let want = expected.frame().expect("the test message encodes and verifies").encoded().info;
     let hit = report.decodes.iter().find(|d| d.info == want);
     let others: Vec<String> = report.decodes.iter().filter(|d| d.info != want).map(|d| d.message.to_string()).collect();
     let frame = &window[z30_dsp::baseband::SLOT_ZERO_INDEX + 3_000..z30_dsp::baseband::SLOT_ZERO_INDEX + 141_000];
@@ -129,86 +133,135 @@ pub fn analyse(window: &[f32], report: &SlotReport, expected: &Message, predicte
     })
 }
 
-/// Runs the test on the configured devices.
-pub fn run(cfg: &z30_engine::config::Config, confirmed: bool, out: Option<&Path>) -> Result<(), String> {
-    if !confirmed {
-        return Err("--loopback-test plays a z-30 frame through the output device. A radio on VOX connected to it WOULD transmit. \
-             Connect the output to the input with a cable (or a second sound card), with no transmitter in the path, \
-             and run again with --confirm-no-transmitter."
-            .into());
-    }
-    let mut input = z30_io::audio::CpalInput::open(cfg.audio.input_device.as_deref())?;
-    let mut output = z30_io::audio::CpalOutput::open(cfg.audio.output_device.as_deref())?;
-    let wall = z30_io::wallclock::SystemWallClock::default();
+/// Device rates the software loopback runs at: the two a sound card is most likely to use, so
+/// the resampler in front of the receiver is exercised in both of its non-trivial ratios.
+pub const SOFTWARE_RATES_HZ: [u32; 2] = [48_000, 44_100];
+/// SNR (2500 Hz, SPEC.md section 10) of the white noise added in the software cable for the
+/// decode, timing, frequency and SNR measurement: inside the SNR estimate's validated range.
+pub const SOFTWARE_SNR_DB: f64 = 20.0;
+/// Seed of that noise.
+pub const SOFTWARE_NOISE_SEED: u64 = 20_260_924;
+
+/// One software loopback at device rate `rate`, with white noise at `snr_db` (2500 Hz) or none.
+/// Returns the analysis (`loopback::analyse`) with the run's own `pass`:
+///
+/// - with noise: the frame decodes, nothing else does, |DT| <= 20 ms, |f error| <= 0.5 Hz and
+///   the reported SNR is within 1 dB of the SNR the noise was added at;
+/// - without noise: the frame decodes and the occupied bandwidth at the receiver's 6 kHz input
+///   (after the transmit synthesis and the resampler) is p99 <= 55 Hz, -40 dB <= 80 Hz. A noise
+///   floor would hide the -40 dB edge (at +20 dB it is ~37 dB below the peak bin), so the
+///   bandwidth is measured on the clean chain.
+pub fn software_loopback(rate: u32, snr_db: Option<f64>) -> Result<Value, String> {
     let msg = Message::parse(TEST_MESSAGE).map_err(|e| e.to_string())?;
-    let enc = msg.encode().map_err(|e| e.to_string())?;
-    let level = cfg.audio.tx_level.clamp(0.05, 1.0);
-    let audio: Vec<f32> = Modulator::new(output.sample_rate() as f64)
-        .map_err(|e| e.to_string())?
-        .synthesize(&enc.symbols, TEST_F0_HZ)
-        .map_err(|e| e.to_string())?
-        .into_iter()
-        .map(|v| v * level)
-        .collect();
-    let mut pipe = RxPipeline::new(input.sample_rate());
+    let frame = msg.frame().map_err(|e| e.to_string())?;
+    let plan = TxPlan { slot: 0, kind: TxKind::Frame(Box::new(frame)), tx_audio_hz: TEST_F0_HZ, text: TEST_MESSAGE.into() };
+    let level = 0.5f32;
+    let tx = z30_engine::runtime::tx_audio(&plan, rate, level)?;
+    // A slot far from the epoch, the stream starting 10 s before it, the frame at DT = 0.
+    let slot = 60_000_000i64;
+    let t0 = slot_start(slot) - 10.0;
+    let fs = rate as f64;
+    let at = (10.0 * fs) as usize;
+    let total = at + (27.0 * fs) as usize;
+    let mut cable = vec![0.0f32; total];
+    let seed = SOFTWARE_NOISE_SEED ^ rate as u64;
+    if let Some(snr) = snr_db {
+        // Noise sigma for `snr`: frame power over noise power in 2500 Hz.
+        let p_sig = tx.iter().map(|&v| (v as f64).powi(2)).sum::<f64>() / tx.len() as f64;
+        let sigma = (p_sig / (10f64.powf(snr / 10.0) * 5000.0 / fs)).sqrt();
+        let mut r = z30_channel::rng(seed);
+        cable.iter_mut().for_each(|c| *c = (gauss(&mut r) * sigma) as f32);
+    }
+    for (c, &v) in cable[at..].iter_mut().zip(&tx) {
+        *c += v;
+    }
+    let mut pipe = RxPipeline::new(rate);
     let rx = Receiver::new();
-    // The slot after next, so the clock model has time to lock and the window starts after the
-    // stream did.
-    let target = slot_of(wall.utc_now()) + 2;
-    eprintln!(
-        "loopback: input {} Hz, output {} Hz; sending \"{TEST_MESSAGE}\" at tone 0 = {TEST_F0_HZ} Hz in the slot starting {:.0} (~{:.0} s)",
-        input.sample_rate(),
-        output.sample_rate(),
-        slot_start(target),
-        slot_start(target) - wall.utc_now()
-    );
-    let mut played_at: Option<(f64, f64)> = None; // (utc of the play call, reported output latency)
-    let deadline = Instant::now() + Duration::from_secs(95);
-    while Instant::now() < deadline {
-        let now = wall.utc_now();
-        if played_at.is_none() && now >= slot_start(target) - output.latency_sec() - 0.005 {
-            let latency = output.latency_sec();
-            output.play(audio.clone())?;
-            played_at = Some((wall.utc_now(), latency));
-        }
-        let Some(block) = input.next_block(Duration::from_millis(5))? else { continue };
-        for ev in pipe.push(&block) {
+    let block = 1024usize;
+    let mut i = 0usize;
+    while i < total {
+        let n = block.min(total - i);
+        let b = AudioBlock { first_index: i as u64, samples: cable[i..i + n].to_vec(), capture_utc: t0 + i as f64 / fs };
+        for ev in pipe.push(&b) {
             match ev {
-                SlotEvent::Ready(job) if job.slot == target => {
+                SlotEvent::Ready(job) if job.slot == slot => {
                     let rep = rx.decode_slot(&job.samples, &RxConfig::default());
-                    let (play_utc, latency) = played_at.ok_or("the frame was never played")?;
-                    let predicted_dt = play_utc + latency - slot_start(target);
-                    let mut v = analyse(&job.samples, &rep, &msg, predicted_dt);
-                    v["source"] = json!("hardware-loopback");
-                    v["message"] = json!(TEST_MESSAGE);
-                    v["predicted_dt_sec"] = json!(predicted_dt);
-                    v["output_latency_reported_sec"] = json!(latency);
-                    v["sample_clock_ppm"] = json!(pipe.clock().drift_ppm());
-                    v["input_overruns"] = json!(pipe.overruns());
-                    v["devices"] = json!({ "input": cfg.audio.input_device.clone().unwrap_or("system default".into()),
-                        "output": cfg.audio.output_device.clone().unwrap_or("system default".into()),
-                        "input_rate_hz": input.sample_rate(), "output_rate_hz": output.sample_rate(), "tx_level": level });
-                    v["clock"] = json!(wall.status());
-                    v["binary"] = json!(crate::version_text());
-                    let text = serde_json::to_string_pretty(&v).map_err(|e| e.to_string())?;
-                    println!("{text}");
-                    if let Some(p) = out {
-                        std::fs::write(p, &text).map_err(|e| format!("{}: {e}", p.display()))?;
-                    }
-                    output.stop();
-                    return if v["pass"].as_bool() == Some(true) {
-                        Ok(())
-                    } else {
-                        Err("loopback test FAILED (see the criteria above)".into())
+                    let mut v = analyse(&job.samples, &rep, &msg, 0.0);
+                    let decoded = v["decoded"].as_bool() == Some(true) && v["other_decodes"].as_array().is_some_and(|o| o.is_empty());
+                    let pass = match snr_db {
+                        Some(snr) => {
+                            let snr_err = v["snr_db"].as_f64().map(|s| s - snr);
+                            v["snr_error_db"] = json!(snr_err);
+                            decoded
+                                && v["dt_sec"].as_f64().is_some_and(|d| d.abs() <= 0.020)
+                                && v["freq_error_hz"].as_f64().is_some_and(|f| f.abs() <= 0.5)
+                                && snr_err.is_some_and(|e| e.abs() <= 1.0)
+                        }
+                        None => {
+                            let bw = &v["occupied_bandwidth_hz"];
+                            decoded
+                                && bw["p99"].as_f64().is_some_and(|b| b <= 55.0)
+                                && bw["minus_40_db"].as_f64().is_some_and(|b| b <= 80.0)
+                        }
                     };
+                    v["criteria"] = json!(match snr_db {
+                        Some(_) => "decodes, nothing else does, |DT| <= 20 ms, |f error| <= 0.5 Hz, |SNR error| <= 1 dB",
+                        None => "decodes; occupied bandwidth p99 <= 55 Hz and -40 dB <= 80 Hz (the waveform alone measures ~49 / ~66 Hz)",
+                    });
+                    v["pass"] = json!(pass);
+                    v["source"] = json!("software-loopback");
+                    v["hardware_involved"] = json!(false);
+                    v["message"] = json!(TEST_MESSAGE);
+                    v["device_rate_hz"] = json!(rate);
+                    v["noise"] = match snr_db {
+                        Some(snr) => json!({ "snr_db_2500hz": snr, "seed": seed, "generator": "ChaCha8 (z30_channel::rng), Box-Muller" }),
+                        None => json!("none"),
+                    };
+                    v["sample_clock_ppm"] = json!(pipe.clock().drift_ppm());
+                    v["path"] = json!("Message::frame -> VerifiedFrame -> runtime::tx_audio -> (memory) -> RxPipeline (resampler, sample clock, slot scheduler) -> decode_slot");
+                    return Ok(v);
                 }
-                SlotEvent::Missed(s, why) if s == target => return Err(format!("the test slot was not captured: {why:?}")),
+                SlotEvent::Missed(s, why) if s == slot => return Err(format!("the test slot was not scheduled: {why:?}")),
                 _ => {}
             }
         }
+        i += n;
     }
-    output.stop();
-    Err("timed out waiting for the test slot's window".into())
+    Err("the receive pipeline never produced the test slot's window".into())
+}
+
+/// Standard normal deviate (Box-Muller).
+fn gauss(r: &mut z30_channel::ChannelRng) -> f64 {
+    let u1: f64 = r.gen_range(f64::MIN_POSITIVE..1.0);
+    let u2: f64 = r.gen_range(0.0..1.0);
+    (-2.0 * u1.ln()).sqrt() * (std::f64::consts::TAU * u2).cos()
+}
+
+/// `z30 --loopback-test`: the software loopback at every rate in `SOFTWARE_RATES_HZ`.
+pub fn run(out: Option<&std::path::Path>) -> Result<(), String> {
+    let mut runs = Vec::new();
+    for rate in SOFTWARE_RATES_HZ {
+        runs.push(software_loopback(rate, Some(SOFTWARE_SNR_DB))?);
+        runs.push(software_loopback(rate, None)?);
+    }
+    let pass = runs.iter().all(|v| v["pass"].as_bool() == Some(true));
+    let v = json!({
+        "test": "software loopback (no audio device, no PTT, no rig control; cannot transmit)",
+        "hardware_validation": "NOT HARDWARE VALIDATED: this exercises the software transmit synthesis and receive chain only",
+        "binary": crate::version_text(),
+        "runs": runs,
+        "pass": pass,
+    });
+    let text = serde_json::to_string_pretty(&v).map_err(|e| e.to_string())?;
+    println!("{text}");
+    if let Some(p) = out {
+        std::fs::write(p, &text).map_err(|e| format!("{}: {e}", p.display()))?;
+    }
+    if pass {
+        Ok(())
+    } else {
+        Err("software loopback FAILED (see the criteria above)".into())
+    }
 }
 
 #[cfg(test)]
@@ -246,8 +299,24 @@ mod tests {
     }
 
     #[test]
-    fn it_will_not_play_audio_without_the_confirmation() {
-        let err = run(&z30_engine::config::Config::default(), false, None).unwrap_err();
-        assert!(err.contains("VOX"));
+    fn the_software_loopback_decodes_through_the_resampler_at_both_device_rates() {
+        // The production transmit synthesis into the production receive chain at 48 and
+        // 44.1 kHz: the resampler, sample clock and scheduler that no published benchmark
+        // passes through (post-remediation audit N-12) are in this path.
+        for rate in SOFTWARE_RATES_HZ {
+            let v = software_loopback(rate, Some(SOFTWARE_SNR_DB)).unwrap();
+            eprintln!("{rate}: {v:#}");
+            assert_eq!(v["source"], "software-loopback");
+            assert_eq!(v["hardware_involved"], false);
+            assert_eq!(v["decoded"], true, "{rate} Hz");
+            assert!(v["other_decodes"].as_array().unwrap().is_empty());
+            assert!(v["dt_sec"].as_f64().unwrap().abs() < 0.02, "{rate} Hz: DT {}", v["dt_sec"]);
+            assert!(v["freq_error_hz"].as_f64().unwrap().abs() < 0.5, "{rate} Hz");
+            assert!(v["snr_error_db"].as_f64().unwrap().abs() < 1.0, "{rate} Hz: SNR {}", v["snr_db"]);
+            assert_eq!(v["pass"], true, "{rate} Hz");
+            let clean = software_loopback(rate, None).unwrap();
+            eprintln!("{rate} clean: {}", clean["occupied_bandwidth_hz"]);
+            assert_eq!(clean["pass"], true, "{rate} Hz clean: {}", clean["occupied_bandwidth_hz"]);
+        }
     }
 }

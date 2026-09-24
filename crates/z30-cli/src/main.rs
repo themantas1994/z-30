@@ -3,6 +3,7 @@
 //! Receive-only by design: this binary never keys a transmitter. Transmitting is done from the
 //! GUI, where the operator sees the gate's verdict before every transmission.
 
+mod audio_loopback;
 mod bench;
 mod loopback;
 mod suite;
@@ -78,8 +79,13 @@ struct Cli {
     /// suite benchmark's own publishable size otherwise).
     #[arg(long)]
     frames: Option<usize>,
+    /// Suite base seed (default: the published 20260830). Another seed generates independent
+    /// frames under the same conditions, to measure a figure's sampling variability; its results
+    /// say they are not the published run.
+    #[arg(long)]
+    seed: Option<u64>,
     /// Output directory for suite results (default: research/results/<commit>), or the JSON
-    /// file for --loopback-test.
+    /// file for --loopback-test / --audio-loopback-test.
     #[arg(long, value_name = "DIR")]
     out: Option<PathBuf>,
     /// Report configuration, clock, audio, rig and transmit-gate status.
@@ -106,14 +112,20 @@ struct Cli {
     /// Export the logbook as ADIF.
     #[arg(long, value_name = "FILE")]
     export_adif: Option<PathBuf>,
-    /// Hardware validation A1 (docs/hardware-validation.md): play a known frame through the
-    /// configured output, record it through the configured input and the production receive
-    /// path, and report decode, DT, frequency, SNR, clock error and occupied bandwidth as JSON.
-    /// Keys nothing; requires --confirm-no-transmitter.
+    /// Software loopback: a known frame through the production transmit synthesis and the
+    /// production receive chain (resampler, clock, scheduler, decode_slot) at 48 and 44.1 kHz,
+    /// entirely in memory. Opens no audio device, PTT line or rig control, so it cannot
+    /// transmit. Reports decode, DT, frequency, SNR and occupied bandwidth as JSON.
     #[arg(long)]
     loopback_test: bool,
-    /// Confirms the audio output is looped back by cable with no transmitter (or VOX radio) in
-    /// the path.
+    /// Hardware validation A1 (docs/hardware-validation.md): play a known frame through the
+    /// configured OUTPUT SOUND CARD, record it through the configured input, and analyse it as
+    /// --loopback-test does. Keys nothing. Requires --confirm-no-transmitter, and refuses to run
+    /// with any PTT method (VOX included) or rig control configured.
+    #[arg(long)]
+    audio_loopback_test: bool,
+    /// For --audio-loopback-test: confirms the output is looped back by cable with no
+    /// transmitter (or VOX radio) in the path.
     #[arg(long)]
     confirm_no_transmitter: bool,
     /// Import ADIF into the logbook (fields marked legacy_import).
@@ -171,10 +183,11 @@ fn run(cli: &Cli, config_path: &Path) -> Result<(), String> {
     if let Some(msg) = &cli.encode {
         let out = cli.wav.as_ref().ok_or("--encode needs --wav <file>")?;
         let m = z30_protocol::codec::Message::parse(msg).map_err(|e| e.to_string())?;
-        let enc = m.encode().map_err(|e| e.to_string())?;
+        // Verified like a transmitted frame: a WAV can be played into a radio.
+        let frame = m.frame().map_err(|e| e.to_string())?;
         let w = z30_protocol::gfsk::Modulator::new(cli.rate as f64)
             .map_err(|e| e.to_string())?
-            .synthesize(&enc.symbols, cli.f0)
+            .synthesize(frame.symbols(), cli.f0)
             .map_err(|e| e.to_string())?;
         z30_io::wav::write_mono(out, &w, cli.rate)?;
         println!("{m}  ->  {} ({} samples at {} Hz, tone 0 at {} Hz)", out.display(), w.len(), cli.rate, cli.f0);
@@ -196,14 +209,18 @@ fn run(cli: &Cli, config_path: &Path) -> Result<(), String> {
         return Ok(());
     }
     if let Some(what) = &cli.benchmark {
-        return bench::run(what, cli.frames, cli.out.as_deref());
+        return bench::run(what, cli.frames, cli.out.as_deref(), cli.seed);
+    }
+    if cli.loopback_test {
+        // No configuration is read: nothing in it could matter to a test that touches no device.
+        return loopback::run(cli.out.as_deref());
     }
     let cfg = paths::load_config(config_path)?;
     if cli.diagnostics {
         return diagnostics(&cfg, config_path);
     }
-    if cli.loopback_test {
-        return loopback::run(&cfg, cli.confirm_no_transmitter, cli.out.as_deref());
+    if cli.audio_loopback_test {
+        return audio_loopback::run(&cfg, cli.confirm_no_transmitter, cli.out.as_deref());
     }
     if let Some(wav) = &cli.decode {
         return decode_wav(wav, cli.start_utc, &cfg, cli.capture_slots.as_deref());
@@ -263,10 +280,18 @@ fn diagnostics(cfg: &z30_engine::config::Config, config_path: &Path) -> Result<(
     Ok(())
 }
 
-fn print_decode(slot: i64, d: &z30_dsp::slot::Decode) {
-    let (date, time) = z30_io::logbook::utc_parts(z30_engine::slots::slot_start(slot));
+/// `when`: the slot, if its UTC is known; otherwise the recording's window index. A recording
+/// decoded without `--start-utc` has no time, and used to be printed as 1970-01-01 00:00:00.
+fn print_decode(when: Result<i64, usize>, d: &z30_dsp::slot::Decode) {
+    let label = match when {
+        Ok(slot) => {
+            let (date, time) = z30_io::logbook::utc_parts(z30_engine::slots::slot_start(slot));
+            format!("{date} {time}")
+        }
+        Err(i) => format!("window {i:<3} (UTC unknown)"),
+    };
     let ap = if d.ap_type > 0 { format!(" a{}", d.ap_type) } else { String::new() };
-    println!("{date} {time}  {:>5} dB  DT {:+5.2}  {:7.1} Hz  {}{ap}", z30_engine::api::snr_text(d.snr_db), d.dt_sec, d.freq_hz, d.message);
+    println!("{label}  {:>5} dB  DT {:+5.2}  {:7.1} Hz  {}{ap}", z30_engine::api::snr_text(d.snr_db), d.dt_sec, d.freq_hz, d.message);
 }
 
 fn decode_wav(path: &Path, start_utc: Option<f64>, cfg: &z30_engine::config::Config, capture: Option<&Path>) -> Result<(), String> {
@@ -287,15 +312,19 @@ fn decode_wav(path: &Path, start_utc: Option<f64>, cfg: &z30_engine::config::Con
     let window = z30_dsp::baseband::SLOT_SAMPLES;
     if x.len() == window && start_utc.is_none() {
         let rep = rx.decode_slot(&x, &rx_cfg);
-        rep.decodes.iter().for_each(|d| print_decode(0, d));
+        rep.decodes.iter().for_each(|d| print_decode(Err(0), d));
         eprintln!("{} decodes in {:.0} ms", rep.decodes.len(), rep.elapsed_ms);
         return Ok(());
     }
-    // A recording on the slot grid: pad 1.5 s in front so slot n's window is complete.
-    let t0 = start_utc.unwrap_or(0.0);
-    let first_slot = z30_engine::slots::slot_of(t0 - 1e-6) + 1;
-    let first_slot = if start_utc.is_none() { 0 } else { first_slot };
-    let offset_sec = if start_utc.is_none() { 0.0 } else { z30_engine::slots::slot_start(first_slot) - t0 };
+    // A recording on the slot grid: pad 1.5 s in front so slot n's window is complete. With no
+    // start time the recording is assumed to start at a slot boundary, and its slots have no UTC.
+    let (first_slot, offset_sec) = match start_utc {
+        Some(t0) => {
+            let s = z30_engine::slots::slot_of(t0 - 1e-6) + 1;
+            (s, z30_engine::slots::slot_start(s) - t0)
+        }
+        None => (0, 0.0),
+    };
     let mut slot = first_slot;
     let mut total = 0;
     loop {
@@ -309,11 +338,11 @@ fn decode_wav(path: &Path, start_utc: Option<f64>, cfg: &z30_engine::config::Con
             .map(|i| if start + i >= 0 && ((start + i) as usize) < x.len() { x[(start + i) as usize] } else { 0.0 })
             .collect();
         let rep = rx.decode_slot(&win, &rx_cfg);
-        let label = if start_utc.is_some() { slot } else { 0 };
-        rep.decodes.iter().for_each(|d| print_decode(label, d));
+        let when = if start_utc.is_some() { Ok(slot) } else { Err((slot - first_slot) as usize) };
+        rep.decodes.iter().for_each(|d| print_decode(when, d));
         total += rep.decodes.len();
         if let Some(dir) = capture {
-            capture_slot(dir, slot, &win, &rep, "recording")?;
+            capture_slot(dir, when, &win, &rep, "recording")?;
         }
         slot += 1;
     }
@@ -321,13 +350,19 @@ fn decode_wav(path: &Path, start_utc: Option<f64>, cfg: &z30_engine::config::Con
     Ok(())
 }
 
-fn capture_slot(dir: &Path, slot: i64, window: &[f32], rep: &z30_dsp::slot::SlotReport, source: &str) -> Result<(), String> {
+fn capture_slot(dir: &Path, when: Result<i64, usize>, window: &[f32], rep: &z30_dsp::slot::SlotReport, source: &str) -> Result<(), String> {
     std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
-    let (d, t) = z30_io::logbook::utc_parts(z30_engine::slots::slot_start(slot));
-    let base = dir.join(format!("z30_{d}_{t}"));
+    let base = match when {
+        Ok(slot) => {
+            let (d, t) = z30_io::logbook::utc_parts(z30_engine::slots::slot_start(slot));
+            dir.join(format!("z30_{d}_{t}"))
+        }
+        Err(i) => dir.join(format!("z30_window_{i:04}")),
+    };
     z30_io::wav::write_mono(&base.with_extension("wav"), window, 6000)?;
     let json = serde_json::json!({
-        "slot": slot, "window_start_utc": z30_engine::slots::slot_start(slot) - 1.5, "rate_hz": 6000,
+        // Absent (null) when the recording's start time was not given: not 1970.
+        "slot": when.ok(), "window_start_utc": when.ok().map(|s| z30_engine::slots::slot_start(s) - 1.5), "rate_hz": 6000,
         // Where the samples came from: "live-audio" (a sound card) or "recording" (a WAV file).
         "source": source, "receiver": format!("z30 {}", env!("Z30_BUILD_COMMIT")),
         "elapsed_ms": rep.elapsed_ms,
@@ -408,7 +443,7 @@ fn receive(cfg: z30_engine::config::Config, capture: Option<PathBuf>) -> Result<
                     let snap = handle.snapshot.load();
                     let last = shown;
                     for row in snap.decodes.iter().filter(|r| r.id > last) {
-                        print_decode(row.slot, &row.decode);
+                        print_decode(Ok(row.slot), &row.decode);
                         shown = row.id;
                     }
                     eprintln!("-- slot {slot}: {count} decodes, {elapsed_ms:.0} ms");
@@ -421,7 +456,7 @@ fn receive(cfg: z30_engine::config::Config, capture: Option<PathBuf>) -> Result<
         while handle.waterfall.try_recv().is_ok() {}
         if let Some(dir) = &capture {
             while let Ok(c) = tap_rx.try_recv() {
-                if let Err(e) = capture_slot(dir, c.slot, &c.samples, &c.report, "live-audio") {
+                if let Err(e) = capture_slot(dir, Ok(c.slot), &c.samples, &c.report, "live-audio") {
                     eprintln!("-- capture failed: {e}");
                 }
             }
