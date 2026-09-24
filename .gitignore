@@ -5,13 +5,16 @@ coverage/
 .DS_Store
 *.log
 .env*
-!.env.example
+
 __pycache__/
 *.py[cod]
 *.egg-info/
 .pytest_cache/
-# Per-machine clock calibration; resolved to ~/.z30/config.json at runtime.
+# A personal configuration (the retired app wrote config.json) never belongs in the repository.
 config.json
 
 # Rust build output
 /target/
+
+# Benchmark smoke output (published results live in research/results/<commit>/)
+/smoke/

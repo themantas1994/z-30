@@ -7,6 +7,21 @@ mod app;
 mod waterfall;
 
 fn main() -> eframe::Result {
+    if std::env::args().skip(1).any(|a| a == "--version" || a == "-V") {
+        println!(
+            "z30-gui {} (z-30 vNext, Rust)\ncommit:       {}\nbuilt:        {}\ntarget:       {}\narchitecture: {} ({})\nprofile:      {}\nfeatures:     {}\nprotocol:     v{}",
+            env!("CARGO_PKG_VERSION"),
+            env!("Z30_BUILD_COMMIT"),
+            env!("Z30_BUILD_DATE"),
+            env!("Z30_BUILD_TARGET"),
+            std::env::consts::ARCH,
+            std::env::consts::OS,
+            env!("Z30_BUILD_PROFILE"),
+            if cfg!(feature = "cm108") { "cm108 (CM108/CM119 GPIO PTT)" } else { "none (CM108 GPIO PTT not built in)" },
+            z30_protocol::PROTOCOL_VERSION,
+        );
+        return Ok(());
+    }
     z30_engine::ptt::install_panic_release();
     // A termination signal ends the process without running a single destructor, so without
     // this a CAT- or CM108-keyed radio would be left transmitting until its own time-out (a

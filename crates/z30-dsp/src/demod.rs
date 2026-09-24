@@ -142,19 +142,180 @@ impl FrameSpectra {
         out
     }
 
-    /// SNR in the 2500 Hz reference bandwidth, measured on the frame's own tones once they are
-    /// known (after a successful decode): signal energy per symbol in its tone bin, less the
-    /// noise, over the noise in one 3.125 Hz bin, rescaled to 2500 Hz. Clamped to -40 dB when
-    /// the estimate is not positive; that is a floor, not a measurement.
-    pub fn snr_db(&self, symbols: &[u8; TOTAL_SYMBOLS]) -> f64 {
-        let n_bin = 2.0 * self.noise_sigma2();
-        let e: f64 = (0..TOTAL_SYMBOLS).map(|s| self.tone(s, symbols[s] as usize).norm_sqr() as f64).sum::<f64>() / TOTAL_SYMBOLS as f64;
-        let s = e - n_bin;
-        if s <= 0.0 {
-            return -40.0;
+    /// SNR in the 2500 Hz reference bandwidth (SPEC.md section 10), measured on the decoded
+    /// frame once its symbols are known.
+    ///
+    /// `replica` is the noise-free frame at the decoded symbols, placed where fine sync put it,
+    /// in these same symbol spectra (`replica_spectra`). Per symbol, a least-squares complex
+    /// gain `g_s` fits the replica to the received spectrum over the signal's own bins; then
+    ///
+    /// - signal energy per symbol `S = mean_s |g_s|^2 ||R_s||^2 - n_bin` (the LS projection
+    ///   carries one complex dimension of noise, whose expected energy is `n_bin`),
+    /// - noise energy per 3.125 Hz bin `n_bin` from the off-signal bins of the RESIDUAL
+    ///   `Y_s - g_s R_s` (median, so another station there does not inflate it),
+    /// - `SNR = 10 log10(S / n_bin) - 10 log10(2500 / 3.125)`.
+    ///
+    /// The residual is what makes this valid for strong signals. The previous estimator took
+    /// the noise from the off-tone bins of the received spectrum itself, and for a strong
+    /// signal those bins hold the frame's own GFSK sidelobes: it read +10 dB as +5.4 and
+    /// saturated near +6.6 dB (2026-09-24 audit, M-07), and the QSO engine sent reports
+    /// derived from it. The accuracy is measured, not assumed:
+    /// `tests/snr_accuracy.rs` asserts it over `SNR_VALIDATED_MIN_DB..=SNR_VALIDATED_MAX_DB`.
+    ///
+    /// Returns `None` when the signal estimate is not positive: that is not a measurement, and
+    /// a floor value would be reported as one.
+    pub fn snr_db(&self, replica: &[Complex32]) -> Option<f64> {
+        assert_eq!(replica.len(), self.bins.len(), "replica spectra cover the same 75 x 64 bins");
+        let mut resid: Vec<f32> = Vec::with_capacity(TOTAL_SYMBOLS * 31);
+        let mut s_sum = 0.0f64;
+        let mut bias_sum = 0.0f64;
+        for s in 0..TOTAL_SYMBOLS {
+            let y = &self.bins[s * BB_NSPS..(s + 1) * BB_NSPS];
+            let r = &replica[s * BB_NSPS..(s + 1) * BB_NSPS];
+            let (mut num, mut den_fit) = (Complex32::new(0.0, 0.0), 0.0f64);
+            for b in FIT_BINS.iter().flat_map(|r| r.clone()) {
+                num += r[b].conj() * y[b];
+                den_fit += r[b].norm_sqr() as f64;
+            }
+            let den_all: f64 = r.iter().map(|z| z.norm_sqr() as f64).sum();
+            if den_fit <= 0.0 {
+                // The replica has no energy in this window (the frame hangs off the slot).
+                for rg in NOISE_BINS.iter() {
+                    for b in rg.clone() {
+                        resid.push(y[b].norm_sqr());
+                    }
+                }
+                continue;
+            }
+            let g = num / den_fit as f32;
+            s_sum += g.norm_sqr() as f64 * den_all;
+            bias_sum += den_all / den_fit;
+            for rg in NOISE_BINS.iter() {
+                for b in rg.clone() {
+                    resid.push((y[b] - g * r[b]).norm_sqr());
+                }
+            }
         }
-        (10.0 * (s / n_bin).log10() - 10.0 * (2500.0 / TONE_SPACING_HZ).log10()).max(-40.0)
+        let mid = resid.len() / 2;
+        let med = *resid.select_nth_unstable_by(mid, |a, b| a.partial_cmp(b).unwrap()).1 as f64;
+        let n_bin = (med / std::f64::consts::LN_2).max(1e-30);
+        let s = (s_sum - n_bin * bias_sum) / TOTAL_SYMBOLS as f64;
+        (s > 0.0).then(|| 10.0 * (s / n_bin).log10() - 10.0 * (2500.0 / TONE_SPACING_HZ).log10())
     }
+}
+
+impl FrameSpectra {
+    /// Energy left over the fit and noise bins after the per-symbol least-squares replica fit
+    /// that `snr_db` makes. Smooth in the replica's placement, so it can be minimised to put
+    /// the replica where the frame really is.
+    pub fn fit_residual_energy(&self, replica: &[Complex32]) -> f64 {
+        let mut e = 0.0f64;
+        for s in 0..TOTAL_SYMBOLS {
+            let y = &self.bins[s * BB_NSPS..(s + 1) * BB_NSPS];
+            let r = &replica[s * BB_NSPS..(s + 1) * BB_NSPS];
+            let (mut num, mut den) = (Complex32::new(0.0, 0.0), 0.0f32);
+            for b in FIT_BINS.iter().flat_map(|r| r.clone()) {
+                num += r[b].conj() * y[b];
+                den += r[b].norm_sqr();
+            }
+            let g = if den > 0.0 { num / den } else { Complex32::new(0.0, 0.0) };
+            for b in FIT_BINS.iter().chain(NOISE_BINS.iter()).flat_map(|r| r.clone()) {
+                e += (y[b] - g * r[b]).norm_sqr() as f64;
+            }
+        }
+        e
+    }
+}
+
+/// The replica for `snr_db` and the offset it was placed at, by least squares: starting from
+/// fine sync's timing, the 6 kHz offset that minimises the fitted residual (descent in steps of
+/// 4, 2, 1 samples, bounded to +-`MAX_REPLICA_SHIFT`). Fine sync's timing carries a bias of a few ms (the audit
+/// measured +2.8 ms), and a replica that far off leaves the frame's tone transitions in the
+/// residual, which caps the measurable SNR near +15 dB.
+pub fn placed_replica(
+    spectra: &FrameSpectra,
+    fft: &SymbolFft,
+    modulator_6k: &z30_protocol::gfsk::Modulator,
+    symbols: &[u8; TOTAL_SYMBOLS],
+    offset_6k: i64,
+) -> (Vec<Complex32>, i64) {
+    let eval = |off: i64| {
+        let r = replica_spectra(fft, modulator_6k, symbols, off);
+        (spectra.fit_residual_energy(&r), r)
+    };
+    let (mut best_e, mut best_r) = eval(offset_6k);
+    let mut best_off = offset_6k;
+    for step in [4i64, 2, 1] {
+        loop {
+            let mut moved = false;
+            for cand in [best_off - step, best_off + step] {
+                if (cand - offset_6k).abs() > MAX_REPLICA_SHIFT {
+                    continue;
+                }
+                let (e, r) = eval(cand);
+                if e < best_e {
+                    (best_e, best_r, best_off, moved) = (e, r, cand, true);
+                }
+            }
+            if !moved {
+                break;
+            }
+        }
+    }
+    (best_r, best_off)
+}
+
+/// Largest correction `placed_replica` applies to fine sync's timing, 6 kHz samples (5 ms).
+pub const MAX_REPLICA_SHIFT: i64 = 30;
+
+/// Bins the per-symbol replica gain is fitted over: the 16 tones and two guard bins each side
+/// (-6.25..+53.1 Hz from tone 0), where nearly all of a frame's energy is.
+const FIT_BINS: [std::ops::Range<usize>; 2] = [0..18, 62..64];
+
+/// The lower edge of the range over which `FrameSpectra::snr_db` has been measured against the
+/// truth (tests/snr_accuracy.rs: bias within +-0.6 dB, spread within 0.8 dB). Below it frames
+/// rarely decode and the estimate has not been characterised.
+pub const SNR_VALIDATED_MIN_DB: f64 = -22.0;
+/// The upper edge of that range. +30 dB is also the largest report v1 can carry.
+pub const SNR_VALIDATED_MAX_DB: f64 = 30.0;
+
+/// The decoded frame, noise-free, in the demodulator's symbol spectra: the same 64-point
+/// transform on the same 200 Hz symbol grid as `FrameSpectra::new`, after the same
+/// derotation (so tone k sits on bin k). `offset_6k` is where the frame really starts relative
+/// to the grid's first symbol, in 6 kHz samples (fine sync's sub-sample timing; the demodulator
+/// keeps its windows on the integer grid). Synthesised at 6 kHz from the one modulator and
+/// sampled every 30th sample, so the GFSK transitions sit where the transmitter put them.
+pub fn replica_spectra(
+    fft: &SymbolFft,
+    modulator_6k: &z30_protocol::gfsk::Modulator,
+    symbols: &[u8; TOTAL_SYMBOLS],
+    offset_6k: i64,
+) -> Vec<Complex32> {
+    let fs = modulator_6k.sample_rate();
+    let decim = (fs / crate::baseband::BB_RATE_HZ).round() as i64;
+    let f = modulator_6k.instantaneous_frequency(symbols, 0.0);
+    let env = modulator_6k.envelope(f.len());
+    let mut phase = Vec::with_capacity(f.len());
+    let mut acc = 0.0f64;
+    for &x in &f {
+        acc += x;
+        if acc >= fs {
+            acc -= fs;
+        }
+        phase.push(2.0 * std::f64::consts::PI * acc / fs);
+    }
+    let mut bins = vec![Complex32::new(0.0, 0.0); TOTAL_SYMBOLS * BB_NSPS];
+    for (m, b) in bins.iter_mut().enumerate() {
+        let i = m as i64 * decim - offset_6k;
+        if i >= 0 && (i as usize) < phase.len() {
+            let (sn, cs) = phase[i as usize].sin_cos();
+            *b = Complex32::new((env[i as usize] * cs) as f32, (env[i as usize] * sn) as f32);
+        }
+    }
+    for s in 0..TOTAL_SYMBOLS {
+        fft.fft.process(&mut bins[s * BB_NSPS..(s + 1) * BB_NSPS]);
+    }
+    bins
 }
 
 #[cfg(test)]

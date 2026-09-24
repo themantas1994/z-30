@@ -211,3 +211,22 @@ impl Config {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_new_installation_is_unconfigured_and_cannot_transmit() {
+        // Audit C-04: the legacy bundle shipped the real station W1AW as its default callsign.
+        // A new vNext installation has no callsign, region, licence class or PTT method, and
+        // the gate refuses every one of those (tests/safety.rs g1/g2/h1).
+        let c = Config::default();
+        assert_eq!(c.station.callsign, "");
+        assert_eq!(c.station.region, None);
+        assert_eq!(c.station.license_class, None);
+        assert_eq!(c.ptt, PttConfig::None);
+        assert_eq!(c.station.configured_tx_power_w, None);
+        assert!(!c.receiver.ap_enabled);
+    }
+}

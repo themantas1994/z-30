@@ -9,7 +9,10 @@ version = "0.9.0"
 edition = "2021"
 license = "MIT"
 repository = "https://github.com/themantas1994/z-30"
-rust-version = "1.82"
+# The oldest toolchain the WHOLE workspace builds with, checked in CI (.github/workflows/rust.yml,
+# "msrv" job). It was declared 1.82 while z30-gui's eframe 0.36 needs 1.95, so the declared
+# version could not build the workspace (2026-09-24 audit, H-08).
+rust-version = "1.95"
 
 [workspace.dependencies]
 z30-protocol = { path = "crates/z30-protocol" }

@@ -4,7 +4,7 @@
 
 use crate::ap::{build_ladder, decode_with_ap, ApContext};
 use crate::baseband::{Plans, SlotSpectrum, BB_DECIMATION, SLOT_SAMPLES, SLOT_ZERO_INDEX};
-use crate::demod::{FrameSpectra, SymbolFft};
+use crate::demod::{placed_replica, FrameSpectra, SymbolFft};
 use crate::ldpc::{DecodeMethod, Decoder};
 use crate::sic::{self, SicParams};
 use crate::sync::{fine_sync, Candidate, Spectrogram, ToneTable};
@@ -74,8 +74,10 @@ pub struct Decode {
     pub message: DecodedMessage,
     /// The 77 information bits.
     pub info: [u8; K],
-    /// SNR in 2500 Hz, measured on the decoded frame's own tones.
-    pub snr_db: f64,
+    /// SNR in 2500 Hz, measured on the decoded frame against the noise left when its own
+    /// replica is removed (`FrameSpectra::snr_db`). `None` = no positive signal estimate: not
+    /// measured, and never replaced by a floor value.
+    pub snr_db: Option<f64>,
     /// Frame start relative to the slot boundary, seconds.
     pub dt_sec: f64,
     /// Tone-0 audio frequency, Hz.
@@ -212,12 +214,18 @@ impl Receiver {
             let Some(message) = unpack_info(&r.result.info) else { continue };
             let cw = encode_info(&r.result.info);
             let symbols = codeword_to_symbols(&cw);
-            let start_sample = ((sync.start as f64 + sync.frac) * BB_DECIMATION as f64).round() as i64;
+            // Fine sync's timing, then the replica fit's: the whole decoded frame placed by least
+            // squares, to one 6 kHz sample. Fine sync alone reads about 2.9 ms late (the audit's
+            // +2.8 ms DT bias); the fit is what the reported DT and the SIC start from.
+            let grid = (sync.start * BB_DECIMATION) as i64;
+            let coarse_start = ((sync.start as f64 + sync.frac) * BB_DECIMATION as f64).round() as i64;
+            let (replica, offset) = placed_replica(&spectra, &self.symfft, &self.modulator, &symbols, coarse_start - grid);
+            let start_sample = grid + offset;
             return Some(Attempt {
                 decode: Decode {
                     message,
                     info: r.result.info,
-                    snr_db: spectra.snr_db(&symbols),
+                    snr_db: spectra.snr_db(&replica),
                     dt_sec: (start_sample as f64 - SLOT_ZERO_INDEX as f64) / DSP_RATE_HZ,
                     freq_hz: f0_abs,
                     drift_hz: sync.drift_hz,

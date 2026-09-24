@@ -128,10 +128,23 @@ fn fade(sig: &mut [Complex64], w: &Watterson, fs: f64, rng: &mut ChannelRng) {
             *v *= (-0.5 * (f / sigma_f).powi(2)).exp();
         }
         inv.process(&mut t);
-        let p = t.iter().map(|z| z.norm_sqr()).sum::<f64>() / n as f64;
-        if p > 0.0 {
+        // Normalise to unit ENSEMBLE power: with unit-variance complex white input and rustfft's
+        // unnormalised transforms, E|t|^2 = n * sum_k |H_k|^2 - a constant of the filter, not of
+        // this realisation. Dividing by each realisation's own measured power (as this did until
+        // the 2026-09-24 audit, H-10) forced every frame to average exactly the requested SNR,
+        // which deletes the frame-to-frame Rayleigh power variation that is the dominant
+        // impairment when the Doppler spread is small against 1/24 s: the "good" preset measured
+        // 87% at -20 dB that way against 53% with the variation kept.
+        let h2: f64 = (0..n)
+            .map(|i| {
+                let f = if i <= n / 2 { i as f64 } else { i as f64 - n as f64 } * fs / n as f64;
+                (-(f / sigma_f).powi(2)).exp()
+            })
+            .sum();
+        let scale = (n as f64 * h2).sqrt();
+        if scale > 0.0 {
             for v in t.iter_mut() {
-                *v /= p.sqrt();
+                *v /= scale;
             }
         }
         t
@@ -249,6 +262,37 @@ mod tests {
         let noise_2500 = 5000.0 / FS;
         let snr = 10.0 * (p / noise_2500).log10();
         assert!(snr.abs() < 0.05, "{snr}");
+    }
+
+    /// Power of a unit-amplitude carrier through `fade`, over one realisation.
+    fn faded_power(w: &Watterson, seed: u64) -> f64 {
+        let n = 144_000;
+        let mut c: Vec<Complex64> = (0..n).map(|i| Complex64::from_polar(1.0, i as f64 * 0.3)).collect();
+        fade(&mut c, w, FS, &mut rng(seed));
+        c.iter().map(|z| z.norm_sqr()).sum::<f64>() / n as f64
+    }
+
+    #[test]
+    fn watterson_preserves_power_over_the_ensemble_and_not_per_frame() {
+        // H-10: each realisation used to be scaled to exactly unit power, which removed the slow
+        // fading a 24 s frame actually experiences. Over many frames the average must be the
+        // requested power; frame to frame, a slow channel must vary like Rayleigh fading does.
+        for name in ["good", "moderate", "poor", "high-moderate"] {
+            let w = Watterson::preset(name).unwrap();
+            let p: Vec<f64> = (0..300).map(|s| faded_power(&w, 1_000 + s)).collect();
+            let mean = p.iter().sum::<f64>() / p.len() as f64;
+            let cv = (p.iter().map(|x| (x - mean).powi(2)).sum::<f64>() / p.len() as f64).sqrt() / mean;
+            // 300 realisations: the ensemble mean is within a few percent of 1 for every preset.
+            assert!((mean - 1.0).abs() < 0.15, "{name}: ensemble mean power {mean:.3}");
+            match name {
+                // 0.1 Hz: the taps barely move in 24 s, so each frame's power is close to an
+                // exponential draw (two independent paths: coefficient of variation ~ 1/sqrt 2).
+                "good" => assert!(cv > 0.5, "{name}: frame powers vary by only {cv:.2} (per-frame normalisation?)"),
+                // 10 Hz: the taps average out inside a frame; its power is nearly constant.
+                "high-moderate" => assert!(cv < 0.1, "{name}: cv {cv:.2}"),
+                _ => assert!(cv > 0.05, "{name}: cv {cv:.2}"),
+            }
+        }
     }
 
     #[test]

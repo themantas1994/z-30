@@ -1,16 +1,19 @@
 # z-30 vNext documentation
 
-The native Rust implementation of z-30: the protocol, the receiver, the station engine, the
-hardware adapters, the CLI and the desktop GUI. These pages describe the code in `crates/` as
-it is; every figure they quote names the file in `research/results/` it came from.
+z-30's application: the protocol, the receiver, the station engine, the hardware adapters, the
+command-line station and the desktop GUI, all in the Rust workspace in `crates/`. These pages
+describe that code as it is; every figure they quote names the file in `research/results/` it
+came from, and says whether it was measured in simulation or on hardware (so far: always
+simulation).
 
-`wiki/` remains the operator documentation for the legacy browser/Python runtime until that
-runtime is retired (an operator decision, see `VNEXT_IMPLEMENTATION_PLAN.md` section 8).
 `SPEC.md` at the repository root is the normative protocol specification; `protocol-v1.md` here
-is its guided tour.
+is its guided tour. `wiki/` is the operator documentation and must agree with these pages; a
+contradiction is a bug. The retired browser/Python runtime is documented only in
+[`legacy/`](../legacy/README.md).
 
 | Page | What it covers |
 | :--- | :--- |
+| [install.md](install.md) | Release archives, building from source, first run, migrating from the retired app |
 | [architecture.md](architecture.md) | Crates, dependency direction, threads, the command/snapshot API |
 | [protocol-v1.md](protocol-v1.md) | The frame, the codec and its refusal rule, what v1 cannot carry |
 | [receiver.md](receiver.md) | `decode_slot` end to end, its configuration and report |
@@ -20,6 +23,7 @@ is its guided tour.
 | [sic.md](sic.md) | Least-squares interference cancellation and its measured suppression |
 | [audio.md](audio.md) | cpal capture/playback, the SPSC ring, resampling, the sample clock |
 | [hardware.md](hardware.md) | rigctld, serial RTS/DTR, CM108, VOX; what each can and cannot guarantee |
+| [hardware-validation.md](hardware-validation.md) | The procedure for validating on real equipment (none performed yet) |
 | [safety.md](safety.md) | The transmit gate, PTT defences, and the tests behind each rule |
 | [benchmarking.md](benchmarking.md) | Every measured figure, how it was measured, and what is not measured |
 | [development.md](development.md) | Building, testing, golden vectors, CI, house rules for this workspace |

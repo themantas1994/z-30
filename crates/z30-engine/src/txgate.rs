@@ -3,7 +3,9 @@
 //! added (each only ever adds a refusal):
 //!
 //! - the callsign must be one v1 can carry exactly (audit C5);
-//! - the frame to be sent must encode and round-trip, and must be sent FROM this station;
+//! - the frame to be sent must encode, must read back - symbols, parity, CRC, fields and text -
+//!   as exactly the message requested (partner callsign and grid included), and must be sent
+//!   FROM this station;
 //! - the emission is checked at its measured -40 dB width around the real tone span, not as a
 //!   50 Hz block centred on tone 0.
 //!
@@ -188,8 +190,16 @@ pub fn can_transmit(req: &TxRequest<'_>, rig: &RigStateTracker, now_ms: u64) -> 
     }
 
     if let Some(m) = req.message {
-        if let Err(e) = m.encode() {
-            v.push(Violation::MessageNotEncodable(e));
+        // The whole frame, not just our callsign: encoded, then read back symbol by symbol as
+        // a receiver would. A frame that does not come back as this exact message - partner
+        // call, grid, report and all - is refused (audit C-06).
+        match m.encode() {
+            Ok(enc) => {
+                if let Err(e) = enc.verify_round_trip() {
+                    v.push(Violation::MessageNotEncodable(e));
+                }
+            }
+            Err(e) => v.push(Violation::MessageNotEncodable(e)),
         }
         if my_call.as_ref() != Some(&m.from) {
             v.push(Violation::MessageNotFromStation(m.from.to_string()));

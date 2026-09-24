@@ -6,15 +6,16 @@
 //! - `false-decodes`: noise-only slots with the fine-sync gate disabled, so every candidate
 //!   reaches the LDPC decoder: false accepts per LDPC attempt with an exact 95% upper bound.
 //!   Also the production configuration's rate on the same slots.
-//! - `sweep`: a quick Rust-native AWGN sensitivity sweep on `z30-channel` bands (exploratory; the
-//!   published figures come from `research/paired_receiver.py`).
+//! - `sweep`: a quick Rust-native AWGN sensitivity sweep on `z30-channel` bands (exploratory).
+//!
+//! The publishable measurements are `suite.rs` (`--benchmark suite`).
 
 use std::time::Instant;
 use z30_channel::{random_station, rng, synthesize, Band};
 use z30_dsp::slot::{Receiver, RxConfig, SlotReport};
 
 /// Process CPU seconds (user + system), where the platform can say.
-fn cpu_seconds() -> Option<f64> {
+pub(crate) fn cpu_seconds() -> Option<f64> {
     #[cfg(target_os = "linux")]
     {
         let stat = std::fs::read_to_string("/proc/self/stat").ok()?;
@@ -109,7 +110,7 @@ fn perf(frames: usize) -> Result<(), String> {
 
 /// Exact one-sided upper 95% bound on a binomial rate with `k` events in `n` trials (Clopper-
 /// Pearson), by bisection on the binomial tail.
-fn upper95(k: u64, n: u64) -> f64 {
+pub(crate) fn upper95(k: u64, n: u64) -> f64 {
     let tail = |p: f64| -> f64 {
         // P(X <= k | n, p)
         let mut term = (1.0 - p).powf(n as f64);
@@ -181,12 +182,12 @@ fn sweep(frames: usize) -> Result<(), String> {
 }
 
 /// Entry point.
-pub fn run(what: &str, frames: usize) -> Result<(), String> {
+pub fn run(what: &str, frames: Option<usize>, out: Option<&std::path::Path>) -> Result<(), String> {
     match what {
-        "perf" => perf(frames),
-        "false-decodes" => false_decodes(frames),
-        "sweep" => sweep(frames),
-        other => Err(format!("unknown benchmark \"{other}\" (perf, false-decodes, sweep)")),
+        "perf" => perf(frames.unwrap_or(20)),
+        "false-decodes" => false_decodes(frames.unwrap_or(20)),
+        "sweep" => sweep(frames.unwrap_or(20)),
+        other => crate::suite::run(other, frames, out),
     }
 }
 

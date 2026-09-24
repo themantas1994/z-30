@@ -36,28 +36,58 @@ pub struct Report {
     pub log_imported: usize,
     /// Log entries skipped, with reasons.
     pub log_skipped: Vec<String>,
+    /// Log entries not imported again because an earlier migration already did (idempotence).
+    pub log_already_present: usize,
+    /// Legacy values dropped from imported entries, with reasons.
+    pub log_fields_dropped: Vec<String>,
     /// Files read.
     pub sources: Vec<String>,
 }
 
 impl Report {
-    /// Human-readable text.
+    /// Human-readable text: what was imported, what was imported with a change, and what was
+    /// deliberately not carried over, each with its reason.
     pub fn text(&self) -> String {
         let mut s = String::new();
         s.push_str(&format!(
             "Read: {}\n",
             if self.sources.is_empty() { "(no legacy files found)".into() } else { self.sources.join(", ") }
         ));
-        for f in &self.fields {
-            match f {
-                Outcome::Migrated(n) => s.push_str(&format!("  migrated   {n}\n")),
-                Outcome::Changed(n, why) => s.push_str(&format!("  CHANGED    {n}: {why}\n")),
-                Outcome::Skipped(n, why) => s.push_str(&format!("  not moved  {n}: {why}\n")),
+        let section = |s: &mut String, title: &str, lines: Vec<String>| {
+            if !lines.is_empty() {
+                s.push_str(title);
+                s.push('\n');
+                for l in lines {
+                    s.push_str(&format!("  {l}\n"));
+                }
             }
-        }
-        s.push_str(&format!("Logbook: {} imported (fields marked legacy_import), {} skipped\n", self.log_imported, self.log_skipped.len()));
+        };
+        section(
+            &mut s,
+            "Imported:",
+            self.fields.iter().filter_map(|f| if let Outcome::Migrated(n) = f { Some(n.clone()) } else { None }).collect(),
+        );
+        section(
+            &mut s,
+            "Imported with a change:",
+            self.fields.iter().filter_map(|f| if let Outcome::Changed(n, w) = f { Some(format!("{n}: {w}")) } else { None }).collect(),
+        );
+        section(
+            &mut s,
+            "Skipped:",
+            self.fields.iter().filter_map(|f| if let Outcome::Skipped(n, w) = f { Some(format!("{n}: {w}")) } else { None }).collect(),
+        );
+        s.push_str(&format!(
+            "Logbook: {} imported (fields marked legacy_import), {} already present, {} skipped\n",
+            self.log_imported,
+            self.log_already_present,
+            self.log_skipped.len()
+        ));
         for r in &self.log_skipped {
             s.push_str(&format!("  skipped: {r}\n"));
+        }
+        for r in &self.log_fields_dropped {
+            s.push_str(&format!("  dropped: {r}\n"));
         }
         s
     }
@@ -68,6 +98,13 @@ fn str_of<'a>(v: &'a Value, k: &str) -> Option<&'a str> {
 }
 
 const PLACEHOLDERS: [&str; 2] = ["NOCAL", "N0CALL"];
+
+/// How the legacy auto-logger began the notes of every entry it wrote.
+const LEGACY_AUTOLOG_NOTE: &str = "z-30 16-MFSK LDPC";
+/// The grid it logged when none had been received.
+const LEGACY_DEFAULT_GRID: &str = "FN31";
+/// The received report it logged when none had been received.
+const LEGACY_DEFAULT_RST_RCVD: i8 = -16;
 
 /// Builds a vNext configuration from the legacy files in `dir`.
 pub fn migrate_config(dir: &Path) -> (Config, Report) {
@@ -235,10 +272,33 @@ pub fn migrate_config(dir: &Path) -> (Config, Report) {
     }
     if tk.get("app_time_offset_ms").is_some() || web.get("appTimeOffsetMs").is_some() {
         rep.fields.push(Outcome::Skipped(
-            "clock offset".into(),
+            "legacy RF time offset".into(),
             "an RF-time-sync offset is never carried over: the old sync could \"succeed\" on noise (audit H4); vNext uses the system clock and shows its NTP status".into(),
         ));
     }
+    for (keys, what, why) in [
+        (
+            &["selfTestEnabled", "experimentalUnlocked", "selfTestPreset", "injectTestSignal"][..],
+            "synthetic/self-test state",
+            "the legacy self-test injected simulated decodes into the live list; vNext has no such mode",
+        ),
+        (
+            &["rfSyncStation", "rfSyncLastResult", "lastSyncOffsetMs", "networkTimeOffsetMs"][..],
+            "legacy time-sync results",
+            "measurements the legacy time sync could fabricate (audit C-03); never carried over",
+        ),
+        (
+            &["theme", "waterfallPalette", "pwaInstalled", "uiLayout", "updateChannel", "lastUpdateCheck"][..],
+            "browser UI settings",
+            "settings of the retired browser interface, with no vNext equivalent",
+        ),
+    ] {
+        let found: Vec<&str> = keys.iter().copied().filter(|k| web.get(*k).is_some() || tk.get(*k).is_some()).collect();
+        if !found.is_empty() {
+            rep.fields.push(Outcome::Skipped(what.into(), format!("{why} ({})", found.join(", "))));
+        }
+    }
+    // Configuration, not a measurement: the TX drive level vNext starts from.
     cfg.audio.tx_level = 0.5;
     (cfg, rep)
 }
@@ -256,11 +316,37 @@ fn legacy_record(e: &Value, rep: &mut Report) -> Option<QsoRecord> {
             .and_then(|s| s.trim_start_matches('R').parse::<f64>().ok())
             .map(|v| Sourced::new(v.round().clamp(-99.0, 99.0) as i8, Provenance::LegacyImport))
     };
+    // The legacy auto-logger (qsoEngine.ts) filled a missing grid with FN31 and a missing
+    // received report with -16, and marked its entries with this note. On such an entry those
+    // exact values cannot be told apart from the fabrications, so they are dropped: an absent
+    // field is honest, a possibly-invented one is not. Its time was local time labelled UTC,
+    // which cannot be undone either; the comment says so.
+    let auto_logged = str_of(e, "notes").is_some_and(|n| n.starts_with(LEGACY_AUTOLOG_NOTE));
+    let mut grid = str_of(e, "grid").map(|g| li(g.to_string()));
+    let mut rst_rcvd = rpt("rstRcvd");
+    if auto_logged {
+        if grid.as_ref().is_some_and(|g| g.value.eq_ignore_ascii_case(LEGACY_DEFAULT_GRID)) {
+            grid = None;
+            rep.log_fields_dropped.push(format!(
+                "{call} {date} {time}: grid {LEGACY_DEFAULT_GRID} (the legacy auto-logger's default when no grid was received)"
+            ));
+        }
+        if rst_rcvd.as_ref().is_some_and(|r| r.value == LEGACY_DEFAULT_RST_RCVD) {
+            rst_rcvd = None;
+            rep.log_fields_dropped
+                .push(format!("{call} {date} {time}: received report {LEGACY_DEFAULT_RST_RCVD} (the legacy auto-logger's default)"));
+        }
+    }
+    let comment = if auto_logged {
+        "imported from the legacy z-30 auto-logger: its time was the computer's LOCAL time labelled UTC, and its default grid/report were dropped on import (audit C-05); verify before uploading"
+    } else {
+        "imported from the legacy z-30 logbook, whose auto-logger could write local time as UTC and default grid/report values (audit C-05); verify before uploading"
+    };
     Some(QsoRecord {
         call,
-        grid: str_of(e, "grid").map(|g| li(g.to_string())),
+        grid,
         rst_sent: rpt("rstSent"),
-        rst_rcvd: rpt("rstRcvd"),
+        rst_rcvd,
         start_utc: t,
         end_utc: t,
         dial_hz: Sourced::new(e.get("freqMhz").and_then(|v| v.as_f64()).unwrap_or(0.0) * 1e6, Provenance::LegacyImport),
@@ -270,7 +356,7 @@ fn legacy_record(e: &Value, rep: &mut Report) -> Option<QsoRecord> {
         my_grid: str_of(e, "myGrid").map(str::to_string),
         tx_power_w: e.get("txPowerWatts").and_then(|v| v.as_f64()).map(|p| Sourced::new(p, Provenance::LegacyImport)),
         ap_assisted: false,
-        comment: "imported from the legacy z-30 logbook: its auto-logger could write local time as UTC and default grid/report values (audit H1); verify before uploading".into(),
+        comment: comment.into(),
     })
 }
 
@@ -284,10 +370,7 @@ pub fn migrate_logbook(dir: &Path, book: &mut Logbook, rep: &mut Report) {
             .unwrap_or_default();
         for e in &entries {
             if let Some(r) = legacy_record(e, rep) {
-                match book.insert(&r) {
-                    Ok(_) => rep.log_imported += 1,
-                    Err(err) => rep.log_skipped.push(format!("{}: {err}", r.call)),
-                }
+                insert_once(book, &r, rep);
             }
         }
         return;
@@ -308,11 +391,21 @@ pub fn import_adif(text: &str, book: &mut Logbook, rep: &mut Report) {
             "myCall": f.get("STATION_CALLSIGN"), "myGrid": f.get("MY_GRIDSQUARE"),
         });
         if let Some(r) = legacy_record(&e, rep) {
-            match book.insert(&r) {
-                Ok(_) => rep.log_imported += 1,
-                Err(err) => rep.log_skipped.push(format!("{}: {err}", r.call)),
-            }
+            insert_once(book, &r, rep);
         }
+    }
+}
+
+/// Inserts a legacy record unless an identical contact (call, start time, frequency) is already
+/// in the book, so running the migration twice imports nothing the second time.
+fn insert_once(book: &mut Logbook, r: &QsoRecord, rep: &mut Report) {
+    match book.contains_contact(&r.call, r.start_utc, r.dial_hz.value) {
+        Ok(true) => rep.log_already_present += 1,
+        Ok(false) => match book.insert(r) {
+            Ok(_) => rep.log_imported += 1,
+            Err(err) => rep.log_skipped.push(format!("{}: {err}", r.call)),
+        },
+        Err(err) => rep.log_skipped.push(format!("{}: {err}", r.call)),
     }
 }
 
@@ -339,11 +432,11 @@ mod tests {
         .unwrap();
         let (cfg, mut rep) = migrate_config(&dir);
         assert_eq!(cfg.station.callsign, "G4XYZ/P");
-        assert!(rep.fields.iter().any(|f| matches!(f, Outcome::Changed(n, why) if n == "callsign" && why.contains("C5"))));
+        assert!(rep.fields.iter().any(|f| matches!(f, Outcome::Changed(n, _) if n == "callsign")));
         assert!(rep.fields.iter().any(|f| matches!(f, Outcome::Changed(n, _) if n == "grid")));
         assert_eq!(cfg.ptt, PttConfig::Serial { port: "/dev/ttyUSB1".into(), line: SerialLine::Rts, active_high: false });
         assert_eq!(cfg.rig.rigctld_port, 4532);
-        assert!(rep.fields.iter().any(|f| matches!(f, Outcome::Skipped(n, _) if n == "clock offset")));
+        assert!(rep.fields.iter().any(|f| matches!(f, Outcome::Skipped(n, _) if n == "legacy RF time offset")));
         let mut book = Logbook::in_memory().unwrap();
         migrate_logbook(&dir, &mut book, &mut rep);
         assert_eq!(rep.log_imported, 1);
@@ -353,6 +446,69 @@ mod tests {
         assert_eq!(r.grid.as_ref().unwrap().source, Provenance::LegacyImport);
         assert_eq!(r.rst_rcvd.as_ref().unwrap().value, -18);
         assert!(!rep.text().is_empty());
+        std::fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn running_the_migration_twice_changes_nothing_the_second_time() {
+        let dir = std::env::temp_dir().join(format!("z30-mig-twice-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("station_config.json"), r#"{"myCall":"G4XYZ","myGrid":"IO91wm","pttMethod":"VOX"}"#).unwrap();
+        std::fs::write(
+            dir.join("logbook.json"),
+            r#"[{"callsign":"K1ABC","utcDate":"2026-09-01","utcTime":"13:52:00","grid":"FN42","rstSent":"-10","rstRcvd":"-12","freqMhz":14.0775},
+                {"callsign":"W1AW","utcDate":"2026-09-02","utcTime":"10:00:00","freqMhz":14.0775}]"#,
+        )
+        .unwrap();
+        let mut book = Logbook::in_memory().unwrap();
+        let (cfg1, mut rep1) = migrate_config(&dir);
+        migrate_logbook(&dir, &mut book, &mut rep1);
+        let (cfg2, mut rep2) = migrate_config(&dir);
+        migrate_logbook(&dir, &mut book, &mut rep2);
+        assert_eq!(cfg1, cfg2, "the configuration is a pure function of the legacy files");
+        assert_eq!((rep1.log_imported, rep1.log_already_present), (2, 0));
+        assert_eq!((rep2.log_imported, rep2.log_already_present), (0, 2), "{}", rep2.text());
+        assert_eq!(book.all().unwrap().len(), 2, "no duplicates");
+        assert!(rep2.text().contains("Imported:") && rep2.text().contains("already present"));
+        std::fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn the_legacy_auto_loggers_defaults_and_runtime_state_are_not_migrated() {
+        let dir = std::env::temp_dir().join(format!("z30-mig-defaults-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join("station_config.json"),
+            r#"{"myCall":"G4XYZ","appTimeOffsetMs":29666.24,"selfTestEnabled":true,"theme":"dark","lastSyncOffsetMs":12}"#,
+        )
+        .unwrap();
+        // Auto-logged: FN31 and -16 are exactly the defaults it wrote when nothing was received.
+        std::fs::write(
+            dir.join("logbook.json"),
+            r#"[{"callsign":"K1ABC","utcDate":"2026-09-24","utcTime":"18:05:27","grid":"FN31","rstSent":"-09","rstRcvd":"-16",
+                 "freqMhz":14.0775,"notes":"z-30 16-MFSK LDPC / SIC Pass 1","distanceKm":2625},
+                {"callsign":"W1AW","utcDate":"2026-09-24","utcTime":"19:00:00","grid":"FN31","rstRcvd":"-16","freqMhz":14.0775}]"#,
+        )
+        .unwrap();
+        let (cfg, mut rep) = migrate_config(&dir);
+        assert_eq!(cfg.station.callsign, "G4XYZ");
+        let skipped: Vec<&str> =
+            rep.fields.iter().filter_map(|f| if let Outcome::Skipped(n, _) = f { Some(n.as_str()) } else { None }).collect();
+        for s in ["legacy RF time offset", "synthetic/self-test state", "legacy time-sync results", "browser UI settings"] {
+            assert!(skipped.contains(&s), "{s} not reported as skipped: {skipped:?}");
+        }
+        let mut book = Logbook::in_memory().unwrap();
+        migrate_logbook(&dir, &mut book, &mut rep);
+        let all = book.all().unwrap();
+        let auto = all.iter().find(|r| r.call == "K1ABC").unwrap();
+        assert_eq!(auto.grid, None, "FN31 on an auto-logged entry is indistinguishable from the fabricated default");
+        assert_eq!(auto.rst_rcvd, None);
+        assert_eq!(auto.rst_sent.as_ref().map(|r| r.value), Some(-9), "the report it sent is a real value");
+        assert!(auto.comment.contains("LOCAL time"));
+        // A hand-entered entry keeps its values (marked legacy_import).
+        let manual = all.iter().find(|r| r.call == "W1AW").unwrap();
+        assert_eq!(manual.grid.as_ref().map(|g| g.value.as_str()), Some("FN31"));
+        assert_eq!(rep.log_fields_dropped.len(), 2);
         std::fs::remove_dir_all(dir).ok();
     }
 }

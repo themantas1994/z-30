@@ -74,11 +74,37 @@ assert zero duplicates on busy bands.
 
 - `decodes`: one `Decode` per station, carrying the message (`DecodedMessage`, where every
   field is either a canonical value or marked unrepresentable), the information bits, SNR
-  (2500 Hz reference), DT, frequency, drift, sync metric, LDPC iterations, the method (BP
-  schedule or OSD), `ap_type` (`a1`…`a6` when AP closed the frame) and the pass that found it;
+  (2500 Hz reference, `Option`: see below), DT, frequency, drift, sync metric, LDPC iterations,
+  the method (BP schedule or OSD), `ap_type` (`a1`…`a6` when AP closed the frame) and the pass
+  that found it. There is **no confidence value**: the decoder has no calibrated one, and the
+  CRC is the acceptance test; `method`, `iterations` and `ap_type` say how the frame closed;
 - `passes`: per pass, the candidates tried, the LDPC attempts, new decodes, duplicates, the
-  SIC suppression of each subtraction, and timings for the spectra, the candidates and SIC;
+  receiver's own fit-residual ratio for each subtraction (`suppression_db`; **not** a physical
+  suppression measurement, see [sic.md](sic.md)), and timings for the spectra, the candidates
+  and SIC;
 - `elapsed_ms`.
+
+## Reported SNR, DT and frequency
+
+Every value is measured from the slot's own samples after the frame has decoded:
+
+- **DT and the frame's start** come from placing the decoded frame's noise-free replica on the
+  received symbol spectra by least squares, to one 6 kHz sample (0.17 ms), starting from fine
+  sync (`demod::placed_replica`). Fine sync alone read about 2.9 ms late at every SNR; the fit
+  removed that (now within ±0.2 ms of the truth at −15 dB and above). The SIC starts from the
+  same start sample.
+- **SNR** is `S / n_bin − 10 log10(2500 / 3.125)`, with `S` the per-symbol energy of the fitted
+  replica less its noise projection and `n_bin` the median noise energy per 3.125 Hz bin in the
+  off-signal bins **of the residual after the replica is removed** (`FrameSpectra::snr_db`).
+  The earlier estimator took the noise from the received spectrum itself, whose off-tone bins
+  hold a strong frame's GFSK sidelobes: it saturated near +6.6 dB and read +20 dB as +6.7
+  (2026-09-24 audit, M-07), and the QSO engine sent reports derived from it.
+- **Validated range:** −22 to +30 dB (`SNR_VALIDATED_MIN_DB`, `SNR_VALIDATED_MAX_DB`),
+  measured against the channel model's true SNR by `tests/snr_accuracy.rs` and by
+  `z30 --benchmark snr` (bias and spread per point in
+  [benchmarking.md](benchmarking.md#reported-snr-dt-and-frequency)). Outside it the GUI and CLI
+  show a bound (`<-22`, `>+30`), not a number. `None` means the signal estimate was not
+  positive: it is shown as `--`, and the sequencer sends no report rather than a made-up one.
 
 ## Determinism
 
@@ -105,3 +131,7 @@ All of them go through `decode_slot` on `z30-channel` bands:
 | `fading_is_reported_not_gated` | Watterson moderate, reported only |
 | `noise_only_slots_produce_no_decodes` | no false decodes |
 | `decode_slot_is_deterministic` | byte-identical reports |
+
+Beside them: `snr_accuracy.rs` (reported SNR/DT against the truth, −22 to +30 dB),
+`sensitivity_regression.rs` (100 blind frames at −22 dB must decode ≥ 84: sized so a 0.5 dB
+loss fails with ~97.5% probability) and `sic_regression.rs` ([sic.md](sic.md)).

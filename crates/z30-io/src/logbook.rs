@@ -81,8 +81,9 @@ impl Logbook {
         Ok(Logbook { db })
     }
 
-    /// Inserts a record.
+    /// Inserts a record. Refuses one that describes no contact (`QsoRecord::validate`).
     pub fn insert(&mut self, r: &QsoRecord) -> Result<i64, String> {
+        r.validate()?;
         self.db
             .execute(
                 "INSERT INTO qso (call, grid, grid_src, rst_sent, rst_sent_src, rst_rcvd, rst_rcvd_src, start_utc, end_utc,
@@ -149,6 +150,17 @@ impl Logbook {
             })
             .map_err(|e| e.to_string())?;
         rows.collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())
+    }
+
+    /// Whether a contact with this callsign, start time and dial frequency is already logged.
+    pub fn contains_contact(&self, call: &str, start_utc: f64, dial_hz: f64) -> Result<bool, String> {
+        self.db
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM qso WHERE call = ?1 AND abs(start_utc - ?2) < 0.5 AND abs(dial_hz - ?3) < 1.0)",
+                params![call, start_utc, dial_hz],
+                |row| row.get::<_, bool>(0),
+            )
+            .map_err(|e| e.to_string())
     }
 
     /// The whole log as ADIF.

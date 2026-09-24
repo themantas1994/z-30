@@ -20,17 +20,27 @@ impl Default for SystemWallClock {
     }
 }
 
+/// What to say about the clock, from `timedatectl show -p NTPSynchronized --value`'s output
+/// (`None` when it could not be run). "Synchronised" is said only when the operating system
+/// says so; anything unrecognised is reported as unknown, never as good.
+pub fn status_from_timedatectl(output: Option<&str>) -> String {
+    match output.map(str::trim) {
+        Some("yes") => "system clock NTP-synchronised (timedatectl)".into(),
+        Some("no") => "system clock NOT synchronised (timedatectl) - decodes will show a DT offset".into(),
+        _ => "system clock (synchronisation status unavailable)".into(),
+    }
+}
+
 fn query_status() -> String {
     #[cfg(target_os = "linux")]
     {
-        if let Ok(out) = std::process::Command::new("timedatectl").args(["show", "-p", "NTPSynchronized", "--value"]).output() {
-            match String::from_utf8_lossy(&out.stdout).trim() {
-                "yes" => return "system clock NTP-synchronised (timedatectl)".into(),
-                "no" => return "system clock NOT synchronised (timedatectl) - decodes will show a DT offset".into(),
-                _ => {}
-            }
-        }
-        "system clock (synchronisation status unavailable)".into()
+        let out = std::process::Command::new("timedatectl")
+            .args(["show", "-p", "NTPSynchronized", "--value"])
+            .output()
+            .ok()
+            .filter(|o| o.status.success())
+            .map(|o| String::from_utf8_lossy(&o.stdout).into_owned());
+        status_from_timedatectl(out.as_deref())
     }
     #[cfg(not(target_os = "linux"))]
     {
@@ -49,5 +59,28 @@ impl WallClock for SystemWallClock {
             *c = (Some(Instant::now()), query_status());
         }
         c.1.clone()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn synchronised_is_claimed_only_when_the_os_says_so() {
+        assert!(status_from_timedatectl(Some("yes\n")).contains("NTP-synchronised"));
+        for other in [Some("no"), Some(""), Some("maybe"), Some("YES please"), None] {
+            let s = status_from_timedatectl(other);
+            assert!(!s.contains("NTP-synchronised"), "{other:?} -> {s}");
+        }
+    }
+
+    #[test]
+    fn utc_is_the_operating_systems_with_no_offset_applied() {
+        // vNext has no RF or network time source and applies no offset of its own (the legacy
+        // RF sync persisted offsets measured from noise, audit C-03).
+        let c = SystemWallClock::default();
+        let os = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs_f64();
+        assert!((c.utc_now() - os).abs() < 0.5);
     }
 }

@@ -1,9 +1,14 @@
 // Exports the shipped TypeScript message codec's behaviour into fixtures/golden/messages.json.
 //
-//     npx tsx reference/golden/generate_messages.mts            # write
-//     npx tsx reference/golden/generate_messages.mts --check    # compare with the committed file
+//     (cd legacy/browser-runtime && npm ci)
+//     npx --prefix legacy/browser-runtime tsx reference/golden/generate_messages.mts            # write
+//     npx --prefix legacy/browser-runtime tsx reference/golden/generate_messages.mts --check    # compare
 //
-// The grid table and the text tokenizer exist only in src/dsp/z30Codec.ts (message_codec.py
+// The legacy TypeScript codec is the reference for the v1 wire format of whole messages and
+// nothing else: it is not production code, and its LOSSY packing (FN42 -> RE78, audit C-06) is
+// exactly what `round_trips: false` records. vNext refuses every such message.
+//
+// The grid table and the text tokenizer exist only in legacy/browser-runtime/src/dsp/z30Codec.ts (message_codec.py
 // deliberately stops at the callsign fields), so the v1 wire format for whole messages is
 // defined by this file's oracle, not by the Python one. vNext reproduces every message that
 // round-trips bit-exactly and REFUSES every one that does not; `round_trips` records which is
@@ -11,7 +16,7 @@
 import { readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { decodeGrid, encodeGrid, packZ30Message, unpackZ30Message } from '../../src/dsp/z30Codec.ts';
+import { decodeGrid, encodeGrid, packZ30Message, unpackZ30Message } from '../../legacy/browser-runtime/src/dsp/z30Codec.ts';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const out = join(here, '..', '..', 'fixtures', 'golden', 'messages.json');

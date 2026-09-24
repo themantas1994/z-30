@@ -12,8 +12,9 @@ otherwise.
 
 There is one check in front of every transmit path: the sequencer, manual TX and tune. It
 **fails closed** and returns **every** violation, never a partial "allowed" (`g4`). It is a
-port of `canTransmit()` in `src/dsp/catController.ts`, with every rule kept and some added,
-each only ever adding a refusal.
+port of `canTransmit()` from the retired browser runtime
+(`legacy/browser-runtime/src/dsp/catController.ts`), with every rule kept and some added, each
+only ever adding a refusal.
 
 | Violation | Refuses when | Test |
 | :--- | :--- | :--- |
@@ -23,16 +24,26 @@ each only ever adding a refusal.
 | `FrequencyUndetermined`, `AudioOffsetOutOfRange` | dial or audio frequency unusable; tone 0 below 200 Hz or tone 15 above 2800 Hz | `g3` |
 | `OutOfBand` | the **radiated** emission, dial + audio offset across the tone span widened to the measured −40 dB width (66 Hz), is not wholly inside a permitted data segment for the region and class | `g3` |
 | `RigDialDisagrees` | a settled rig readback contradicts the dial being checked | `r1`, `r6` |
-| `MessageNotEncodable` | the message cannot round-trip through the v1 codec | `g5` |
+| `MessageNotEncodable` | the whole frame does not read back as the requested message: encoded, then symbols → Costas check → codeword → every parity check → CRC → fields → text, compared with what was asked for. Partner callsign, grid and report included, not just our own call (audit C-06); a hand-built off-table grid or out-of-range report is refused, not panicked on | `g5`, `g6`, `z30-protocol/tests/round_trip.rs` |
 | `MessageNotFromStation` | the frame's sender field is not this station | `g5` |
 | `PttNotConfigured` | no keying method is configured | `h1` |
 | `HardwareUnavailable` | the audio output or keying line could not be opened | `h1` |
 
 Callsign syntax is checked against the shared vectors in
 `tests/vectors/callsign_vectors.json`, the same file the TypeScript and Python validators are
-tested against. The band plan (`bandplan.rs`) is a port of `src/dsp/bandPlan.ts`: IARU R1–R3 and
-FCC Part 97 data segments, national variations not modelled. The operator remains responsible
-for their emissions.
+tested against. The band plan (`bandplan.rs`) is a port of the legacy `bandPlan.ts`: IARU R1–R3
+and FCC Part 97 data segments, national variations not modelled. The operator remains
+responsible for their emissions.
+
+**USB is assumed.** The emission is computed as dial + audio offset, which is upper sideband.
+z-30 does not set or read the radio's mode for the gate, and an operator in LSB would be checked
+against the wrong frequency (2026-09-24 audit, L-07). Operate in USB (or the radio's USB data
+mode).
+
+**No real callsign is a default.** A new installation has an empty callsign, no region, no
+licence class and no PTT method, and the gate refuses until all are set
+(`config::tests::a_new_installation_is_unconfigured_and_cannot_transmit`). The retired browser
+bundle defaulted to the real station W1AW (audit C-04); CI scans the release binaries for it.
 
 The GUI shows the gate's verdict, with every violation and its reason, **before** a
 transmission is enabled, and again at each slot. The CLI never transmits at all.
@@ -86,29 +97,43 @@ CM108-keyed** radio stays powered. **Enable the radio's own transmit time-out ti
 ## Messages: refuse, never transform
 
 The v1 codec refuses anything it cannot carry exactly (see [protocol-v1.md](protocol-v1.md)),
-and the gate checks the encoded frame again. The shipped software transmitted other stations'
-callsigns, other grids and reports without their roger. vNext refuses each, with a reason.
+and the gate reads the encoded frame back again before every transmission. The retired software
+transmitted other stations' callsigns, other grids and reports without their roger. z-30
+refuses each, with a reason, and transmits nothing in its place.
+
+## Reports sent
+
+The report in a `-NN` message is this receiver's measurement of the other station
+(`qso::report_for`), rounded and limited to v1's −30…+30 dB. The SNR estimate behind it is
+measured against the truth from −22 to +30 dB ([receiver.md](receiver.md#reported-snr-dt-and-frequency));
+the previous estimator saturated near +6.6 dB, so a +20 dB station was sent "+07" (audit M-07).
+When there is no signal estimate at all, no report message is sent.
 
 ## Time
 
-vNext **never changes the system clock** and never derives UTC from a received signal. The
-legacy RF time sync could "succeed" on noise and persist a 27 s offset (audit H4). Its offset
-is deliberately not migrated, and it has no vNext counterpart. The status bar and
-`z30 --diagnostics` report what the operating system says about its own synchronisation.
+z-30 **never changes the system clock**, applies no offset of its own and never derives UTC
+from a received signal. The legacy RF time sync could "succeed" on noise and persist a 27–30 s
+offset (audits H4 / C-03). Its offset is deliberately not migrated, and it has no counterpart.
+The status bar and `z30 --diagnostics` report what the operating system says about its own
+synchronisation, and never claim "synchronised" when it cannot be asked.
 
 ## No network API
 
-The legacy runtime needed a loopback HTTP server (`web_server.py`) with a bearer token, Origin
-and Host checks, because a browser cannot open a serial port. vNext is a native program and
-listens on **no** port. Its only network traffic is the outbound connection to the configured
-`rigctld`.
+The retired runtime needed a loopback HTTP server (`web_server.py`, now deleted) with a bearer
+token, Origin and Host checks, because a browser cannot open a serial port; it also served
+`./dist` from the working directory first (audit L-02). z-30 is a native program: it listens on
+**no** port, serves no files, and makes no network request at startup. Its only network
+traffic is the outbound connection to the configured `rigctld`.
 
 ## Logged data
 
 A logbook record holds only what was received, measured, sent, read back from the rig,
 commanded, configured or entered, and each field carries that provenance. A field nothing
-supplied is absent. The shipped auto-logger wrote local time as UTC and a default grid and
-report when nothing had been received (audit H1). Legacy records are imported with
-`legacy_import` provenance, because the import cannot tell a received value from a fabricated
-one. Configured power is shown as configuration. Forward power and SWR are "not measured"
+supplied is absent. The retired auto-logger wrote local time as UTC and a default grid and
+report when nothing had been received (audits H1 / C-05). A record with no partner callsign or
+no plausible UTC time is refused by `QsoRecord::validate`, in the engine and again by the
+logbook. Legacy records are imported with `legacy_import` provenance, because the import cannot
+tell a received value from a fabricated one; on entries the old auto-logger wrote, its default
+grid (FN31) and report (−16) are dropped, since those exact values are indistinguishable from
+its fabrications. Configured power is shown as configuration. Forward power and SWR are "not measured"
 because nothing measures them.

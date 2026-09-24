@@ -1,9 +1,10 @@
 name: vNext (Rust)
 
-# The Rust workspace: one implementation of the protocol and receiver, tested on all three
-# desktop platforms, against the frozen oracle's golden vectors, and through the Python harness
-# that publishes its sensitivity figures - so the receiver that is benchmarked is the one that
-# ships (VNEXT_IMPLEMENTATION_PLAN.md).
+# The production application: the Rust workspace in crates/ (the `z30` and `z30-gui` binaries).
+# Built and tested on all three desktop platforms, on the declared minimum Rust version as well
+# as current stable, against the frozen oracle's golden vectors, and through the benchmark
+# suite that produces every published figure - so the receiver that is benchmarked is the one
+# that ships.
 
 on:
   push:
@@ -23,7 +24,7 @@ env:
 
 jobs:
   workspace:
-    name: Build and test (${{ matrix.os }})
+    name: Build and test (${{ matrix.os }}, stable)
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -34,7 +35,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
-      - name: Linux system libraries (ALSA, udev, X11/Wayland for the GUI)
+      - name: Linux system libraries (ALSA, udev/hidraw, X11/Wayland for the GUI)
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y libasound2-dev libudev-dev libxkbcommon-dev libwayland-dev libx11-dev libxcursor-dev libxrandr-dev libxi-dev libgl1-mesa-dev
       - uses: Swatinem/rust-cache@v2
@@ -43,38 +44,97 @@ jobs:
         run: cargo fmt --all --check
       - name: Clippy (warnings are errors)
         run: cargo clippy --workspace --all-targets --exclude z30-py -- -D warnings
-      - name: Tests (golden vectors, property tests, safety scenarios, channel scenarios, virtual-clock soak)
-        run: cargo test --workspace --exclude z30-py
+      - name: Tests (golden vectors, property tests, safety, channel scenarios, SNR accuracy, SIC, live runtime, virtual-clock soak)
+        run: cargo test --workspace --exclude z30-py --locked
       - name: Tests, release profile
-        run: cargo test --workspace --exclude z30-py --release
-      - name: Release binaries
-        run: cargo build --release -p z30-cli -p z30-gui
-      - name: The binary is the commit it claims to be
+        run: cargo test --workspace --exclude z30-py --release --locked
+      - name: Release binaries, with CM108 GPIO PTT (the release configuration)
+        run: cargo build --release --locked -p z30-cli -p z30-gui --features z30-cli/cm108,z30-gui/cm108
+      - name: The binary is the commit it claims to be, and says what it contains
         shell: bash
         run: |
           set -e
-          v=$(./target/release/z30 --version)
-          echo "$v"
-          short=$(git rev-parse --short=12 HEAD)
-          case "$v" in *"$short"*) ;; *) echo "z30 --version does not name HEAD ($short)"; exit 1;; esac
-          case "$v" in *dirty*) echo "built from a dirty tree"; exit 1;; esac
-      - name: Benchmark smoke (latency is measured, not asserted, on shared runners)
-        run: ./target/release/z30 --benchmark perf --frames 2
+          ext=""; [ "$RUNNER_OS" = "Windows" ] && ext=".exe"
+          for b in z30 z30-gui; do
+            v=$(./target/release/$b$ext --version)
+            echo "$v"
+            short=$(git rev-parse --short=12 HEAD)
+            case "$v" in *"$short"*) ;; *) echo "$b --version does not name HEAD ($short)"; exit 1;; esac
+            case "$v" in *dirty*) echo "built from a dirty tree"; exit 1;; esac
+            case "$v" in *"features:     cm108"*) ;; *) echo "$b was built without CM108 PTT"; exit 1;; esac
+          done
+      - name: No real callsign ships in a binary (audit C-04, the W1AW default)
+        if: runner.os == 'Linux'
+        run: |
+          set -e
+          if strings target/release/z30 target/release/z30-gui | grep -w W1AW; then
+            echo "W1AW is in a release binary"; exit 1
+          fi
       - name: Decode round trip through the CLI
         shell: bash
         run: |
-          ./target/release/z30 --encode "CQ K1ABC FN31" --wav cq.wav --rate 44100 --f0 1400
-          ./target/release/z30 --decode cq.wav | tee out.txt
+          ext=""; [ "$RUNNER_OS" = "Windows" ] && ext=".exe"
+          ./target/release/z30$ext --encode "CQ K1ABC FN31" --wav cq.wav --rate 44100 --f0 1400
+          ./target/release/z30$ext --decode cq.wav | tee out.txt
           grep -q "CQ K1ABC FN31" out.txt
-      - uses: actions/upload-artifact@v5
+      - name: A message v1 cannot carry is refused, not transmitted as something else
+        shell: bash
+        run: |
+          ext=""; [ "$RUNNER_OS" = "Windows" ] && ext=".exe"
+          if ./target/release/z30$ext --encode "CQ K1ABC FN42" --wav bad.wav; then echo "FN42 was encoded"; exit 1; fi
+          if ./target/release/z30$ext --encode "ZY2ABC K1ABC -10" --wav bad.wav; then echo "ZY2ABC was encoded"; exit 1; fi
+      - name: Benchmark smoke (latency is measured, not asserted, on shared runners)
+        run: ./target/release/z30 --benchmark perf --frames 2
+
+  msrv:
+    name: Declared minimum Rust version builds and passes
+    # Cargo.toml declares rust-version = "1.95". It used to declare 1.82 while the GUI needed
+    # 1.95, so the declared version could not build the workspace (2026-09-24 audit, H-08). This
+    # job reads the version from Cargo.toml, so the declaration and the check cannot drift.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Read the declared MSRV
+        id: msrv
+        run: echo "version=$(grep -m1 '^rust-version' Cargo.toml | sed -E 's/.*"(.*)".*/\1/')" >> "$GITHUB_OUTPUT"
+      - uses: dtolnay/rust-toolchain@master
         with:
-          name: z30-${{ matrix.os }}-${{ github.sha }}
-          path: |
-            target/release/z30
-            target/release/z30.exe
-            target/release/z30-gui
-            target/release/z30-gui.exe
-          if-no-files-found: ignore
+          toolchain: ${{ steps.msrv.outputs.version }}
+      - run: sudo apt-get update && sudo apt-get install -y libasound2-dev libudev-dev libxkbcommon-dev libwayland-dev libx11-dev libxcursor-dev libxrandr-dev libxi-dev libgl1-mesa-dev
+      - uses: Swatinem/rust-cache@v2
+      - name: Build everything on ${{ steps.msrv.outputs.version }}
+        run: cargo build --workspace --exclude z30-py --all-targets --locked --features z30-cli/cm108,z30-gui/cm108
+      - name: Test on ${{ steps.msrv.outputs.version }}
+        run: cargo test --workspace --exclude z30-py --release --locked
+
+  benchmark-suite:
+    name: Benchmark suite runs through the shipped binary and records provenance
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - run: sudo apt-get update && sudo apt-get install -y libasound2-dev libudev-dev
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --release --locked -p z30-cli
+      - name: Every suite benchmark, exploratory size
+        run: ./target/release/z30 --benchmark suite --frames 3 --out smoke
+      - name: Each result names the commit, the receiver, the seed and its definitions
+        run: |
+          python3 - <<'PY'
+          import json, os, subprocess
+          head = subprocess.check_output(["git", "rev-parse", "--short=12", "HEAD"]).decode().strip()
+          names = ["awgn", "snr", "drift", "timing", "clock", "impair", "busy", "false", "sic", "fading"]
+          for n in names:
+              d = json.load(open(os.path.join("smoke", n + ".json")))
+              p = d["provenance"]
+              assert p["git_commit"] == head, (n, p["git_commit"], head)
+              assert "decode_slot" in p["receiver"], n
+              assert p["hardware_involved"] is False, n
+              assert d["seed"]["suite_seed"] == 20260830, n
+              assert "snr" in d["definitions"] and "success" in d["definitions"], n
+              assert d.get("exploratory"), n
+              print(n, "ok")
+          PY
 
   golden:
     name: Golden vectors reproduce from the oracle
@@ -85,18 +145,22 @@ jobs:
         with:
           python-version: '3.11'
           cache: pip
+          cache-dependency-path: legacy/python-oracle/requirements.txt
       - uses: actions/setup-node@v7
         with:
           node-version: '22'
           cache: npm
-      - run: python -m pip install -r requirements.txt && npm ci
+          cache-dependency-path: legacy/browser-runtime/package-lock.json
+      - run: python -m pip install -r legacy/python-oracle/requirements.txt
+      - run: npm ci
+        working-directory: legacy/browser-runtime
       - name: Python oracle vectors are byte-identical to fixtures/golden
         run: python reference/golden/generate.py --check
       - name: TypeScript codec vectors are identical to fixtures/golden/messages.json
-        run: npx tsx reference/golden/generate_messages.mts --check
+        run: npx --prefix legacy/browser-runtime tsx reference/golden/generate_messages.mts --check
 
   harness:
-    name: Research harness measures the shipped decode_slot
+    name: Paired oracle-vs-production harness drives the shipped decode_slot
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -106,7 +170,8 @@ jobs:
         with:
           python-version: '3.11'
           cache: pip
-      - run: python -m pip install -r requirements.txt maturin
+          cache-dependency-path: legacy/python-oracle/requirements.txt
+      - run: python -m pip install -r legacy/python-oracle/requirements.txt maturin
       - name: Build and install the bindings
         run: |
           cd crates/z30-py && maturin build --release -o ../../wheels

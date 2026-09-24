@@ -35,7 +35,8 @@ import time
 from multiprocessing import Pool
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-sys.path.insert(0, ROOT)
+# The frozen Python oracle (non-production reference receiver) lives in legacy/python-oracle.
+sys.path.insert(0, os.path.join(ROOT, "legacy", "python-oracle"))
 os.environ.setdefault("RAYON_NUM_THREADS", "1")
 
 import numpy as np  # noqa: E402

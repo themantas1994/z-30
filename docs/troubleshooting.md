@@ -98,9 +98,22 @@ needs none of them.
 ## Migration
 
 `z30 --migrate` reads the legacy `station_config.json`, `config.json`, `logbook.json` and
-`logbook.adi` and never modifies them. It prints one line per field: migrated, migrated with a
-change (and why), or not migrated (and why). If `config.toml` already exists it stops, unless
-`--force` is given. Imported log fields carry `legacy_import` provenance on purpose (see
-[safety.md](safety.md#logged-data)).
+`logbook.adi` and never modifies them. It prints three sections - **Imported**, **Imported
+with a change** (and why), **Skipped** (and why) - and a logbook line with how many contacts
+were imported, already present and skipped. If `config.toml` already exists it is not
+replaced unless `--force` is given. Running it again is safe: a contact already in the vNext
+logbook (same call, start time and frequency) is not imported twice, and the configuration it
+builds is a pure function of the legacy files.
 
-The legacy RF time-sync offset (`appTimeOffsetMs`) is deliberately **not** migrated.
+Never migrated, whatever the legacy files say:
+
+- the RF time-sync offset (`appTimeOffsetMs` / `app_time_offset_ms`) and any stored time-sync
+  result - the old sync could report success on noise (audit C-03);
+- self-test / synthetic-signal state;
+- browser UI settings;
+- on entries written by the old auto-logger, the grid `FN31` and received report `-16`, which
+  are exactly its defaults for "nothing received" (audit C-05). Their times were local time
+  labelled UTC; that cannot be undone, and the imported comment says so.
+
+Imported log fields carry `legacy_import` provenance on purpose (see
+[safety.md](safety.md#logged-data)).

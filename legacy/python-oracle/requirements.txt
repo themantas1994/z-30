@@ -1,0 +1,15 @@
+# Dependencies of the frozen z-30 Python oracle, pinned to exact versions.
+#
+# The oracle's numerical output (golden vectors, reference-receiver curves) depends on NumPy and
+# SciPy, so they are pinned; bump them deliberately, together, and re-run
+# `python reference/golden/generate.py --check` and the oracle's tests afterwards.
+#
+# sounddevice, cffi, pyserial and requests used to be listed here because this file served the
+# retired Python application (audio capture, serial PTT, update checks). The oracle uses none of
+# them, and z-30's application (the Rust binaries in crates/) needs no Python at all.
+#
+# Install with:
+#     pip install -r legacy/python-oracle/requirements.txt
+
+numpy==2.2.6
+scipy==1.15.3

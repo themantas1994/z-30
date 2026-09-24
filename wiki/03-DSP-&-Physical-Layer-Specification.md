@@ -1,150 +1,118 @@
 # 03. DSP & Physical Layer Specification
 
-This document provides the complete mathematical and signal processing specification for the **z-30** physical transmission layer.
+The normative text is [`SPEC.md`](../SPEC.md); the implementation is `crates/z30-protocol`
+(transmit) and `crates/z30-dsp` (receive), documented in [`docs/`](../docs/README.md). This page
+summarises both and must agree with them. Every statement about the receiver below describes
+code that exists; nothing here describes intended behaviour.
 
----
+## Physical layer parameters
 
-## 📊 Physical Layer Parameters Summary
-
-| Parameter | Notation | Value | Notes |
-| :--- | :--- | :--- | :--- |
-| **Modulation** | — | **16-MFSK (CPFSK)** | Continuous-Phase Frequency Shift Keying |
-| **Tone Count** | $M$ | **16 tones** | Alphabet $\{0, 1, 2, \dots, 15\}$ |
-| **Tone Spacing** | $\Delta f$ | **3.125 Hz** | $\Delta f = 1 / T_s$ (Orthogonal condition) |
-| **Symbol Duration** | $T_s$ | **320.0 ms** | $T_s = 0.320\text{ s}$ |
-| **Occupied Bandwidth** | $B$ | **50.0 Hz** | $B = 16 \times 3.125\text{ Hz}$ |
-| **Frame Symbol Count** | $N_{\text{sym}}$ | **75 symbols** | 54 Data Symbols + 21 Costas Sync Symbols |
-| **Active TX Duration** | $T_{\text{tx}}$ | **24.0 s** | $75 \times 0.320\text{ s} = 24.0\text{ s}$ |
-| **Cycle Duration** | $T_{\text{cycle}}$ | **30.0 s** | Synchronized to UTC :00 / :30 |
-| **Guard / Processing Time** | $T_{\text{guard}}$ | **6.0 s** | FFT Framing + 3-Pass SIC + LDPC decode |
-| **Bits per Symbol** | $\log_2(M)$ | **4 bits/symbol** | $54 \times 4 = 216$ coded channel bits |
-| **FEC Code** | — | **IRA-LDPC (216, 77)** | Rate $R \approx 0.356$, dual-diagonal parity |
-| **AWGN Decode Threshold** | — | **-22.9 dB SNR (50%) / -22.1 dB SNR (90%)** | In a $2500\text{ Hz}$ noise bandwidth, through blind acquisition with random carrier ($\pm5$ Hz) and timing ($\pm0.5$ s) offsets, demodulated non-coherently. Seed 20260830, 200 frames/point; 95% intervals $[-23.07, -22.79]$ and $[-22.16, -22.01]$. Comparable with the published on-air figures for FT8 and FT4. |
-| **Idealised AWGN Bound** | — | -24.58 dB SNR (50%) / -23.48 dB SNR (90%) | Exact noise sigma, exact carrier and perfect symbol timing given to the demodulator. A bound on the code, **not** an on-air threshold. The 1.66 dB gap is the acquisition loss. |
-| **ITU-R F.1487 high-latitude moderate** | — | **does not decode** (3 frames in 1,400, $-10$ to $+20\text{ dB}$) | 3 ms delay spread, 10 Hz Doppler spread. The Doppler spread is wider than the $3.125\text{ Hz}$ tone spacing, so tone orthogonality is destroyed; acquisition still finds the frame. See [16](16-Benchmarking-Testing-&-CI.md#the-channel-z-30-cannot-use). |
-
----
-
-## 🔄 End-to-End Signal Chain
-
-```
-                                      z-30 DSP Transmit / Receive Flow
-                                      ================================
-
-       [ Structured QSO Message ]                           [ Raw Audio In (12 / 48 kHz / 16-bit) ]
-                 |                                                          |
-       [ 63-bit Radix-37/27 Packing ]                             [ Audio Buffer (24.0s Window) ]
-                 |                                                          |
-       [ 14-bit CRC Parity Insertion ]                             [ Downsample & Matched Filter ]
-                 |                                                          |
-       [ R=0.356 IRA-LDPC Encoder (216, 77) ]                     [ FFT Energy Binning (16 Tones) ]
-                 |                                                          |
-       [ 21-Symbol Costas Synchronization ]                        [ Costas Array Sync Detection ]
-                 |                                                          |
-       [ 16-MFSK Continuous Phase FSK ]                            [ Non-Coherent Metric Slicer ]
-                 |                                                          |
-       [ Gaussian Frequency-Pulse Shaping ]                        [ Log-Likelihood Ratio (LLR) ]
-                 |                                                          |
-       [ Transceiver Soundcard / CAT ]                            [ Belief Propagation LDPC Decoder ]
-                                                                            |
-                                                                   +--------+--------+
-                                                                 Valid CRC?       Corrupt / Clash?
-                                                                   |                 |
-                                                            [ Output Decode ]   [ SIC Engine ]
-                                                                                     |
-                                                                           (Subtract & Re-decode)
-```
-
-The transmit path is implemented twice, once per stack, and the two must stay bit-exact:
-`z30_dsp/modem.py` and `src/dsp/z30Waveform.ts`. `tests/test_cross_language_parity.py` and
-`tests/crc14.test.mjs` hold them together against shared known-answer vectors.
-
----
-
-## 🌊 Waveform Synthesis & Keying
-
-The transmitted continuous-phase baseband signal $s(t)$ over the frame duration $0 \le t \le 24.0\text{ s}$ is defined as:
-
-$$s(t) = A(t) \cdot \cos\left( 2\pi f_{\text{carrier}} t + 2\pi \Delta f \int_{0}^{t} \sum_{k=0}^{74} S_k \cdot g(\tau - k T_s)\, d\tau + \phi_0 \right)$$
-
-Where:
-- $S_k \in \{0, 1, \dots, 15\}$ is the integer tone index for symbol $k$.
-- $\Delta f = 3.125\text{ Hz}$ is the tone spacing.
-- $T_s = 0.320\text{ s}$ is the symbol period.
-- $g(t)$ is a **Gaussian frequency pulse** with bandwidth-time product $BT = 2.0$ — the value
-  WSJT-X uses for FT8. The piecewise-constant tone sequence is convolved with $g(t)$ *before*
-  it is integrated into phase.
-- $A(t)$ is the envelope: **unity throughout the frame**, with a single 20 ms raised-cosine
-  ramp at the start ($t=0$) and at the end ($t=24.0\text{ s}$).
-
-Two properties define this waveform, and both are load-bearing:
-
-1. **Continuous phase.** One phase accumulator runs across the entire frame. A phase
-   discontinuity at a symbol boundary is an impulse in frequency and radiates across the whole
-   passband.
-2. **Constant amplitude.** Smoothing the *frequency* narrows the spectrum; smoothing the
-   *amplitude* per symbol is amplitude keying at 3.125 baud laid over the tone sequence, and
-   widens it. An earlier modulator did exactly that — an 8 ms ramp on every one of the 75
-   symbols — and discarded the benefit of the phase accumulator sitting next to it.
-
-Lowering $BT$ to 1.0 buys back roughly 6 Hz of -40 dB occupied bandwidth but costs about 2 dB
-of decode threshold, because the extra smoothing is inter-symbol interference the per-symbol
-matched-filter demodulator does not model. That is a bad trade for a weak-signal mode.
-`tests/test_modem_spectrum.py` asserts the 99% occupied bandwidth (**49.8 Hz** measured) and
-the -40 dB bandwidth (**66 Hz**) against fixed budgets, and asserts that the old per-symbol
-gated waveform *fails* them — so the test can demonstrably tell the difference.
-
----
-
-## ⏱️ Synchronous 30-Second Cycle Timing
-
-The UTC clock is divided into even and odd 30-second transmission slots:
-
-- **`EVEN` slot**: begins exactly at `:00` of each UTC minute (span `:00`–`:30`).
-- **`ODD` slot**: begins exactly at `:30` of each UTC minute (span `:30`–`:00`).
-
-Within a slot:
-
-| Window | Span | Purpose |
+| Parameter | Value | Notes |
 | :--- | :--- | :--- |
-| **Active transmission** | $0.00\text{ s}$ – $24.00\text{ s}$ | The 75-symbol frame |
-| **Decode & SIC processing** | $24.00\text{ s}$ – $28.50\text{ s}$ | $4.50\text{ s}$ compute budget for FFT framing, LDPC and 3-pass SIC |
-| **Sequencing & CAT guard** | $28.50\text{ s}$ – $30.00\text{ s}$ | $1.50\text{ s}$ of rig turnaround |
+| Modulation | 16-GFSK, continuous phase | Gaussian frequency pulse, BT = 2.0 |
+| Tone spacing | 3.125 Hz | = 1 / symbol time |
+| Symbol time | 320 ms | 1920 samples at the receiver's 6 kHz |
+| Tone span | 46.9 Hz | tone 0 to tone 15 |
+| Occupied bandwidth (audio waveform) | 99%: ≈ 49–50 Hz; −40 dB: ≈ 66 Hz | Welch PSD, Hann, 8192 points at 6 kHz (0.73 Hz bins), 50% overlap (`z30 --loopback-test` uses the same method); ideal waveform only — transmitter and ALC effects not measured |
+| Symbols per frame | 75 = 54 data + 21 sync | |
+| Frame | 24.00 s | starts on a 30 s UTC boundary (even or odd slot) |
+| Message | **63 bits** | two 28-bit call fields + 7-bit extra field |
+| Information bits | 77 = 63 + 14-bit CRC | CRC-14, g(x) = x¹⁴+x¹³+x¹⁰+x⁶+x+1, init 0x2757 |
+| FEC | IRA-LDPC (216, 77), rate 0.356 | dual-diagonal parity, degree-5 connection table |
+| Symbol mapping | **natural binary**, 4 bits/symbol, MSB first | not Gray-coded; the loss against Gray has not been measured |
+| Receiver timing window | slot − 1.5 s … slot + 25.5 s | DT search ±1.5 s, hard edge |
+| Sideband | USB assumed | radiated = dial + audio; LSB is not modelled |
 
-Slot alignment is what makes the mode work at all; see
-[07. RF Time Synchronization Engine](07-RF-Time-Synchronization-Engine.md) for how z-30
-calibrates its clock without internet access.
+The sensitivity figures are on [16](16-Benchmarking-Testing-&-CI.md) and
+[11](11-Physics-&-Comparative-Analysis-z30-vs-FT8.md), each with its conditions. None is a
+hardware or on-air measurement.
 
----
+## Transmit
 
-## 🎯 Synchronization & Costas Array Pattern
-
-To enable robust detection under severe polar flutter, multi-path delay spread, and Doppler drift, z-30 embeds **21 synchronization symbols** distributed across the 75-symbol frame.
-
-### Sync Positions in Frame:
+```text
+message text -> v1 codec (refuses anything it cannot carry exactly) -> 63 bits
+             -> CRC-14 -> 77 bits -> LDPC (216,77) -> 54 data symbols (natural binary)
+             -> interleave 21 Costas symbols -> 75 tones -> GFSK modulator (one phase accumulator,
+                BT 2.0, constant envelope, 20 ms raised-cosine ramp at each end) -> audio
 ```
-Indices: [0, 1, 2,  7, 8, 9,  17, 18, 19,  27, 28, 29,  37, 38, 39,  47, 48, 49,  72, 73, 74]
+
+The modulator is `z30_protocol::gfsk::Modulator`; the same one generates the SIC replica and
+the benchmark's test signals. It is bit-exact with the frozen Python oracle on the golden
+waveforms at 6, 12 and 48 kHz, and an independent re-implementation from `SPEC.md` alone
+reproduced it exactly (2026-09-24 audit, E007).
+
+Two properties are load-bearing: **continuous phase** (a phase step at a symbol boundary would
+splatter across the passband) and **constant amplitude** (the only amplitude shaping is one
+ramp at each end of the frame; a per-symbol amplitude ramp, which an early version had, is
+amplitude keying at 3.125 baud).
+
+## Frame layout
+
+```text
+SSS DDDD SSS DDDDDDD SSS DDDDDDD SSS DDDDDDD SSS DDDDDDD SSS DDDDDDDDDDDDDDDDDDDDDDD SSS
+sync positions: 0-2, 7-9, 17-19, 27-29, 37-39, 47-49, 72-74
+sync tones:     3 11 7 | 14 2 9 | 5 12 1 | 15 6 10 | 4 8 13 | 0 9 3 | 14 6 11
 ```
 
-### Costas Tone Pattern:
-```
-Sync Tones: [3, 11, 7,  14, 2, 9,  5, 12, 1,  15, 6, 10,  4, 8, 13,  0, 9, 3,  14, 6, 11]
-```
+Seven clusters of three. The pattern uses all 16 tones; for any non-zero shift in time and tone,
+at most 3 of the 21 sync symbols coincide (audit E011). Strictly it is not a Costas array (tones
+repeat), which acquisition does not need.
 
-### Purpose of Interleaved Sync:
-1. **Time Offset ($\Delta t$) Estimation**: Normalized cross-correlation against the known 21-symbol sequence estimates frame arrival time with sub-10ms precision across a $\pm 1.5\text{ s}$ search window.
-2. **Frequency Offset ($\Delta f$) Tracking**: Estimates fine carrier frequency errors down to $\pm 0.1\text{ Hz}$.
-3. **Phase Trajectory Tracking**: Tracks ionospheric phase rotation across the 24-second transmission frame for coherent multi-pass SIC reconstruction.
+## Slot timing
 
----
+| Span (relative to the slot boundary) | What |
+| :--- | :--- |
+| −1.5 s … +25.5 s | the receive window for that slot (27 s): the frame (24 s) plus the ±1.5 s DT search |
+| +25.5 s | the earliest moment the window is complete; the scheduler decodes then, never before |
+| +25.5 s … +30 s | the decode budget: 4.5 s before the next slot starts |
 
-## 📈 Demodulation & Non-Coherent Metric Slicing
+The decode is triggered by the audio sample counter reaching the end of the window, not by a
+timer ([`docs/synchronization.md`](../docs/synchronization.md)). The retired browser app
+triggered at +24.0 s, before its window existed, and never retried (audit C-01). The old
+statement on this page that decoding runs from +24.0 s to +28.5 s was that defect written down.
 
-1. **Downsampling & Filtering**: Input audio (at 12 kHz or 48 kHz) is filtered through a 128-tap Kaiser-windowed bandpass filter matching the active channel bandwidth.
-2. **Short-Time Discrete Fourier Transform (STDFT)**:
-   For each symbol interval $k \in [0, 74]$, the power spectral density across all 16 candidate tone frequencies $f_m = f_{\text{base}} + m \cdot \Delta f$ is computed:
-   $$P_k(m) = \left| \sum_{n=0}^{N-1} x[n + k N] \cdot w[n] \cdot e^{-j 2\pi \frac{m n}{N}} \right|^2, \quad m \in \{0, 1, \dots, 15\}$$
-3. **Log-Likelihood Ratio (LLR) Generation**:
-   For each of the 4 bits $b_{k,j}$ ($j \in \{0, 1, 2, 3\}$) mapped by Gray-coding into tone index $m$:
-   $$\text{LLR}(b_{k,j}) = \ln \left( \frac{\sum_{m \in S_{j,0}} \exp\left( \frac{P_k(m)}{\sigma^2} \right)}{\sum_{m \in S_{j,1}} \exp\left( \frac{P_k(m)}{\sigma^2} \right)} \right)$$
-   Where $S_{j,0}$ and $S_{j,1}$ are the tone subsets having bit $j$ equal to 0 and 1, respectively.
+## Receive (`decode_slot`)
+
+1. **Slot spectrum.** One real FFT of the 162 000-sample window (6 kHz).
+2. **Coarse sync.** A Hann-windowed spectrogram (one symbol long, zero-padded 4× to 0.78 Hz
+   bins, hopped every 40 ms) over 200–2800 Hz. For every DT in ±1.5 s and every tone-0 bin, the
+   Costas metric is the power at the 21 sync tones over the power in all 16 tone bins at those
+   instants, normalised by the map's median. Local maxima above 1.5, non-maximum suppression,
+   at most 50 candidates per pass.
+3. **Per-candidate baseband.** 5400 bins around the candidate, a raised-cosine taper beyond
+   ±85 Hz, one inverse FFT: complex baseband at 200 Hz, where tone k is bin k of a 64-point FFT.
+4. **Fine sync.** Timing (5 ms grid + parabolic interpolation), frequency (to 0.02 Hz) and a
+   linear drift hypothesis up to ±4 Hz across the frame, all on the sync symbols only.
+5. **Demodulation.** 64-point FFT per symbol after de-rotating frequency and drift; noise from
+   the median of off-signal bins; per-tone noise raised where something stationary sits
+   (whitening against carriers); the exact non-coherent Rician metric
+   `ln I0(a|r|/σ²) − a²/(2σ²)` with the pilot-mean amplitude; exact Log-MAP demapping to 216
+   LLRs. **Non-coherent**: there is no carrier-phase or phase-trajectory tracking, and none is
+   needed for 16-FSK with 320 ms symbols.
+6. **LDPC.** Four belief-propagation schedules (≤ 150 iterations in total), then an OSD whose
+   candidates must carry a matching received CRC field; optional AP ([17](17-A-Priori-(AP)-Decoding.md)).
+   The CRC decides.
+7. **Measurements.** DT is the least-squares placement of the decoded frame's replica (to one
+   6 kHz sample); SNR is measured against the residual after that replica is removed; both are
+   checked against the truth from −22 to +30 dB ([16](16-Benchmarking-Testing-&-CI.md)).
+8. **SIC.** Each decode is regenerated with the modulator, fitted with a slowly varying complex
+   gain by least squares, timing-refined and subtracted; passes 2 and 3 search what is left
+   ([05](05-Successive-Interference-Cancellation-(SIC).md)).
+
+There is no Kaiser-window bandpass filter, no "normalised cross-correlation" with sub-10 ms
+precision, no phase-trajectory tracking and no Gray demapping anywhere in the receiver. Earlier
+versions of this page described all four; none was ever implemented (audit E051).
+
+## Measured tolerances (simulation)
+
+Measured through `decode_slot`, single stations, AWGN; full tables on
+[16](16-Benchmarking-Testing-&-CI.md):
+
+- **Timing:** decodes at DT up to ±1.5 s; beyond it the frame leaves the window.
+- **Frequency:** tone 0 anywhere from 200 Hz to 2753 Hz (tone 15 ≤ 2800 Hz).
+- **Drift:** linear drift up to about ±4 Hz across the frame is tracked; beyond that decoding
+  degrades quickly.
+- **Sound-card clock error:** ±3000 ppm costs nothing measurable.
+- **Fading:** decodes on slow and moderate Watterson paths; on ITU-R F.1487 high-latitude
+  moderate (10 Hz Doppler spread) it **does not decode at any SNR** — the Doppler spread is
+  wider than the 3.125 Hz tone spacing.

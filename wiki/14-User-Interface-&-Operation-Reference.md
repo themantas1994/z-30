@@ -1,191 +1,91 @@
 # 14. User Interface & Operation Reference
 
-A reference for every control surface in the z-30 workspace: what it does, where it lives in
-the source, and what it changes on the air. If you are setting a station up for the first time,
-start at [01. New User Guide & First Steps](01-New-User-Guide-&-First-Steps.md) instead — this
-page is the reference you come back to.
+`z30-gui` is the desktop station (egui, `crates/z30-gui`). It renders the engine's state and
+sends it commands; it owns no radio state and runs no DSP. The engine's threads keep receiving,
+sequencing and watching PTT whatever the window is doing.
 
----
+> The GUI has been built and tested for its logic, not operated with a radio or sound card
+> (see [01](01-New-User-Guide-&-First-Steps.md)).
 
-## 🌊 60 FPS Spectral Waterfall & Spectrogram
+## Layout
 
-`src/components/WaterfallDisplay.tsx`
+**Top bar.** Your callsign (or "z-30 (no callsign)"); the UTC time from the operating system;
+the slot progress bar (even/odd, seconds into the slot); the dial — "(radio agrees)" when
+`rigctld` reports the same dial, "commanded, radio reports …" when it does not, "(not
+verified)" without rig control; the TX state (RX / TX armed / TX and the message being sent);
+buttons for **Settings**, **Logbook** and **Diagnostics**.
 
-The primary canvas delivers continuous, non-blocking 60 FPS spectral analysis:
+**Waterfall.** 0–3 kHz of the received audio. The green box is the receive frequency, the red
+box the transmit frequency (each the width of the 16-tone span). Click to set both; shift-click
+to set only the transmit frequency.
 
-- **Colormaps**: 10 scientific palettes — `Turbo`, `Inferno`, `Viridis`, `Plasma`, `Magma`,
-  `WSJT-X Classic`, `Night Vision Green`, `Amber CRT`, `High-Contrast B&W`, `Spectral Heatmap`.
-- **Passband presets**: `200–3000 Hz (Standard)`, `500–2000 Hz (Narrow)`,
-  `800–1800 Hz (Digital Focus)`, `100–3500 Hz (Wide)`, `0–4000 Hz (Extended)`.
-- **Trace visibility boost**: a 3-level contrast multiplier (`1x`, `1.6x`, `2.2x`) that lifts
-  weak 16-MFSK tone tracks down to about $-25.0\text{ dB}$ out of the background.
-- **Interactive tuning**:
-  - **Single click** — set the audio RX centre frequency.
-  - **Shift + click** — set the audio TX centre frequency.
-  - **Double click on a carrier** — arm the transmitter (`txEnabled = true`) and prepare the
-    sequencing macro that calls that station on the upcoming cycle.
-  - **Mouse wheel** — smooth zoom ($1\times$ to $8\times$), with drag-to-pan inspection.
+**Band activity.** One row per decode: UTC (of the slot), SNR in dB (2500 Hz reference), DT in
+seconds, tone-0 frequency in Hz, the message, and `a1`…`a6` when a priori information completed
+the frame. CQs are green, messages addressed to you red. Double-click a CQ to answer it.
 
-Remember that the frequency you radiate is the dial frequency **plus** this audio offset. That
-sum is what the transmit gate checks against the band plan — see
-[13. Operating Safety, Compliance & Local Security](13-Operating-Safety-Compliance-&-Security.md).
+- **SNR** is shown as a number from −22 to +30 dB, the range over which its accuracy has been
+  measured; outside it as `<-22` / `>+30`; `--` when there was no signal estimate.
+- A field of a received message that is not the valid encoding of anything is shown as
+  unrepresentable (`<?…>`), never as a plausible callsign or grid.
+- There is **no confidence column**: the decoder has no calibrated per-decode confidence, and
+  none is invented. (The retired app showed the constant 99 on every decode.)
+- Every row is a reception by this receiver. There is no self-test or synthetic-signal mode.
 
----
+**QSO panel.** The sequencer state, the next message to be sent, **Call CQ**, **Enable TX**,
+**Tune** (one unmodulated carrier at the centre of the tone span, at most one frame long),
+**HALT TX** (stops audio and unkeys immediately, and abandons a transmission that was about to
+start), **Reset QSO**, and the transmit gate's verdict: "clear", or every reason it would refuse.
+Messages from the engine (refusals, faults, rig and audio events, logged contacts) scroll below.
 
-## 🔁 QSO State Machine & Auto-Sequencing
+**Status bar.** Audio input running or stopped, input level (dBFS), overruns, the sound card's
+clock error as the sample-clock model estimates it ("measuring" until it has enough data), the
+last decode time and when it finished relative to the slot, missed slots, the median DT of
+recent decodes (a clock-error hint), and the operating system's clock status.
 
-`src/dsp/qsoEngine.ts`, `src/components/QsoMacrosTransmitPanel.tsx`
+## QSO sequencing
 
-z-30 automates standard amateur contact exchanges via a 6-stage finite state machine:
+With auto-sequence on, the sequencer advances only on a message addressed **exactly** to your
+callsign (not a substring), from the station being worked (or, while calling CQ, from whoever
+answers), and of the type the current state expects. Anything else repeats the current message.
 
-| Macro | Description | Transmitted payload example |
-| :--- | :--- | :--- |
-| **TX 1** | Directed or general CQ call | `CQ W1AW FN31` |
-| **TX 2** | Signal report response | `W1AW K1ABC -12` |
-| **TX 3** | Signal report acknowledgment | `K1ABC W1AW R-08` |
-| **TX 4** | Mutual confirmation (RRR / RR73) | `W1AW K1ABC RR73` |
-| **TX 5** | Final 73 sign-off | `K1ABC W1AW 73` |
-| **TX 6** | Free text / special grid | `CQ DX W1AW FN31` |
+```text
+A: CQ A GRID       B: A B GRID       A: B A -12
+B: A B -08  (a report in reply to a report is the roger, by sequence: v1 has no roger bit)
+A: B A RR73        B: A B 73
+```
 
-- **Auto-sequence** advances through the macros on each valid CRC-verified reply.
-- **Auto-log** commits the contact on RR73/73 and exports ADIF (`.adi`) accepted by LoTW, QRZ,
-  ClubLog and eQSL.
-- **Watchdog safety** disarms the transmitter after a configurable number of unanswered cycles
-  (1 to 10), so an unattended station cannot call CQ indefinitely.
-- **A priori (AP) decoding** (Station Settings -> Automation, off by default) uses the stage this
-  machine is in to retry a frame that failed to decode, asserting what that stage implies must be
-  in it - your callsign, the station you are working, and the closing message. Frames recovered
-  that way are tagged `a1`...`a6` in the activity log rather than shown as ordinary decodes,
-  because a frame that only closed on an assumption is a weaker claim than one that closed
-  without help. See [17. A Priori (AP) Decoding](17-A-Priori-(AP)-Decoding.md) for what it buys,
-  what it costs, and why it ships off.
+The report is your receiver's measurement of the other station. With no signal estimate, no
+report message is sent. After `watchdog_cycles` transmissions without progress (default 6)
+transmission stops.
 
----
+## Settings
 
-## 🎯 Auto-Reply Priority Strategies
+| Section | Fields |
+| :--- | :--- |
+| Station | callsign (checked live: whether v1 can carry it), grid (whether its square is in the v1 table), region, licence class, the TX power you set on the radio (configuration, never shown or logged as a measurement) |
+| Operating | dial (Hz, USB), TX audio frequency, TX slot, auto-sequence, auto-log, the no-progress watchdog |
+| Audio | input and output device, TX level |
+| Rig and PTT | `rigctld` host and port; PTT method (none, VOX, CAT, serial RTS/DTR with polarity, CM108 GPIO and polarity) |
+| Receiver | a priori decoding (off by default), drift search range, SIC passes |
 
-When several stations answer your CQ inside the same 30-second slot, z-30 sorts the callers and
-picks one according to the configured rule:
+**Apply and save** writes `config.toml`. Changing the configuration while transmitting ends the
+transmission: the gate approved the old configuration, not the new one.
 
-1. **First decoded (chrono)** — the first caller decoded in the slot (WSJT-X "Call 1st" behaviour).
-2. **Last decoded** — the last caller decoded in the cycle.
-3. **Strongest signal (max SNR)** — the loudest station first (e.g. $-4\text{ dB}$ before $-24\text{ dB}$).
-4. **Weakest signal (deep DX)** — stations closest to the LDPC threshold first (e.g. $-24.5\text{ dB}$ before $-6\text{ dB}$).
-5. **Nearest station (min distance)** — smallest Maidenhead great-circle distance.
-6. **Farthest DX (max distance)** — greatest Maidenhead great-circle distance.
+## Logbook
 
----
+Completed contacts, with **Export ADIF** (written to the data directory as `export.adi`).
+Fields that were not received or measured are empty; the dial is labelled rig-verified or
+commanded; power is labelled as configured. Forward power and SWR are "not measured" — nothing
+in z-30 measures them. See [13](13-Operating-Safety-Compliance-&-Security.md#the-logbook-records-only-what-happened).
 
-## 🎛️ CAT Rig Control & S-Meter Integration
+## Diagnostics
 
-`src/dsp/catController.ts`, `src/dsp/hamlibCatalog.ts`, `src/components/RigControlPanel.tsx`
+Build (version, commit), configuration path, GUI frame time, the rig tracker's state, audio
+health, the transmit gate's verdict, and "Forward power / SWR: not measured".
 
-- Bidirectional serial communication over Hamlib `rigctld` (default port `4532`) or native
-  serial ports (`COM1..COM32`, `/dev/ttyUSB*`, `/dev/ttyACM*`).
-- Reads and sets the VFO dial frequency (band selector, direct MHz entry, and +/-100 Hz /
-  +/-1 kHz nudge buttons), and reads the operating mode (`USB` / `PKTUSB`) and passband live
-  from the controller rather than displaying a fixed label.
-- Keys the tune carrier and opens the band manager.
-- **The S-meter readout is rendered in the waterfall header**, not in this panel, because that
-  is where an operator watches the band; the reading itself comes from
-  `catController.getSmeterInfo()`. The panel shows the rigctld endpoint, baud rate and the
-  configured PTT method.
-- A live CAT terminal for raw Hamlib commands. **Case is significant, as in real rigctl**:
-  lower-case short verbs read, upper-case short verbs set — `f` / `F <hz>`, `m` / `M <mode>`,
-  `t` / `T <0|1>` — alongside the long forms `\get_freq`, `\set_freq`, `\get_mode`,
-  `\set_mode`, `\get_ptt`, `\set_ptt`, `\get_vfo`, `\get_level`, `\version`,
-  `dump_state` and `help`. An unrecognised verb returns a non-zero `RPRT`, not success.
-- **`T 1` / `\set_ptt 1` runs the same transmit gate as every other transmit path** and is
-  refused, with the reason, if the station is not clear to transmit. It keys through the
-  operator's configured PTT method and polarity, not a CAT default. See
-  [13. Operating Safety, Compliance & Security](13-Operating-Safety-Compliance-&-Security.md).
-- Synchronous PTT keying via CAT commands, RTS/DTR serial pins, or audio tones.
+## What the retired app had that z-30 does not
 
-Full wiring, daemon invocation and per-rig notes live in
-[06. Transceiver CAT Control & PTT Wiring](06-Transceiver-CAT-Control-&-PTT-Wiring.md).
-
----
-
-## ⚡ Supported PTT Keying Architectures
-
-Nine keying methods are supported natively. The summary below is the index; the wiring diagrams
-and per-method caveats are in
-[06. Transceiver CAT Control & PTT Wiring](06-Transceiver-CAT-Control-&-PTT-Wiring.md).
-
-| # | Method | Typical hardware |
-| :--- | :--- | :--- |
-| 1 | **CAT command** (`\set_ptt 1` over USB/serial or the Hamlib TCP daemon) | Icom IC-7300/705/7610, Yaesu FT-991A/710/891, Kenwood TS-590SG, Elecraft K3/K4, Xiegu G90/X6100 |
-| 2 | **RTS serial pin** | Digirig, Rigblaster, microHAM |
-| 3 | **DTR serial pin** | Dual-line and legacy interfaces |
-| 4 | **Right-channel audio PTT tone** (1000/1500 Hz on R, data on L) | SignaLink USB, HT cables, smartphone audio jacks |
-| 5 | **C-Media CM108 / CM119 USB GPIO** (GPIO3/GPIO4 via HID reports) | DRA-30/50/70, RIM, URIxB |
-| 6 | **Raspberry Pi / SBC direct GPIO** (BCM 17/27) | DigiPi, backpack field boxes |
-| 7 | **VOX** | Transceiver's internal voice-operated exchange |
-| 8 | **TCI network socket** | ExpertSDR, SunSDR2 and other SDRs |
-| 9 | **K1EL WinKeyer 2/3** | WinKeyer, microHAM CW Keyer |
-
----
-
-## 🧭 Interactive Station Setup Wizard
-
-`src/components/SetupWizardModal.tsx` (terminal equivalent: `z30 --wizard`)
-
-Four guided steps:
-
-1. **Station identity** — callsign format validation, 4/6-character Maidenhead locator
-   resolution, operator name, QTH, timezone.
-2. **Audio & soundcard I/O** — device enumeration, live VU meters, test-tone verification.
-3. **Rig control & Hamlib** — a searchable catalogue of 200+ transceivers, daemon host/port,
-   serial ports, baud rate, data bits.
-4. **PTT keying & hardware test** — method selection, wiring guidance, polarity, lead-in and
-   hang-time sliders, and a live PTT test trigger.
-
----
-
-## 📡 Band Manager & Presets
-
-`src/dsp/bandPlan.ts`, `src/components/BandManagerModal.tsx` (terminal equivalent: `z30 --bands`)
-
-Default calling frequencies, all customisable:
-
-| Band | Dial frequency | Band | Dial frequency |
-| :--- | :--- | :--- | :--- |
-| **160 m** | 1.842000 MHz | **17 m** | 18.102000 MHz |
-| **80 m** | 3.576000 MHz | **15 m** | 21.076000 MHz |
-| **60 m** | 5.359000 MHz | **12 m** | 24.917000 MHz |
-| **40 m** | 7.076000 MHz | **10 m** | 28.076000 MHz |
-| **30 m** | 10.139000 MHz | **6 m** | 50.316000 MHz |
-| **20 m** | 14.076000 MHz *(primary activity)* | **2 m** | 144.176000 MHz |
-| **70 cm** | 432.176000 MHz | | |
-
-The same module supplies the band-edge and licence-class data the transmit gate enforces, so a
-custom preset outside your privileges is refused at transmit time rather than silently keyed.
-
----
-
-## 📒 ADIF 3.1.4 Logbook & Contest Export
-
-`src/dsp/qsoLogger.ts`, `src/components/LogbookModal.tsx`, `z30_dsp/auto_logger.py`
-
-- Tabular logbook recording date, UTC time, callsign, band, dial frequency, mode (`Z-30`),
-  sent/received reports, Maidenhead grid, distance (km/mi) and operator notes.
-- One-click export to five formats:
-  - **ADIF 3.1.4 (`.adi`)** — for LoTW, eQSL, Club Log and contest loggers. `MODE` is `MFSK`
-    with `SUBMODE` `Z30`, because ADIF's `MODE` is a closed enumeration and `z-30` is not in
-    it; a record with an unlisted `MODE` gets rejected or mis-filed.
-  - **Cabrillo v3.0 (`.cbr`)** — the contest submission format. The header fields the log
-    cannot know (`CONTEST`, `OPERATORS`, `NAME`, `ADDRESS`, `CLAIMED-SCORE`) are emitted empty
-    for you to complete: a submission with invented values is worse than a visibly incomplete
-    one.
-  - **JSON (`.json`)** — the only lossless format. ADIF flattens the SIC pass and LDPC
-    iteration count into a comment, CSV loses types, and Cabrillo keeps only what a contest
-    robot scores; this round-trips every field a QSO record carries.
-  - **CSV (`.csv`)** — RFC 4180, for spreadsheets.
-  - **SQLite dump (`.sql`)** — schema plus inserts, for anyone who would rather query their log
-    than read it.
-- Search and filter by callsign, grid or notes; by band; and by **UTC date range** (from/to,
-  with a Clear button). Every export writes the **filtered** set, so the date range doubles as
-  the contest-period selector for a Cabrillo submission.
-- The authoritative copy is the file on disk (`~/.z30/logbook.json` plus an ADIF export beside
-  it); the browser store is a cache. See
-  [13. Operating Safety, Compliance & Local Security](13-Operating-Safety-Compliance-&-Security.md).
+Band manager presets, auto-reply priority strategies, Cabrillo export, an in-app wiki and
+Python source viewer, a rig console, a Hamlib catalogue, RF time sync, a self-test signal
+generator, a Monte Carlo benchmark panel and an update button. Several of those displayed
+fabricated values and were among the reasons it was retired ([08](08-Web-&-PWA-Architecture.md)).
