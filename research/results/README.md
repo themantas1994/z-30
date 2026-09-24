@@ -1,10 +1,33 @@
 # Measured results
 
-Raw outputs of the research harness and the `z30 --benchmark` instruments. Each row names its
-command; every figure in `docs/` that comes from here cites the file.
+Raw, machine-readable outputs of the benchmark instruments. Every figure in `README.md`,
+`docs/` and `wiki/` that comes from here cites the file. Nothing here is edited by hand. All of
+it is software simulation: no radio, sound card or RF path was involved.
 
-Host for every run: 4 vCPU Intel Xeon @ 2.80 GHz, 16 GB, Linux 6.18, Python 3.11.15,
-NumPy 2.2.6; Rust 1.94.1 (awgn_paired_200) and 1.98.1 (the rest).
+## The benchmark suite: `<commit>/`
+
+`z30 --benchmark suite` writes one JSON file per benchmark to `research/results/<commit>/`,
+named after the commit of the binary that produced it. Each file records the commit, build
+profile, compiler, target, OS, CPU, the receiver entry point (`decode_slot`) and its full
+configuration, the channel, the placement distributions, the seed rule, the definitions and the
+per-point results. `python3 research/summarize_suite.py <dir> --write` renders `SUMMARY.md`
+beside them.
+
+| Directory | Binary | Contents |
+| :--- | :--- | :--- |
+| [`d8983eeef66e/`](d8983eeef66e/SUMMARY.md) | release build of `d8983ee`, rustc 1.98.1, x86_64 Linux, 4 logical CPUs | `awgn`, `snr`, `drift`, `timing`, `clock`, `impair`, `busy`, `false`, `sic`, `fading` at publishable size (200 frames per point; 100 for `snr` and per `sic` cell; 400 slots per `false` kind); suite seed 20260830 |
+
+Command: `cargo build --release -p z30-cli && ./target/release/z30 --benchmark suite`.
+The receiver crates (`z30-dsp`, `z30-protocol`, `z30-channel`) are unchanged from `d8983ee` to
+the end of the 2026-09-24 remediation, so these results describe the receiver at its head.
+
+## Earlier instruments (top level)
+
+Measured before the suite existed; each is kept with the commit it was measured at.
+
+Host for these runs: 4 vCPU Intel Xeon @ 2.80 GHz, 16 GB, Linux 6.18, Python 3.11.15,
+NumPy 2.2.6; Rust 1.94.1 (awgn_paired_200) and 1.98.1 (the rest). The oracle harness imported
+the Python oracle, now at `legacy/python-oracle/`.
 
 | File | What | Command |
 | :--- | :--- | :--- |

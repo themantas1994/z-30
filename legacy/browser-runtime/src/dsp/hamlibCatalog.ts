@@ -12,7 +12,7 @@ export interface HamlibRigModel {
   defaultBaud: number;
   defaultCiv?: string;
   supportedPtt: Array<'CAT' | 'RTS' | 'DTR' | 'VOX'>;
-  status: 'UNTESTED' | 'BETA' | 'UNTESTED';
+  status: 'UNTESTED' | 'BETA';
 }
 
 export interface HamlibVersionInfo {

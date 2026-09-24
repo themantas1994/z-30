@@ -2,275 +2,155 @@
 
 # z-30
 
-**An experimental amateur radio digital mode for weak-signal HF, VHF and microwave contacts —
-open-source, cross-platform, and built for operators who want to see how it works.**
+**An experimental weak-signal digital mode for amateur radio, and the native software that
+operates it.**
 
-16-tone FSK · 50 Hz occupied bandwidth · 30-second UTC cycles · rate-0.356 LDPC · 3-pass
-interference cancellation
-Web/PWA transceiver + native Python DSP package · Hamlib CAT · 9 PTT keying methods
+16-tone GFSK · 30 s UTC slots · 24 s frames · ~50 Hz wide · 63-bit messages · LDPC (216, 77) ·
+least-squares interference cancellation
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Python 3.9+](https://img.shields.io/badge/python-3.9+-blue.svg)](https://www.python.org/downloads/)
-[![Platform](https://img.shields.io/badge/platform-Android%20|%20Ubuntu%20|%20Arch%20|%20Windows%20|%20Linux%20|%20Raspberry%20Pi-brightgreen.svg)]()
-[![Radio Mode](https://img.shields.io/badge/mode-16--MFSK%20|%20LDPC--SIC%20|%2030s%20Cycle-orange.svg)]()
-[![PWA Ready](https://img.shields.io/badge/PWA-Installable%20Offline-blueviolet.svg)]()
-[![Status](https://img.shields.io/badge/status-experimental%20(alpha)-red.svg)]()
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Rust 1.95+](https://img.shields.io/badge/rust-1.95%2B-orange.svg)](docs/install.md)
+[![Status](https://img.shields.io/badge/status-experimental-red.svg)](#current-state)
+[![Hardware](https://img.shields.io/badge/real--radio%20validation-not%20yet%20performed-lightgrey.svg)](docs/hardware-validation.md)
 
-### 📖 **[The wiki is the documentation.](wiki/Home.md)** &nbsp;·&nbsp; [Install](wiki/09-Cross-Platform-Build-&-Packaging.md) &nbsp;·&nbsp; [First QSO](wiki/01-New-User-Guide-&-First-Steps.md) &nbsp;·&nbsp; [Before you transmit](wiki/13-Operating-Safety-Compliance-&-Security.md)
+[Install](docs/install.md) · [First steps](wiki/01-New-User-Guide-&-First-Steps.md) ·
+[Before you transmit](wiki/13-Operating-Safety-Compliance-&-Security.md) ·
+[Protocol](SPEC.md) · [Measurements](docs/benchmarking.md) · [Wiki](wiki/Home.md) ·
+[Developer docs](docs/README.md)
 
 </div>
 
 ---
 
-## What is z-30?
+## Architecture
 
-z-30 is a weak-signal digital mode for amateur radio, in the same family as FT8 and JS8Call, plus
-the software that runs it. Each transmission packs a 77-bit QSO exchange (callsigns, grid square,
-report) into a 24-second, 50 Hz-wide, continuous-phase 16-tone FSK frame, protects it with a
-rate-0.356 LDPC code and a 14-bit CRC, and — where two stations land on the same frequency at the
-same time — pulls them apart with up to three passes of successive interference cancellation
-(SIC).
+**z-30 vNext — Rust production runtime.** z-30 is two native programs built from one Rust
+workspace (`crates/`):
 
-It ships as two implementations of one specification, kept in lock-step by a shared test suite:
+- **`z30-gui`** — the desktop station: waterfall, decodes, QSO sequencing, transmit gate,
+  logbook.
+- **`z30`** — the command-line station and toolbox: receive-only live station, decoding and
+  encoding recordings, diagnostics, migration from the old version, the benchmark suite. It
+  never transmits.
 
-- An **interactive Web/PWA transceiver** — 60 FPS waterfall, Web Audio DSP, live S-meter, and a
-  logbook that exports ADIF, Cabrillo, JSON, CSV or SQLite. Runs in a browser or installs as an
-  offline app.
-- A **native Python 3 package** (`z30_dsp`) — Hamlib CAT control, nine PTT keying methods, six
-  auto-reply strategies, and RF clock calibration against WWV, WWVH, CHU, DCF77, MSF, WWVB and
-  JJY, with no internet connection required.
+Both use the same receiver (`decode_slot`), the same engine and the same transmit gate. Neither
+needs Python, Node or a browser, and neither falls back to anything else: if the audio device,
+the PTT line or rig control cannot be opened, the program says so and stops.
 
-> **This README is the front page.** Every specification, procedure and measurement lives in
-> **[the wiki](wiki/Home.md)**, which is the project's source of truth and is also served inside
-> the app itself. If this page and a wiki page disagree, the wiki is right.
+The earlier browser/Python application is **retired**. Its Python protocol code survives as a
+frozen, non-production reference in [`legacy/`](legacy/README.md); nothing an operator installs
+uses it.
 
-New to digital modes or to z-30? **[01. New User Guide & First Steps](wiki/01-New-User-Guide-&-First-Steps.md)**
-walks through the setup wizard, audio levels, time sync and your first contact in order.
+## Current state
 
----
+| | Status |
+| :--- | :--- |
+| **Protocol validated** | **Yes.** An independent re-implementation written from [`SPEC.md`](SPEC.md) alone reproduces the CRC, LDPC encoder, symbol map and waveform bit for bit. |
+| **Software simulation validated** | **Yes.** The receiver is measured through its production entry point in seeded simulation (AWGN, drift, timing, clock error, impairments, busy bands, collisions, fading, false decodes) — [measurements](docs/benchmarking.md). |
+| **Hardware validated** | **No.** Real-radio validation: **not yet performed.** No radio, audio interface or PTT interface has been used with z-30. |
+| **On-air validated** | **No.** No z-30 frame has been decoded over a real radio path. No other software speaks z-30. |
 
-## Why z-30
+z-30 is experimental. Passing tests does not make it production-ready, and nothing here should be
+read as a claim that it works on the air until the [hardware validation
+procedure](docs/hardware-validation.md) has been carried out and recorded.
 
-- **Deep weak-signal decoding.** -22.9 dB SNR at 50% decode probability on AWGN — see
-  [the honest numbers below](#about-that-sensitivity-figure) for exactly what that does and does
-  not mean next to other modes, including the channel on which it does not work at all.
-- **Narrow enough to pack a band.** 50.0 Hz nominal occupied bandwidth (49.8 Hz measured), so many
-  signals fit in the space one SSB voice contact would use.
-- **Recovers collisions, not just clean signals.** Three-pass SIC decodes co-channel stations that
-  a single-pass receiver would drop entirely.
-- **Runs anywhere.** The same protocol on a phone browser (PWA, works offline once installed) and
-  on a Raspberry Pi with no GUI at all.
-- **No internet required to run correctly.** UTC time sync can come from your OS's NTP client, or
-  from the built-in RF receiver that reads WWV, WWVH, CHU, DCF77, MSF, WWVB or JJY off the air.
-- **Talks to your existing rig.** Hamlib CAT control plus nine PTT keying methods (CAT command,
-  RTS/DTR, audio-tone VOX, CM108/CM119 GPIO, Raspberry Pi GPIO, and more) — see
-  [06. Transceiver CAT Control & PTT Wiring](wiki/06-Transceiver-CAT-Control-&-PTT-Wiring.md).
-- **Open source, fully specified.** Every constant, every threshold and every measurement in this
-  README is backed by a page in [the wiki](wiki/Home.md) and, where it's a number, a seeded,
-  reproducible benchmark.
+## Sensitivity — what was measured, and how
 
-<details>
-<summary><strong>New to the jargon? MFSK, LDPC and SIC in plain terms</strong></summary>
+> **vNext `decode_slot`: 50% decode at −23.03 dB [−23.13, −22.89], 90% at −22.06 dB
+> [−22.15, −21.80].** AWGN simulation; SNR in a 2500 Hz reference bandwidth (SPEC §10); blind
+> acquisition (tone 0 uniform over 210–2740 Hz, DT uniform over ±1.4 s, random carrier phase,
+> random payload); success = the decoded 63 payload bits equal the transmitted ones; 200 frames
+> per SNR point; suite seed 20260830; Wilson 95% intervals; 0 false decodes in the sweep.
+> Source: [`research/results/d8983eeef66e/awgn.json`](research/results/d8983eeef66e/awgn.json).
+> **Not measured on real radio hardware.**
 
-- **MFSK (multiple frequency-shift keying)** — instead of one tone per bit, z-30 sends one of 16
-  tones per symbol, at a fixed cadence, without any amplitude change. That's what keeps the
-  signal narrow and lets a receiver find it deep in the noise.
-- **LDPC (low-density parity-check code)** — the forward error correction wrapped around the
-  message. It adds redundant bits so the receiver can reconstruct the original 77 bits even when
-  many of the received symbols were corrupted by noise.
-- **SIC (successive interference cancellation)** — when two stations transmit on the same
-  frequency in the same slot, the receiver decodes whichever one it can, synthesises that
-  station's exact waveform, subtracts it from the recording, and tries again on what's left —
-  up to three times.
-</details>
+Against FT8, all of it or none of it:
 
----
+- **Sensitivity:** about 2 dB deeper than FT8's published −21 dB — a simulation figure (Franke,
+  Somerville & Taylor, *QEX* 2020, as cited by the FT8 Wikipedia article), whose exact
+  conditions are not identical to these. No FT8 decoder was run on the same channel.
+- **Cost:** z-30 transmits for 24.0 s against FT8's 12.64 s (2.8 dB more energy) and carries 63
+  message bits against FT8's 77. **Per message bit it needs about 1.6 dB more Eb/N0 than FT8**
+  (6.8 dB against 5.1 dB).
+- **Fading:** on ITU-R F.1487 high-latitude moderate (3 ms / 10 Hz Doppler) z-30 **does not
+  decode at any SNR**: the Doppler spread is wider than the 3.125 Hz tone spacing. On slower
+  fading paths see @@FADING_README@@.
+- **Collisions:** both modes subtract decoded signals and decode again; WSJT-X's FT8 decoder
+  runs three passes with subtraction. z-30's measured collision behaviour (simulation, two
+  stations, paired SIC on/off) is in [docs/benchmarking.md](docs/benchmarking.md#collisions-sic-on-versus-off).
 
-## 📊 At a glance
+Full comparison and sources: [wiki/11](wiki/11-Physics-&-Comparative-Analysis-z30-vs-FT8.md).
+
+## At a glance
 
 | | |
 | :--- | :--- |
-| **Modulation** | 16-MFSK, continuous phase, Gaussian frequency-pulse shaped ($BT = 2.0$) |
-| **Occupied bandwidth** | 50.0 Hz nominal — **49.8 Hz measured** at 99% occupancy, 66 Hz at -40 dB |
-| **Cycle** | 30.0 s UTC slots · 24.0 s active TX (75 symbols) · 6.0 s decode + guard |
-| **FEC** | IRA-LDPC (216, 77), rate ≈ 0.356, with CRC-14 |
-| **Decode threshold (AWGN, blind acquisition)** | **-22.9 dB SNR at 50%**, -22.1 dB at 90% (2500 Hz reference, 200 frames/point) |
-| **Decode threshold (ITU-R F.1487 mid-latitude moderate)** | -21.4 dB at 50% |
-| **ITU-R F.1487 high-latitude moderate (3 ms / 10 Hz)** | **does not decode** — 10 Hz Doppler spread is wider than the 3.125 Hz tone spacing |
-| **Collision recovery** | 3-pass successive interference cancellation |
-| **Platforms** | Android (PWA & Termux), Ubuntu/Debian, Arch, Windows 10/11, Raspberry Pi, generic Linux |
+| Modulation | 16-GFSK, continuous phase, BT 2.0, constant envelope, 3.125 Hz tone spacing, 320 ms symbols |
+| Occupied bandwidth (audio waveform) | ≈ 49–50 Hz (99%), ≈ 66 Hz (−40 dB); Welch, 0.73 Hz bins; transmitter and ALC effects not measured |
+| Frame | 75 symbols (54 data + 21 sync), 24.0 s, in a 30 s UTC slot |
+| Message | **63 bits**: two 28-bit call fields + a 7-bit grid/report/acknowledgement; + CRC-14 = 77 information bits |
+| FEC | IRA-LDPC (216, 77), rate 0.356; four BP schedules + corrected OSD |
+| Receiver | blind search 200–2800 Hz, DT ±1.5 s (hard edge), linear drift to ±4 Hz; up to 3 SIC passes |
+| Messages v1 cannot carry | portable/compound calls, `ZV`–`ZZ` prefixes, grids outside a 63-square table, roger reports, free text — **refused, never transmitted as something else** |
+| Rig control / PTT | `rigctld` (Hamlib); PTT by CAT, serial RTS/DTR, CM108 GPIO or VOX — implemented, **none tested with a radio** |
+| Time | the operating system's UTC clock (keep it within a few tenths of a second: NTP or GPS); z-30 never sets it |
+| Platforms | Linux, Windows, macOS — built and tested in CI; **not operated with a sound card or radio** |
 
-### About that sensitivity figure
+## Install
 
--22.9 dB is measured the way other modes publish theirs: sensitivity is the SNR in a 2500 Hz
-reference bandwidth at which decode probability reaches 50%, measured by seeded Monte Carlo
-through the decoder that ships, with random carrier offset, random timing offset, non-coherent
-demodulation, and a receiver handed nothing but audio, which finds the frame and estimates the
-noise floor itself. **On AWGN that is 1.9 dB deeper than FT8's published -21.0 dB — and z-30
-transmits for 24.0 s against FT8's 12.64 s, which is 2.8 dB more energy, to carry 14 fewer
-message bits.** So it buys depth with airtime, not with a more efficient code; per second on the
-air it is marginally behind FT8. Both halves of that belong in any quote of the number.
-
-**And there is a third half, which is the one a comparison usually leaves out.** On the ITU-R
-F.1487 high-latitude moderate channel — 3 ms delay spread, 10 Hz Doppler spread, one of the
-conditions WSJT-X publishes every mode against — z-30 decoded 3 frames out of 1,400 across
--10 dB to +20 dB — two of them at the *lowest* SNR swept, and 30 dB of extra signal buys
-nothing. The 24-second symbol-rich frame that buys
-the depth on a quiet path is the same thing that loses the signal entirely when the ionosphere
-moves faster than the symbol does: 10 Hz of Doppler spread is wider than the whole 3.125 Hz
-tone spacing. FT8's 0.16 s symbols make the opposite trade.
-
-An earlier version of this project claimed a "+4.0 dB advantage" by comparing its own
-genie-aided bound against FT8's on-air number; that claim stays withdrawn, and the 1.9 dB above
-is not a revival of it — it is blind-acquisition on both sides. The genie-aided bound (-24.58 dB)
-is still reported, but separately, because 1.66 dB of it is simply the cost of *finding* the
-signal.
-
-Every figure here comes from a seeded run at 200 frames per point and carries a 95% confidence
-interval in the wiki table. The full curves, the seeds, and the commands to reproduce them are
-in **[16. Benchmarking, Testing & CI](wiki/16-Benchmarking-Testing-&-CI.md)**.
-
----
-
-## 🚀 Quick start
-
-Pick your platform below for the fastest path to a running install. Full, per-platform
-instructions — including PKGBUILD, PyInstaller `.exe`, Termux field deployment and DigiPi — are
-in **[09. Cross-Platform Build & Packaging](wiki/09-Cross-Platform-Build-&-Packaging.md)**.
-
-<details open>
-<summary><strong>🐧 Linux — Ubuntu / Debian / Mint / Pop!_OS / Raspberry Pi OS</strong></summary>
+From a release archive (none published yet), or from source with Rust 1.95+:
 
 ```bash
 git clone https://github.com/themantas1994/z-30.git && cd z-30
-chmod +x install_ubuntu.sh && ./install_ubuntu.sh
-z30
+cargo install --locked --path crates/z30-cli --features cm108
+cargo install --locked --path crates/z30-gui --features cm108
+z30 --version        # commit, build date, target, features
+z30 --diagnostics    # clock status, PTT, rigctld, audio devices, transmit-gate verdict
+z30-gui
 ```
-</details>
 
-<details>
-<summary><strong>🐧 Linux — Arch / Manjaro / EndeavourOS / CachyOS</strong></summary>
+Linux needs the ALSA, udev and X11/Wayland development packages; details, release archives and
+desktop integration are in **[docs/install.md](docs/install.md)**. Coming from the old
+browser/Python z-30? Run `z30 --migrate` once ([what it imports and what it deliberately does
+not](docs/troubleshooting.md#migration)).
 
-```bash
-git clone https://github.com/themantas1994/z-30.git && cd z-30
-chmod +x install_arch.sh && ./install_arch.sh     # or: makepkg -si
-z30
-```
-</details>
+## Before you transmit
 
-<details>
-<summary><strong>🪟 Windows 10 / 11</strong></summary>
+- Set your callsign, grid, region, licence class and PTT method. There are **no defaults** for
+  any of them, and the transmit gate refuses until all are set.
+- The gate refuses any emission outside a permitted data segment for your licence (checked at
+  the radiated frequency, not the dial), any frequency your radio contradicts, and any message
+  that would not go out exactly as shown.
+- Key into a dummy load first, keep ALC at zero, check the signal on another receiver, and
+  enable your radio's transmit time-out if you key by CAT or CM108.
+- See [wiki/13](wiki/13-Operating-Safety-Compliance-&-Security.md).
 
-1. Install Python 3.9+ and tick **Add python.exe to PATH** during setup.
-2. Clone the repository.
-3. Double-click `run_windows.bat`.
-</details>
+## Limitations
 
-<details>
-<summary><strong>📱 Android</strong></summary>
+The full list is [audit/2026-09-24-vnext-remediation/KNOWN_LIMITATIONS.md](audit/2026-09-24-vnext-remediation/KNOWN_LIMITATIONS.md).
+The ones that matter first: no hardware or on-air validation; no interoperability with any other
+software; a ±1.5 s timing window with no built-in time source; no decoding on high-Doppler paths;
+rig control only through an external `rigctld`; no split operation; USB assumed; CAT/CM108 PTT
+not released if the computer loses power (the radio's time-out is the defence); a small message
+vocabulary (63 grids, no roger bit, no portable calls).
 
-Install the PWA from your browser's menu (**Install app**) — the site must be served over HTTPS
-or from `localhost`. For CLI and DSP tools only, `install_android_termux.sh` under Termux works,
-but Android exposes no audio devices to Termux, so it can't act as a transceiver there.
-</details>
+## Documentation
 
-<details>
-<summary><strong>⚙️ Any platform, from source</strong></summary>
-
-```bash
-pip install -r requirements.txt
-npm install && npm run build
-python3 -m z30_dsp.main
-```
-</details>
-
-Once it's running, work through
-**[01. New User Guide & First Steps](wiki/01-New-User-Guide-&-First-Steps.md)**:
-setup wizard → audio levels → time sync → first QSO.
-
----
-
-## ⚠️ Before you key a transmitter
-
-z-30 keys real radios over serial, CM108, GPIO and VOX. Four things are worth knowing before
-you do, and all four are covered in
-**[13. Operating Safety, Compliance & Local Security](wiki/13-Operating-Safety-Compliance-&-Security.md)**:
-
-- **The transmit gate fails closed.** No valid non-placeholder callsign, no regulatory region
-  and licence class, or a dial-plus-audio frequency outside a segment your class holds, and
-  nothing is radiated. The refusal names the condition.
-- **Three independent stuck-transmitter layers**: a 40 s browser-side ceiling, a server-side
-  dead-man switch on the GPIO line, and signal handlers that release every pin on exit.
-- **The local API is authenticated.** Loopback is not an authentication boundary, so every
-  `/api/` request needs a per-start bearer token plus matching `Origin` and `Host`.
-- **Your ALC is still your problem.** Capture your transmitter's actual output on a spectrum
-  analyser before going on the air — clipping and ALC re-broaden a clean signal.
-
-z-30 is an experimental mode and is not coordinated with any band plan authority.
-
----
-
-## 📚 Documentation
-
-| Page | What it covers |
+| Where | What |
 | :--- | :--- |
-| [Wiki Home](wiki/Home.md) | Index, navigation matrix, project overview |
-| [01. New User Guide & First Steps](wiki/01-New-User-Guide-&-First-Steps.md) | Wizard, audio levels, time sync, first QSO |
-| [02. Developer Setup & Contributing](wiki/02-Developer-Setup-&-Contributing.md) | Environments, architecture, docs policy, PR checklist |
-| [03. DSP & Physical Layer Specification](wiki/03-DSP-&-Physical-Layer-Specification.md) | Signal chain, waveform maths, Costas sync, slot timing |
-| [04. Forward Error Correction & LDPC](wiki/04-Forward-Error-Correction-&-LDPC.md) | Message packing, CRC-14, (216, 77) code, four-schedule min-sum/SPA decoding |
-| [05. Successive Interference Cancellation](wiki/05-Successive-Interference-Cancellation-(SIC).md) | The 3-pass co-channel recovery engine |
-| [06. Transceiver CAT Control & PTT Wiring](wiki/06-Transceiver-CAT-Control-&-PTT-Wiring.md) | `rigctld`, wiring diagrams for all 9 keying methods |
-| [07. RF Time Synchronization Engine](wiki/07-RF-Time-Synchronization-Engine.md) | WWV/CHU/DCF77/MSF/WWVB/JJY calibration without NTP |
-| [08. Web & PWA Architecture](wiki/08-Web-&-PWA-Architecture.md) | React 19, Web Audio pipeline, canvas waterfall, service worker |
-| [09. Cross-Platform Build & Packaging](wiki/09-Cross-Platform-Build-&-Packaging.md) | Every install and packaging path |
-| [10. Troubleshooting & FAQ](wiki/10-Troubleshooting-&-FAQ.md) | No decodes, ALC, serial permissions, PTT, clock offset |
-| [11. Physics & Comparative Analysis](wiki/11-Physics-&-Comparative-Analysis-z30-vs-FT8.md) | Shannon limits, mode comparison table, what z-30 can honestly claim |
-| [12. Software Updates & GitHub Sync](wiki/12-Software-Updates-&-GitHub-Sync.md) | Update channels per platform |
-| [13. Operating Safety & Compliance](wiki/13-Operating-Safety-Compliance-&-Security.md) | Transmit gate, TX watchdogs, API auth, clock and logbook handling |
-| [14. UI & Operation Reference](wiki/14-User-Interface-&-Operation-Reference.md) | Waterfall, QSO macros, auto-reply, band manager, logbook |
-| [15. Command-Line Tools & Configuration](wiki/15-Command-Line-Tools-&-Configuration.md) | `z30` subcommands, file locations, environment variables |
-| [16. Benchmarking, Testing & CI](wiki/16-Benchmarking-Testing-&-CI.md) | Both benchmark modes, measured curves, test suite, CI checks |
-| [17. A Priori (AP) Decoding](wiki/17-A-Priori-(AP)-Decoding.md) | Constraining the decode with what the QSO state already implies, ported from WSJT-X |
+| [`SPEC.md`](SPEC.md) | the normative v1 protocol specification |
+| [`docs/`](docs/README.md) | how the code works: architecture, receiver, synchronisation, demodulation, LDPC, SIC, audio, hardware, safety, benchmarking, install, hardware validation |
+| [`wiki/`](wiki/Home.md) | operator documentation |
+| [`research/results/`](research/results) | every published measurement, machine-readable, with provenance |
+| [`audit/`](audit) | independent audits and the evidence for this remediation |
+| [`AGENTS.md`](AGENTS.md) | working context and invariants for contributors and coding assistants |
 
-Working on z-30 with a coding assistant? **[`AGENTS.md`](AGENTS.md)** is the architecture,
-invariants and house rules on one page.
+## Contributing
 
----
+See [wiki/02](wiki/02-Developer-Setup-&-Contributing.md) and [`AGENTS.md`](AGENTS.md). In short:
+`cargo fmt`, `cargo clippy -- -D warnings`, `cargo test --workspace --exclude z30-py --release`;
+safety tests are never weakened to pass; every number needs a result file.
 
-## 🛠️ Development
+## Licence
 
-```bash
-pip install -r requirements.txt pytest && python -m pytest tests -v   # Python DSP suite
-npm ci && npm run lint && npm run test:ts                             # Typecheck + TS tests
-npm run build                                                         # Production web bundle
-python -m z30_dsp.benchmark --mode realistic --frames 40              # Decode threshold
-```
-
-The repository holds two implementations of one specification — `z30_dsp/` (Python/NumPy) and
-`src/dsp/` (TypeScript/Web Audio) — plus `src/components/` for the UI, `wiki/` for the
-documentation, and `tests/` for the suite that keeps the two stacks bit-compatible.
-
-Two files under `src/data/` are generated from the Python sources and the wiki markdown; run
-`npm run generate` after editing either, or CI will tell you. Setup, architecture, conventions
-and the pull request checklist are in
-**[02. Developer Setup & Contributing](wiki/02-Developer-Setup-&-Contributing.md)**.
-
----
-
-## 🤝 Contributing & licence
-
-Contributions, bug reports and hardware test reports are welcome — whether you are optimising
-LDPC decoding kernels, testing a new rig, or fixing a wrong number in the wiki. Start with
-[02. Developer Setup & Contributing](wiki/02-Developer-Setup-&-Contributing.md), and open an
-issue or a pull request.
-
-Distributed under the **MIT Licence**. See [`LICENSE`](LICENSE).
-
----
-
-<div align="center">
-
-*73 — z-30 is experimental software. Verify your signal before you trust it on the air.*
-
-</div>
+MIT — see [LICENSE](LICENSE).

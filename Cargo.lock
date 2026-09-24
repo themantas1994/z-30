@@ -4423,6 +4423,7 @@ dependencies = [
  "ctrlc",
  "rand 0.8.8",
  "rayon",
+ "rustfft",
  "serde_json",
  "z30-channel",
  "z30-dsp",

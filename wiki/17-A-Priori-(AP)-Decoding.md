@@ -9,9 +9,20 @@ This is a port of the mechanism WSJT-X has used for FT8 since v1.8 (`lib/ft8/ft8
 `lib/ft8/bpdecode174_91.f90`). This page documents what was ported, what was adapted for z-30's
 different message layout, what it was measured to be worth, and what it costs.
 
-Implementation: [`z30_dsp/ap_decode.py`](../z30_dsp/ap_decode.py) and
-[`src/dsp/apDecode.ts`](../src/dsp/apDecode.ts), on top of the AP mask path in
-[`z30_dsp/ldpc.py`](../z30_dsp/ldpc.py) and [`src/dsp/ldpcCodec.ts`](../src/dsp/ldpcCodec.ts).
+Implementation in z-30: [`crates/z30-dsp/src/ap.rs`](../crates/z30-dsp/src/ap.rs), on top of the
+AP mask path in [`crates/z30-dsp/src/ldpc.rs`](../crates/z30-dsp/src/ldpc.rs), called from
+`decode_slot` when `ap_enabled` is set (off by default). It is a port of the oracle's
+[`ap_decode.py`](../legacy/python-oracle/z30_dsp/ap_decode.py) (twin:
+[`apDecode.ts`](../legacy/browser-runtime/src/dsp/apDecode.ts)).
+
+> **Whose measurements these are.** The figures in "Measured effect" below were measured on the
+> frozen Python oracle's reference receiver (`legacy/python-oracle`, `benchmark.py --ap`), not on
+> the production `decode_slot`. The Rust port is tested bit-exact against the oracle instead: the
+> hypothesis ladders match the oracle's, AP decoding on the recorded corpus gives the oracle's
+> results bit for bit, an empty mask decodes bit-identically to no mask
+> (`crates/z30-dsp/tests/golden_ldpc.rs`), the CRC bits are never asserted and the deep types are
+> frequency-gated (`ap.rs` unit tests). Its paired AP effect has **not** been re-measured through
+> `decode_slot`. Treat the numbers below as the oracle's, in simulation.
 
 ---
 
@@ -78,7 +89,7 @@ While you are calling CQ, the likely frames are other CQs and answers to you. On
 exchanging reports, the likely frames are the closing messages of the QSO you are in. At the 73
 the ladder falls back towards the general cases as the QSO winds down.
 
-`tests/test_cross_language_parity.py` pins this table across both implementations, and pins that
+`legacy/python-oracle/tests/test_cross_language_parity.py` pins this table across both implementations, and pins that
 **every** stage in the `QsoStage` union has a ladder — so a stage added to the state machine
 cannot silently fall through to "no AP" without someone deciding that.
 
@@ -102,7 +113,7 @@ than the most certain thing the demodulator measured, whatever the signal level.
 decision is `llr < 0 → 1`; WSJT-X's `bpdecode174_91` reads the opposite sign and its
 `apsym = 2*bit-1` term carries the flip. Transcribing that expression rather than re-deriving it
 would assert every AP bit inverted, and every hypothesis would fail its CRC — a silent, total
-failure with no error message anywhere. `tests/test_ap_decode.py` pins the convention directly.
+failure with no error message anywhere. `legacy/python-oracle/tests/test_ap_decode.py` pins the convention directly.
 
 ### 2. Asserted bits are pinned, not merely biased
 
@@ -202,7 +213,7 @@ entitled to see which they are looking at.
 
 ## 📊 Measured effect
 
-`z30_dsp/benchmark.py --ap` is the instrument. It does not produce another decode curve — it
+The oracle's `benchmark.py --ap` (in `legacy/python-oracle`) was the instrument. It does not produce another decode curve — it
 produces a **paired comparison**: every frame goes through the channel once, is demodulated
 once, and the resulting 216 LLRs are decoded twice, once by the ordinary decoder and once with
 the ladder behind it. Both arms therefore see bit-identical channel evidence, and any difference
@@ -260,19 +271,17 @@ that the effect survives fading, not as a figure of merit.
 
 ### What this figure is not
 
-**It is not a new decode threshold for z-30, and must never be quoted as one.** wiki/16's
-−23.1 dB is measured over arbitrary traffic with no a priori information; this is measured over
+**It is not a new decode threshold for z-30, and must never be quoted as one.** The published
+threshold ([16](16-Benchmarking-Testing-&-CI.md)) is measured over arbitrary traffic with no a
+priori information; this is measured over
 the frames of one QSO, with the receiver in that QSO, with AP switched on. A station hearing a
 band that is 10% its own QSO gets a tenth of the frames improved, not a 1.9 dB better receiver.
 The right sentence is *"AP recovers frames the ordinary decoder loses, and for the frames it
 describes it moves the 50% point by 1.8–1.9 dB on AWGN"* — the two halves together or neither,
 the same rule §5 of `AGENTS.md` applies to the FT8 comparison.
 
-The plain arm's own in-QSO crossing (−22.88 dB) sits 0.2 dB off the published −23.1 dB. That is
-not a revision of the published figure: it is the same quantity estimated from ~40 frames per
-point instead of a dedicated sweep, and 0.2 dB is inside that estimate's noise. The published
-threshold is unchanged, and is guaranteed unchanged by the bit-identity tests rather than by
-this sweep.
+The plain arm's own in-QSO crossing (−22.88 dB) is the oracle receiver's, estimated from ~40
+frames per point; it is not a revision of any published figure.
 
 ### The cost side, measured as far as it can be
 
@@ -314,6 +323,7 @@ insists on quoting both.
 ## 🔁 Reproducing it
 
 ```bash
+cd legacy/python-oracle
 python -m z30_dsp.benchmark --ap --mode realistic --fading none \
     --min-snr -26.5 --max-snr -21.5 --step 0.5 --frames 80 --seed 20260830
 ```
@@ -328,9 +338,10 @@ and one more place for the two arms to diverge.
 
 | File | What it pins |
 | :--- | :--- |
-| `tests/test_ap_decode.py` | The mechanism (pinning survives every iteration, sign convention, magnitude), the gates (callsign round-trip, frequency window, unknown stage), that AP never loses a frame the ordinary decoder found, that a wrong hypothesis is always rejected, determinism through the rewritten LLR vector, and that the pre-AP decode path is bit-identical with an empty mask. |
-| `tests/apDecode.test.mjs` | The same, plus the packing vectors and the closing-modifier branch order that `packZ30Message` depends on. |
-| `tests/test_cross_language_parity.py` | `AP_LLR_MARGIN`, `AP_FREQ_WINDOW_HZ`, `AP_DEEP_TYPE`, the type catalogue, the stage ladder (membership **and** order), the closing-modifier codes, and the shared callsign packing vectors. |
+| `crates/z30-dsp/tests/golden_ldpc.rs`, `crates/z30-dsp/src/ap.rs` | The Rust port: ladders identical to the oracle's, AP decoding bit-exact on the corpus, empty mask bit-identical to no mask, CRC bits never asserted, deep types frequency-gated. |
+| `legacy/python-oracle/tests/test_ap_decode.py` | The mechanism (pinning survives every iteration, sign convention, magnitude), the gates (callsign round-trip, frequency window, unknown stage), that AP never loses a frame the ordinary decoder found, that a wrong hypothesis is always rejected, determinism through the rewritten LLR vector, and that the pre-AP decode path is bit-identical with an empty mask. |
+| `legacy/browser-runtime/tests/apDecode.test.mjs` | The same, plus the packing vectors and the closing-modifier branch order that `packZ30Message` depends on. |
+| `legacy/python-oracle/tests/test_cross_language_parity.py` | `AP_LLR_MARGIN`, `AP_FREQ_WINDOW_HZ`, `AP_DEEP_TYPE`, the type catalogue, the stage ladder (membership **and** order), the closing-modifier codes, and the shared callsign packing vectors. |
 
 Every expectation in those files is computed from the data the test itself generates. There are
 no recorded "expected" decode counts — a count written down once and asserted forever passes
@@ -349,22 +360,18 @@ faithfully rendered it back as `+30`.
 
 The 7-bit allocation always reserved 62 for `73` and the unpacker has always decoded 62 as `73`;
 only the packer never emitted it. Emitting it now is a fix rather than a wire-format change — an
-existing receiver already understands the value. `tests/apDecode.test.mjs` guards the branch
-order, and `tests/test_cross_language_parity.py` guards it a second way by asserting the
+existing receiver already understands the value. The legacy `apDecode.test.mjs` guards the branch
+order, and the oracle's `test_cross_language_parity.py` guards it a second way by asserting the
 positions of the two branches in the source.
 
-### A related defect that is *not* fixed here
+### A related limitation: no roger bit
 
-`R-12` and `-12` pack to the **same** 7-bit code (18). `packZ30Message` sets
-`type: 'ROGER_REPORT'` for the first and `type: 'REPORT'` for the second, but the R is not
-carried in the payload, so `unpackZ30Message` renders both as `-12` and Tx4 is indistinguishable
-on the air from Tx3.
-
-This one cannot be fixed without changing the wire format: all 128 states of the 7-bit field are
-allocated (0–60 reports, 61 RRR, 62 73, 63 RR73, 64–127 grids), so there is no spare code point
-for the R flag. `AGENTS.md` names a codec change as a protocol break — "every station on the air
-stops decoding you" — so it is recorded here rather than made. It does not affect AP: no
-hypothesis in the ladder asserts a report value.
+`R-12` and `-12` would pack to the **same** 7-bit code (18): v1 has no roger bit. There is no
+spare code point for one (0–60 reports, 61 RRR, 62 73, 63 RR73, 64–126 grids, 127 unassigned
+but reserved by `SPEC.md`), and changing the field is a protocol break. The retired browser
+packer transmitted `R-12` as `-12` anyway; z-30 refuses `R-12` and carries the roger by the
+report's place in the sequence ([14](14-User-Interface-&-Operation-Reference.md#qso-sequencing)).
+It does not affect AP: no hypothesis in the ladder asserts a report value.
 
 ---
 

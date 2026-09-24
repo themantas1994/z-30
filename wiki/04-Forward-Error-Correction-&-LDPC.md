@@ -6,24 +6,41 @@ This document details the source coding, message compression, Low-Density Parity
 
 ## 📦 Message Structure & 63-Bit Source Packing
 
-Amateur radio transmissions in z-30 encode structured contact messages into a compact **63-bit information vector** (`z30Codec.ts:encodeCallsign28`, `z30_dsp/ldpc.py`), structured as follows:
+A z-30 v1 frame carries a **63-bit message** (`crates/z30-protocol/src/codec.rs`; `SPEC.md` §6):
 
-| Field | Bit Length | Representation / Compression |
+| Field | Bits | Contents |
 | :--- | :--- | :--- |
-| **Callsign 1 (Destination)** | 28 bits | Radix-37 prefix + digit + Radix-27 suffix packing |
-| **Callsign 2 (Source)** | 28 bits | Radix-37 prefix + digit + Radix-27 suffix packing |
-| **Grid / Report / Extra** | 7 bits | 4-char Maidenhead grid (indexed table + hashed fallback) or SNR report, 0-127 states |
-| **Total Information Bits ($K$)** | **63 bits** | Encodes standard QSO exchanges with zero ambiguity |
+| To | 28 | a callsign, or one of the tokens `CQ`, `CQ DX`, `CQ TEST`, `QRZ` |
+| From | 28 | a callsign |
+| Extra | 7 | a report −30…+30 dB (codes 0–60), `RRR` (61), `73` (62), `RR73` (63), a grid from the 63-square v1 table (64–126); 127 unassigned |
+| **Message** | **63** | |
 
-### Radix-37 / Radix-27 Callsign Encoding
-Standard amateur callsigns (e.g., `W1AW`, `K1ABC`, `EA8/G4XYZ`) are decomposed into a 1-2 character prefix, a single digit, and a 1-3 character alphabetic suffix:
+Plus the 14-bit CRC below: 77 information bits. (Earlier text called this a "77-bit QSO
+exchange"; the message is 63 bits. FT8 carries 77 message bits.)
 
-$$N = \big( (p \cdot 37 + p') \cdot 10 + d \big) \cdot 27^3 + (s_0 \cdot 27^2 + s_1 \cdot 27 + s_2) + 4$$
+### Callsigns
 
-Where $p, p'$ are Radix-37 prefix characters (`[A-Z0-9 ]`), $d$ is the decimal digit, and $s_0, s_1, s_2$ are Radix-27 suffix characters (`[A-Z ]`). Total addressable states: $37^2 \times 10 \times 27^3 = 269{,}460{,}270$, fitting within 28 bits ($2^{28} = 268{,}435{,}456$ ceiling is exceeded only by reserved low tokens `CQ`/`CQ DX`/`CQ TEST`/`QRZ`, which are assigned dedicated values 0-3).
+A callsign v1 can carry is a 1–2 character prefix, one digit and a 1–3 letter suffix, packed as
 
-### 7-Bit Grid / Report Field
-4-character Maidenhead grids are looked up in a 64-entry table of common global locators (values 64-127); grids outside the table hash to the same 64-127 range. Signal reports and modifiers (`RR73`, `73`, etc.) use the same 7-bit field via a separate encoding path.
+$$N = ig( (p \cdot 37 + p') \cdot 10 + d ig) \cdot 27^3 + (s_0 \cdot 27^2 + s_1 \cdot 27 + s_2) + 100$$
+
+($p, p'$ over `[ 0-9A-Z]`, $s_i$ over `[ A-Z]`). The full space exceeds $2^{28}$, so prefixes from
+`ZV` upward would wrap onto other callsigns. **z-30 refuses them**, and refuses portable (`/P`),
+compound (`EA8/G4XYZ`) and 3-character-prefix calls, rather than transmitting something else.
+The retired browser packer did transmit something else — `ZY2ABC` as `24BWE`, `G4XYZ/P` as
+`EY6ACQ` (audit C-06).
+
+### The extra field
+
+There is **no roger bit**: `R-12` cannot be sent, and a report sent in reply to a report carries
+the roger by its place in the sequence. Only the 63 grid squares in the v1 table can be sent; any
+other square is refused. The retired packer hashed other squares onto the table and transmitted
+a different grid (`FN42` went out as `RE78`, audit C-06).
+
+**The rule, enforced at encode time and again by the transmit gate:** a message is sent only if
+its encoded frame reads back — symbols, parity, CRC, fields and text — as exactly the message
+requested (`EncodedMessage::verify_round_trip`). `crates/z30-protocol/tests/round_trip.rs` checks
+every one of the 32,400 Maidenhead squares, every report and 40,000 sampled callsigns.
 
 ---
 
@@ -33,14 +50,18 @@ To eliminate false decodes under severe noise conditions, the 63-bit information
 
 $$P(x) = x^{14} + x^{13} + x^{10} + x^{6} + x + 1 \quad (\text{register constant } \mathtt{0x2443}\text{, } x^{14} \text{ implicit; initial seed } \mathtt{0x2757}\text{, MSB-first})$$
 
-> Earlier revisions of this page, and of both source implementations, wrote this as
+> Earlier revisions of this page, and of both legacy implementations, wrote this as
 > $x^{14} + x^{11} + x^2 + 1$ - a different polynomial (register constant `0x0805`). The two
-> shipped implementations agreed with each other so nothing broke, but a third implementation
+> legacy implementations agreed with each other so nothing broke, but a third implementation
 > written from that specification would have produced a CRC failing against both.
-> `tests/vectors/crc14_vectors.json` now pins the answer for every implementation.
+> `tests/vectors/crc14_vectors.json` now pins the answer for every implementation, and an
+> independent re-implementation from `SPEC.md` reproduced all golden vectors (audit E007).
 
-- **Protected Codeword Size**: $K_{\text{total}} = 63 + 14 = 77 \text{ bits}$ (no padding required).
-- **False Decode Probability**: $P_{\text{false}} \approx 2^{-14} \approx 6.1 \times 10^{-5}$ per candidate for random errors. Costas coherence validation rejects further candidates on top of this, but the combined figure has not been measured and no number is claimed for it here.
+- **Protected block**: $K = 63 + 14 = 77$ bits.
+- **False accepts**: a CRC-14 passes a random wrong word with probability $2^{-14} \approx 6.1 \times 10^{-5}$.
+  What reaches the CRC is not random, and how many candidates are tried matters, so the rate
+  that matters is measured, not derived: see the false-decode rows on
+  [16](16-Benchmarking-Testing-&-CI.md) (no false decode has been observed in any vNext run).
 
 ---
 
@@ -72,7 +93,7 @@ The receiver performs iterative message passing between Variable Nodes ($V_n$) a
 
 > **Correction (2026-08-31):** every earlier revision of this page described a single normalized
 > min-sum schedule with a fixed $\alpha = 0.75$. That was never what either implementation ran.
-> `z30_dsp/ldpc.py::decode_min_sum` and `src/dsp/ldpcCodec.ts::decodeMinSum` have always run the
+> the oracle's `decode_min_sum` and the legacy `decodeMinSum` have always run the
 > four-schedule cascade documented below, identically in both languages. A paired benchmark
 > (240 frames across SNR −24/−25/−26 dB, same frame and channel noise decoded by both the real
 > cascade and a from-scratch reimplementation of the single-schedule description this page used
@@ -98,10 +119,9 @@ That is a maximum of 150 total iterations across all four schedules for one cand
 typical clean frame converges within the first schedule in single digits of iterations. Schedule
 3's reverse check-node order and schedule 4's random perturbation exist to escape the trapping
 sets / pseudocodewords a single deterministic schedule can stall on near the decode threshold —
-the mechanism the paired benchmark above measured. `LDPC_MAX_ITERATIONS` (TypeScript) and the
-`max_iterations` constructor argument (Python) both refer to schedule 1's cap (45); it is what
-`SpecsModal` quotes, since it is also the number a well-formed frame converges within almost
-always.
+the mechanism the paired benchmark above measured. The Rust decoder (`crates/z30-dsp/src/ldpc.rs`)
+is bit-exact with the oracle on the recorded corpus: the same verdict, the same information
+bits and the same iteration count on all 540 frames (`tests/golden_ldpc.rs`).
 
 There is no single $\alpha$ for "the decoder" any more than there is a single schedule — the
 $0.75$ figure this page carried for years was nominal, never live. Each schedule's own
@@ -131,9 +151,17 @@ dithered passes from oscillating.
    syndrome — this catches a codeword whose information bits are already correct but whose noisy
    parity bits haven't converged, without spending more iterations on them.
 6. **Escalation**: if a schedule's iteration cap is reached without success, the next schedule in
-   the table runs on a fresh copy of the channel LLRs. If schedule 4 also fails to produce a
-   CRC-valid codeword, the frame is flagged for SIC processing (see
-   [05. Successive Interference Cancellation](05-Successive-Interference-Cancellation-(SIC).md)) or marked unresolvable.
+   the table runs on a fresh copy of the channel LLRs.
+7. **OSD**: if all four fail, ordered-statistics post-processing (up to 2 bit flips on the most
+   reliable basis) proposes codewords. In z-30 a proposal is accepted only if its CRC field
+   matches the **received** CRC bits as well as its own payload — the legacy check compared a
+   codeword's CRC with the CRC computed from that same codeword, which is always true (a
+   tautology; audit H-09 / M1), so the legacy OSD's only real test was the syndrome. The union
+   bound on a false OSD accept is about $106 \times 2^{-14} \approx 6.5 \times 10^{-3}$ per
+   invocation *before* the fine-sync gate and the CRC-field match, and 0 false decodes have been
+   observed in any measured run (`docs/ldpc.md`).
+8. Otherwise the candidate fails. A failed candidate is **not** passed to SIC: SIC subtracts only
+   frames that decoded ([05](05-Successive-Interference-Cancellation-(SIC).md)).
 
 ---
 

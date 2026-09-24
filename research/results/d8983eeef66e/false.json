@@ -1,0 +1,85 @@
+{
+  "benchmark": "false",
+  "definition": "every decode is false: nothing was transmitted",
+  "definitions": {
+    "duplicates_dropped": "decodes of an already-decoded payload that the receiver itself discarded (PassStats::duplicates)",
+    "duplicates_emitted": "the same payload reported more than once in the output (must be 0)",
+    "false_decode": "a CRC-valid decode whose payload was not transmitted in that slot",
+    "ground_truth": "the harness knows the transmitted payloads; the receiver is given only the 27 s window",
+    "interval": "Wilson score 95% interval, percent",
+    "latency": "wall-clock time of decode_slot per slot, measured while other slots were decoded concurrently on the same pool; indicative only (see `z30 --benchmark perf` for controlled latency)",
+    "sample_rate_hz": 6000.0,
+    "snr": "SPEC.md section 10: frame signal power over the noise power in 2500 Hz; real white Gaussian noise, sigma = 1 per sample at 6 kHz, so SNR = P / (5000 / 6000)",
+    "success": "a decode whose 63 payload bits equal the transmitted payload"
+  },
+  "not_tested": "real recorded non-z-30 audio (speech, music, real FT8/RTTY, real QRN): no recordings exist yet",
+  "points": [
+    {
+      "false_decodes": 0,
+      "label": "white noise only",
+      "ldpc_attempts": 250,
+      "slots": 400,
+      "upper95_per_slot": 0.007461355528799618
+    },
+    {
+      "false_decodes": 0,
+      "label": "20 CW carriers, -10..+20 dB",
+      "ldpc_attempts": 2394,
+      "slots": 400,
+      "upper95_per_slot": 0.007461355528799618
+    },
+    {
+      "false_decodes": 0,
+      "label": "8 random 16-FSK signals without the Costas pattern, 0 dB",
+      "ldpc_attempts": 25976,
+      "slots": 400,
+      "upper95_per_slot": 0.007461355528799618
+    },
+    {
+      "false_decodes": 0,
+      "label": "8 FT8-like 8-FSK signals, 0 dB",
+      "ldpc_attempts": 27536,
+      "slots": 400,
+      "upper95_per_slot": 0.007461355528799618
+    },
+    {
+      "false_decodes": 0,
+      "label": "500 impulses up to 40 sigma",
+      "ldpc_attempts": 331,
+      "slots": 400,
+      "upper95_per_slot": 0.007461355528799618
+    }
+  ],
+  "pooled": {
+    "bound": "exact one-sided Clopper-Pearson 95%",
+    "false_decodes": 0,
+    "slots": 2000,
+    "upper95_per_slot": 0.0014967448951883067
+  },
+  "provenance": {
+    "arch": "x86_64",
+    "binary": "z30 (z30-cli), the shipped command-line station",
+    "build_profile": "release",
+    "built": "2026-09-24T02:52:21Z",
+    "cpu": "Intel(R) Xeon(R) Processor @ 2.10GHz",
+    "decoder_config": "RxConfig { band_lo_hz: 200.0, band_hi_hz: 2800.0, max_candidates: 50, sync_threshold: 1.5, passes: 3, max_drift_hz: 4.0, drift_gain: 1.05, min_fine_sync: 2.5, whiten: true, ap: None, sic: SicParams { window_sec: 0.4, timing_search: 16 } }",
+    "elapsed_s": 226.645867127,
+    "git_commit": "d8983eeef66e",
+    "hardware_involved": false,
+    "logical_cpus": 4,
+    "note": "Software simulation only. No radio, sound card or RF path was involved.",
+    "os": "linux",
+    "rayon_threads": 4,
+    "receiver": "z30_dsp::slot::Receiver::decode_slot (the production receive entry point)",
+    "rustc": "rustc 1.98.1 (48a229cea 2026-09-01)",
+    "started_utc": "2026-09-24T03:20:20Z",
+    "target": "x86_64-unknown-linux-gnu",
+    "version": "0.9.0"
+  },
+  "seed": {
+    "per_frame": "SUITE_SEED ^ (benchmark << 40) ^ (point << 20) ^ frame, ChaCha8 (z30_channel::rng)",
+    "suite_seed": 20260830
+  },
+  "slots_per_point": 400,
+  "title": "False decodes on slots containing no z-30 frame"
+}

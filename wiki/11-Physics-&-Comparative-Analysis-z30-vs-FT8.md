@@ -1,442 +1,130 @@
-# 11. Physics & Comparative Analysis: z-30 vs. FT8
-
-An in-depth technical analysis for **advanced amateur radio operators, RF engineers, and digital signal processing specialists** detailing the underlying communication physics, information theory, and digital signal processing advantages of **z-30** relative to **FT8** and other weak-signal protocols.
-
----
-
-## 🔬 1. Executive Summary & Parameter Comparison
-
-| Metric / Parameter | FT8 (Franke-Taylor 8-FSK) | z-30 (16-MFSK Weak-Signal) | Physics & Engineering Delta |
-| :--- | :--- | :--- | :--- |
-| **Decoding Threshold ($SNR_{2500}$)** | **-21.0 dB** (measured on the air) | **-22.9 dB (50%) / -22.1 dB (90%)** (blind acquisition, AWGN) | $-1.9\text{ dB}$, bought with $+2.8\text{ dB}$ of airtime - see the note below |
-| **Transmission Slot Duration** | 15.0 s (12.64 s active TX) | 30.0 s (24.0 s active TX) | $2\times$ integration time ($+3.01\text{ dB}$) |
-| **Modulation Format** | 8-MFSK (Continuous Phase) | 16-MFSK (Continuous Phase) | Higher-order orthogonal signaling efficiency |
-| **Occupied Bandwidth** | 47.0 Hz ($8 \times 6.25\text{ Hz}$) | 50.0 Hz ($16 \times 3.125\text{ Hz}$) | Ultra-narrowband density (50 channels in 2.7 kHz) |
-| **Tone Spacing ($\Delta f$)** | 6.25 Hz | 3.125 Hz | $50\%$ narrower matched-filter bandwidth |
-| **Symbol Duration ($T_s$)** | 160.0 ms (6.25 baud) | 320.0 ms (3.125 baud) | $2\times$ symbol integration period |
-| **Total Frame Symbols** | 79 symbols (58 data + 21 Costas) | 75 symbols (54 data + 21 Costas) | Optimized symbol packing & channel utilization |
-| **Raw Channel Bits** | 174 bits ($58 \times 3\text{ bits}$) | 216 bits ($54 \times 4\text{ bits}$) | Higher total channel codeword dimensionality |
-| **Information Bits ($K$)** | 91 bits ($77\text{ msg} + 14\text{ CRC}$) | 77 bits ($63\text{ msg} + 14\text{ CRC}$) | **z-30 carries 14 fewer message bits.** Earlier revisions of this row read "77 bits ($58\text{ msg} + 14\text{ CRC} + 5\text{ flag}$)" against FT8's 77 and called the capacity identical; that compared z-30's post-CRC block against FT8's pre-CRC message field. See [04](04-Forward-Error-Correction-&-LDPC.md): z-30 packs 63 message bits, FT8 packs 77. |
-| **FEC Code** | Systematic LDPC (174, 91) | IRA LDPC (216, 77) | **Rate $R \approx 0.356$ vs $0.523$** ($+2.4\text{ dB}$ coding gain) |
-| **Parity Check Fraction** | 47.7% parity overhead | **64.4% parity overhead** | Significantly steeper waterfall BER curve |
-| **CRC Polynomial** | 14-bit ($P_{\text{false}} \approx 6 \times 10^{-5}$) | 14-bit CRC-14 ($P_{\text{false}} \approx 2^{-14} \approx 6.1 \times 10^{-5}$) | Same order of magnitude; neither mode is meaningfully ahead here |
-| **Co-Channel Collision Recovery** | None (collisions fail to decode) | **3-Pass Successive Interference Cancellation (SIC)** | Mechanism present; recovery depth **not measured** - see [05](05-Successive-Interference-Cancellation-(SIC).md#-benchmark-extraction-performance) |
-| **Clock Drift Tolerance** | $\pm 1.0\text{ s}$ (requires NTP/GPS) | $\pm 1.5\text{ s}$ + Built-in RF Time Sync | Zero-admin offline HF/LF time calibration |
-
-
-### 1.1 Against the wider mode set
-
-The same measurement placed beside the published on-air figures for the other common
-weak-signal modes:
-
-| Metric / Parameter | **z-30** | **FT8** | **FT4** | **WSPR** | **JS8Call** |
-| :--- | :--- | :--- | :--- | :--- | :--- |
-| **Cycle duration** | **30.0 s** | 15.0 s | 7.5 s | 120.0 s | 15.0 s (var) |
-| **Occupied bandwidth** | **50.0 Hz** | 47.0 Hz | 83.0 Hz | 5.9 Hz | 50.0 Hz |
-| **Modulation** | **16-MFSK (CPFSK)** | 8-GFSK | 4-GFSK | 4-FSK | 8-GFSK |
-| **Symbol rate** | **3.125 baud** | 6.25 baud | 20.83 baud | 1.4648 baud | 6.25 baud |
-| **Tone spacing ($\Delta f$)** | **3.125 Hz** | 6.25 Hz | 20.83 Hz | 1.4648 Hz | 6.25 Hz |
-| **Active TX duration** | **24.0 s (75 symbols)** | 12.64 s | 4.48 s | 110.6 s | 12.64 s |
-| **Decode / guard window** | **6.0 s** | 2.36 s | 3.02 s | 9.4 s | 2.36 s |
-| **Sensitivity (50%), AWGN** | **-22.9 dB SNR †** | -21.0 dB SNR ‡ | -17.5 dB SNR ‡ | -28.0 dB SNR ‡ | -24.0 dB SNR ‡ |
-| **Sensitivity (90%), AWGN** | **-22.1 dB SNR †** | -20.0 dB SNR ‡ | -16.5 dB SNR ‡ | -27.0 dB SNR ‡ | -22.5 dB SNR ‡ |
-| **FEC code** | **LDPC (216, 77), $R \approx 0.356$** | LDPC (174, 91), $R = 0.52$ | LDPC (174, 91), $R = 0.52$ | Convolutional $K=32$, $r=1/2$ | LDPC (174, 91) |
-| **Payload capacity** | **63 message bits (+ CRC-14 = 77)** | 77 message bits (+ CRC-14 = 91) | 77 message bits (+ CRC-14 = 91) | 28 bits (call + loc + pwr) | Free text (var) |
-| **Collision recovery** | **Multi-pass SIC (3 passes)** | Single pass (limited) | None | Non-coherent | Single pass |
-| **Primary use case** | **Deep DX / EME / solar minima** | General DX / contesting | Rapid contesting | Propagation beaconing | Conversational keyboard |
-| **Clock drift tolerance** | **$\pm 1.5\text{ s}$ (with RF auto-sync)** | $\pm 1.0\text{ s}$ | $\pm 0.5\text{ s}$ | $\pm 2.0\text{ s}$ | $\pm 1.0\text{ s}$ |
-| **Spectral density** | **50 QSOs per 2.7 kHz band** | ~40 QSOs per band | ~25 QSOs per band | N/A (one-way) | ~30 QSOs per band |
-
-**† is a like-for-like measurement with ‡.** **†** is z-30's own benchmark run in
-`--mode realistic`: each frame gets a random carrier offset (±5 Hz) and timing offset (±0.5 s),
-and the receiver is handed nothing but audio — it locates the frame and estimates the noise
-floor itself, exactly as it must on the air. **‡** are the published over-the-air thresholds
-for those modes, which include the same acquisition, AFC and timing losses. Reproduce † with
-the commands in
-[16. Benchmarking, Testing & CI](16-Benchmarking-Testing-&-CI.md).
-
-**z-30 decodes 1.9 dB deeper than FT8 on AWGN, and it pays more than 1.9 dB for it.**
-
-Take the three facts together before reading the headline number:
-
-| | z-30 | FT8 | Difference |
-| :--- | ---: | ---: | ---: |
-| Decode threshold, 50%, measured the same way | $-22.9\text{ dB}$ | $-21.0\text{ dB}$ | $1.9\text{ dB}$ deeper |
-| Active transmission per message | $24.0\text{ s}$ | $12.64\text{ s}$ | $10\log_{10}(24.0/12.64) = 2.8\text{ dB}$ more energy |
-| Message bits carried | 63 | 77 | 14 fewer |
-
-z-30 spends $2.8\text{ dB}$ of extra airtime and $14$ message bits to buy $1.9\text{ dB}$ of
-sensitivity. **Per second on the air it is therefore about $0.9\text{ dB}$ behind FT8, while
-being $1.9\text{ dB}$ ahead per transmission.** Both statements are true and neither is the
-whole picture; quoting the first without the second is how this page ended up with a withdrawn
-claim once already.
-
-> **Correction (2026-08-31, second revision):** the previous revision of this paragraph read
-> "z-30 is level with FT8 on AWGN, not ahead of it", from a measured threshold of
-> $-21.1\text{ dB}$. That measurement was wrong - not the comparison method, which was sound,
-> but the receiver being measured. `z30_dsp/benchmark.py` was applying a pilot-aided
-> semi-coherent demodulator term through the whole realistic path, which under the timing error
-> that blind acquisition actually leaves cancels signal rather than reinforcing it, and which
-> z-30's receiver does not specify. Correcting it moved the threshold $2.0\text{ dB}$ deeper.
-> The paired measurement that settled it (59 discordant pairs, 55 to the non-coherent receiver,
-> exact two-sided McNemar $p = 1.7\times10^{-12}$) is in
-> [16. Benchmarking, Testing & CI](16-Benchmarking-Testing-&-CI.md).
->
-> The still-withdrawn claim is the older one: a "+4.0 dB advantage" obtained by subtracting
-> FT8's on-air figure from z-30's *genie-aided bound*. That comparison remains invalid and the
-> $1.9\text{ dB}$ above is not it - it is bound-to-bound-free, measured through blind
-> acquisition on both sides of the comparison.
-
-Where z-30 differs beyond sensitivity is occupied bandwidth, multi-pass SIC, and behaviour on a
-disturbed path.
-
-### 1.2 Why 16-MFSK and a 30-second cycle at all?
-
-1. **A longer, more heavily coded frame.** Halving the symbol rate from 6.25 to 3.125 baud
-   doubles the energy per symbol, and a rate-0.356 code over 75 symbols spends considerably
-   more redundancy per information bit than FT8's rate-0.52 (174, 91). Both changes buy coding
-   gain, at the cost of a 30-second cycle instead of 15 — and, as the measurements above show,
-   most of that gain is handed back at the acquisition stage.
-2. **True co-channel collision recovery.** FT8 fails when two signals occupy the same audio
-   frequency bins. z-30 runs a 3-pass **Successive Interference Cancellation** engine: when a
-   strong signal is decoded, its phase and amplitude are synthesised and subtracted from the
-   time-domain buffer, enabling second and third decoding passes on previously obscured weak
-   signals. See
-   [05. Successive Interference Cancellation (SIC)](05-Successive-Interference-Cancellation-(SIC).md).
-
----
-
-## 📐 2. The Shannon-Hartley Capacity & Information Theory Foundation
-
-The theoretical upper bound on error-free information transfer over a band-limited Additive White Gaussian Noise (AWGN) channel is governed by the **Shannon-Hartley Theorem**:
-
-$$C = B \log_2\left(1 + \frac{S}{N}\right) = B \log_2(1 + \text{SNR})$$
-
-Where:
-- $C$ is the channel capacity in bits per second (bps).
-- $B$ is the channel bandwidth in Hertz.
-- $S/N$ is the linear Signal-to-Noise Ratio within bandwidth $B$.
-
-In extreme weak-signal communications where $\text{SNR} \ll 1$ (the "power-limited" or "wideband" regime), using the natural logarithm expansion $\ln(1 + x) \approx x$:
-
-$$C \approx B \cdot \frac{\text{SNR}}{\ln(2)} = \frac{S}{N_0 \ln(2)} \implies \frac{E_b}{N_0} \ge \ln(2) \approx -1.59\text{ dB}$$
-
-### Link Margin Comparison in Standard Reference Bandwidth ($B_{\text{ref}} = 2500\text{ Hz}$):
-In amateur radio, SNR is conventionally expressed relative to a $B_{\text{ref}} = 2500\text{ Hz}$ SSB receiver passband ($SNR_{2500}$):
-
-$$\text{SNR}_{2500} = \frac{S}{N_0 \cdot B_{\text{ref}}} = \left(\frac{E_b}{N_0}\right) \cdot \left(\frac{R_b}{B_{\text{ref}}}\right)$$
-
-Where $R_b$ is the net **message** bit rate — the bits the operator actually sends, before the
-CRC each mode adds on top:
-- **FT8 Net Rate**: $R_{b,\text{FT8}} = \frac{77\text{ bits}}{12.64\text{ s}} \approx 6.09\text{ bps}$
-- **z-30 Net Rate**: $R_{b,\text{z30}} = \frac{63\text{ bits}}{24.0\text{ s}} \approx 2.63\text{ bps}$
-
-> **Correction (2026-08-31):** the z-30 rate here was previously computed as
-> $77/24.0 \approx 3.21\text{ bps}$, reusing FT8's message-bit count. z-30 packs 63 message
-> bits (see [04](04-Forward-Error-Correction-&-LDPC.md)); 77 is its post-CRC block, the
-> $K$ of the LDPC code, and the corresponding figure for FT8 is 91, not 77. The error made
-> z-30's Shannon limit look $0.87\text{ dB}$ higher than it is.
-
-Calculating the theoretical Shannon threshold in a 2500 Hz reference bandwidth for both modes:
-- **FT8 Theoretical Shannon Limit**: $\text{SNR}_{2500,\text{Shannon}} = -1.59\text{ dB} + 10\log_{10}\left(\frac{6.09}{2500}\right) = -27.72\text{ dB}$
-- **z-30 Theoretical Shannon Limit**: $\text{SNR}_{2500,\text{Shannon}} = -1.59\text{ dB} + 10\log_{10}\left(\frac{2.63}{2500}\right) = -31.38\text{ dB}$
-
-**Physical Insight**: each mode's distance from *its own* limit is the only comparison this
-arithmetic supports, because the two limits are different numbers:
-
-| | Threshold | Own Shannon limit | Distance from limit |
-| :--- | ---: | ---: | ---: |
-| FT8, on the air | $-21.0\text{ dB}$ | $-27.72\text{ dB}$ | $6.72\text{ dB}$ |
-| z-30, blind acquisition | $-22.9\text{ dB}$ | $-31.38\text{ dB}$ | $8.48\text{ dB}$ |
-| z-30, genie-aided bound | $-24.58\text{ dB}$ | $-31.38\text{ dB}$ | $6.80\text{ dB}$ |
-
-The comparison to draw is **not** "z-30 is closer to Shannon" — it is further from its own limit
-than FT8 is from its. Sending 63 bits in 24.0 s instead of 77 bits in 12.64 s moves the *limit*
-down by $3.7\text{ dB}$, and z-30's on-air threshold captures $1.9\text{ dB}$ of that. Under
-ideal detection its code sits $6.80\text{ dB}$ from its limit, within a tenth of a dB of where
-FT8's on-air figure sits from its own — so the codes are of comparable efficiency, and the
-$1.66\text{ dB}$ that separates z-30's bound from its measured threshold is acquisition loss on a
-3.125 Hz-spaced signal. That loss is exactly the part a genie-aided comparison hides, in this
-mode and in every other.
-
----
-
-## ⚡ 3. M-ary Orthogonal Signaling Physics: Why 16-MFSK Outperforms 8-MFSK
-
-In digital communications, continuous-phase M-ary Frequency Shift Keying ($M$-MFSK) uses an alphabet of $M$ orthogonal carrier frequencies. For non-coherent matched-filter detection, the minimum tone spacing required for mathematical orthogonality is:
-
-$$\Delta f = \frac{1}{T_s}$$
-
-Where $T_s$ is the symbol duration.
-
-```
-       FT8: 8-MFSK (Ts = 160 ms, df = 6.25 Hz)
-       |──6.25Hz──|
-       f0   f1   f2   f3   f4   f5   f6   f7   (Total BW = 47.0 Hz)
-       
-       z-30: 16-MFSK (Ts = 320 ms, df = 3.125 Hz)
-       |─3.125Hz─|
-       f0 f1 f2 f3 f4 f5 f6 f7 f8 f9 f10 f11 f12 f13 f14 f15 (Total BW = 50.0 Hz)
-```
-
-### 3.1 The Fundamental Orthogonal Signaling Property
-Unlike amplitude or phase modulation schemes (QAM, PSK)—where increasing the constellation size $M$ requires higher $E_b/N_0$ to maintain the same Bit Error Rate—**orthogonal M-ary FSK exhibits the inverse behavior**:
-
-$$\lim_{M \to \infty} P_b(M\text{-FSK}) \to 0 \quad \text{for any } \frac{E_b}{N_0} > \ln(2)$$
-
-As the alphabet size $M$ increases from $M=8$ (FT8, 3 bits/symbol) to $M=16$ (z-30, 4 bits/symbol):
-1. **Energy Efficiency per Bit Increases**: Each symbol carries $\log_2(16) = 4$ bits instead of $\log_2(8) = 3$ bits. The energy allocated per transmitted information bit is $E_b = \frac{E_s}{\log_2(M)}$.
-2. **Noise Bandwidth per Filter Bin Halves**: The matched filter noise bandwidth for each tone is $B_n = \frac{1}{T_s} = 3.125\text{ Hz}$ in z-30, compared to $6.25\text{ Hz}$ in FT8.
-3. **Predetection Processing Gain**:
-
-$$\Delta G_{\text{predet}} = 10 \log_{10}\left(\frac{6.25\text{ Hz}}{3.125\text{ Hz}}\right) = +3.01\text{ dB}$$
-
-Every tone filter bin in the z-30 receiver accumulates only half the thermal noise power ($N = N_0 \cdot \Delta f$) during symbol integration compared to FT8.
-
----
-
-## 🛡️ 4. Forward Error Correction (FEC) & LDPC Coding Gain
-
-Both FT8 and z-30 utilize Low-Density Parity-Check (LDPC) codes decoded via belief propagation over bipartite Tanner graphs. However, their code rates and graph structures differ fundamentally:
-
-```
-                              LDPC Code Rate & Redundancy
-                              ===========================
-
-  FT8: LDPC (174, 91)
-  ┌───────────────────────────────┬───────────────────────────────┐
-  │      Information: 91 bits     │       Parity: 83 bits         │  Rate R = 0.523 (47.7% Parity)
-  └───────────────────────────────┴───────────────────────────────┘
-
-  z-30: IRA-LDPC (216, 77)
-  ┌─────────────────────┬─────────────────────────────────────────┐
-  │ Information: 77 bits│            Parity: 139 bits             │  Rate R = 0.356 (64.4% Parity)
-  └─────────────────────┴─────────────────────────────────────────┘
-```
-
-### 4.1 Mathematical Code Rate Advantage
-- **FT8 Code Rate**: $R_{\text{FT8}} = \frac{91}{174} \approx 0.523$
-- **z-30 Code Rate**: $R_{\text{z30}} = \frac{77}{216} \approx 0.356$
-
-By operating at a significantly lower code rate ($R \approx 0.356$), z-30 provides **139 parity-check constraints** over 216 channel bits, compared to only 83 parity constraints in FT8.
-
-### 4.2 Normalized Min-Sum Decoder Dynamics
-
-> **Correction (2026-09-01):** this section previously stated that the check-node update uses
-> "an optimized empirical attenuation factor $\alpha = 0.75$" and printed a single-schedule
-> formula built on it. That is the description
-> [04. Forward Error Correction & LDPC](04-Forward-Error-Correction-&-LDPC.md) retracted on
-> 2026-08-31: there is no single $\alpha$, and the $0.75$ figure was nominal, never live. Both
-> implementations have always run a four-schedule cascade. This page kept the withdrawn version
-> for a further revision, so the project's two source-of-truth pages contradicted each other on
-> the same fact - the failure mode `AGENTS.md` §5 exists to prevent.
-
-The decoder runs up to four schedules in order, stopping at the first that yields a zero
-syndrome with a matching CRC-14. Each carries its own $\alpha$, $\beta$ and damping; the
-per-schedule table is maintained in
-[04. Forward Error Correction & LDPC](04-Forward-Error-Correction-&-LDPC.md#the-four-decode-schedules)
-and is not duplicated here, so the two pages cannot drift apart again. The normalized min-sum
-schedules apply:
-
-$$L_{m \to n} = \left( \prod_{n' \in N(m) \setminus \{n\}} \text{sgn}(L_{n' \to m}) \right) \cdot \max\!\big(0,\ \alpha \cdot \min_{n' \in N(m) \setminus \{n\}} |L_{n' \to m}| - \beta\big)$$
-
-with schedule 2 instead using the exact box-plus (Jacobian-corrected) combination. Every update
-is damped. `z30_dsp/ldpc.py::DECODE_SCHEDULES` and `src/dsp/ldpcCodec.ts::Z30_DECODE_SCHEDULES`
-are the live values, pinned to each other by `tests/test_cross_language_parity.py`.
-
-Because of the higher parity redundancy ($64.4\%$ vs $47.7\%$), the Tanner graph possesses a larger girth ($g \ge 6$) and fewer short trapping sets, yielding:
-- **Steeper Waterfall Region**: The Frame Error Rate (FER) transition from $10^{-1}$ to $10^{-5}$ occurs across a narrower $\Delta \text{SNR}$ span ($0.8\text{ dB}$ vs $1.6\text{ dB}$ in FT8).
-- **Error Floor**: No error floor has been observed in benchmarking, but the benchmark runs tens of frames per SNR point, so it can only bound the floor at roughly $\text{FER} < 10^{-2}$. A $10^{-6}$ claim would need on the order of $10^{8}$ frames and has not been measured.
-- **Net FEC Coding Gain**: Provides $+2.4\text{ dB}$ of additional coding gain over FT8's higher-rate LDPC code.
-
----
-
-## 🔄 5. Multi-Pass Successive Interference Cancellation (SIC)
-
-In real HF/VHF band conditions, receivers do not operate in isolated AWGN channels; they experience **dense multi-user interference and severe near-far dynamic range disparity**.
-
-```
-  Traditional FT8 Decoder:
-  [ KW Station (+10 dB) ] ──┐
-                            ├─> [ Overlapping 50Hz Bin ] ──> DECODE FAILURE (Both signals lost)
-  [ DX Station (-25 dB) ] ──┘
-
-  z-30 3-Pass SIC Decoder:
-  [ Combined Input ] ──> [ PASS 1: Decode KW Station (+10 dB) ] (100% CRC verified)
-                                 │
-                         [ Synthesize clean replica s_KW(t) ]
-                                 │
-                         [ Subtract from buffer: x_res = x - s_KW ]
-                                 │
-                         [ PASS 2 / 3: Decode DX Station (-25 dB) ] ──> SUCCESS (DX contact logged!)
-```
-
-### 5.1 The Mathematical Near-Far Dilemma
-When a strong local station ($P_{\text{local}} = +10\text{ dB}$) and a weak DX station ($P_{\text{DX}} = -25\text{ dB}$) overlap inside the same FFT bin:
-
-$$\text{SINR}_{\text{DX}} = \frac{P_{\text{DX}}}{P_{\text{local}} + \sigma^2} \approx \frac{10^{-2.5}}{10^{1.0} + 10^{-2.95}} \approx \frac{0.00316}{10.0011} = -35.0\text{ dB}$$
-
-Because $-35.0\text{ dB} \ll -21.0\text{ dB}$, FT8 completely fails to decode either transmission.
-
-### 5.2 The 3-Pass Subtraction Mechanism in z-30
-1. **Pass 1**: The high-SNR signal is decoded cleanly. The 14-bit CRC confirms with probability $1 - 2^{-14} \approx 0.99994$ that all 75 transmitted tones are known exactly.
-2. **Exact Parameter Estimation**:
-   - Carrier frequency $\hat{f}_0$ is estimated via chirped quadratic interpolation with precision $\sigma_f < 0.05\text{ Hz}$.
-   - Time arrival $\hat{\Delta t}$ is locked with sub-millisecond precision.
-   - Time-varying envelope amplitude $\hat{A}(t)$ and ionospheric phase trajectory $\hat{\phi}(t)$ are tracked across all 75 symbols.
-3. **Continuous-Phase Synthesis & Coherent Cancellation**:
-
-$$x_{\text{residual}}(t) = x_{\text{rx}}(t) - \hat{A}(t) \cos\left(2\pi \hat{f}_0 (t - \hat{\Delta t}) + \theta_{\text{mod}}(t) + \hat{\phi}(t)\right)$$
-
-4. **Pass 2 & Pass 3**: The residual buffer $x_{\text{residual}}(t)$ is transformed through the STDFT filterbank, and the unmasked DX signal is re-decoded from it.
-
-> **Correction (2026-09-01):** this step previously claimed the unmasked signal decodes "at the
-> same $-25.0\text{ dB}$ (50%) / $-24.0\text{ dB}$ (90%) AWGN decode floor". Both numbers were
-> wrong twice over: the canonical AWGN threshold is $-22.9\text{ dB}$ (50%) / $-22.1\text{ dB}$
-> (90%), as measured by `z30_dsp/benchmark.py` and stated in
-> [03](03-DSP-&-Physical-Layer-Specification.md), [16](16-Benchmarking-Testing-&-CI.md) and
-> `Home.md`; and the claim that a *residual* buffer faces that same floor is a statement about
-> cancellation quality that nothing has measured. Perfect cancellation would leave the DX signal
-> at the uncontested floor; imperfect cancellation leaves residual interference that raises it.
-> How far short of perfect the implementation falls is exactly the quantity the retracted
-> collision table pretended to know. See
-> [05](05-Successive-Interference-Cancellation-(SIC).md#-benchmark-extraction-performance).
-
----
-
-## 🌊 6. Ionospheric Multipath, Flutter, & Doppler Dynamics
-
-HF ionospheric skywave propagation (F2 layer reflection) is characterized by:
-- **Doppler Spread ($B_d$)**: Frequency dispersion caused by traveling ionospheric disturbances (TID) or polar auroral flutter ($0.1\text{ Hz}$ to $2.0\text{ Hz}$).
-- **Multipath Delay Spread ($\tau_d$)**: Differential path delays between 1-hop, 2-hop, or high/low ray angles ($0.5\text{ ms}$ to $4.0\text{ ms}$).
-- **Coherence Time ($\tau_c \approx 1 / B_d$)**: Time window over which channel phase remains stationary ($0.5\text{ s}$ to $10.0\text{ s}$).
-
-### 6.1 Why z-30 Resists Polar & Auroral Flutter
-FT8 places its Costas synchronization arrays exclusively in three fixed clusters (beginning, middle, end: symbols 0-6, 36-42, 72-78). If an ionospheric deep fade or auroral phase step occurs during one of these clusters, FT8 loses time/frequency lock and the entire frame is lost.
-
-**z-30 distributes 21 Costas synchronization symbols across 7 distinct triplets throughout the 75-symbol frame**:
-
-```
-Frame Index:  [0..2]   [7..9]   [17..19]   [27..29]   [37..39]   [47..49]   [72..74]
-Sync Blocks:    S1       S2        S3         S4         S5         S6         S7
-Data Blocks:       D1       D2        D3         D4         D5         D6
-```
-
-- **Continuous Phase Tracking**: Triplet spacing ($8$ to $10$ symbols $= 2.56\text{ s}$ to $3.20\text{ s}$) is matched to the coherence time ($\tau_c$) of disturbed polar ionospheric channels.
-- **Dynamic Doppler Tracking**: The receiver tracks Doppler drift up to $\pm 1.5\text{ Hz}$ across the 24-second transmission window.
-
----
-
-## 📻 7. Link Budget: What a dB of Sensitivity Buys, and What z-30 Can Claim
-
-**z-30's on-air sensitivity has been measured: 1.9 dB deeper than FT8 on AWGN, bought with
-2.8 dB more airtime and 14 fewer message bits - and paid for again on a fast-fading path, where
-z-30 stops decoding entirely and FT8 does not.**
-
-Earlier revisions of this page put z-30's idealised AWGN bound (a benchmark that hands the
-demodulator the exact noise level, the exact carrier frequency and perfect symbol timing) next
-to FT8's published over-the-air threshold, which *includes* the acquisition, AFC and timing
-losses that bound excludes. The two are different quantities. Everything downstream of that
-comparison - a "+4.0 dB advantage", a $2.51\times$ ERP multiplier, a QRP station matching 12.6 W
-of FT8, an opening window extended by one to two hours - followed from it and has been
-withdrawn.
-
-What is defensible today:
-
-- z-30 spends more energy per symbol (3.125 baud against FT8's 6.25) and more redundancy per
-  information bit (rate 0.356 against 0.52), and both buy coding gain.
-- Its seeded benchmark, driven through the real acquisition path with random carrier and
-  timing offsets, crosses 50% decode at $-22.92\text{ dB}$ $[-23.07, -22.79]$ and 90% at
-  $-22.09\text{ dB}$ $[-22.16, -22.01]$ on AWGN in a 2500 Hz reference bandwidth, at 200 frames
-  per point - $1.9\text{ dB}$ deeper than FT8, measured the same way.
-- Under ideal detection (exact carrier, timing and noise level) the same code reaches
-  $-24.58\text{ dB}$. The $1.66\text{ dB}$ difference is what it costs to *find* the signal.
-- The coding gain is real and it survives acquisition, but it is not free: the $1.9\text{ dB}$
-  costs $2.8\text{ dB}$ of extra airtime and 14 message bits against FT8. z-30 is deeper per
-  transmission and marginally shallower per second.
-- **And it does not survive every channel.** On ITU-R F.1487 high-latitude moderate
-  ($3\text{ ms}$ / $10\text{ Hz}$) - one of the three channels WSJT-X publishes each of its
-  modes against - z-30 decoded 3 frames in 1,400 across $-10$ to $+20\text{ dB}$, and $30\text{ dB}$
-  of extra signal buys none of them back. A $10\text{ Hz}$ Doppler spread is wider than z-30's entire
-  $3.125\text{ Hz}$ tone spacing, so the tones stop being orthogonal; FT8's $6.25\text{ Hz}$
-  spacing and $0.16\text{ s}$ symbols make the opposite trade. The narrow, long symbol is one
-  design decision seen from two sides, and quoting the AWGN half of it alone is the same kind
-  of error as quoting the genie-aided bound was.
-
-### 7.1 How the honest measurement is made
-
-`z30_dsp/benchmark.py --mode realistic` is no longer genie-aided:
-
-1. A random carrier frequency offset ($\pm5$ Hz) is injected (`z30_dsp/channel.py`).
-2. A random symbol timing offset ($\pm0.5$ s) is injected - slot alignment is never exact.
-3. A Watterson two-path fading channel is applied, with ITU-R F.1487 Doppler and delay spreads
-   for the *good*, *moderate* and *poor* path classes.
-4. The decode is driven through the **real acquisition path** (`z30_dsp/acquisition.py`): a
-   Costas sync search over the slot-synchronised timing window and the carrier range, plus a
-   blind noise-floor estimate. Nothing is handed to the demodulator.
-5. The demodulator is purely non-coherent, which is what z-30's receiver is specified to be and
-   what a receiver that has just acquired blind can actually support.
-6. Every run is seeded, and the seed is published with the curve.
-
-Measured result, seed `20260830`:
-
-| Channel | Frames/point | 50% decode | 90% decode |
-| --- | ---: | --- | --- |
-| Idealised bound (genie-aided sync) | 200 | $-24.58\text{ dB}$ | $-23.48\text{ dB}$ |
-| AWGN, blind acquisition | 200 | $-22.92\text{ dB}$ | $-22.09\text{ dB}$ |
-| ITU-R F.1487 mid-latitude moderate (1.0 ms / 0.5 Hz) | 200 | $-21.35\text{ dB}$ | $-19.16\text{ dB}$ |
-| ITU-R F.1487 mid-latitude disturbed (2.0 ms / 1.0 Hz) | 200 | $-21.10\text{ dB}$ | $-19.21\text{ dB}$ |
-| ITU-R F.1487 high-latitude moderate (3.0 ms / 10 Hz) | 200 | **no decode at any SNR** | — |
-
-The two fading presets are not separable at the 50% point at 100 frames each; see
-[16. Benchmarking, Testing & CI](16-Benchmarking-Testing-&-CI.md) for the intervals.
-
-`tests/test_channel_acquisition.py` guards the property that makes this measurement meaningful:
-that acquisition reads only the audio, and is never quietly handed the answer again.
-
-### 7.2 For reference: what a dB is worth
-
-Independent of any z-30 claim, a $\Delta$ dB improvement in sensitivity corresponds to a power
-ratio of
-
-$$\frac{P_1}{P_2} = 10^{\Delta / 10}$$
-
-so $+3\text{ dB}$ halves the power a station needs, and $+4\text{ dB}$ is roughly the gain of a
-small 2-element Yagi over a dipole, or about 0.7 S-units of background noise on the low bands.
-This is why weak-signal work chases single decibels - and why the $4\text{ dB}$ this page once
-claimed, on a comparison that did not hold, was worth retracting rather than defending.
-
----
-
-## 📊 8. Summary Comparison Matrix
-
-```
-   Sensitivity (SNR in 2500 Hz BW)
-   ─────────────────────────────────────────────────────────────────────────────
-   CW (Skilled Ear):                 -15.0 dB ──┐
-   SSB Voice:                        +10.0 dB   │
-   RTTY:                              -5.0 dB   │ Legacy Modes
-   ─────────────────────────────────────────────────────────────────────────────
-   FT4:                              -17.5 dB ──┐
-   FT8:                              -21.0 dB   │ Modern WSJT-X
-   JS8Call (Slow):                   -24.0 dB   │ Modes
-   WSPR (2-Minute Beacon Only):      -28.0 dB ──┘
-   ─────────────────────────────────────────────────────────────────────────────
-   z-30 (blind acquisition, AWGN):   -22.9 dB ◄── measured the same way as the rows above
-   z-30 (idealised bound, genie sync):-24.6 dB ◄── NOT measured the same way; do not compare
-   ─────────────────────────────────────────────────────────────────────────────
-   z-30's own Shannon limit:         -31.4 dB   (63 bits / 24.0 s)
-   FT8's own Shannon limit:          -27.7 dB   (77 bits / 12.64 s)
-```
-
-Every figure above the divider is an over-the-air threshold, and z-30's blind-acquisition
-figure belongs on that same scale: it is measured the same way, and it lands 1.9 dB below FT8 —
-for 1.9x the airtime and 14 fewer message bits, which is why the two Shannon limits at the
-bottom are different numbers and why neither mode's distance from the other's limit means
-anything. The idealised bound does **not** belong on this scale either: it is an upper limit on
-what the code and demodulator could achieve if acquisition were free, and every mode listed
-above would move a few dB left if measured that way too.
-
-What z-30 does offer, independently of any sensitivity claim, is full two-way interactive QSO
-sequencing at 50 Hz occupied bandwidth, real-time successive interference cancellation, and
-cross-platform hardware CAT integration.
+# 11. Physics & Comparative Analysis: z-30 vs FT8
+
+This page compares z-30 with FT8, the mode most operators will judge it against. Every row
+says what kind of evidence stands behind it, because an earlier version of this page mixed
+measured figures, arithmetic, published figures for another mode and numbers nobody had
+measured. Two of those claims had to be withdrawn (see the end of this page).
+
+**Evidence classes**
+
+| Tag | Meaning |
+| :--- | :--- |
+| **[M]** | measured here, in seeded **software simulation** through the production receiver `decode_slot`; the result file is named |
+| **[D]** | derived by arithmetic from protocol parameters or from an [M] figure; the working is shown |
+| **[P]** | a published figure or documented behaviour of FT8/WSJT-X; **not reproduced here** — no FT8 decoder was run on z-30's channels |
+| **[N]** | not measured |
+
+Nothing on this page is a hardware or on-air measurement. **Real-radio validation: not yet
+performed.**
+
+## 1. The parameters
+
+| | z-30 | FT8 | Class |
+| :--- | :--- | :--- | :---: |
+| Cycle / transmission | 30 s / 24.0 s | 15 s / 12.64 s | [D] |
+| Modulation | 16-GFSK, BT 2.0, 3.125 Hz spacing, 3.125 baud | 8-GFSK, BT 2.0, 6.25 Hz spacing, 6.25 baud | [D] / [P] |
+| Occupied bandwidth | ≈ 50 Hz (99%), ≈ 66 Hz (−40 dB) of the audio waveform | ≈ 50 Hz | [M] (`z30 --loopback-test`) / [P] |
+| Message bits | **63** | **77** | [D] |
+| Information bits into the code (message + CRC-14) | 77 | 91 | [D] |
+| Code | IRA-LDPC (216, 77), rate 0.356 | LDPC (174, 91), rate 0.523 | [D] |
+| Sync | 21 Costas symbols (3 × 7) | 21 Costas symbols (3 × 7) | [D] |
+| Interference cancellation | subtract and re-decode, up to 3 passes | subtract and re-decode (`subtractft8`), multiple passes | [M] / [P] |
+| A priori decoding | yes, off by default ([17](17-A-Priori-(AP)-Decoding.md)) | yes | [D] / [P] |
+
+## 2. Sensitivity, and what it costs
+
+| | z-30 | FT8 | Class |
+| :--- | ---: | ---: | :---: |
+| 50% decode, AWGN, SNR in 2500 Hz | **−23.03 dB [−23.13, −22.89]** | −21 dB | [M] / [P] |
+| 90% decode, AWGN | −22.06 dB [−22.15, −21.80] | [N] here | [M] |
+| Transmit time per message | 24.0 s | 12.64 s | [D]: 2.78 dB more energy for z-30 |
+| Message bit rate R<sub>b</sub> | 63 / 24.0 = 2.63 bit/s | 77 / 12.64 = 6.09 bit/s | [D] |
+| **Eb/N0 per message bit at 50%** | **6.76 dB** | **5.13 dB** | [D]: z-30 needs **1.63 dB more** |
+| Shannon limit, SNR in 2500 Hz (Eb/N0 = −1.59 dB) | −31.38 dB | −27.72 dB | [D] |
+| Distance from own Shannon limit | 8.35 dB | 6.72 dB | [D] |
+
+The z-30 figures: `research/results/d8983eeef66e/awgn.json` — blind acquisition (tone 0 uniform
+over 210–2740 Hz, DT uniform over ±1.4 s, random carrier phase, random payload), success = the
+decoded 63 payload bits equal the transmitted ones, 200 frames per SNR point, suite seed
+20260830, Wilson 95% intervals. The FT8 figure is from Franke, Somerville & Taylor, "The FT4 and
+FT8 Communication Protocols", *QEX*, July/August 2020, a simulation figure whose exact
+conditions (acquisition range, AP use, success criterion) are not identical to these.
+
+Eb/N0 = SNR<sub>2500</sub> + 10 log<sub>10</sub>(2500 / R<sub>b</sub>). For z-30:
+−23.03 + 29.79 = 6.76 dB. For FT8: −21.0 + 26.13 = 5.13 dB.
+
+**Read the three together.** z-30 decodes about 2 dB deeper per transmission. It does so by
+transmitting 1.9 times as long (2.78 dB) and carrying 14 fewer message bits. Per message bit it
+is **less** energy-efficient than FT8, by about 1.6 dB, and it sits further from its own
+Shannon limit. The extra depth is bought, not gained. Quoting the −23 dB figure without the
+airtime and the bit count is the error this page used to make.
+
+## 3. Fading
+
+@@FADING_TABLE@@
+
+Source: `research/results/d8983eeef66e/fading.json`; `z30_channel::Watterson`, two equal-power
+paths with complex Gaussian taps and a Gaussian Doppler spectrum, normalised to unit power over
+the ensemble (so an individual frame fades as a Rayleigh channel does); SNR is the average
+SNR; 200 frames per point; seed 20260830. [M]
+
+**On a path with 10 Hz of Doppler spread z-30 does not decode at any SNR.** The spread is wider
+than the 3.125 Hz tone spacing, so the tones are no longer separable; the long, narrow symbol
+that buys the AWGN depth is what loses this channel. FT8's 6.25 Hz spacing is also narrower
+than 10 Hz; how FT8 fares on the same channel is **[N]** — no FT8 decoder was run here.
+
+## 4. Timing, drift and clock error
+
+| | z-30 | FT8 | Class |
+| :--- | :--- | :--- | :---: |
+| Timing window | ±1.5 s, a hard edge: 100% at ±1.5 s, 3.5% / 11.5% at +1.6 / −1.6 s, 0% at ±2.0 s (at −20 dB) | operators are asked to keep clocks within about 1 s of UTC | [M] `timing.json` / [P] |
+| Linear frequency drift across the frame | tracked to ±4 Hz (~79% at −22 dB); 58.5% at ±5 Hz; ~3% at ±8 Hz | [N] | [M] `drift.json` |
+| Sound-card clock error | ≥ 99.5% to ±5000 ppm; 72.5% / 81.5% at +10000 / −10000 ppm (−20 dB) | [N] | [M] `clock.json` |
+
+z-30 has no built-in time source. The operating system's clock, kept by NTP or GPS, is the
+reference ([07](07-RF-Time-Synchronization-Engine.md)).
+
+## 5. Crowded bands and collisions
+
+| | z-30 | FT8 | Class |
+| :--- | :--- | :--- | :---: |
+| 40 stations at random, overlapping positions, −20…0 dB | 98.8% [98.2, 99.2] decoded, 0 false | [N] | [M] `busy.json` |
+| Two-station collisions, SIC on vs off | table in [05](05-Successive-Interference-Cancellation-(SIC).md) | [N] | [M] `sic.json` |
+| False decodes | 0 in 2000 slots of five kinds of non-z-30 audio (white noise, CW carriers, 16-FSK without Costas, FT8-like 8-FSK, impulses) | [N] | [M] `false.json` |
+
+Both modes subtract decoded signals and search again. The claim this page used to make — that
+FT8 "fails" on collisions and z-30 alone recovers them — was wrong on the FT8 side and
+unmeasured on the z-30 side.
+
+## 6. What z-30 cannot do that FT8 can
+
+- **Interoperate.** z-30 is not FT8: it cannot decode FT8 and FT8 software cannot decode it. No
+  other software speaks z-30, there are no agreed z-30 frequencies, and nobody else is known to
+  be on the air with it.
+- **Carry the same messages.** v1 carries two standard callsigns and one 7-bit field: a report
+  (−30…+30 dB), `RRR`, `73`, `RR73`, or one of **63 grid squares**. It has no roger bit (no
+  `R-12`), no portable or compound callsigns, no contest or free-text messages, and no
+  arbitrary grid. The software refuses such messages rather than sending something else.
+- **Turn around quickly.** A 30 s cycle means a minimal QSO takes twice as long.
+- **Spot.** There is no PSK Reporter or other spotting-network upload.
+
+## 7. Withdrawn claims
+
+These appeared on this page or elsewhere in the project and are withdrawn. None is replaced by
+anything but the measured figures above.
+
+- **"+4.0 dB advantage over FT8."** It subtracted FT8's published figure from z-30's
+  genie-aided bound (a receiver told the frequency, timing and noise level). A bound is not a
+  threshold.
+- **"z-30 is level with FT8"** (2026-08-31), from a legacy benchmark that applied a
+  demodulator term the receiver does not use. Superseded by the vNext measurement above.
+- **"FT8: no collision recovery"** and the SIC decode-rate table (98.7 / 95.2 / 91.4 / 84.6 %),
+  "Pass 3 reaches −27.5 dB", "recovery down to −31.5 dB". No instrument produced them.
+- **"50 QSOs per 2.7 kHz"** and similar spectral-density figures, and the FT4/WSPR/JS8Call
+  comparison table, whose figures were not sourced.
+- **"Resists polar and auroral flutter"**, "tracks Doppler ±1.5 Hz" and "zero-admin RF time
+  calibration". The measurement above shows the opposite on high-Doppler paths, and the RF time
+  receiver was retired with the browser runtime.
+- **"+2.4 dB coding gain" and "+3 dB predetection gain"** as net advantages. They are real
+  properties of the parameters, but the Eb/N0 row in section 2 is what the whole chain delivers
+  per message bit, and it is behind FT8.

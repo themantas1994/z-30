@@ -3,8 +3,14 @@
 **Status:** frozen. **Derived from the code**, not from the wiki: `z30_dsp/modem.py`,
 `z30_dsp/ldpc.py`, `z30_dsp/message_codec.py`, `z30_dsp/benchmark.py` (demodulator) and
 `src/dsp/z30Codec.ts` (the text tokenizer and grid table, which exist only there), at the
-audited commit `7661caa`. Where the wiki says something else, this document is right and the
-wiki is the bug (`audit/2026-09-23-vnext` §B.7 lists the known cases).
+audited commit `7661caa`. Those files now live, frozen, in `legacy/python-oracle/z30_dsp/` and
+`legacy/browser-runtime/src/dsp/`; they are the reference, not the implementation, which is
+`crates/`. Where the wiki says something else, this document is right and the wiki is the bug
+(`audit/2026-09-23-vnext` §B.7 lists the known cases).
+
+**Terminology.** A frame carries **63 message bits** (two 28-bit call fields and a 7-bit extra
+field) plus a 14-bit CRC: **77 information bits**, LDPC-encoded to 216. Older text calling this
+a "77-bit QSO exchange" overstated the message: FT8 carries 77 *message* bits (91 with its CRC).
 
 The executable form of this specification is the golden-vector set in `fixtures/golden/`,
 generated from those files by `reference/golden/`. The Rust implementation in `crates/z30-protocol`
@@ -73,8 +79,9 @@ non-coherent (§8).
 ## 3. Symbol mapping
 
 Data symbol *s* (0 … 53) is the 4-bit natural-binary value of codeword bits `4s … 4s+3`, MSB
-first: `tone = c[4s]·8 + c[4s+1]·4 + c[4s+2]·2 + c[4s+3]`. **Not Gray-coded** (wiki/03 says Gray;
-the code never has been).
+first: `tone = c[4s]·8 + c[4s+1]·4 + c[4s+2]·2 + c[4s+3]`. **Not Gray-coded** (wiki/03 used to say
+Gray; the code never has been). The loss against a Gray map with this non-coherent Log-MAP
+demapper has not been measured (audit L-05).
 
 ## 4. Information block
 
@@ -177,7 +184,7 @@ packer's behaviour on representable messages.
 ## 7. LDPC (216, 77)
 
 - **Code:** systematic IRA. H = [H_info (139 × 77) | H_parity (139 × 139)]. Row *p* of H_info
-  has ones at the five indices `Z30_CHECK_TO_INFO[p]` (`z30_dsp/ldpc.py`; degree 5, girth 6).
+  has ones at the five indices `Z30_CHECK_TO_INFO[p]` (`legacy/python-oracle/z30_dsp/ldpc.py`, `crates/z30-protocol/src/ldpc.rs`; degree 5, girth 6).
   H_parity is dual-diagonal: `H[p, 77+p] = 1`, `H[p, 77+p−1] = 1` for p ≥ 1.
 - **Encoder:** `c[0:77] = info`; `acc = 0`; for p in 0 … 138: `acc ^= XOR_{j in row p} info[j]`;
   `c[77+p] = acc`.

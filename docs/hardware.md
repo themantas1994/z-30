@@ -44,20 +44,19 @@ to the computer.
 
 **CM108 is a build feature.** `hidapi` is compiled in only with `--features cm108`
 (`cargo build --release -p z30-gui --features cm108`). A build without it refuses a `cm108`
-configuration with a message saying so; it never falls back to something else. The CI release
-artefacts are currently built **without** it.
+configuration with a message saying so; it never falls back to something else. The release
+archives and the CI release builds **include** it, and `--version` says whether a binary does
+(`features: cm108`).
 
 ## Migrated PTT methods
 
 `z30 --migrate` carries over `CAT`, `RTS`, `DTR`, `VOX` and `CM108_GPIO` from the legacy
 configuration. For CM108 it takes the configured pin and the first C-Media device found.
 
-The legacy app also offered **`AUDIO_TONE_RIGHT`, `RASPBERRY_PI_GPIO`, `TCI_NETWORK` and
-`WINKEYER`**. vNext does not implement these yet. Migration reports each as not migrated, with
+The retired legacy app also offered **`AUDIO_TONE_RIGHT`, `RASPBERRY_PI_GPIO`, `TCI_NETWORK`
+and `WINKEYER`**. z-30 does not implement these. Migration reports each as not migrated, with
 the reason, and the gate refuses to transmit until a supported method is configured. It never
-guesses a substitute. Until they are ported, operators who depend on them still need the legacy
-runtime. That is one of the conditions on retiring it (`VNEXT_IMPLEMENTATION_PLAN.md`
-section 8).
+guesses a substitute. None of the four was ever tested on hardware in the legacy app either.
 
 ## Serial ports and devices
 
@@ -70,6 +69,11 @@ they need access to the hidraw node, usually through a udev rule. See
 [troubleshooting.md](troubleshooting.md).
 
 ## Verification status
+
+**Real-radio validation: not yet performed.** No radio model, interface or PTT method below has
+been operated with z-30. "Supported" in this repository means "implemented and tested against
+simulated or scripted hardware", never "tested with a radio". The framework for doing it is in
+[hardware-validation.md](hardware-validation.md).
 
 | Item | Verified how | On hardware |
 | :--- | :--- | :--- |

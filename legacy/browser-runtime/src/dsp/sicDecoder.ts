@@ -80,7 +80,7 @@ function nextDecodedSignalOrdinal(): string {
   return decodedSignalOrdinal.toString(36).padStart(4, '0');
 }
 
-function toDecodedSignal(
+export function toDecodedSignal(
   frame: RealDecodedFrame,
   dialMhz: number,
   timeStr: string,

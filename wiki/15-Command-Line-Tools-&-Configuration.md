@@ -1,113 +1,99 @@
 # 15. Command-Line Tools & Configuration
 
-Everything the `z30_dsp` package exposes from a terminal, plus where z-30 keeps its files and
-which environment variables change its behaviour.
+## `z30` — the command-line station and toolbox
 
----
+`z30` **never transmits**: it has no PTT and no audio output path to a radio. (The one command
+that plays audio, `--loopback-test`, is for a cable loopback and refuses to run without
+`--confirm-no-transmitter`.)
 
-## 🖥️ The `z30` command
+| Command | What it does |
+| :--- | :--- |
+| `z30 --version` | version, exact commit, build date and compiler, target and architecture, profile, compiled-in features, protocol version |
+| `z30 --diagnostics` | configuration file, OS clock status, PTT method and whether it opens, `rigctld` reachability and readings, audio devices, and every reason the transmit gate would refuse |
+| `z30 --devices` | audio input/output devices and serial ports |
+| `z30 --receive [--capture-slots DIR]` | a live receive-only station on the configured input; with `--capture-slots`, every slot's 27 s window (WAV, 6 kHz) and decode report (JSON, `source: live-audio`) |
+| `z30 --decode FILE.wav [--start-utc T]` | decode a recording (any rate; resampled to 6 kHz); a 27 s 6 kHz file from `--capture-slots` is decoded as one slot |
+| `z30 --encode "CQ K1ABC FN31" --wav out.wav [--f0 1500] [--rate 48000]` | write a frame to a WAV file; refuses a message v1 cannot carry exactly |
+| `z30 --migrate [--force]` | import the retired app's configuration and logbook ([01](01-New-User-Guide-&-First-Steps.md#7-coming-from-the-old-browserpython-z-30)) |
+| `z30 --export-adif FILE` / `--import-adif FILE` | ADIF 3.1.4 export; import marks every field `legacy_import` |
+| `z30 --loopback-test --confirm-no-transmitter [--out a1.json]` | hardware validation test A1 ([`docs/hardware-validation.md`](../docs/hardware-validation.md)) |
+| `z30 --benchmark suite` | every published measurement, through `decode_slot`, JSON with provenance ([16](16-Benchmarking-Testing-&-CI.md)) |
+| `z30 --benchmark perf` | decode latency, CPU and allocations at K = 1, 5, 20, 50 stations |
 
-Installing the wheel (or any of the platform installers in
-[09. Cross-Platform Build & Packaging](09-Cross-Platform-Build-&-Packaging.md)) puts a single
-`z30` entry point on the path. Every subcommand is also reachable as a module, which is what to
-use from a source checkout without installing:
+The printed decode line is `YYYYMMDD HHMMSS  SNR dB  DT s  frequency Hz  message [aN]`.
 
-```bash
-# Launch the default web DSP transceiver application window
-z30
-# or: python3 -m z30_dsp.main
+## `z30-gui` — the desktop station
 
-# Monte Carlo channel simulation and decode-threshold benchmark
-z30 --benchmark
-# or: python3 -m z30_dsp.benchmark
-# Add --workers N to spread the decoding over N processes (0 = one per CPU). This changes how
-# long the run takes and nothing about the curve it produces - see wiki/16.
-# or: python3 -m z30_dsp.benchmark --workers 0
+See [14](14-User-Interface-&-Operation-Reference.md). `z30-gui --version` prints the same build
+information as `z30 --version`.
 
-# Terminal station configuration wizard
-z30 --wizard
-# or: python3 -m z30_dsp.config_wizard
+## Where files live
 
-# RF standard station time sync scanner (WWV, CHU, DCF77, MSF, WWVB, JJY)
-z30 --sync
-# or: python3 -m z30_dsp.rf_time_sync
-
-# CLI band preset manager
-z30 --bands
-# or: python3 -m z30_dsp.band_manager
-
-# Native zero-dependency Tkinter desktop GUI
-z30 --tkinter
-# or: python3 -m z30_dsp.gui_tkinter
-
-# Check for updates and sync from GitHub
-z30 --update
-# or: python3 -m z30_dsp.updater
-# Non-interactive auto-pull:
-z30 --update -y
-```
-
-`pyproject.toml` also installs direct aliases for the same entry points, which are handy in
-`.desktop` files and systemd units: `z30-transceiver`, `z30-web`, `z30-gui`, `z30-wizard`,
-`z30-sync`, `z30-bands`.
-
----
-
-## 📂 Where z-30 keeps your files
-
-Resolved by `z30_dsp/paths.py`, in this order:
-
-1. `$Z30_HOME`, if set — an explicit override, mainly for tests and packaging.
-2. `$XDG_CONFIG_HOME/z30`, if `XDG_CONFIG_HOME` is set (Linux/BSD desktop convention).
-3. `~/.z30` — the historical location, and the fallback everywhere else.
+`$Z30_HOME` if set, else `$XDG_CONFIG_HOME/z30`, else `~/.z30` (on Windows `~` is
+`%USERPROFILE%`). This is the directory the retired app used, so `--migrate` finds its files.
 
 | File | Contents |
 | :--- | :--- |
-| `config.json` | Station configuration, clock calibration (`app_time_offset_ms`), CAT and PTT settings |
-| `logbook.json` | The authoritative QSO log; the browser copy is only a cache |
-| `logbook.adi` | ADIF 3.1.4 export written alongside the JSON log |
-| `web_dist/` | An optional pre-built copy of the web GUI, searched before the packaged one |
+| `config.toml` | the configuration below |
+| `logbook.sqlite` | the logbook, with per-field provenance |
 
-A per-machine `config.json` is deliberately never repository-relative: an earlier version
-defaulted to the bare string `"config.json"`, so the file landed wherever the app happened to
-be launched from and a personal calibration file could be committed by accident.
+`z30 --config PATH` uses another configuration file.
 
----
+## `config.toml`
 
-## 🌱 Environment variables
+A new installation's configuration (this is exactly what `z30 --migrate` writes when there is
+nothing to migrate):
+
+```toml
+[station]
+callsign = ""            # empty: transmit refused
+grid = ""                # 4 or 6 characters; v1 sends the 4-character square if it is in the table
+# region = "IARU_R1"     # IARU_R1 | IARU_R2 | IARU_R3 | US; absent: transmit refused
+# license_class = "FULL" # FULL | US_EXTRA | US_ADVANCED | US_GENERAL | US_TECHNICIAN; absent: refused
+# configured_tx_power_w = 25.0   # what you set on the radio; logged as configuration, never as a measurement
+
+[operating]
+dial_hz = 14076000       # USB dial frequency
+rx_audio_hz = 1250.0
+tx_audio_hz = 1250.0     # tone 0; tone 15 is 46.9 Hz above
+tx_slot = "even"         # even = :00, odd = :30
+auto_sequence = true
+watchdog_cycles = 6      # stop after this many transmissions without progress
+auto_log = true          # log completed contacts (only received/measured fields)
+
+[ptt]
+method = "none"          # none | vox | cat | serial | cm108 (serial: port, line = "rts"/"dtr", active_high; cm108: device, pin, active_high)
+
+[rig]
+rigctld_host = ""        # empty: no rig control (dial unverified)
+rigctld_port = 4532
+poll_interval_ms = 1000
+
+[audio]
+# input_device = "USB Audio CODEC"    # substring of the device name; absent = system default
+# output_device = "USB Audio CODEC"
+tx_level = 0.5           # 0..1 of full scale
+
+[receiver]
+band_lo_hz = 200.0
+band_hi_hz = 2800.0
+max_candidates = 50
+passes = 3               # 1 disables SIC
+max_drift_hz = 4.0
+ap_enabled = false       # a priori decoding; decodes it recovers are labelled a1-a6
+```
+
+Safety limits (the 40 s PTT watchdog, the band plans) are compile-time constants, not
+configuration: nothing in this file can raise them.
+
+## Environment variables
 
 | Variable | Effect |
 | :--- | :--- |
-| `Z30_HOME` | Overrides the per-user data directory entirely |
-| `XDG_CONFIG_HOME` | Used as `$XDG_CONFIG_HOME/z30` when `Z30_HOME` is unset |
-| `Z30_ALLOW_SET_SYSTEM_CLOCK=1` | Permits the opt-in, bounded, confirmed system-clock step described in [13. Operating Safety](13-Operating-Safety-Compliance-&-Security.md) |
-| `DISABLE_HMR=true` | Turns off Vite HMR and file watching in development (used by automated tooling) |
-| `APP_URL` | Public URL when the web UI is hosted somewhere other than the local `127.0.0.1` server; used for self-referential links only |
+| `Z30_HOME` | the data directory |
+| `XDG_CONFIG_HOME` | `$XDG_CONFIG_HOME/z30` when `Z30_HOME` is unset |
+| `RAYON_NUM_THREADS` | threads the decoder uses (default: one per CPU) |
+| `SOURCE_DATE_EPOCH` | at build time: the build date recorded in `--version` (reproducible builds) |
 
-`.env.example` in the repository root documents anything else the build honours. Never commit a
-real `.env`; `.gitignore` excludes it.
-
----
-
-## 🌐 The local web server
-
-`z30_dsp/web_server.py` serves the built web GUI and the hardware API that the browser cannot
-reach on its own — serial CAT, CM108 HID, GPIO PTT and the `rigctld` relay.
-
-- It binds `127.0.0.1` only, and every `/api/` request must carry the per-start bearer token
-  plus a matching `Origin` and `Host`. Loopback is not an authentication boundary; see
-  [13. Operating Safety, Compliance & Local Security](13-Operating-Safety-Compliance-&-Security.md).
-- It locates the web bundle in order: `dist/` (in the working directory, then next to the
-  package), the packaged `z30_dsp/web_dist/`, then `~/.z30/web_dist/` and `~/.z30/dist/`. So a
-  stale `web_dist` snapshot never wins over a bundle you just built. Serving is read-only and
-  never triggers a build; pass `--rebuild` to run `npm run build` in the foreground first.
-- The GPIO PTT line is held by a dead-man switch: the browser re-asserts it about every 500 ms
-  and the pin drops within roughly two seconds of silence.
-
----
-
-## 🔄 Updating
-
-`z30 --update` wraps the git/pip update paths for each platform. Channel-by-channel
-instructions — including the PWA and Termux — are in
-[12. Software Updates & GitHub Sync](12-Software-Updates-&-GitHub-Sync.md).
+There is no longer a local web server, a `.env` file or a system-clock-step option: z-30 never
+changes the system clock.

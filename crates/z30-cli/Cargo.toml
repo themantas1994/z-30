@@ -22,6 +22,7 @@ serde_json.workspace = true
 crossbeam-channel.workspace = true
 rayon.workspace = true
 rand.workspace = true
+rustfft.workspace = true
 
 [features]
 cm108 = ["z30-io/cm108"]

@@ -9,6 +9,10 @@
 This document is the plan. Where it and the code disagree later, the code and its tests are the
 record; this file says what was intended and why, and what was left for the operator to decide.
 
+> Paths below are as of 2026-09-23. Since the retirement on 2026-09-24 (§8.3) the oracle lives in
+> `legacy/python-oracle/z30_dsp/`, the browser runtime in `legacy/browser-runtime/`, and the
+> rest of the legacy Python application and installers are deleted.
+
 ---
 
 ## 1. Confirmed architecture (what exists today)
@@ -170,7 +174,13 @@ operator-approval item (§44.5).
    code 127 as "no grid" would be a wire-format change (old receivers display it as `FN31`), so
    it is left to the operator.
 3. **Retiring the browser runtime, `web_server.py`, `web_dist/`, the Tk tools, RF time sync.**
-   Deferred to Phase 5.
+   **Taken on 2026-09-24** by the operator, in the remediation of the 2026-09-24 audit: vNext is
+   the only application; the Python application, the web bundle, the Tk tools, the RF time sync
+   and the installers are deleted; the Python protocol code is frozen as a non-production oracle
+   in `legacy/python-oracle`; the browser runtime is kept, unbuilt, in `legacy/browser-runtime`
+   as a reference. The legacy PTT methods vNext does not implement (audio-tone, Raspberry Pi
+   GPIO, TCI, WinKeyer) were retired with it rather than ported; none had been tested on
+   hardware. See `audit/2026-09-24-vnext-remediation/`.
 
 ## 9. Implementation order
 

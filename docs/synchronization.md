@@ -43,7 +43,10 @@ search uses only the Costas symbols; data symbols are never used to decide timin
 
 The sub-sample timing is refined by a parabolic fit through the metric at the best sample and
 its two neighbours, giving a fraction of the 5 ms baseband step. That removed a +10 ms DT bias
-the integer grid had.
+the integer grid had. A +2.9 ms bias remained (the 2026-09-24 audit measured +2.8 ms); after a
+frame decodes, its replica is placed on the received spectra by least squares to one 6 kHz
+sample, and that placement - not fine sync's - is the reported DT and the SIC's starting point
+([receiver.md](receiver.md#reported-snr-dt-and-frequency)).
 
 **Gate.** Candidates whose best fine metric is below `min_fine_sync` (2.5) times the bin noise
 stop here and never reach the LDPC decoder. This gate keeps the false-decode rate where
@@ -111,10 +114,29 @@ Measured: 2879 slots, worst alignment 0.35 ms, drift estimate 150.7 ppm.
 The same file runs a closed-loop QSO through the pipeline, decoder, gate, sequencer and logger,
 at 48 kHz with −120 ppm.
 
+The runtime-level test `crates/z30-engine/tests/live_runtime.rs` drives the same path through
+the production threads (`runtime::start`): the virtual sound card stalls 0.5 s before a slot's
+window closes, and the test asserts nothing is decoded during the stall, then that the decoder
+receives exactly the samples of [slot − 1.5 s, slot + 25.5 s] once the rest arrives. It fails
+against a scheduler that fires early and zero-pads (checked by mutation), which is the legacy
+C-01 defect.
+
+## Timing budget
+
+The receiver searches DT over ±1.5 s, and that window is hard: measured through
+`decode_slot`, 100% of frames decode at ±1.5 s and almost none at ±1.6 s
+([benchmarking.md](benchmarking.md#timing)). Everything between the transmitter's clock and
+this receiver's shares it: both stations' clock errors, both sound cards' latencies and the
+propagation delay. Keep the computer on UTC to well under a second.
+
 ## What the clock does not do
 
-It never sets the system clock, and never derives UTC from a received signal. The legacy RF
-time sync could "succeed" on pure noise and persist a 27 s offset (audit H4), so it has no
-counterpart in vNext. UTC comes from the operating system, whose synchronisation status the
-diagnostics report (`z30 --diagnostics`, and the GUI status bar). Keeping the host on NTP is
-the operator's part.
+It never sets the system clock, never applies an offset of its own, and never derives UTC from
+a received signal. There is no RF time sync and no network time query in z-30: the legacy RF
+time sync reported success on pure noise and persisted a 27–30 s offset (audits H4 / C-03), and
+the legacy network query called one HTTP round trip "sub-millisecond". UTC comes from the
+operating system. `z30 --diagnostics` and the GUI status bar report the operating system's own
+synchronisation status: "NTP-synchronised" only when `timedatectl` says so on Linux,
+"unavailable" when it cannot be asked, "not checked" on Windows and macOS - never "OK" by
+default (`wallclock::status_from_timedatectl`, tested). Keeping the host on NTP or GPS
+(`chrony` + `gpsd`) is the operator's part; z-30 does not manage it.

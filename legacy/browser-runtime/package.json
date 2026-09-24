@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "lint": "tsc --noEmit",
-    "test:ts": "tsx tests/crc14.test.mjs && tsx tests/frontend.test.mjs && tsx tests/transmitPath.test.mjs && tsx tests/rigReadback.test.mjs && tsx tests/rigProbeAndWatchdog.test.mjs && tsx tests/dspDeterminism.test.mjs && tsx tests/audioChannelSafety.test.mjs && tsx tests/apDecode.test.mjs",
+    "test:ts": "tsx tests/crc14.test.mjs && tsx tests/frontend.test.mjs && tsx tests/transmitPath.test.mjs && tsx tests/rigReadback.test.mjs && tsx tests/rigProbeAndWatchdog.test.mjs && tsx tests/dspDeterminism.test.mjs && tsx tests/audioChannelSafety.test.mjs && tsx tests/apDecode.test.mjs && tsx tests/rfTimeSyncRetired.test.mjs && tsx tests/legacyLabels.test.mjs",
     "test": "npm run lint && npm run test:ts"
   },
   "dependencies": {

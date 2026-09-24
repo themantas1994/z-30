@@ -1,109 +1,98 @@
 # 01. New User Guide & First Steps
 
-Welcome to **z-30**! This guide is designed to take you from a fresh installation to completing your first 30-second weak-signal contact on the air.
+z-30 is an **experimental** weak-signal digital mode for amateur radio and the software that
+operates it: `z30-gui` (the desktop station) and `z30` (the command-line station and toolbox),
+both native programs built from the Rust workspace in `crates/`.
 
----
+> **Before anything else: what has and has not been validated.**
+>
+> | State | Status |
+> | :--- | :--- |
+> | Protocol validated | **Yes** — an independent re-implementation from `SPEC.md` reproduces the encoder bit for bit |
+> | Software simulation validated | **Yes** — the receiver's performance is measured through its production entry point in seeded simulation ([16](16-Benchmarking-Testing-&-CI.md)) |
+> | Hardware validated | **No** — no radio, audio interface or PTT interface has been used with z-30 |
+> | On-air validated | **No** — no z-30 frame has been decoded over a real radio path |
+>
+> Nobody else runs z-30: there is no interoperability with FT8/WSJT-X or any other program.
 
-## 📋 Prerequisites & Station Requirements
+## 1. Install
 
-To operate z-30 on HF/VHF bands, you need:
-1. **Amateur Radio Transceiver**: An SSB transceiver (HF 160m–10m, VHF 6m/2m, or UHF 70cm).
-2. **Audio Interface**:
-   - Built-in USB soundcard (e.g., Icom IC-7300/705, Yaesu FT-991A/FT-710, Kenwood TS-590SG, Xiegu G90/X6100).
-   - External audio interface (e.g., Digirig Mobile, SignaLink USB, microHAM, DRA-30/50, or CM108/CM119 USB interface).
-   - Line-In / Line-Out jacks on your PC or smartphone.
-3. **Accurate Clock**: Digital modes require your system clock to be synchronized within $\pm 1.0\text{ s}$ of UTC. (z-30 includes a built-in RF Time Sync tool if internet NTP is unavailable).
-4. **Resonant or Tuned Antenna**: A matched antenna system (SWR $< 1.5:1$).
+See [`docs/install.md`](../docs/install.md). In short: download the release archive for your
+platform (when one exists) or build from source with Rust 1.95+:
 
----
+```bash
+cargo install --locked --path crates/z30-cli --features cm108
+cargo install --locked --path crates/z30-gui --features cm108
+z30 --version
+```
 
-## 🛠️ Step 1: Initial Setup Wizard
+z-30 needs no Python, Node or browser, and it has no fallback: if something cannot start, it
+says what and stops.
 
-When you launch z-30 for the first time (or click the **`Wizard`** button in the top navigation bar), the 4-step setup wizard will guide you through configuration:
+## 2. Check the machine
 
-### Step 1.1: Station Identity
-- **Callsign**: Enter your legal amateur radio callsign (e.g., `W1AW`, `G4ABC`, `DL1XYZ`).
-- **Maidenhead Grid Locator**: Enter your 4 or 6-character grid locator (e.g., `FN31`, `JO21xx`). Click **"Use Geolocation"** if using a GPS-equipped device to auto-fill your grid.
-- **Operator Name & QTH**: (Optional) Friendly info used for logging.
-- **Timezone**: Select your local timezone or keep default UTC.
+```bash
+z30 --diagnostics
+```
 
-### Step 1.2: Audio Soundcard I/O
-- **Input Device (RX)**: Select the soundcard receiving audio from your radio (e.g., `USB Audio CODEC`, `Microphone (Digirig)`).
-- **Output Device (TX)**: Select the soundcard routing audio to your radio transmitter.
-- **Audio Levels**: Watch the live VU meter while listening to the radio. Adjust your radio RF Gain or PC input volume so background band noise rests around **30% to 50%** on the green scale.
+prints the configuration file in use, the operating system's clock status, the PTT method, the
+rigctld connection, the audio devices and — most importantly — every reason the transmit gate
+would refuse to transmit right now. On a new installation that list is long, on purpose.
 
-### Step 1.3: Rig Control (Hamlib CAT)
-- **Model**: Select your transceiver from the searchable catalog of 200+ rigs.
-- **Connection Type**: Choose `Hamlib rigctld` (default port `4532`) or `Direct Serial`.
-- **Serial Port & Baud Rate**: E.g., `COM3` on Windows or `/dev/ttyUSB0` on Linux, matching your radio's internal menu baud rate (e.g., `19200` or `38400`).
+**The clock.** z-30 frames start on 30-second UTC boundaries and the receiver tolerates a total
+timing error of **±1.5 s** (both stations' clocks, both sound cards, propagation). z-30 reads the
+operating-system clock and never sets it. Keep the computer on UTC with NTP (or GPS with
+`chrony` + `gpsd` in the field). See [07](07-RF-Time-Synchronization-Engine.md).
 
-### Step 1.4: PTT Keying Method
-Select how your station keys the transmitter:
-- **`CAT Command`**: Sends digital keying commands through the serial/USB cable.
-- **`RTS Line` / `DTR Line`**: Hardware pin toggling used by Digirig, Rigblaster, and microHAM.
-- **`Audio Tone (Right Channel)`**: Plays an inaudible 1000/1500 Hz tone on the right audio channel to trigger an auto-VOX interface (e.g., SignaLink USB, HT cables, phones).
-- **`CM108/CM119 GPIO`**: Drives GPIO pin 3/4 on dedicated radio soundcards (DRA-30/50).
-- **`Raspberry Pi GPIO`**: Uses BCM pin 17/27 for field SBC setups.
+## 3. Receive first
 
-Click **"Test PTT"** to verify that your radio keys into transmit and returns to receive cleanly.
+Connect the radio's audio output to the computer, set the radio to **USB** (or its USB data
+mode) on a z-30 frequency, and start `z30-gui`. Or, headless:
 
----
+```bash
+z30 --devices                        # find your audio input
+z30 --receive                        # receive-only station; Ctrl-C to stop
+z30 --receive --capture-slots slots/ # also keep every slot's audio (WAV) and decode report (JSON)
+```
 
-## ⏱️ Step 2: UTC Time Synchronization
+Decodes show UTC, SNR (dB in 2500 Hz), DT (s), audio frequency (Hz) and the message. An `a1`…`a6`
+tag means the frame was completed with a priori information ([17](17-A-Priori-(AP)-Decoding.md)).
+An SNR shown as `<-22` or `>+30` is outside the range the estimator has been measured over; `--`
+means there was no signal estimate.
 
-z-30 transmissions synchronize to exact **30.0-second UTC slots**:
-- **Even Slot**: Transmissions start at `:00` and `:30` of each UTC minute.
-- **Active TX Window**: $24.0\text{ s}$ duration.
-- **Decode Window**: $24.0\text{ s}$ to $30.0\text{ s}$.
+## 4. Configure the station before transmitting
 
-### If you have internet access:
-Your operating system's NTP client will keep your clock in sync automatically.
+In **Settings**: your callsign, grid, regulatory region and licence class, the audio devices,
+rigctld (optional but recommended — see [06](06-Transceiver-CAT-Control-&-PTT-Wiring.md)) and a
+PTT method. There is **no default callsign**, region, licence class or PTT method, and the gate
+refuses to transmit until all are set. It also refuses:
 
-### If you are in the field (SOTA / POTA / Offline):
-1. Click the **`SYNC TIME`** button in the header.
-2. Tune your radio to a standard time broadcast station (**WWV** at 5/10/15 MHz, **CHU** at 3.33/7.85/14.67 MHz, **DCF77** at 77.5 kHz, etc.).
-3. The built-in DSP receiver will demodulate the audio subcarrier pulses, calculate the exact millisecond offset $\Delta t$, and apply an application-level offset without requiring administrator privileges.
+- a callsign z-30 v1 cannot carry exactly (portable `/P`, compound calls, prefixes ZV–ZZ, 3-character prefixes);
+- a grid square outside the 63-square v1 table (for CQ and grid replies);
+- any emission that would fall outside a permitted data segment for your region and class;
+- any frequency the radio contradicts, when rigctld can read it back.
 
----
+## 5. Transmit — into a dummy load first
 
-## 📻 Step 3: Setting Audio Levels & Waterfall Tuning
+Nothing about z-30's transmit path has been tested on a radio. Before the first on-air
+transmission: key into a dummy load (Tune), confirm the radio keys and unkeys, confirm the
+radio's ALC stays at zero, and have another receiver confirm a clean ~50 Hz-wide signal. The
+procedure is [`docs/hardware-validation.md`](../docs/hardware-validation.md). **Enable your
+radio's own TX time-out timer** if you key by CAT or CM108: nothing in software can unkey those
+after the computer crashes.
 
-1. **Select a Band**: Click the band selector dropdown (e.g., **20m** - `14.076 MHz`).
-2. **Audio RX Level**: Ensure the waterfall shows a dark blue/purple background with distinct signal tracks in yellow/green/cyan.
-3. **Audio TX Level / ALC**:
-   - In digital modes, **never overdrive your radio into heavy ALC compression**.
-   - Set your PC audio output volume so that your transceiver indicates **zero ALC** or minimal deflection (1-2 bars max).
-   - Digital 16-MFSK requires a linear RF amplifier stage. Excessive audio level causes intermodulation distortion (splatter) and reduces decode reliability.
+## 6. Making a contact
 
----
+1. Double-click a CQ in the decode list to answer it, or press **Call CQ**.
+2. With auto-sequence on, the sequencer advances only on messages addressed exactly to you, from
+   the station you are working, of the type the exchange expects.
+3. v1 has no roger bit: a report sent in reply to a report *is* the roger, by its place in the
+   sequence. The software never shows an `R` it did not send.
+4. When the exchange completes, the contact is logged with exactly what was received, sent and
+   measured — a field nothing supplied is left empty ([14](14-User-Interface-&-Operation-Reference.md)).
 
-## 🎯 Step 4: Making Your First QSO
+## 7. Coming from the old browser/Python z-30
 
-### Scenario A: Calling CQ (You start the contact)
-1. **Find a Clear Frequency**: Look at the waterfall and select an open 50 Hz slot. Click on the waterfall to set your RX and TX audio center frequencies (e.g., `1500 Hz`).
-2. **Select Transmit Slot**: Choose **`EVEN`** or **`ODD`**.
-3. **Select Macro TX 1**: The message will display `CQ <MYCALL> <MYGRID>` (e.g., `CQ W1AW FN31`).
-4. **Click `Start TX`**: The station will arm and automatically key the transmitter at the start of the next 30-second slot.
-5. **Auto-Sequencing**:
-   - When a distant station responds (e.g., `W1AW K1ABC -12`), z-30 will automatically advance to **TX 3** (`K1ABC W1AW R-08`).
-   - When the station confirms with **RR73** or **RRR**, z-30 transmits **TX 5** (`K1ABC W1AW 73`) and automatically commits the QSO to your logbook!
-
-### Scenario B: Answering Another Station's CQ
-1. **Monitor Activity**: Watch the **Activity Log** or the **Waterfall**.
-2. **Double-Click a CQ Message**: Double-clicking any decoded CQ in the Activity table or waterfall will:
-   - Tune your RX and TX frequencies to the calling station.
-   - Switch your transmit slot to the opposite slot (if they called on `EVEN`, you transmit on `ODD`).
-   - Arm macro **TX 2** (`<THEIRCALL> <MYCALL> <MYGRID>`).
-   - Automatically begin transmitting when the slot starts.
-
----
-
-## 📖 Step 5: Logbook & ADIF Export
-
-- Click **`Logbook`** in the header to view all logged contacts with calculated great-circle distance (km/miles) and beam headings (azimuth).
-- Click **`Export ADIF`** to download a standard `.adi` file ready for upload to:
-  - **ARRL Logbook of The World (LoTW)**
-  - **QRZ.com**
-  - **ClubLog**
-  - **eQSL.cc**
-- You can also export to **Cabrillo** (for contests), **CSV**, or **JSON**.
+Run `z30 --migrate` once. It imports your callsign, grid, licence data, rig and PTT settings and
+your logbook, and tells you exactly what it did not import and why. The old program is retired;
+see [08](08-Web-&-PWA-Architecture.md).

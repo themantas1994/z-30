@@ -4,6 +4,7 @@
 //! GUI, where the operator sees the gate's verdict before every transmission.
 
 mod bench;
+mod loopback;
 mod suite;
 
 use clap::Parser;
@@ -77,7 +78,8 @@ struct Cli {
     /// suite benchmark's own publishable size otherwise).
     #[arg(long)]
     frames: Option<usize>,
-    /// Output directory for suite results (default: research/results/<commit>).
+    /// Output directory for suite results (default: research/results/<commit>), or the JSON
+    /// file for --loopback-test.
     #[arg(long, value_name = "DIR")]
     out: Option<PathBuf>,
     /// Report configuration, clock, audio, rig and transmit-gate status.
@@ -104,6 +106,16 @@ struct Cli {
     /// Export the logbook as ADIF.
     #[arg(long, value_name = "FILE")]
     export_adif: Option<PathBuf>,
+    /// Hardware validation A1 (docs/hardware-validation.md): play a known frame through the
+    /// configured output, record it through the configured input and the production receive
+    /// path, and report decode, DT, frequency, SNR, clock error and occupied bandwidth as JSON.
+    /// Keys nothing; requires --confirm-no-transmitter.
+    #[arg(long)]
+    loopback_test: bool,
+    /// Confirms the audio output is looped back by cable with no transmitter (or VOX radio) in
+    /// the path.
+    #[arg(long)]
+    confirm_no_transmitter: bool,
     /// Import ADIF into the logbook (fields marked legacy_import).
     #[arg(long, value_name = "FILE")]
     import_adif: Option<PathBuf>,
@@ -189,6 +201,9 @@ fn run(cli: &Cli, config_path: &Path) -> Result<(), String> {
     let cfg = paths::load_config(config_path)?;
     if cli.diagnostics {
         return diagnostics(&cfg, config_path);
+    }
+    if cli.loopback_test {
+        return loopback::run(&cfg, cli.confirm_no_transmitter, cli.out.as_deref());
     }
     if let Some(wav) = &cli.decode {
         return decode_wav(wav, cli.start_utc, &cfg, cli.capture_slots.as_deref());

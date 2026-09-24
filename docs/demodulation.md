@@ -49,7 +49,7 @@ LLRs match the reference bit for bit.
 the demodulator, because it is a property of the receiver and not of any benchmark (AGENTS.md
 section 4). Measured paired in the reference, the pilot-aided coherent term is worth +1.29 dB
 when the timing is exact and costs 1.77 dB when the receiver has to find the frame itself
-(`z30_dsp/benchmark.py`). A test pins the value.
+(`legacy/python-oracle/z30_dsp/benchmark.py`). A test pins the value.
 
 ## Per-tone interference whitening
 

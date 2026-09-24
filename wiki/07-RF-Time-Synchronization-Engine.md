@@ -1,86 +1,51 @@
-# 07. RF Time Synchronization Engine
+# 07. Time Synchronisation
 
-Synchronous digital modes like z-30 rely on strict **30-second UTC slot alignment**. When operating in remote field locations (such as SOTA, POTA, maritime mobile, or emergency disaster response) without internet NTP or GPS time receivers, system clocks drift quickly.
+> **The RF time synchronisation engine has been removed.** This page kept its old file name so
+> links still work. What z-30 does about time now is below.
 
-**z-30** includes an embedded DSP tool (`z30_dsp/rf_time_sync.py` and the in-app **`SYNC TIME`** workbench) that synchronizes the clock directly against international HF and LF time standard stations over the air.
+## Why it was removed
 
----
+The legacy RF time sync (`rf_time_sync.py`, `rfTimeSyncEngine.ts`) claimed to set the clock from
+WWV/WWVH/CHU/DCF77/MSF/WWVB/JJY "with sub-millisecond precision". The 2026-09-23 and 2026-09-24
+audits found (C-03, F-01) that it never decoded a time code at all:
 
-## 📡 Supported Time Standard Broadcast Stations
+- its "RF timestamp" was the computer's own clock rounded to the minute — it measured the clock
+  against itself;
+- it reported success unconditionally once a crude pre-check passed, and the pre-check passed on
+  pure noise (20 of 20 noise dwells "succeeded");
+- its SNR was floored (`max(snr, 6.5)` and similar) and its confidence was a constant;
+- with no audio device it silently used its own simulator, reported
+  `SYNC OK … Offset: +29666.24 ms`, and **persisted that offset**, which could then step the OS
+  clock.
 
-| Station | Location | Frequencies | Modulation & Timing Signals |
-| :--- | :--- | :--- | :--- |
-| **WWV / WWVH** | Fort Collins, Colorado / Kauai, Hawaii | 2.5, 5.0, 10.0, 15.0, 20.0 MHz | 1000 Hz / 1200 Hz tone bursts (5 ms tick), 100 Hz BCD subcarrier |
-| **CHU** | Ottawa, Canada | 3.330, 7.850, 14.670 MHz | 1000 Hz second ticks (300 ms), 300-baud Bell 103 AFSK timecode on seconds 31–39 |
-| **DCF77** | Mainflingen, Germany | 77.5 kHz (LF) | 1 Hz AM carrier dips (100 ms / 200 ms PWM) + PRBS phase modulation |
-| **MSF** | Anthorn, United Kingdom | 60.0 kHz (LF) | Fast dual-pulse carrier on/off keying |
-| **WWVB** | Fort Collins, Colorado | 60.0 kHz (LF) | 17 dB carrier power reductions (0.2s, 0.5s, 0.8s) + BPSK phase modulation |
-| **JJY** | Fukushima / Saga, Japan | 40.0 kHz / 60.0 kHz (LF) | 1 Hz carrier amplitude keying |
+The sample output this page used to show (correlation 0.942, ±0.8 ms) was not a measurement
+either. Nothing of it remains in z-30. The retired browser snapshot's copy now always fails and
+stores nothing. The network time query ("atomic UTC, sub-millisecond" from one HTTP round trip,
+and a time-zone parsing error) is removed too.
 
----
+## What z-30 does
 
-## 🔬 DSP Time Calibration Pipeline
+- It uses the **operating system's UTC clock** and never changes it or applies an offset of its
+  own.
+- It reports the operating system's own synchronisation status: on Linux,
+  "NTP-synchronised" only when `timedatectl` says so, "NOT synchronised" when it says not,
+  "unavailable" when it cannot be asked; on Windows and macOS, "not checked". It never says
+  "OK" by default.
+- The GUI shows the **median DT** of recent decodes: a clock that is off shows up as every
+  station appearing early or late by the same amount. It is a diagnostic hint, not a correction.
+- `z30 --migrate` never imports a legacy clock offset.
 
-```
-   Radio Audio (Tuned to Time Station)
-                │
-   [ 5-Second Rapid Signal Pre-Validation ]
-                │
-   [ 61-Tap Windowed-Sinc FIR Bandpass Filter ] (e.g. Center: 1000 Hz, Q: 30)
-                │
-   [ Envelope Demodulation & Squaring ]
-                │
-   [ Normalized Cross-Correlation R_xy(tau) ] Against Reference Pulse
-                │
-   [ Peak Sub-Sample Quadratic Interpolation ]
-                │
-   [ Clock Offset Delta t = T_RF - T_System ] (Precision < 1.5 ms)
-                │
-   [ Apply Zero-Admin Offset Calibration ] (appTimeOffsetMs)
-```
+## What you need to do
 
----
+The receiver's timing window is **±1.5 s in total**, shared by the other station's clock, your
+clock, both sound cards' latency and the propagation delay. Measured through `decode_slot`,
+frames decode at ±1.5 s and essentially never at ±1.6 s ([16](16-Benchmarking-Testing-&-CI.md)).
+Keep the computer within a few tenths of a second of UTC:
 
-## 🎛️ Using RF Time Sync in the Application
+- **At home:** the operating system's NTP client (`systemd-timesyncd`, `chrony`, Windows Time,
+  macOS time server). Check `timedatectl` / `w32tm /query /status`.
+- **In the field, without Internet:** a GPS receiver with `gpsd` + `chrony` (PPS if available).
+  z-30 does not manage this and has not been tested with it.
 
-### 1. In the Web / PWA Interface:
-1. Click the **`SYNC TIME`** button in the header (or in the Setup Wizard / Settings).
-2. Choose your preferred standard station (e.g., **WWV 10.000 MHz** or **CHU 7.850 MHz**).
-3. Tune your receiver dial to the frequency in **USB** mode.
-4. Click **"Calibrate Time Offset"**.
-5. Watch the live correlation peak curve. Once locked, click **"Apply Offset to Station"**. z-30's own slot timing adjusts immediately, without root or administrative permissions - the machine's system clock is left alone unless you have explicitly opted in (see the note below).
-
-### 2. From the Python CLI:
-```bash
-# Run the automated RF time calibration scanner
-z30-sync
-
-# or via the unified z30 CLI:
-z30 --sync
-```
-
-> **The system clock is not touched by default.** A time station is an unauthenticated
-> broadcast: anyone can transmit a WWV-shaped signal, and a marginal decode can produce a wrong
-> timestamp with no adversary at all. z-30 therefore applies the correction internally as
-> `app_time_offset_ms`, which is all the decoder needs, and never steps the machine's clock
-> unless you explicitly opt in - by setting `"allow_set_system_clock": true` in
-> `~/.z30/config.json` or exporting `Z30_ALLOW_SET_SYSTEM_CLOCK=1`. Even then, a proposed step
-> of more than 5 minutes is refused as a misdecode or a spoof, no more than 15 minutes of total
-> movement is allowed in any 24-hour window (so a run of individually-legal steps cannot walk
-> the clock somewhere arbitrary), each step is confirmed again wherever there is an operator to
-> ask rather than once at opt-in, and z-30 declines to fight an NTP daemon that already owns the
-> clock.
-
-Output example:
-```
-=============================================================
-  z-30 RF Standard Station Time Synchronization Engine
-=============================================================
-[+] Scanning standard stations: WWV, CHU, DCF77, MSF, WWVB, JJY...
-[+] Listening to audio stream (48000 Hz)...
-[+] Station Detected: WWV (Fort Collins, CO) on 10.000 MHz
-[+] FIR Filter: 61-tap Windowed-Sinc (Fc = 1000 Hz, BW = 40 Hz)
-[+] Peak Correlation: 0.942 at sample offset +144
-[+] Measured Time Offset (Delta t): +12.4 ms (+/- 0.8 ms)
-[SUCCESS] Application clock calibrated: Delta t = +12.4 ms.
-```
+WSJT-X asks for the same thing (clock within ±1 s of UTC); its FT8 receiver searches a wider
+window (about ±2.5 s) than z-30's ±1.5 s.

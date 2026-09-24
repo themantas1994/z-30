@@ -78,11 +78,25 @@ over a 120 s sliding window of (sample index, capture UTC) observations. A slot 
 the store holds every sample of its window, not when a UI timer fires. See
 [synchronization.md](synchronization.md#the-slot-clock).
 
-## Legacy runtime
+## What is not part of this graph
 
-The browser app (`src/`), `z30_dsp/web_server.py`, the Tk tools and RF time sync are still in
-the repository and still tested by the old CI. Retiring them is an operator decision, taken
-after the side-by-side run in Phase 5 (`VNEXT_IMPLEMENTATION_PLAN.md`). The Python modules
-`z30_dsp/{modem,ldpc,message_codec,acquisition,channel,ap_decode,benchmark}.py` are the frozen
-oracle: golden vectors are generated from them, and `research/paired_receiver.py` measures
-vNext against them.
+z-30's production application is the graph above and nothing else. There is no fallback path:
+if audio, rig control or PTT cannot be opened, the program reports the failure and does not
+start something else in its place.
+
+`legacy/` holds, outside it:
+
+- `legacy/python-oracle/`: the frozen Python implementation of v1 and its reference receiver.
+  Golden vectors are generated from it and `research/paired_receiver.py` measures
+  `decode_slot` against it. No crate depends on it; it has no entry points.
+- `legacy/browser-runtime/`: the retired browser/PWA transceiver, kept as a reference (its
+  TypeScript codec defines `fixtures/golden/messages.json`) and for reproducing the audits'
+  findings. Not built, served or installed.
+
+```text
+legacy/python-oracle --golden vectors--> fixtures/golden --tests--> crates/
+legacy/python-oracle <--paired comparison (research/, via z30-py bindings)--> decode_slot
+```
+
+Never the other way round: nothing in `crates/` reads, calls or falls back to anything in
+`legacy/`. See [`legacy/README.md`](../legacy/README.md).
