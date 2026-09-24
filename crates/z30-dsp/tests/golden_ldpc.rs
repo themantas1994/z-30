@@ -156,6 +156,25 @@ fn production_decoder_never_accepts_a_crc_failure_and_agrees_with_bp() {
     }
 }
 
+#[test]
+fn an_empty_ap_mask_decodes_bit_identically_to_no_mask() {
+    // AGENTS.md section 4: an AP-less decode must stay bit-identical - same bits, same
+    // iteration count, same syndrome - or every published threshold describes another decoder.
+    let doc = load("ldpc_corpus.json");
+    let llrs = read_llrs(doc["llr_file"].as_str().unwrap());
+    let mut dec = Decoder::new();
+    let empty: ApMask = [false; N];
+    for (i, llr) in llrs.iter().enumerate() {
+        let a = dec.decode(llr, None);
+        let b = dec.decode(llr, Some(&empty));
+        assert_eq!(
+            (a.success, a.info, a.iterations, a.method, a.min_syndrome),
+            (b.success, b.info, b.iterations, b.method, b.min_syndrome),
+            "frame {i}"
+        );
+    }
+}
+
 fn to_bits(s: &str) -> Vec<u8> {
     s.bytes().map(|b| b - b'0').collect()
 }
