@@ -23,6 +23,12 @@ Provenance notes:
   the published `--mode realistic` table frame for frame (-22.92 dB [-23.07, -22.79]). Later
   changes to SIC cannot move it: every frame holds one station, SIC runs only after a decode,
   and a decode is already counted.
+- `whitening_ab_200`: re-run with the `83b1b70` wheel (header `73ce0f9`; `decode_slot` is
+  unchanged between the two): identical to the first run, 0 discordant of 1000. Its per-point
+  counts differ from `awgn_paired_200` at the same SNR (18 against 23 at -24 dB) because the
+  harness consumes one generator across the sweep in order, so a sweep starting at -25 dB draws
+  different frames from one starting at -28 dB. Compare arms within a file, never counts across
+  files.
 - `perf_k`: measured after the SIC fit rewrite (block gains walked incrementally between block
   centres). The same bands decoded 1000/1000 at K = 50 before and after it, and the SIC
   suppression scenario in `crates/z30-dsp/tests/channel_scenarios.rs` reports identical figures.
