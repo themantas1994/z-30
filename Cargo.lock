@@ -4463,6 +4463,7 @@ version = "0.9.0"
 dependencies = [
  "arc-swap",
  "crossbeam-channel",
+ "ctrlc",
  "eframe",
  "egui",
  "z30-dsp",

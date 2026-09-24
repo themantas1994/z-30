@@ -19,6 +19,8 @@ eframe = { version = "0.36", default-features = false, features = ["accesskit", 
 egui = "0.36"
 crossbeam-channel.workspace = true
 arc-swap.workspace = true
+# SIGINT/SIGTERM/SIGHUP (Unix) and console close (Windows) -> release PTT before exiting.
+ctrlc = { version = "3", features = ["termination"] }
 
 [features]
 cm108 = ["z30-io/cm108"]
