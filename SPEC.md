@@ -220,7 +220,7 @@ BP reliability, flips up to two of the 14 least reliable, and **accepts a candid
 received CRC field equals the CRC of its payload**, then applies the same correlation and
 distance gates. Per OSD invocation this tests 106 candidates, so the union bound on a random
 CRC pass is 106 × 2⁻¹⁴ ≈ 6.5 × 10⁻³ *before* the correlation and distance gates; the rate that
-matters is the measured one (`docs/LDPC.md`).
+matters is the measured one (`docs/ldpc.md`).
 
 ## 8. Demodulation (reference metric)
 
@@ -260,7 +260,7 @@ bandwidth, for real white noise of per-sample variance σ² at sample rate fs.
 | GFSK modulator | float64, float32 output | ≤ 1e-6 |
 | LDPC BP cascade | float32 per §7 | yes: verdict, information bits and iteration count |
 | OSD | integer + float32 correlation | different rule (§7.1) |
-| Demodulator LLRs | float64 internally, float32 output | reference port bit-exact; production FFT path within tolerance (`docs/demodulation.md`) |
+| Demodulator LLRs | float64 internally, float32 output | production FFT path against the reference on the golden frame: 215/216 hard decisions, LLR correlation 0.998 (`crates/z30-dsp/tests/golden_demod.rs`, `docs/demodulation.md`) |
 
 ## 12. Protocol v2 (not adopted)
 
