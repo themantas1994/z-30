@@ -27,7 +27,7 @@ classifiers = [
     "Programming Language :: Python :: 3.13",
 ]
 
-# Deliberately no [project.scripts]: nothing here is an application.
+# Deliberately no console-script entry points: nothing here is an application.
 
 [tool.setuptools]
 packages = ["z30_dsp"]

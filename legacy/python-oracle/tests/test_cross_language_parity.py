@@ -693,7 +693,8 @@ def test_the_ap_instrument_reports_a_band_and_not_a_bare_crossing():
 
 def test_the_python_sources_stay_importable_on_the_supported_floor():
     """
-    AGENTS.md section 7 puts the support floor at Python 3.9, and CI runs 3.10 and up.
+    Written when the floor was Python 3.9 and CI ran 3.10 and up (the oracle now declares 3.10,
+    audit L-04; the check is kept because a 3.9-safe annotation costs nothing).
 
     So nothing in CI evaluates a module-level annotation the way 3.9 would, and
     `benchmark._log_sum_exp` carried `List[float] | np.ndarray` unquoted for exactly that
@@ -744,10 +745,18 @@ def test_the_python_sources_stay_importable_on_the_supported_floor():
                     if isinstance(sub, ast.BinOp) and isinstance(sub.op, ast.BitOr):
                         offenders.append(f"{directory}/{name}:{annotation.lineno}")
 
-    assert len(sources) > 20, "the scan found almost no sources - it would pass vacuously"
+    # The oracle was trimmed to its protocol and reference-receiver modules when it was frozen
+    # (2026-09-24), which left exactly 20 files and tripped a bare "more than 20" total. What the
+    # guard exists for is that neither tree was silently skipped, so require both halves.
+    per_directory = {}
+    for directory, _ in sources:
+        per_directory[directory] = per_directory.get(directory, 0) + 1
+    assert len(per_directory) == 2 and min(per_directory.values()) >= 8, (
+        f"the scan found almost no sources - it would pass vacuously: {per_directory}"
+    )
     assert not offenders, (
         "PEP 604 `X | Y` annotations evaluated at runtime, which raises TypeError on the "
-        f"Python 3.9 floor AGENTS.md section 7 sets: {offenders}. Quote them, as ldpc.py does."
+        f"Python 3.9: {offenders}. Quote them, as ldpc.py does."
     )
 
 
