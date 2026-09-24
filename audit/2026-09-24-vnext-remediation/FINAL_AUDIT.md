@@ -11,7 +11,15 @@ interface, PTT interface, RF path, GPS/PPS or on-air recording was available.
 
 ## Environment
 
-@@ENVIRONMENT@@
+| | |
+| :--- | :--- |
+| Repository | `themantas1994/z-30`, branch `claude/zealous-cori-6ndv68`, [PR #34](https://github.com/themantas1994/z-30/pull/34) |
+| Commits | `d8983ee` (vNext fixes), `17c3e8e` (legacy separation), `5ab1421` (documentation, results, audit drafts), `dedd4e0` (oracle test fixes), `f98a24a` (fading results), and the commit that adds this file |
+| Benchmarked binary | release build of `d8983ee`; the receiver crates are unchanged from it to the final commit |
+| OS | Linux 6.18.44 x86_64, Ubuntu 24.04.4 LTS, cloud container, 4 logical CPUs |
+| Toolchains | rustc/cargo 1.98.1 (stable) and 1.95 (declared MSRV); Python 3.11.15 (NumPy 2.2.6, SciPy 1.15.3, pytest 9.1.1, ruff 0.15.8); Node 22.22.2 / npm 10.9.7 |
+| CI | GitHub Actions: Linux, Windows, macOS; Python 3.10–3.13; Rust stable and 1.95 |
+| Hardware | **none available** |
 
 ## Findings
 
@@ -610,11 +618,113 @@ interface, PTT interface, RF path, GPS/PPS or on-air recording was available.
 - **Legacy PTT methods not ported** (audio tone, Raspberry Pi GPIO, TCI, WinKeyer). They are
   listed in LEGACY_STATUS.md and KNOWN_LIMITATIONS.md, not claimed.
 
-@@BENCH_SECTION@@
+## Benchmarks re-run
 
-@@TESTS_SECTION@@
+Every figure is from `research/results/d8983eeef66e/`, produced by the release build of
+`d8983ee` through `decode_slot` with `RxConfig::default()`. Suite seed **20260830**. Every frame
+is seeded from (seed, benchmark, point, frame). Intervals are Wilson 95%, and paired comparisons
+use exact McNemar. It is all simulation. Details and comparison with the audit's own numbers
+are in [BENCHMARK_RESULTS.md](BENCHMARK_RESULTS.md).
 
-@@SEARCH_SECTION@@
+| Benchmark | Samples | Result |
+| :--- | :--- | :--- |
+| AWGN | 9 points × 200 | 50% −23.03 dB [−23.13, −22.89]; 90% −22.06 dB [−22.15, −21.80]; 0 false |
+| SNR accuracy | 11 points × 100 | bias −0.25…+0.01 dB, sd ≤ 0.38 dB from −22 to +30 dB; DT bias within ±0.5 ms |
+| Drift | 30 points × 200 | −22 dB: 92.5% at 0, ~79% at ±4, 58.5% at ±5, ~3% at ±8 Hz |
+| Timing | 11 points × 200 | 100% to ±1.5 s; 3.5% / 11.5% at +1.6 / −1.6 s; 0% at ±2.0 s |
+| Clock error | 11 points × 200 | ≥ 99.5% to ±5000 ppm; 72.5% / 81.5% at ±10000 ppm |
+| Impairments | 7 points × 200 | 100% (clipping, 8-bit, dropouts); 36.5% with 200 impulses at 50× RMS |
+| Busy band (random, overlapping) | 250 slots, 5750 stations | K = 40: 98.8% [98.2, 99.2]; 0 false, 0 duplicates |
+| False decodes | 2000 slots of 5 kinds | 0; 95% upper bound 1.5 × 10⁻³ per slot |
+| SIC on/off, paired | 24 cells × 100 | weak decoded 100/100 with SIC except exact co-location (0/100 both arms); p ≤ 1.2 × 10⁻¹⁰ where the arms differ; 0 false |
+| Fading (ensemble-normalised) | 25 points × 200 | 50% −20.79 / −21.31 / −21.07 dB (good / moderate / poor); high-latitude moderate 0 of 800 |
+
+## Tests
+
+Full record: [TEST_RESULTS.md](TEST_RESULTS.md).
+
+| Suite | Result |
+| :--- | :--- |
+| `cargo fmt --check`, `cargo clippy -D warnings` | clean |
+| `cargo test --workspace --exclude z30-py --release` | 139 passed, 0 failed, 1 ignored (a manual screening helper) |
+| `cargo build --workspace --release`, plus the CM108 release build | ok |
+| MSRV 1.95 build and test | see TEST_RESULTS.md; CI's MSRV job passed on the PR head |
+| Python oracle | 148 passed |
+| Golden vectors (oracle, TS codec) | reproduce byte for byte |
+| Retired browser runtime | typecheck clean; 10 test files pass |
+| CI on the PR head | all jobs green (Rust on three OSes, MSRV, benchmark provenance, golden, harness, oracle 3.10–3.13, legacy, hygiene, CodeQL) |
+
+**Failed tests:** none on the final tree. Two oracle tests failed on the first run after the
+legacy separation. Both were caused by the separation itself (an anti-vacuity count and a
+comment containing a searched-for string) and were fixed in `dedd4e0` without weakening what
+they check. **Skipped tests:** none, apart from the one `#[ignore]` helper above.
+
+## Final repository-wide search
+
+`git grep -i -F` over the committed tree at the final commit (lockfiles excluded). Counts are
+occurrences per area: `crates/` (the application), `legacy/`, docs (`wiki/`, `docs/`,
+`README.md`, `AGENTS.md`, `SPEC.md`, the plan), test data (`fixtures/`, `reference/`, `tests/`,
+`research/`), CI (`.github/`) and `audit/`.
+
+| Term | crates | legacy | docs | test data | CI | audit |
+| :--- | ---: | ---: | ---: | ---: | ---: | ---: |
+| `W1AW` | 21 | 45 | 7 | 173 | 4 | 25 |
+| `confidence: 99` | 0 | 2 | 0 | 0 | 0 | 4 |
+| `max(snr` | 0 | 12 | 1 | 0 | 0 | 3 |
+| `success=True` | 0 | 4 | 0 | 0 | 0 | 1 |
+| `SYNC OK` | 0 | 2 | 1 | 0 | 0 | 3 |
+| `FN31` | 27 | 56 | 9 | 82 | 2 | 26 |
+| `EM00` | 2 | 6 | 2 | 1 | 0 | 3 |
+| `-16` | 19 | 8 | 2 | 44 | 0 | 13 |
+| `simulated` | 3 | 9 | 4 | 0 | 0 | 2 |
+| `self-test` | 3 | 20 | 5 | 0 | 0 | 10 |
+| `benchmark` | 42 | 454 | 121 | 48 | 13 | 94 |
+| `fallback` | 1 | 51 | 4 | 3 | 0 | 9 |
+| `legacy` | 80 | 44 | 105 | 12 | 21 | 109 |
+
+**Classification of every occurrence in `crates/`** (the only code an operator runs). Each one
+was read:
+
+- **`W1AW`**: test inputs only. `#[cfg(test)]` modules in `ap.rs`, `codec.rs`, `migrate.rs`,
+  `logbook.rs`; `tests/safety.rs` and `qso_logging.rs`; and the comment in `config.rs` that
+  explains the C-04 test. There is no default, and CI checks with `strings` that the release
+  binaries contain none. *Legitimate test/reference.*
+- **`FN31`, `EM00`**: the protocol's 63-entry grid table (`codec.rs`, SPEC §6.2); tests; the
+  CLI's `--encode` help example; the loopback test message `CQ Q0TST FN31` (Q0TST is not a
+  valid issued call); and `migrate.rs`'s `LEGACY_DEFAULT_GRID`, which exists to **detect and
+  drop** the old default. *Legitimate.*
+- **`-16`**: the SNR grid of the fading benchmark (`suite.rs`); floating-point constants in
+  `math.rs` (`E-16`); test SNRs; and `migrate.rs`'s `LEGACY_DEFAULT_RST_RCVD`, which exists to
+  detect and drop the old default. *Legitimate.*
+- **`simulated`, `self-test`**: `virtual_clock.rs` (a simulated sound card in a test) and
+  `migrate.rs`'s skip list ("synthetic/self-test state … vNext has no such mode"). *Legitimate.*
+- **`benchmark`**: the explicit `z30 --benchmark` subcommand (`main.rs`, `bench.rs`,
+  `suite.rs`), which an operator must ask for and which calls `decode_slot` unchanged; and doc
+  comments in `z30-dsp` (`demod.rs`, `slot.rs`, `sync.rs`) explaining that the receiver's
+  constants are the validated ones. Nothing in `z30-dsp` branches on being benchmarked.
+  *Legitimate.*
+- **`fallback`**: one doc comment in `codec.rs` naming the old transmitter's lossy Base-37
+  callsign fallback, which vNext **refuses**. *Legitimate.*
+- **`legacy`**: the migration module and its report strings, provenance tags
+  (`Provenance::Legacy`) on imported log fields, comments naming what was removed, and the
+  `golden_ldpc.rs` test that pins the fixed OSD against the legacy one. *Legitimate.*
+- **`confidence: 99`, `max(snr`, `success=True`, `SYNC OK`**: **no occurrence in `crates/`.**
+
+**Outside `crates/`:**
+
+- `legacy/browser-runtime/src/data/pythonSource.ts` holds `SYNC OK`, `success=True` and
+  `max(snr_db, …)`. It is a frozen string snapshot of the deleted `rf_time_sync.py`, made for
+  the retired app's source viewer: data, never executed.
+- The `Math.max(snrDb, …)` lines in `legacy/…/rfTimeSyncEngine.ts` sit below the unconditional
+  retirement return and are unreachable, which `rfTimeSyncRetired.test.mjs` asserts.
+- The legacy README and tests quote `confidence: 99` and `SYNC OK` to describe the defects.
+- In docs, wiki 07 describes the retired `SYNC OK` / `max(snr, 6.5)` behaviour as a defect.
+  `FN31`/`EM00`/`-16` appear in SPEC's grid table, examples, and the accounts of the old
+  auto-logger's defaults.
+- Test data holds the golden vectors and the callsign known-answer vectors. `audit/` holds the
+  previous audits and this one.
+
+*Legitimate documentation/test/reference.* **No occurrence can affect the production runtime.**
 
 ## Hardware tests not performed
 
