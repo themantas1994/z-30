@@ -88,3 +88,24 @@ fn an_estimate_is_never_reported_above_the_strongest_signal_measured() {
         assert!(e < 1.0 && e > -6.0, "+40 dB reported as {:+.1} dB", 40.0 + e);
     }
 }
+
+#[test]
+fn no_signal_is_no_estimate_never_a_floor_value() {
+    // Post-remediation audit, mutation SNR-e: flooring the no-estimate case to -30 dB instead
+    // of returning None survived every test, and a floor value would be sent as a report. With
+    // nothing in the spectra there is no signal to estimate: None, which the QSO engine turns
+    // into "no report sent".
+    use rustfft::num_complex::Complex32;
+    use z30_dsp::demod::{replica_spectra, FrameSpectra, SymbolFft};
+    let fft = SymbolFft::new();
+    let modem = z30_protocol::gfsk::Modulator::new(6000.0).unwrap();
+    let (_, st) = random_station(&mut rng(4), 1000.0, 0.0, 0.0);
+    let replica = replica_spectra(&fft, &modem, &st.symbols, 0);
+    let silence = FrameSpectra { bins: vec![Complex32::new(0.0, 0.0); replica.len()] };
+    assert_eq!(silence.snr_db(&replica), None, "silence has no SNR");
+    // The same replica against spectra that contain it does give a number: the None above is
+    // the absence of signal, not a broken estimator.
+    let present =
+        FrameSpectra { bins: replica.iter().enumerate().map(|(i, z)| z + Complex32::new(1e-3 * ((i * 7919) % 13) as f32, 0.0)).collect() };
+    assert!(present.snr_db(&replica).is_some());
+}

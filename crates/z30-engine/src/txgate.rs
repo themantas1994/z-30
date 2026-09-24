@@ -5,7 +5,11 @@
 //! - the callsign must be one v1 can carry exactly (audit C5);
 //! - the frame to be sent must encode, must read back - symbols, parity, CRC, fields and text -
 //!   as exactly the message requested (partner callsign and grid included), and must be sent
-//!   FROM this station;
+//!   FROM this station. The verified frame is handed out in the `Permission` and is the only
+//!   thing the transmitter modulates (`TxKind::Frame` holds a `VerifiedFrame`, which only
+//!   `EncodedMessage::verify` can create), so a frame nobody verified cannot be transmitted;
+//! - a radio that reports an operating mode other than USB is refused: the emission check
+//!   assumes the audio is transmitted as upper sideband (2026-09-24 audit, L-07);
 //! - the emission is checked at its measured -40 dB width around the real tone span, not as a
 //!   50 Hz block centred on tone 0.
 //!
@@ -15,7 +19,7 @@ use crate::bandplan::{find_permitted_segment, is_valid_callsign, nearest_permitt
 use crate::config::StationConfig;
 use crate::rig::{DialDisagreement, RigStateTracker};
 use std::fmt;
-use z30_protocol::codec::{CallField, Callsign, CodecError, Message};
+use z30_protocol::codec::{CallField, Callsign, CodecError, EncodedMessage, Message, VerifiedFrame};
 use z30_protocol::{NUM_TONES, PLACEHOLDER_CALLSIGN, TONE_SPACING_HZ};
 
 /// -40 dB occupied bandwidth of the GFSK frame, Hz (tests/test_modem_spectrum.py measures 66).
@@ -57,6 +61,10 @@ pub enum Violation {
     },
     /// The radio reports a different dial than the one checked.
     RigDialDisagrees(DialDisagreement),
+    /// The radio reports an operating mode in which the emission would not be the one checked.
+    RigModeNotUsb(String),
+    /// The frame offered for transmission is not the frame of the requested message.
+    FrameNotForMessage,
     /// The message cannot be carried exactly.
     MessageNotEncodable(CodecError),
     /// The message's sender field is not this station.
@@ -65,6 +73,8 @@ pub enum Violation {
     PttNotConfigured,
     /// The transmit hardware (audio output, keying line) could not be opened.
     HardwareUnavailable(String),
+    /// The transmit audio level is zero: the transmitter would be keyed with no signal.
+    TxAudioLevelZero,
 }
 
 impl fmt::Display for Violation {
@@ -78,7 +88,7 @@ impl fmt::Display for Violation {
             NoRegion => write!(f, "No regulatory region is configured."),
             NoLicenseClass => write!(f, "No licence class is configured."),
             ClassNotInRegion => write!(f, "The licence class does not apply in the configured region."),
-            FrequencyUndetermined => write!(f, "The transmit frequency could not be determined from the dial frequency and audio offset."),
+            FrequencyUndetermined => write!(f, "The transmit frequency could not be determined: no dial frequency is set (Settings: dial), or the dial or audio offset is not a usable number."),
             AudioOffsetOutOfRange(hz) => write!(f, "Transmit audio frequency {hz:.0} Hz is outside {MIN_TX_AUDIO_HZ:.0}-{MAX_TX_AUDIO_TOP_HZ:.0} Hz."),
             OutOfBand { low_hz, high_hz, nearest } => {
                 write!(f, "{:.6}-{:.6} MHz is not inside any data segment available to this licence.", low_hz / 1e6, high_hz / 1e6)?;
@@ -99,10 +109,13 @@ impl fmt::Display for Violation {
                 d.commanded_hz / 1e6,
                 d.error_hz / 1e3
             ),
+            RigModeNotUsb(m) => write!(f, "The radio reports mode {m}. z-30 checks its emission as upper sideband (USB or PKTUSB); in any other mode the frequencies radiated are not the ones checked. Set the radio to USB."),
+            FrameNotForMessage => write!(f, "internal error: the frame offered for transmission is not the requested message's; refusing to transmit it"),
             MessageNotEncodable(e) => write!(f, "The message cannot be sent: {e}"),
             MessageNotFromStation(c) => write!(f, "The message is sent from {c}, not from this station's callsign."),
             PttNotConfigured => write!(f, "No PTT method is configured (Settings: PTT)."),
             HardwareUnavailable(why) => write!(f, "Transmit hardware unavailable: {why}"),
+            TxAudioLevelZero => write!(f, "The transmit audio level is 0 (Settings: TX level): the radio would be keyed with no signal."),
         }
     }
 }
@@ -110,8 +123,13 @@ impl fmt::Display for Violation {
 /// The gate's answer.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Permission {
-    /// True only if every condition passed.
+    /// True only if every condition passed and, for a frame, the verified frame is present.
     pub allowed: bool,
+    /// The frame that passed the round trip, for a message request that was allowed. This, not
+    /// a re-encoding, is what the transmitter sends: before it existed `plan_tx` encoded the
+    /// message a second time after the gate had passed (2026-09-24 post-remediation audit,
+    /// N-03), so what was verified and what was keyed were two different objects.
+    pub frame: Option<VerifiedFrame>,
     /// Every failed condition, in check order.
     pub violations: Vec<Violation>,
     /// Centre of the emission, Hz, when computable.
@@ -124,7 +142,7 @@ pub struct Permission {
 pub struct TxRequest<'a> {
     /// Station identity and licence.
     pub station: &'a StationConfig,
-    /// The dial this software commanded, Hz.
+    /// The dial the emission is checked at, Hz (NaN when none is set: refused).
     pub dial_hz: f64,
     /// Tone-0 audio frequency, Hz.
     pub tx_audio_hz: f64,
@@ -132,8 +150,24 @@ pub struct TxRequest<'a> {
     pub message: Option<&'a Message>,
 }
 
-/// Runs every check. `now_ms` is the rig tracker's clock.
+/// Upper-sideband mode names as Hamlib reports them. The emission is dial + audio only in these.
+pub const USB_MODES: [&str; 2] = ["USB", "PKTUSB"];
+
+/// Runs every check. `now_ms` is the rig tracker's clock. For a message, the frame checked is
+/// `Message::encode`'s, and it is returned in `Permission::frame` when allowed.
 pub fn can_transmit(req: &TxRequest<'_>, rig: &RigStateTracker, now_ms: u64) -> Permission {
+    can_transmit_encoded(req, req.message.map(Message::encode), rig, now_ms)
+}
+
+/// The gate for an already-encoded candidate frame: `can_transmit` with the encoding step
+/// taken out, so a test can hand the gate a frame the real encoder would never produce and
+/// see it refused. `candidate` must be the encoding of `req.message` (None for a tune).
+pub fn can_transmit_encoded(
+    req: &TxRequest<'_>,
+    candidate: Option<Result<EncodedMessage, CodecError>>,
+    rig: &RigStateTracker,
+    now_ms: u64,
+) -> Permission {
     let mut v = Vec::new();
     let call = req.station.callsign.trim().to_ascii_uppercase();
     let mut my_call: Option<Callsign> = None;
@@ -189,18 +223,30 @@ pub fn can_transmit(req: &TxRequest<'_>, rig: &RigStateTracker, now_ms: u64) -> 
         v.push(Violation::RigDialDisagrees(d));
     }
 
-    if let Some(m) = req.message {
-        // The whole frame, not just our callsign: encoded, then read back symbol by symbol as
-        // a receiver would. A frame that does not come back as this exact message - partner
-        // call, grid, report and all - is refused (audit C-06).
-        match m.encode() {
-            Ok(enc) => {
-                if let Err(e) = enc.verify_round_trip() {
-                    v.push(Violation::MessageNotEncodable(e));
-                }
-            }
-            Err(e) => v.push(Violation::MessageNotEncodable(e)),
+    if let Some(mode) = rig.fresh_reported_mode(now_ms) {
+        if !USB_MODES.contains(&mode.trim().to_ascii_uppercase().as_str()) {
+            v.push(Violation::RigModeNotUsb(mode.to_string()));
         }
+    }
+
+    let mut frame = None;
+    match (req.message, candidate) {
+        (None, None) => {}
+        (None, Some(_)) => v.push(Violation::FrameNotForMessage),
+        (Some(m), candidate) => {
+            // The whole frame, not just our callsign: read back symbol by symbol as a receiver
+            // would. A frame that does not come back as this exact message - partner call,
+            // grid, report and all - is refused (audit C-06), and only a frame that does is
+            // handed on to be transmitted.
+            match candidate.unwrap_or_else(|| m.encode()).and_then(EncodedMessage::verify) {
+                Ok(f) if f.message() == m => frame = Some(f),
+                Ok(_) => v.push(Violation::FrameNotForMessage),
+                Err(e) => v.push(Violation::MessageNotEncodable(e)),
+            }
+        }
+    }
+
+    if let Some(m) = req.message {
         if my_call.as_ref() != Some(&m.from) {
             v.push(Violation::MessageNotFromStation(m.from.to_string()));
         }
@@ -209,5 +255,8 @@ pub fn can_transmit(req: &TxRequest<'_>, rig: &RigStateTracker, now_ms: u64) -> 
         }
     }
 
-    Permission { allowed: v.is_empty(), violations: v, tx_centre_hz: tx_centre, segment }
+    // Fails closed twice: a violation refuses, and so does a message request with no verified
+    // frame, whatever the list says.
+    let allowed = v.is_empty() && frame.is_some() == req.message.is_some();
+    Permission { allowed, frame: frame.filter(|_| allowed), violations: v, tx_centre_hz: tx_centre, segment }
 }

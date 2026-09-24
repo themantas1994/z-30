@@ -13,7 +13,8 @@ use std::sync::Arc;
 pub enum Command {
     /// Replace the configuration (validated; TX halts while keyed state is re-evaluated).
     UpdateConfig(Box<Config>),
-    /// Set the dial (commanded; the rig tracker verifies it).
+    /// Set the dial. It is sent to the radio when rig control is configured; it counts as
+    /// "commanded" only once the radio acknowledges that command.
     SetDial(u64),
     /// Set the receive and transmit tone-0 audio frequencies.
     SetAudioFrequencies {
@@ -128,8 +129,11 @@ pub struct EngineSnapshot {
     pub tx_blockers: Vec<String>,
     /// Rig readback.
     pub rig: RigSnapshot,
-    /// Dial this software commanded.
-    pub commanded_dial_hz: u64,
+    /// The operator's dial, Hz, if one is set.
+    pub dial_hz: Option<u64>,
+    /// Whether the radio acknowledged a set-frequency command for exactly `dial_hz`. False
+    /// means the dial is configuration only: nothing has told a radio to go there.
+    pub dial_commanded: bool,
     /// Audio.
     pub audio: AudioHealth,
     /// Decoder.

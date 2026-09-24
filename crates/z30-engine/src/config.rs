@@ -118,8 +118,11 @@ pub struct AudioConfig {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct OperatingConfig {
-    /// Dial frequency, Hz (USB).
-    pub dial_hz: u64,
+    /// Dial frequency, Hz (USB), as the operator set it. None = not set: the gate refuses to
+    /// transmit (the emission cannot be placed) and a contact logs no frequency unless the radio
+    /// reports one. There is no default: a default dial was logged as the contact's frequency,
+    /// labelled "commanded", on stations with no rig control (post-remediation audit, N-05).
+    pub dial_hz: Option<u64>,
     /// Receive tone-0 audio frequency, Hz (the "worked" frequency AP gates on).
     pub rx_audio_hz: f64,
     /// Transmit tone-0 audio frequency, Hz.
@@ -137,7 +140,7 @@ pub struct OperatingConfig {
 impl Default for OperatingConfig {
     fn default() -> Self {
         OperatingConfig {
-            dial_hz: 14_076_000,
+            dial_hz: None,
             rx_audio_hz: 1250.0,
             tx_audio_hz: 1250.0,
             tx_slot: TxSlot::Even,
@@ -228,5 +231,9 @@ mod tests {
         assert_eq!(c.ptt, PttConfig::None);
         assert_eq!(c.station.configured_tx_power_w, None);
         assert!(!c.receiver.ap_enabled);
+        // No dial either (N-05): a default frequency is not the station's frequency.
+        assert_eq!(c.operating.dial_hz, None);
+        // And no transmit level (N-09): the gate refuses 0.
+        assert_eq!(c.audio.tx_level, 0.0);
     }
 }

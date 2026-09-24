@@ -10,7 +10,7 @@
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::Duration;
 use z30_engine::pipeline::AudioBlock;
 use z30_engine::runtime::{AudioInput, AudioOutput};
 
@@ -94,7 +94,7 @@ impl InputCallbackState {
 }
 
 fn utc_now() -> f64 {
-    SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs_f64()).unwrap_or(0.0)
+    crate::wallclock::system_utc()
 }
 
 impl InputRings {

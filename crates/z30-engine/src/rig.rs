@@ -258,6 +258,15 @@ impl RigStateTracker {
         }
     }
 
+    /// The operating mode the radio reported, while that report is fresh.
+    pub fn fresh_reported_mode(&self, now_ms: u64) -> Option<&str> {
+        if self.has_fresh_reading(now_ms) {
+            self.reported_mode.as_deref()
+        } else {
+            None
+        }
+    }
+
     /// A settled, fresh disagreement with `commanded_hz`, or None. Only positive evidence of a
     /// mismatch is returned; everything uncertain is None.
     pub fn dial_disagreement(&self, commanded_hz: f64, now_ms: u64) -> Option<DialDisagreement> {

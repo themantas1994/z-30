@@ -15,7 +15,7 @@ use std::collections::VecDeque;
 use std::sync::Arc;
 use z30_dsp::ap::ApContext;
 use z30_dsp::slot::{RxConfig, SlotReport};
-use z30_protocol::codec::{CallField, Callsign, EncodedMessage};
+use z30_protocol::codec::{CallField, Callsign, VerifiedFrame};
 
 /// Decodes kept for display.
 pub const DECODE_HISTORY: usize = 500;
@@ -23,8 +23,9 @@ pub const DECODE_HISTORY: usize = 500;
 /// What to transmit in a slot.
 #[derive(Clone, Debug)]
 pub enum TxKind {
-    /// A frame.
-    Frame(Box<EncodedMessage>),
+    /// A frame. Only the gate can supply one: `VerifiedFrame` has no constructor but
+    /// `EncodedMessage::verify`, and `plan_tx` takes it from `Permission::frame`.
+    Frame(Box<VerifiedFrame>),
     /// An unmodulated carrier at the TX audio frequency, for tuning (one frame long at most).
     Tune,
 }
@@ -47,7 +48,14 @@ pub struct Engine {
     config: Arc<Config>,
     seq: Option<Sequencer>,
     rig: RigStateTracker,
-    commanded_dial: u64,
+    /// The operator's dial (configuration or `SetDial`), if any.
+    dial: Option<u64>,
+    /// True only after the radio acknowledged a set-frequency command for exactly `dial`.
+    dial_commanded: bool,
+    /// A dial the runtime should send to the radio (set when the operator changes it).
+    dial_to_command: Option<u64>,
+    /// Tone-0 audio offset of the last frame this station transmitted, Hz.
+    last_tx_audio_hz: Option<f64>,
     tx_enabled: bool,
     tune_pending: bool,
     active_tx: Option<(i64, String)>,
@@ -64,7 +72,10 @@ impl Engine {
     /// An engine with this configuration.
     pub fn new(config: Config) -> Self {
         let mut e = Engine {
-            commanded_dial: config.operating.dial_hz,
+            dial: config.operating.dial_hz,
+            dial_commanded: false,
+            dial_to_command: None,
+            last_tx_audio_hz: None,
             config: Arc::new(config),
             seq: None,
             rig: RigStateTracker::new(),
@@ -80,7 +91,9 @@ impl Engine {
             tx_hardware_problem: None,
         };
         e.rebuild_sequencer();
-        e.rig.note_requested_dial(e.commanded_dial as f64);
+        if let Some(d) = e.dial {
+            e.rig.note_requested_dial(d as f64);
+        }
         e
     }
 
@@ -105,9 +118,47 @@ impl Engine {
         &self.rig
     }
 
-    /// The dial this software commanded.
-    pub fn commanded_dial(&self) -> u64 {
-        self.commanded_dial
+    /// The operator's dial, Hz, if set.
+    pub fn dial_hz(&self) -> Option<u64> {
+        self.dial
+    }
+
+    /// Whether the radio acknowledged a set-frequency command for the current dial.
+    pub fn dial_commanded(&self) -> bool {
+        self.dial_commanded
+    }
+
+    /// The dial to send to the radio, once, after the operator changed it. The runtime calls
+    /// this after every command and forwards it to rig control, if there is any.
+    pub fn take_dial_command(&mut self) -> Option<u64> {
+        self.dial_to_command.take()
+    }
+
+    /// The radio answered a set-frequency command for `hz`. Only an acknowledgement of the dial
+    /// that is still current makes it "commanded"; a failure, or an answer for a dial the
+    /// operator has since changed, leaves it configuration.
+    pub fn on_dial_command_result(&mut self, hz: u64, result: Result<(), String>) {
+        match result {
+            Ok(()) if self.dial == Some(hz) => self.dial_commanded = true,
+            Ok(()) => {}
+            Err(e) => {
+                if self.dial == Some(hz) {
+                    self.dial_commanded = false;
+                }
+                self.events.push(Event::Rig(format!("the radio did not accept the dial {:.6} MHz: {e}", hz as f64 / 1e6)));
+            }
+        }
+    }
+
+    fn set_dial(&mut self, dial: Option<u64>) {
+        if dial != self.dial {
+            self.dial = dial;
+            self.dial_commanded = false;
+            self.dial_to_command = dial;
+            if let Some(d) = dial {
+                self.rig.note_requested_dial(d as f64);
+            }
+        }
     }
 
     /// Whether a transmission is in progress.
@@ -120,23 +171,21 @@ impl Engine {
     pub fn apply(&mut self, cmd: Command, now_ms: u64) -> bool {
         match cmd {
             Command::UpdateConfig(c) => {
-                let dial_changed = c.operating.dial_hz != self.config.operating.dial_hz;
+                let dial = c.operating.dial_hz;
                 self.config = Arc::new(*c);
                 self.rebuild_sequencer();
-                if dial_changed {
-                    self.commanded_dial = self.config.operating.dial_hz;
-                    self.rig.note_requested_dial(self.commanded_dial as f64);
-                }
+                self.set_dial(dial);
                 // A configuration change while keyed ends the transmission: the gate approved
                 // the old configuration, not this one.
                 return self.halt_tx();
             }
             Command::SetDial(hz) => {
-                self.commanded_dial = hz;
-                self.rig.note_requested_dial(hz as f64);
                 let mut c = (*self.config).clone();
-                c.operating.dial_hz = hz;
+                c.operating.dial_hz = Some(hz);
                 self.config = Arc::new(c);
+                // Sent again even if unchanged: the operator asked for it to be commanded.
+                self.dial = None;
+                self.set_dial(Some(hz));
                 return self.halt_tx();
             }
             Command::SetAudioFrequencies { rx_hz, tx_hz } => {
@@ -264,19 +313,24 @@ impl Engine {
                     self.events.push(Event::SequencerWatchdog(k));
                 }
                 QsoNote::Complete(mut rec) => {
-                    // The radio's own reading when it is fresh and agrees; otherwise the commanded
-                    // dial, labelled as commanded.
-                    let dial = self.commanded_dial as f64;
-                    let verified = self.rig.verified_dial_hz(now_ms).filter(|&r| crate::rig::dial_agrees(dial, r, self.rig.resolution()));
-                    rec.dial_hz = match verified {
-                        Some(r) => Sourced::new(r, Provenance::RigVerified),
-                        None => Sourced::new(dial, Provenance::Commanded),
+                    // The strongest claim the evidence supports, and no stronger (N-05): what the
+                    // radio reports in a fresh reading; else a dial the radio acknowledged being
+                    // told; else the operator's setting, labelled as configuration; else nothing.
+                    rec.dial_hz = match (self.rig.verified_dial_hz(now_ms), self.dial) {
+                        (Some(r), _) => Some(Sourced::new(r, Provenance::ReportedByRig)),
+                        (None, Some(d)) if self.dial_commanded => Some(Sourced::new(d as f64, Provenance::Commanded)),
+                        (None, Some(d)) => Some(Sourced::new(d as f64, Provenance::Configured)),
+                        (None, None) => None,
                     };
-                    rec.tx_audio_hz = self.config.operating.tx_audio_hz;
-                    rec.band = self.config.station.region.zip(self.config.station.license_class).and_then(|(r, c)| {
-                        find_permitted_segment(r, c, rec.dial_hz.value + rec.tx_audio_hz + 23.4, OCCUPIED_40DB_HZ)
-                            .map(|s| s.band.to_string())
-                    });
+                    rec.tx_audio_hz = self.last_tx_audio_hz;
+                    let centre_offset = self.last_tx_audio_hz.unwrap_or(self.config.operating.tx_audio_hz)
+                        + (z30_protocol::NUM_TONES - 1) as f64 * z30_protocol::TONE_SPACING_HZ / 2.0;
+                    rec.band = match (&rec.dial_hz, self.config.station.region, self.config.station.license_class) {
+                        (Some(d), Some(r), Some(c)) => {
+                            find_permitted_segment(r, c, d.value + centre_offset, OCCUPIED_40DB_HZ).map(|s| s.band.to_string())
+                        }
+                        _ => None,
+                    };
                     rec.tx_power_w = self.config.station.configured_tx_power_w.map(|p| Sourced::new(p, Provenance::Configured));
                     if self.config.operating.auto_log {
                         match rec.validate() {
@@ -336,6 +390,11 @@ impl Engine {
         if let Some(p) = &self.tx_hardware_problem {
             v.push(crate::txgate::Violation::HardwareUnavailable(p.clone()));
         }
+        // A new installation's level is 0.0: keying with it puts a silent carrier-less TX on the
+        // air under the operator's name (2026-09-24 post-remediation audit, N-09).
+        if self.config.audio.tx_level.is_nan() || self.config.audio.tx_level <= 0.0 {
+            v.push(crate::txgate::Violation::TxAudioLevelZero);
+        }
         v
     }
 
@@ -344,7 +403,7 @@ impl Engine {
         let mut v = can_transmit(
             &TxRequest {
                 station: &self.config.station,
-                dial_hz: self.commanded_dial as f64,
+                dial_hz: self.dial.map_or(f64::NAN, |d| d as f64),
                 tx_audio_hz: self.config.operating.tx_audio_hz,
                 message: msg.as_ref(),
             },
@@ -373,7 +432,8 @@ impl Engine {
         let mut perm = can_transmit(
             &TxRequest {
                 station: &self.config.station,
-                dial_hz: self.commanded_dial as f64,
+                // No dial set: NaN, which the gate refuses as an undetermined frequency.
+                dial_hz: self.dial.map_or(f64::NAN, |d| d as f64),
                 tx_audio_hz: self.config.operating.tx_audio_hz,
                 message: msg.as_ref(),
             },
@@ -381,6 +441,10 @@ impl Engine {
             now_ms,
         );
         perm.violations.extend(self.hardware_violations());
+        if !perm.allowed && perm.violations.is_empty() {
+            // Refused with nothing to say is still refused: a frame request with no verified frame.
+            perm.violations.push(crate::txgate::Violation::FrameNotForMessage);
+        }
         if !perm.violations.is_empty() {
             self.tx_enabled = false;
             self.tune_pending = false;
@@ -392,12 +456,12 @@ impl Engine {
             self.tune_pending = false;
             return Some(TxPlan { slot, kind: TxKind::Tune, tx_audio_hz, text: "TUNE".into() });
         }
-        let msg = msg?;
-        match msg.encode() {
-            Ok(enc) => Some(TxPlan { slot, text: msg.to_string(), kind: TxKind::Frame(Box::new(enc)), tx_audio_hz }),
-            Err(e) => {
+        // The frame the gate verified, not a fresh encoding: what was checked is what is sent.
+        match perm.frame.take() {
+            Some(frame) => Some(TxPlan { slot, text: frame.message().to_string(), kind: TxKind::Frame(Box::new(frame)), tx_audio_hz }),
+            None => {
                 self.tx_enabled = false;
-                self.events.push(Event::TxRefused(vec![crate::txgate::Violation::MessageNotEncodable(e)]));
+                self.events.push(Event::TxRefused(vec![crate::txgate::Violation::FrameNotForMessage]));
                 None
             }
         }
@@ -406,6 +470,9 @@ impl Engine {
     /// The runtime keyed and started audio for `plan`.
     pub fn tx_started(&mut self, plan: &TxPlan) {
         self.active_tx = Some((plan.slot, plan.text.clone()));
+        if matches!(plan.kind, TxKind::Frame(_)) {
+            self.last_tx_audio_hz = Some(plan.tx_audio_hz);
+        }
         self.events.push(Event::TxStarted { slot: plan.slot, text: plan.text.clone() });
     }
 
@@ -445,7 +512,8 @@ impl Engine {
             next_tx_text: self.seq.as_ref().and_then(|s| s.next_message()).map(|m| m.to_string()),
             tx_blockers: self.blockers_now(now_ms).iter().map(|v| v.to_string()).collect(),
             rig: self.rig.snapshot(),
-            commanded_dial_hz: self.commanded_dial,
+            dial_hz: self.dial,
+            dial_commanded: self.dial_commanded,
             audio: self.audio.clone(),
             stats: self.stats.clone(),
             clock_status: self.clock_status.clone(),

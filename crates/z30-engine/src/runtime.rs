@@ -178,9 +178,9 @@ impl TxScheduler {
 pub fn tx_audio(plan: &TxPlan, rate: u32, level: f32) -> Result<Vec<f32>, String> {
     let level = level.clamp(0.0, 1.0);
     match &plan.kind {
-        TxKind::Frame(enc) => {
+        TxKind::Frame(frame) => {
             let m = Modulator::new(rate as f64).map_err(|e| e.to_string())?;
-            let w = m.synthesize(&enc.symbols, plan.tx_audio_hz).map_err(|e| e.to_string())?;
+            let w = m.synthesize(frame.symbols(), plan.tx_audio_hz).map_err(|e| e.to_string())?;
             Ok(w.into_iter().map(|v| v * level).collect())
         }
         TxKind::Tune => {
@@ -279,6 +279,8 @@ enum Internal {
     Slot(SlotEvent),
     Decoded(i64, Box<SlotReport>, f64),
     Rig(Result<Reading, String>),
+    /// The radio's answer to a set-frequency command.
+    DialSet(u64, Result<(), String>),
     Health(AudioHealth),
 }
 
@@ -402,9 +404,9 @@ pub fn start(config: Config, parts: RuntimeParts) -> RuntimeHandle {
                 .spawn(move || {
                     while !stop.load(Ordering::SeqCst) {
                         while let Ok(hz) = dial_rx.try_recv() {
-                            if let Err(e) = rig.set_dial(hz) {
-                                let _ = int_tx.try_send(Internal::Rig(Err(e)));
-                            }
+                            // The answer goes back to the engine either way: only an
+                            // acknowledged command makes the logged dial "commanded" (N-05).
+                            let _ = int_tx.send(Internal::DialSet(hz, rig.set_dial(hz)));
                         }
                         let _ = int_tx.try_send(Internal::Rig(rig.read()));
                         std::thread::sleep(period);
@@ -434,8 +436,11 @@ pub fn start(config: Config, parts: RuntimeParts) -> RuntimeHandle {
                         let mut dirty = false;
                         select! {
                             recv(cmd_rx) -> c => if let Ok(c) = c {
-                                if let Command::SetDial(hz) = c { let _ = dial_tx.try_send(hz); }
-                                if engine.apply(c, mono2.now_ms()) && txs.busy() {
+                                let halt = engine.apply(c, mono2.now_ms());
+                                // A dial the operator set goes to the radio, if there is rig control
+                                // (without it the channel has no receiver and this does nothing).
+                                if let Some(hz) = engine.take_dial_command() { let _ = dial_tx.try_send(hz); }
+                                if halt && txs.busy() {
                                     output.stop();
                                     let _ = ptt2.unkey();
                                     engine.note_ptt(false, mono2.now_ms());
@@ -455,6 +460,7 @@ pub fn start(config: Config, parts: RuntimeParts) -> RuntimeHandle {
                                     }
                                     Internal::Rig(Ok(r)) => engine.on_rig_reading(&r, mono2.now_ms()),
                                     Internal::Rig(Err(e)) => engine.on_rig_offline(&e),
+                                    Internal::DialSet(hz, r) => engine.on_dial_command_result(hz, r),
                                     Internal::Health(h) => engine.set_audio_health(h),
                                 }
                                 dirty = true;
