@@ -79,11 +79,11 @@ struct Cli {
     /// suite benchmark's own publishable size otherwise).
     #[arg(long)]
     frames: Option<usize>,
-    /// Suite base seed (default: the published 20260830). Another seed generates independent
-    /// frames under the same conditions, to measure a figure's sampling variability; its results
-    /// say they are not the published run.
+    /// Suite replicate number (default 0: the published seed 20260830). Replicate r >= 1 runs
+    /// the same conditions on frames no other replicate uses, to measure a figure's sampling
+    /// variability; its results say they are not the published run.
     #[arg(long)]
-    seed: Option<u64>,
+    replicate: Option<u16>,
     /// Output directory for suite results (default: research/results/<commit>), or the JSON
     /// file for --loopback-test / --audio-loopback-test.
     #[arg(long, value_name = "DIR")]
@@ -209,7 +209,7 @@ fn run(cli: &Cli, config_path: &Path) -> Result<(), String> {
         return Ok(());
     }
     if let Some(what) = &cli.benchmark {
-        return bench::run(what, cli.frames, cli.out.as_deref(), cli.seed);
+        return bench::run(what, cli.frames, cli.out.as_deref(), cli.replicate);
     }
     if cli.loopback_test {
         // No configuration is read: nothing in it could matter to a test that touches no device.

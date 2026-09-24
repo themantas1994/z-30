@@ -26,11 +26,26 @@ use z30_protocol::gfsk::Modulator;
 /// Base seed of the suite: the project's published seed, 2026-08-30.
 pub const SUITE_SEED: u64 = 20_260_830;
 
-/// The base seed of this run: `SUITE_SEED` unless `--seed` gave another. Another seed is for
-/// measuring the sampling variability of a published figure (independent frames, same
-/// conditions); its results record the seed and are marked as not the published run. It changes
-/// only which random frames the harness generates - never the receiver.
+/// The base seed of this run: `replicate_seed(r)` for `--replicate r`, `SUITE_SEED` (= replicate
+/// 0) otherwise. A replicate is for measuring the sampling variability of a published figure:
+/// the same conditions on frames none of which any other replicate, or the published run, uses.
+/// Its results record the seed and say they are not the published run. It changes only which
+/// random frames the harness generates - never the receiver.
 static RUN_SEED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(SUITE_SEED);
+
+/// Base seed of replicate `r`: the published seed with `r` in bits 48-63.
+///
+/// `frame_seed` puts the frame index in bits 0-19, the point in 20-39 and the benchmark in
+/// 40-47, all combined by XOR. The first version of `--seed` took the base seed from the user
+/// directly, and small seeds (1..10) only flipped low bits of the frame index: seeds 1-7
+/// regenerated exactly the published 200 frames per point in another order, and 8-10 nearly so.
+/// Ten "independent" AWGN replicates were therefore the same measurement ten times (found by
+/// their identical crossings; `tests::replicates_share_no_frame_with_each_other_or_the_published_run`
+/// now fails on that). Bits 48-63 are used by nothing else, so every replicate is a different
+/// set of ChaCha8 streams.
+pub fn replicate_seed(r: u16) -> u64 {
+    SUITE_SEED ^ ((r as u64) << 48)
+}
 
 fn run_seed() -> u64 {
     RUN_SEED.load(std::sync::atomic::Ordering::Relaxed)
@@ -714,8 +729,8 @@ fn fading(frames: usize) -> Value {
 }
 
 /// Entry point for suite benchmarks.
-pub fn run(what: &str, frames: Option<usize>, out: Option<&Path>, seed: Option<u64>) -> Result<(), String> {
-    RUN_SEED.store(seed.unwrap_or(SUITE_SEED), std::sync::atomic::Ordering::Relaxed);
+pub fn run(what: &str, frames: Option<usize>, out: Option<&Path>, replicate: Option<u16>) -> Result<(), String> {
+    RUN_SEED.store(replicate_seed(replicate.unwrap_or(0)), std::sync::atomic::Ordering::Relaxed);
     let names: Vec<&str> = if what == "suite" {
         BENCHMARKS.to_vec()
     } else if BENCHMARKS.contains(&what) {
@@ -749,10 +764,12 @@ pub fn run(what: &str, frames: Option<usize>, out: Option<&Path>, seed: Option<u
         v["provenance"]["elapsed_s"] = json!(t.elapsed().as_secs_f64());
         v["definitions"] = definitions();
         v["seed"] = json!({ "suite_seed": run_seed(), "published_seed": run_seed() == SUITE_SEED,
-            "per_frame": "suite_seed ^ (benchmark << 40) ^ (point << 20) ^ frame, ChaCha8 (z30_channel::rng)" });
+            "replicate": replicate.unwrap_or(0),
+            "per_frame": "suite_seed ^ (benchmark << 40) ^ (point << 20) ^ frame, ChaCha8 (z30_channel::rng); replicate r: suite_seed = 20260830 ^ (r << 48)" });
         if run_seed() != SUITE_SEED {
             v["not_the_published_run"] = json!(format!(
-                "suite seed {} is not the published seed {SUITE_SEED}: a replicate for measuring sampling variability",
+                "replicate {} (suite seed {}), not the published seed {SUITE_SEED}: for measuring sampling variability",
+                replicate.unwrap_or(0),
                 run_seed()
             ));
         }
@@ -797,6 +814,25 @@ mod tests {
         let hi = c["interval"][1].as_f64().unwrap();
         assert!(lo < -23.0 && hi > -23.0);
         assert!(crossing(&[(-24.0, 180, 200), (-23.0, 190, 200)], 50.0).is_none());
+    }
+
+    #[test]
+    fn replicates_share_no_frame_with_each_other_or_the_published_run() {
+        // Every benchmark, point and frame index the suite uses, for the published run and 20
+        // replicates: no frame seed may repeat. The first `--seed` failed this (seed 1 gave the
+        // published frames permuted).
+        let mut seen = std::collections::HashSet::new();
+        for r in 0..=20u16 {
+            let base = replicate_seed(r);
+            for b in 1..=10u64 {
+                for p in 0..40usize {
+                    for i in 0..400usize {
+                        assert!(seen.insert(base ^ (b << 40) ^ ((p as u64) << 20) ^ i as u64), "replicate {r} reuses a frame");
+                    }
+                }
+            }
+        }
+        assert_eq!(replicate_seed(0), SUITE_SEED, "replicate 0 is the published run");
     }
 
     #[test]
