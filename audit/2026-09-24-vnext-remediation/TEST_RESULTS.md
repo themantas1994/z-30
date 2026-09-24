@@ -24,7 +24,7 @@ needs an input file (`golden_ldpc.rs::screen_osd_pool`, `#[ignore]` since it was
 | Release build | `cargo build --workspace --exclude z30-py --release` | ok |
 | Release build, CM108 | `cargo build --release -p z30-cli -p z30-gui --features z30-cli/cm108,z30-gui/cm108` | ok; `--version` of both binaries reports commit, build date, rustc, target, architecture, profile, `features: cm108`, protocol v1 |
 | No real callsign in binaries | `strings target/release/z30 target/release/z30-gui \| grep -cw W1AW` | 0 |
-| MSRV | `cargo +1.95 build --workspace --locked` and `cargo +1.95 test --workspace --release --locked` (both `--exclude z30-py`) | CI job "Declared minimum Rust version builds and passes": success on `f98a24a` (Linux). Local run: pending when this file was committed; recorded in the following commit |
+| MSRV | `cargo +1.95 build --workspace --locked` and `cargo +1.95 test --workspace --release --locked` (both `--exclude z30-py`) | ok on cargo/rustc 1.95.0: build clean; **139 passed, 0 failed, 1 ignored** (same as stable). CI job "Declared minimum Rust version builds and passes" also green on the PR head |
 | Python oracle | `cd legacy/python-oracle && python -m pytest tests -q` | **148 passed**, 0 failed (after the fix in `dedd4e0`; the first run found 2 failures, see below) |
 | Oracle lint | `ruff check z30_dsp tests` (oracle), `ruff check research reference` | clean |
 | Golden vectors (oracle) | `python reference/golden/generate.py --check` | all 18 golden files reproduce byte for byte |

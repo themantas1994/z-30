@@ -648,7 +648,7 @@ Full record: [TEST_RESULTS.md](TEST_RESULTS.md).
 | `cargo fmt --check`, `cargo clippy -D warnings` | clean |
 | `cargo test --workspace --exclude z30-py --release` | 139 passed, 0 failed, 1 ignored (a manual screening helper) |
 | `cargo build --workspace --release`, plus the CM108 release build | ok |
-| MSRV 1.95 build and test | see TEST_RESULTS.md; CI's MSRV job passed on the PR head |
+| MSRV 1.95 build and test | ok locally (1.95.0: 139 passed, 0 failed, 1 ignored) and in CI |
 | Python oracle | 148 passed |
 | Golden vectors (oracle, TS codec) | reproduce byte for byte |
 | Retired browser runtime | typecheck clean; 10 test files pass |
