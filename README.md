@@ -74,7 +74,7 @@ Against FT8, all of it or none of it:
   (6.8 dB against 5.1 dB).
 - **Fading:** on ITU-R F.1487 high-latitude moderate (3 ms / 10 Hz Doppler) z-30 **does not
   decode at any SNR**: the Doppler spread is wider than the 3.125 Hz tone spacing. On slower
-  fading paths see @@FADING_README@@.
+  fading paths see the ensemble-normalised Watterson simulations in [docs/benchmarking.md](docs/benchmarking.md#fading): 50% at about −21 dB on the ITU-R F.1487 good, moderate and poor presets (−20.8 / −21.3 / −21.1 dB), with a slow-fading tail on the good channel (95% only at −14 dB).
 - **Collisions:** both modes subtract decoded signals and decode again; WSJT-X's FT8 decoder
   runs three passes with subtraction. z-30's measured collision behaviour (simulation, two
   stations, paired SIC on/off) is in [docs/benchmarking.md](docs/benchmarking.md#collisions-sic-on-versus-off).

@@ -61,7 +61,23 @@ airtime and the bit count is the error this page used to make.
 
 ## 3. Fading
 
-@@FADING_TABLE@@
+| | z-30 | FT8 | Class |
+| :--- | :--- | :--- | :---: |
+| 50% decode, ITU-R F.1487 good / moderate / poor (Watterson, average SNR) | −20.79 / −21.31 / −21.07 dB | [N] here | [M] |
+| 50% decode, high-latitude moderate (3 ms / 10 Hz) | none: 0 of 800 frames from −20 to +10 dB | [N] here | [M] |
+
+| ITU-R F.1487 preset (delay / Doppler) | −22 dB | −20 dB | −18 dB | −16 dB | −14 dB | −10 dB | 50% crossing |
+| :--- | ---: | ---: | ---: | ---: | ---: | ---: | :--- |
+| good (0.5 ms / 0.1 Hz) | 34.0% | 60.5% | 80.0% | 91.5% | 95.0% | 98.5% | −20.79 dB [−21.30, −20.28] |
+| moderate (1 ms / 0.5 Hz) | 34.5% | 79.5% | 96.0% | 99.0% | 100% | 100% | −21.31 dB [−21.60, −21.04] |
+| poor (2 ms / 1 Hz) | 27.0% | 76.5% | 99.0% | 100% | 100% | 100% | −21.07 dB [−21.32, −20.83] |
+| high-latitude moderate (3 ms / 10 Hz) | — | 0% | — | — | — | 0% (and 0% at 0 and +10 dB) | **no decode at any SNR** |
+
+Against AWGN (−23.03 dB), fading costs z-30 about 1.7–2.2 dB at the 50% point. On the slowest
+channel ("good", 0.1 Hz Doppler) the cost grows toward high decode rates: a frame whose whole
+24 s falls in a fade is lost whatever the average SNR, so 95% is reached only at −14 dB and
+98.5% at −10 dB. On the faster "poor" channel the fading averages out within a frame and 99%
+is reached at −18 dB.
 
 Source: `research/results/d8983eeef66e/fading.json`; `z30_channel::Watterson`, two equal-power
 paths with complex Gaussian taps and a Gaussian Doppler spectrum, normalised to unit power over

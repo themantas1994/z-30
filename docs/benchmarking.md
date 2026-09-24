@@ -213,7 +213,60 @@ default 3 passes (SIC) and with 1 pass. 100 trials per cell.
 
 ### Fading
 
-@@FADING_SECTION@@
+`fading.json`: `z30_channel::Watterson`, two equal-power paths, complex Gaussian taps with a
+Gaussian Doppler spectrum, normalised to unit power **over the ensemble** (so individual frames
+fade as a Rayleigh channel does; audit H-10). The SNR is the average SNR. Blind placement,
+200 frames per point.
+
+| Preset, SNR | Decoded (Wilson 95%) | False |
+| :--- | :--- | ---: |
+| good −24 dB | 25/200 = 12.5% [8.6, 17.8] | 0 |
+| good −22 dB | 68/200 = 34.0% [27.8, 40.8] | 0 |
+| good −20 dB | 121/200 = 60.5% [53.6, 67.0] | 0 |
+| good −18 dB | 160/200 = 80.0% [73.9, 85.0] | 0 |
+| good −16 dB | 183/200 = 91.5% [86.8, 94.6] | 0 |
+| good −14 dB | 190/200 = 95.0% [91.0, 97.3] | 0 |
+| good −10 dB | 197/200 = 98.5% [95.7, 99.5] | 0 |
+| moderate −24 dB | 12/200 = 6.0% [3.5, 10.2] | 0 |
+| moderate −22 dB | 69/200 = 34.5% [28.3, 41.3] | 0 |
+| moderate −20 dB | 159/200 = 79.5% [73.4, 84.5] | 0 |
+| moderate −18 dB | 192/200 = 96.0% [92.3, 98.0] | 0 |
+| moderate −16 dB | 198/200 = 99.0% [96.4, 99.7] | 0 |
+| moderate −14 dB | 200/200 = 100.0% [98.1, 100.0] | 0 |
+| moderate −10 dB | 200/200 = 100.0% [98.1, 100.0] | 0 |
+| poor −24 dB | 1/200 = 0.5% [0.1, 2.8] | 0 |
+| poor −22 dB | 54/200 = 27.0% [21.3, 33.5] | 0 |
+| poor −20 dB | 153/200 = 76.5% [70.2, 81.8] | 0 |
+| poor −18 dB | 198/200 = 99.0% [96.4, 99.7] | 0 |
+| poor −16 dB | 200/200 = 100.0% [98.1, 100.0] | 0 |
+| poor −14 dB | 200/200 = 100.0% [98.1, 100.0] | 0 |
+| poor −10 dB | 200/200 = 100.0% [98.1, 100.0] | 0 |
+| high-latitude moderate −20 dB | 0/200 = 0.0% [0.0, 1.9] | 0 |
+| high-latitude moderate −10 dB | 0/200 = 0.0% [0.0, 1.9] | 0 |
+| high-latitude moderate +0 dB | 0/200 = 0.0% [0.0, 1.9] | 0 |
+| high-latitude moderate +10 dB | 0/200 = 0.0% [0.0, 1.9] | 0 |
+
+| Preset | Delay / Doppler | 50% crossing |
+| :--- | :--- | :--- |
+| good | 0.5 ms / 0.1 Hz | −20.79 dB [−21.30, −20.28] |
+| moderate | 1.0 ms / 0.5 Hz | −21.31 dB [−21.60, −21.04] |
+| poor | 2.0 ms / 1.0 Hz | −21.07 dB [−21.32, −20.83] |
+| high-latitude moderate | 3.0 ms / 10 Hz | none: 0 of 800 frames from −20 to +10 dB |
+
+- Fading costs 1.7–2.2 dB at the 50% point against AWGN.
+- **Slow fading has a tail.** On "good" (0.1 Hz) a whole frame can sit in a fade, so 95% needs
+  −14 dB and 98.5% needs −10 dB. On "poor" (1 Hz) the fading averages within the frame and 99%
+  is reached at −18 dB. The per-realisation normalisation that the audit found (H-10) hid
+  exactly this tail. The audit's independent ensemble model gave 53% (good) and 76% (moderate)
+  at −20 dB over 100 frames; these runs give 60.5% and 79.5% over 200, and the intervals
+  overlap.
+- **High-latitude moderate: no decode at any SNR.** 10 Hz of Doppler spread is wider than the
+  3.125 Hz tone spacing.
+- The old figure "mid-latitude −21.4 dB" came from the per-realisation model and the oracle
+  receiver. It is withdrawn, and is not replaced by the moderate row above, which measures a
+  different receiver on a different model.
+- This is the project's own channel model. No independent channel simulator and no recording
+  of a real path were used.
 
 ## Earlier instruments
 

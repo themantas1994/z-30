@@ -37,7 +37,9 @@ elsewhere; each item is also stated where an operator would look for it.
 - Two stations at exactly the same frequency and DT: the weaker is never decoded, with or
   without SIC (0/100 at every power difference in `sic.json`). The boundary between that and
   5 Hz or 0.4 s apart, where SIC recovers it every time, has not been mapped.
-- Fading: see `fading.json`; nothing decodes on the high-latitude (10 Hz Doppler) channel.
+- Fading (`fading.json`, simulation): 50% at about −21 dB on ITU-R F.1487 good/moderate/poor, 1.7–2.2 dB
+  worse than AWGN; on the slowest channel a frame in a fade is lost whatever the average SNR
+  (95% only at −14 dB); nothing decodes on high-latitude moderate (10 Hz Doppler).
 - The AP effect has been measured only on the oracle's reference receiver, not through
   `decode_slot`.
 

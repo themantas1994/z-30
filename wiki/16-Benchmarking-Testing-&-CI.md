@@ -49,7 +49,7 @@ random carrier phase and payload.
 | Busy band, random overlapping placement | K = 40 at −20…0 dB: 98.8% [98.2, 99.2]; K = 20 at −22…−16 dB: 97.6%; 0 false decodes |
 | False decodes, no z-30 frame present | 0 in 2000 slots (white noise, CW carriers, 16-FSK without Costas, FT8-like 8-FSK, impulses); 95% upper bound 1.5 × 10⁻³ per slot |
 | Two-station collisions, SIC on vs off | weak station (−18 dB, 3–20 dB below) decoded 100/100 with SIC in every cell except exact co-location (0/100 in both arms); single pass loses it at 5–20 Hz; p ≤ 1.2 × 10⁻¹⁰ where the arms differ; 0 false, 0 duplicates in 2400 trials |
-| Watterson fading (ensemble-normalised) | @@FADING_ROW@@ |
+| Watterson fading (ensemble-normalised) | 50% at −20.79 / −21.31 / −21.07 dB on ITU-R F.1487 good / moderate / poor (average SNR); slow-fading tail on good (95% at −14 dB); **high-latitude moderate (10 Hz Doppler): 0 of 800 frames from −20 to +10 dB** |
 
 Not measured: any real recording, any hardware, any on-air path; collisions of three or more
 stations as a function of power difference; FT8 on the same channels.

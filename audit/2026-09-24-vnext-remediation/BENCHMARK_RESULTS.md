@@ -21,7 +21,7 @@ beside the 2026-09-24 audit's own measurements where it made them.
 | Seeds | suite seed **20260830**; frame seed = seed ^ (benchmark << 40) ^ (point << 20) ^ frame, ChaCha8 |
 | Success / false | the decoded 63 payload bits equal a transmitted payload / a CRC-valid decode of anything not transmitted |
 | Intervals | Wilson 95%; zero counts by exact Clopper–Pearson 95%; pairs by exact McNemar |
-| Run | 2026-09-24, 02:52–@@RUN_END@@ UTC; wall-clock per benchmark in each JSON |
+| Run | 2026-09-24, 02:52–03:53 UTC; wall-clock per benchmark in each JSON |
 | Receiver since | `z30-dsp`, `z30-protocol` and `z30-channel` are byte-identical between `d8983ee` and the remediation's final commit |
 
 ## Sample counts
@@ -56,9 +56,9 @@ beside the 2026-09-24 audit's own measurements where it made them.
 | Busy band K = 40, random placement | 97.8% [96.5, 98.6] (E023, DT ±1.0 s) | 98.8% [98.2, 99.2] (DT ±1.4 s) |
 | False decodes | 0 in 2100 slots of seven kinds (E024) | 0 in 2000 slots of five kinds |
 | SIC, two stations | not measured by a sweep | 24 paired cells × 100: weak decoded 100/100 with SIC except exact co-location (0/100 both arms); single-pass-only decodes 0; 0 false, 0 duplicates |
-| Fading, good −20 dB | 87% (per-frame normalised) → 53% (ensemble, audit's model) | @@FADING_GOOD@@ |
-| Fading, moderate −20 dB | 92% → 76% | @@FADING_MOD@@ |
-| Fading, high-latitude moderate | 1 of 800 | @@FADING_HIGH@@ |
+| Fading, good −20 dB | 87% (per-frame normalised) → 53% (ensemble, audit's model) | **60.5% [53.6, 67.0]** (ensemble, 200 frames); 50% at −20.79 dB |
+| Fading, moderate −20 dB | 92% → 76% | **79.5% [73.4, 84.5]**; 50% at −21.31 dB |
+| Fading, high-latitude moderate | 1 of 800 | **0 of 800** from −20 to +10 dB |
 
 The drift, timing, clock and impairment grids follow the brief's section 24. The per-point
 tables with latency and duplicate counts are in `SUMMARY.md`.
