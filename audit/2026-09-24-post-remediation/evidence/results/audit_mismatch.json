@@ -1,0 +1,83 @@
+{
+  "elapsed_s": 303.536283484,
+  "note": "independent audit harness; software simulation only",
+  "receiver": "z30_dsp::slot::Receiver::decode_slot, RxConfig::default()",
+  "result": {
+    "points": [
+      {
+        "bias_db": -0.17050980570178306,
+        "condition": "phase-noise 2 deg/sym rms",
+        "decoded": 60,
+        "frames": 60,
+        "sd_db": 0.14407013659754841,
+        "true_snr_db": 20.0
+      },
+      {
+        "bias_db": -0.9018551826740769,
+        "condition": "phase-noise 2 deg/sym rms",
+        "decoded": 60,
+        "frames": 60,
+        "sd_db": 0.32590509956166824,
+        "true_snr_db": 30.0
+      },
+      {
+        "bias_db": -0.488324621578771,
+        "condition": "phase-noise 5 deg/sym rms",
+        "decoded": 60,
+        "frames": 60,
+        "sd_db": 0.12831367027344448,
+        "true_snr_db": 20.0
+      },
+      {
+        "bias_db": -2.876348708397879,
+        "condition": "phase-noise 5 deg/sym rms",
+        "decoded": 60,
+        "frames": 60,
+        "sd_db": 0.23017007092568467,
+        "true_snr_db": 30.0
+      },
+      {
+        "bias_db": -0.045145373379373945,
+        "condition": "phase-noise 5 deg/sym rms",
+        "decoded": 60,
+        "frames": 60,
+        "sd_db": 0.13688988892547369,
+        "true_snr_db": 0.0
+      },
+      {
+        "bias_db": -0.0004324977122336963,
+        "condition": "phase-noise 5 deg/sym rms",
+        "decoded": 60,
+        "frames": 60,
+        "sd_db": 0.1717693628209274,
+        "true_snr_db": -15.0
+      },
+      {
+        "average_snr_db": 10.0,
+        "bias_vs_realised_db": -0.36021067750507374,
+        "condition": "Watterson moderate",
+        "decoded": 60,
+        "frames": 60,
+        "sd_db": 0.17573209452836752
+      },
+      {
+        "average_snr_db": 20.0,
+        "bias_vs_realised_db": -1.9211235532231496,
+        "condition": "Watterson moderate",
+        "decoded": 60,
+        "frames": 60,
+        "sd_db": 0.4153023417214559
+      },
+      {
+        "average_snr_db": 20.0,
+        "bias_vs_realised_db": -4.419919416737768,
+        "condition": "Watterson poor",
+        "decoded": 60,
+        "frames": 60,
+        "sd_db": 0.5341884016669542
+      }
+    ]
+  },
+  "seed_base": "0x5eeda0d10924",
+  "what": "mismatch"
+}

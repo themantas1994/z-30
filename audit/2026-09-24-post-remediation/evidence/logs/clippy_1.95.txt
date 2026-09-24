@@ -1,0 +1,18 @@
+### clippy
+error: this boolean expression contains a logic bug
+   --> crates/z30-protocol/src/codec.rs:259:28
+    |
+259 |     let canonical_prefix = pb != 0 && !(pa != 0 && pb == 0);
+    |                            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ help: it would look like the following: `pb != 0`
+    |
+help: this expression can be optimized out by applying boolean operations to the outer expression
+   --> crates/z30-protocol/src/codec.rs:259:41
+    |
+259 |     let canonical_prefix = pb != 0 && !(pa != 0 && pb == 0);
+    |                                         ^^^^^^^
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.95.0/index.html#overly_complex_bool_expr
+    = note: `#[deny(clippy::overly_complex_bool_expr)]` on by default
+
+error: could not compile `z30-protocol` (lib) due to 1 previous error
+warning: build failed, waiting for other jobs to finish...
+EXIT clippy 101

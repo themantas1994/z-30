@@ -1,0 +1,57 @@
+     Running unittests src/lib.rs (<scratch>/target195/release/deps/z30_channel-aed045e03551e3b0)
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 35.91s
+     Running unittests src/main.rs (<scratch>/target195/release/deps/z30-a76e7d9788b27997)
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.45s
+     Running unittests src/lib.rs (<scratch>/target195/release/deps/z30_dsp-48e9992f02abf91b)
+test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.10s
+     Running tests/channel_scenarios.rs (<scratch>/target195/release/deps/channel_scenarios-f1ab6949bfce8250)
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 27.23s
+     Running tests/golden_demod.rs (<scratch>/target195/release/deps/golden_demod-5f8e97bfc66aea4d)
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+     Running tests/golden_ldpc.rs (<scratch>/target195/release/deps/golden_ldpc-5d8c059cfbfc3da1)
+test result: ok. 7 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 7.15s
+     Running tests/sensitivity_regression.rs (<scratch>/target195/release/deps/sensitivity_regression-de834fcfee7c3255)
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 10.86s
+     Running tests/sic_regression.rs (<scratch>/target195/release/deps/sic_regression-1d38aebb15689577)
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 9.85s
+     Running tests/snr_accuracy.rs (<scratch>/target195/release/deps/snr_accuracy-0f4b4043e998745e)
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 47.19s
+     Running unittests src/lib.rs (<scratch>/target195/release/deps/z30_engine-72efaf7ba298d956)
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+     Running tests/emergency.rs (<scratch>/target195/release/deps/emergency-448a7eec20fd6a53)
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running tests/live_runtime.rs (<scratch>/target195/release/deps/live_runtime-b5d4703de3792e50)
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.89s
+     Running tests/qso_logging.rs (<scratch>/target195/release/deps/qso_logging-c002247beccadcf3)
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running tests/safety.rs (<scratch>/target195/release/deps/safety-705d4b8c5f31ff65)
+test result: ok. 23 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.40s
+     Running tests/virtual_clock.rs (<scratch>/target195/release/deps/virtual_clock-5fb05c8c5e9f92b7)
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 17.59s
+     Running unittests src/main.rs (<scratch>/target195/release/deps/z30_gui-a64a860f05218ba0)
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running unittests src/lib.rs (<scratch>/target195/release/deps/z30_io-25ded3a1e53add50)
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running tests/callback_alloc.rs (<scratch>/target195/release/deps/callback_alloc-8649f628977a3664)
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running tests/logbook_integrity.rs (<scratch>/target195/release/deps/logbook_integrity-ad6263cbf2470d78)
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running unittests src/lib.rs (<scratch>/target195/release/deps/z30_protocol-14fc7f282dd5af87)
+test result: ok. 18 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+     Running tests/golden.rs (<scratch>/target195/release/deps/golden-abc06d8539ff1d58)
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.07s
+     Running tests/properties.rs (<scratch>/target195/release/deps/properties-176a8c170fc70843)
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+     Running tests/round_trip.rs (<scratch>/target195/release/deps/round_trip-ffe76b732d7c89d6)
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.25s
+   Doc-tests z30_channel
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+   Doc-tests z30_dsp
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+   Doc-tests z30_engine
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+   Doc-tests z30_io
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+   Doc-tests z30_protocol
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+EXIT test 0

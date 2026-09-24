@@ -1,0 +1,113 @@
+{
+  "elapsed_s": 241.080895007,
+  "note": "independent audit harness; software simulation only",
+  "receiver": "z30_dsp::slot::Receiver::decode_slot, RxConfig::default()",
+  "result": {
+    "crossing_50pct_db": -22.93859649122807,
+    "crossing_90pct_db": -22.058823529411764,
+    "points": [
+      {
+        "decoded": 1,
+        "false_decodes": 0,
+        "frames": 200,
+        "snr_db": -25.0,
+        "wilson95": [
+          0.08831687058453754,
+          2.777370469642793
+        ]
+      },
+      {
+        "decoded": 1,
+        "false_decodes": 0,
+        "frames": 200,
+        "snr_db": -24.5,
+        "wilson95": [
+          0.08831687058453754,
+          2.777370469642793
+        ]
+      },
+      {
+        "decoded": 18,
+        "false_decodes": 0,
+        "frames": 200,
+        "snr_db": -24.0,
+        "wilson95": [
+          5.7687448660377365,
+          13.776571920817224
+        ]
+      },
+      {
+        "decoded": 50,
+        "false_decodes": 0,
+        "frames": 200,
+        "snr_db": -23.5,
+        "wilson95": [
+          19.508167967673103,
+          31.434098365775036
+        ]
+      },
+      {
+        "decoded": 93,
+        "false_decodes": 0,
+        "frames": 200,
+        "snr_db": -23.0,
+        "wilson95": [
+          39.71856410502652,
+          53.413353181656205
+        ]
+      },
+      {
+        "decoded": 150,
+        "false_decodes": 0,
+        "frames": 200,
+        "snr_db": -22.5,
+        "wilson95": [
+          68.56590163422494,
+          80.4918320323269
+        ]
+      },
+      {
+        "decoded": 184,
+        "false_decodes": 0,
+        "frames": 200,
+        "snr_db": -22.0,
+        "wilson95": [
+          87.40105113029428,
+          95.01594142951284
+        ]
+      },
+      {
+        "decoded": 200,
+        "false_decodes": 0,
+        "frames": 200,
+        "snr_db": -21.5,
+        "wilson95": [
+          98.1154673331037,
+          99.99999999999999
+        ]
+      },
+      {
+        "decoded": 200,
+        "false_decodes": 0,
+        "frames": 200,
+        "snr_db": -21.0,
+        "wilson95": [
+          98.1154673331037,
+          99.99999999999999
+        ]
+      },
+      {
+        "decoded": 200,
+        "false_decodes": 0,
+        "frames": 200,
+        "snr_db": -20.0,
+        "wilson95": [
+          98.1154673331037,
+          99.99999999999999
+        ]
+      }
+    ]
+  },
+  "seed_base": "0x5eeda0d10924",
+  "what": "awgn"
+}

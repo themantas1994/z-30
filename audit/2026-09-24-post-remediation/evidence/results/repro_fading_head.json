@@ -1,0 +1,637 @@
+{
+  "benchmark": "fading",
+  "channel": "z30_channel::Watterson: two equal-power paths, complex Gaussian taps with a Gaussian Doppler spectrum (sigma = spread / 2), normalised to unit ENSEMBLE power (per-frame power varies as Rayleigh fading does; audit H-10)",
+  "definitions": {
+    "duplicates_dropped": "decodes of an already-decoded payload that the receiver itself discarded (PassStats::duplicates)",
+    "duplicates_emitted": "the same payload reported more than once in the output (must be 0)",
+    "false_decode": "a CRC-valid decode whose payload was not transmitted in that slot",
+    "ground_truth": "the harness knows the transmitted payloads; the receiver is given only the 27 s window",
+    "interval": "Wilson score 95% interval, percent",
+    "latency": "wall-clock time of decode_slot per slot, measured while other slots were decoded concurrently on the same pool; indicative only (see `z30 --benchmark perf` for controlled latency)",
+    "sample_rate_hz": 6000.0,
+    "snr": "SPEC.md section 10: frame signal power over the noise power in 2500 Hz; real white Gaussian noise, sigma = 1 per sample at 6 kHz, so SNR = P / (5000 / 6000)",
+    "success": "a decode whose 63 payload bits equal the transmitted payload"
+  },
+  "frames_per_point": 200,
+  "placement": "as awgn",
+  "points": [
+    {
+      "decoded": 25,
+      "duplicates_dropped": 0,
+      "duplicates_emitted": 0,
+      "false_decodes": 0,
+      "frames": 200,
+      "label": "good -24 dB",
+      "latency_ms": {
+        "max": 953.382171,
+        "p50": 232.91432700000001,
+        "p95": 515.5840830000001
+      },
+      "param": {
+        "preset": "good",
+        "snr_db": -24.0
+      },
+      "percent": 12.5,
+      "wilson95": [
+        8.611974475712644,
+        17.801425002582345
+      ]
+    },
+    {
+      "decoded": 68,
+      "duplicates_dropped": 0,
+      "duplicates_emitted": 0,
+      "false_decodes": 0,
+      "frames": 200,
+      "label": "good -22 dB",
+      "latency_ms": {
+        "max": 1260.9660410000001,
+        "p50": 426.616989,
+        "p95": 973.861221
+      },
+      "param": {
+        "preset": "good",
+        "snr_db": -22.0
+      },
+      "percent": 34.0,
+      "wilson95": [
+        27.791545970908793,
+        40.81150447316374
+      ]
+    },
+    {
+      "decoded": 121,
+      "duplicates_dropped": 0,
+      "duplicates_emitted": 0,
+      "false_decodes": 0,
+      "frames": 200,
+      "label": "good -20 dB",
+      "latency_ms": {
+        "max": 1956.8270330000003,
+        "p50": 776.731357,
+        "p95": 1198.797687
+      },
+      "param": {
+        "preset": "good",
+        "snr_db": -20.0
+      },
+      "percent": 60.5,
+      "wilson95": [
+        53.588349159285364,
+        67.01589898679204
+      ]
+    },
+    {
+      "decoded": 160,
+      "duplicates_dropped": 0,
+      "duplicates_emitted": 0,
+      "false_decodes": 0,
+      "frames": 200,
+      "label": "good -18 dB",
+      "latency_ms": {
+        "max": 1653.263897,
+        "p50": 959.138135,
+        "p95": 1426.948146
+      },
+      "param": {
+        "preset": "good",
+        "snr_db": -18.0
+      },
+      "percent": 80.0,
+      "wilson95": [
+        73.91448134346213,
+        84.95479907390188
+      ]
+    },
+    {
+      "decoded": 183,
+      "duplicates_dropped": 0,
+      "duplicates_emitted": 0,
+      "false_decodes": 0,
+      "frames": 200,
+      "label": "good -16 dB",
+      "latency_ms": {
+        "max": 3664.579805,
+        "p50": 1192.158608,
+        "p95": 1546.220304
+      },
+      "param": {
+        "preset": "good",
+        "snr_db": -16.0
+      },
+      "percent": 91.5,
+      "wilson95": [
+        86.81041292843443,
+        94.62542498225244
+      ]
+    },
+    {
+      "decoded": 190,
+      "duplicates_dropped": 0,
+      "duplicates_emitted": 0,
+      "false_decodes": 0,
+      "frames": 200,
+      "label": "good -14 dB",
+      "latency_ms": {
+        "max": 22264.356557,
+        "p50": 1315.106764,
+        "p95": 1710.346587
+      },
+      "param": {
+        "preset": "good",
+        "snr_db": -14.0
+      },
+      "percent": 95.0,
+      "wilson95": [
+        91.0421851861224,
+        97.2617354399236
+      ]
+    },
+    {
+      "decoded": 197,
+      "duplicates_dropped": 0,
+      "duplicates_emitted": 0,
+      "false_decodes": 0,
+      "frames": 200,
+      "label": "good -10 dB",
+      "latency_ms": {
+        "max": 23251.781617,
+        "p50": 1490.629326,
+        "p95": 1731.319352
+      },
+      "param": {
+        "preset": "good",
+        "snr_db": -10.0
+      },
+      "percent": 98.5,
+      "wilson95": [
+        95.68342712073097,
+        99.48857622067418
+      ]
+    },
+    {
+      "decoded": 12,
+      "duplicates_dropped": 0,
+      "duplicates_emitted": 0,
+      "false_decodes": 0,
+      "frames": 200,
+      "label": "moderate -24 dB",
+      "latency_ms": {
+        "max": 887.535487,
+        "p50": 410.505091,
+        "p95": 620.1692330000001
+      },
+      "param": {
+        "preset": "moderate",
+        "snr_db": -24.0
+      },
+      "percent": 6.0,
+      "wilson95": [
+        3.465219425433187,
+        10.193169295766271
+      ]
+    },
+    {
+      "decoded": 69,
+      "duplicates_dropped": 0,
+      "duplicates_emitted": 0,
+      "false_decodes": 0,
+      "frames": 200,
+      "label": "moderate -22 dB",
+      "latency_ms": {
+        "max": 18328.37267,
+        "p50": 526.067634,
+        "p95": 989.0833060000001
+      },
+      "param": {
+        "preset": "moderate",
+        "snr_db": -22.0
+      },
+      "percent": 34.5,
+      "wilson95": [
+        28.259794376748943,
+        41.32441074094632
+      ]
+    },
+    {
+      "decoded": 159,
+      "duplicates_dropped": 0,
+      "duplicates_emitted": 0,
+      "false_decodes": 0,
+      "frames": 200,
+      "label": "moderate -20 dB",
+      "latency_ms": {
+        "max": 1382.6724729999999,
+        "p50": 927.7218929999999,
+        "p95": 1170.312159
+      },
+      "param": {
+        "preset": "moderate",
+        "snr_db": -20.0
+      },
+      "percent": 79.5,
+      "wilson95": [
+        73.37430194757748,
+        84.51382379616379
+      ]
+    },
+    {
+      "decoded": 192,
+      "duplicates_dropped": 0,
+      "duplicates_emitted": 0,
+      "false_decodes": 0,
+      "frames": 200,
+      "label": "moderate -18 dB",
+      "latency_ms": {
+        "max": 1642.675004,
+        "p50": 1081.571439,
+        "p95": 1367.8628820000001
+      },
+      "param": {
+        "preset": "moderate",
+        "snr_db": -18.0
+      },
+      "percent": 96.0,
+      "wilson95": [
+        92.3067931799067,
+        97.95943679338475
+      ]
+    },
+    {
+      "decoded": 198,
+      "duplicates_dropped": 0,
+      "duplicates_emitted": 0,
+      "false_decodes": 0,
+      "frames": 200,
+      "label": "moderate -16 dB",
+      "latency_ms": {
+        "max": 841.2157970000001,
+        "p50": 625.9290400000001,
+        "p95": 782.170982
+      },
+      "param": {
+        "preset": "moderate",
+        "snr_db": -16.0
+      },
+      "percent": 99.0,
+      "wilson95": [
+        96.42782382838232,
+        99.72533418664555
+      ]
+    },
+    {
+      "decoded": 200,
+      "duplicates_dropped": 0,
+      "duplicates_emitted": 0,
+      "false_decodes": 0,
+      "frames": 200,
+      "label": "moderate -14 dB",
+      "latency_ms": {
+        "max": 954.902574,
+        "p50": 676.0255950000001,
+        "p95": 802.191569
+      },
+      "param": {
+        "preset": "moderate",
+        "snr_db": -14.0
+      },
+      "percent": 100.0,
+      "wilson95": [
+        98.11546736227335,
+        100.0
+      ]
+    },
+    {
+      "decoded": 200,
+      "duplicates_dropped": 0,
+      "duplicates_emitted": 0,
+      "false_decodes": 0,
+      "frames": 200,
+      "label": "moderate -10 dB",
+      "latency_ms": {
+        "max": 1913.890615,
+        "p50": 742.6309650000001,
+        "p95": 851.739755
+      },
+      "param": {
+        "preset": "moderate",
+        "snr_db": -10.0
+      },
+      "percent": 100.0,
+      "wilson95": [
+        98.11546736227335,
+        100.0
+      ]
+    },
+    {
+      "decoded": 1,
+      "duplicates_dropped": 0,
+      "duplicates_emitted": 0,
+      "false_decodes": 0,
+      "frames": 200,
+      "label": "poor -24 dB",
+      "latency_ms": {
+        "max": 2236.169524,
+        "p50": 216.532865,
+        "p95": 282.77894100000003
+      },
+      "param": {
+        "preset": "poor",
+        "snr_db": -24.0
+      },
+      "percent": 0.5,
+      "wilson95": [
+        0.08831687156009814,
+        2.777370439789293
+      ]
+    },
+    {
+      "decoded": 54,
+      "duplicates_dropped": 0,
+      "duplicates_emitted": 0,
+      "false_decodes": 0,
+      "frames": 200,
+      "label": "poor -22 dB",
+      "latency_ms": {
+        "max": 1946.7441370000001,
+        "p50": 256.679409,
+        "p95": 465.283238
+      },
+      "param": {
+        "preset": "poor",
+        "snr_db": -22.0
+      },
+      "percent": 27.0,
+      "wilson95": [
+        21.323449814685848,
+        33.543435198668426
+      ]
+    },
+    {
+      "decoded": 153,
+      "duplicates_dropped": 0,
+      "duplicates_emitted": 0,
+      "false_decodes": 0,
+      "frames": 200,
+      "label": "poor -20 dB",
+      "latency_ms": {
+        "max": 768.495162,
+        "p50": 439.91807900000003,
+        "p95": 573.798798
+      },
+      "param": {
+        "preset": "poor",
+        "snr_db": -20.0
+      },
+      "percent": 76.5,
+      "wilson95": [
+        70.15863111723746,
+        81.84256658476741
+      ]
+    },
+    {
+      "decoded": 198,
+      "duplicates_dropped": 0,
+      "duplicates_emitted": 0,
+      "false_decodes": 0,
+      "frames": 200,
+      "label": "poor -18 dB",
+      "latency_ms": {
+        "max": 776.387148,
+        "p50": 543.649536,
+        "p95": 644.955521
+      },
+      "param": {
+        "preset": "poor",
+        "snr_db": -18.0
+      },
+      "percent": 99.0,
+      "wilson95": [
+        96.42782382838232,
+        99.72533418664555
+      ]
+    },
+    {
+      "decoded": 200,
+      "duplicates_dropped": 0,
+      "duplicates_emitted": 0,
+      "false_decodes": 0,
+      "frames": 200,
+      "label": "poor -16 dB",
+      "latency_ms": {
+        "max": 9079.491050999999,
+        "p50": 618.981518,
+        "p95": 723.5307779999999
+      },
+      "param": {
+        "preset": "poor",
+        "snr_db": -16.0
+      },
+      "percent": 100.0,
+      "wilson95": [
+        98.11546736227335,
+        100.0
+      ]
+    },
+    {
+      "decoded": 200,
+      "duplicates_dropped": 0,
+      "duplicates_emitted": 0,
+      "false_decodes": 0,
+      "frames": 200,
+      "label": "poor -14 dB",
+      "latency_ms": {
+        "max": 4161.508499,
+        "p50": 687.915648,
+        "p95": 798.0485000000001
+      },
+      "param": {
+        "preset": "poor",
+        "snr_db": -14.0
+      },
+      "percent": 100.0,
+      "wilson95": [
+        98.11546736227335,
+        100.0
+      ]
+    },
+    {
+      "decoded": 200,
+      "duplicates_dropped": 0,
+      "duplicates_emitted": 0,
+      "false_decodes": 0,
+      "frames": 200,
+      "label": "poor -10 dB",
+      "latency_ms": {
+        "max": 980.278063,
+        "p50": 740.745976,
+        "p95": 850.832437
+      },
+      "param": {
+        "preset": "poor",
+        "snr_db": -10.0
+      },
+      "percent": 100.0,
+      "wilson95": [
+        98.11546736227335,
+        100.0
+      ]
+    },
+    {
+      "decoded": 0,
+      "duplicates_dropped": 0,
+      "duplicates_emitted": 0,
+      "false_decodes": 0,
+      "frames": 200,
+      "label": "high-moderate -20 dB",
+      "latency_ms": {
+        "max": 7991.666389,
+        "p50": 250.45044,
+        "p95": 335.112974
+      },
+      "param": {
+        "preset": "high-moderate",
+        "snr_db": -20.0
+      },
+      "percent": 0.0,
+      "wilson95": [
+        1.734723475976807e-16,
+        1.8845326377266574
+      ]
+    },
+    {
+      "decoded": 0,
+      "duplicates_dropped": 0,
+      "duplicates_emitted": 0,
+      "false_decodes": 0,
+      "frames": 200,
+      "label": "high-moderate -10 dB",
+      "latency_ms": {
+        "max": 832.260811,
+        "p50": 648.794035,
+        "p95": 763.387743
+      },
+      "param": {
+        "preset": "high-moderate",
+        "snr_db": -10.0
+      },
+      "percent": 0.0,
+      "wilson95": [
+        1.734723475976807e-16,
+        1.8845326377266574
+      ]
+    },
+    {
+      "decoded": 0,
+      "duplicates_dropped": 0,
+      "duplicates_emitted": 0,
+      "false_decodes": 0,
+      "frames": 200,
+      "label": "high-moderate +0 dB",
+      "latency_ms": {
+        "max": 2734.110973,
+        "p50": 798.3408589999999,
+        "p95": 902.8740680000001
+      },
+      "param": {
+        "preset": "high-moderate",
+        "snr_db": 0.0
+      },
+      "percent": 0.0,
+      "wilson95": [
+        1.734723475976807e-16,
+        1.8845326377266574
+      ]
+    },
+    {
+      "decoded": 0,
+      "duplicates_dropped": 0,
+      "duplicates_emitted": 0,
+      "false_decodes": 0,
+      "frames": 200,
+      "label": "high-moderate +10 dB",
+      "latency_ms": {
+        "max": 1036.529035,
+        "p50": 813.8393860000001,
+        "p95": 927.975128
+      },
+      "param": {
+        "preset": "high-moderate",
+        "snr_db": 10.0
+      },
+      "percent": 0.0,
+      "wilson95": [
+        1.734723475976807e-16,
+        1.8845326377266574
+      ]
+    }
+  ],
+  "presets": {
+    "good": {
+      "crossing_50pct_db": {
+        "at": -20.79245283018868,
+        "interval": [
+          -21.298705755474906,
+          -20.278201072674168
+        ],
+        "method": "linear interpolation between adjacent points of the rate and of its Wilson 95% bounds"
+      },
+      "delay_ms": 0.5,
+      "doppler_hz": 0.1
+    },
+    "high-moderate": {
+      "crossing_50pct_db": null,
+      "delay_ms": 3.0,
+      "doppler_hz": 10.0
+    },
+    "moderate": {
+      "crossing_50pct_db": {
+        "at": -21.31111111111111,
+        "interval": [
+          -21.59825389393637,
+          -21.036221083024365
+        ],
+        "method": "linear interpolation between adjacent points of the rate and of its Wilson 95% bounds"
+      },
+      "delay_ms": 1.0,
+      "doppler_hz": 0.5
+    },
+    "poor": {
+      "crossing_50pct_db": {
+        "at": -21.07070707070707,
+        "interval": [
+          -21.31855649039403,
+          -20.825578223713247
+        ],
+        "method": "linear interpolation between adjacent points of the rate and of its Wilson 95% bounds"
+      },
+      "delay_ms": 2.0,
+      "doppler_hz": 1.0
+    }
+  },
+  "provenance": {
+    "arch": "x86_64",
+    "binary": "z30 (z30-cli), the shipped command-line station",
+    "build_profile": "release",
+    "built": "2026-09-24T15:32:45Z",
+    "cpu": "Intel(R) Xeon(R) Processor @ 2.80GHz",
+    "decoder_config": "RxConfig { band_lo_hz: 200.0, band_hi_hz: 2800.0, max_candidates: 50, sync_threshold: 1.5, passes: 3, max_drift_hz: 4.0, drift_gain: 1.05, min_fine_sync: 2.5, whiten: true, ap: None, sic: SicParams { window_sec: 0.4, timing_search: 16 } }",
+    "elapsed_s": 946.454427271,
+    "git_commit": "84033d4531b3",
+    "hardware_involved": false,
+    "logical_cpus": 4,
+    "note": "Software simulation only. No radio, sound card or RF path was involved.",
+    "os": "linux",
+    "rayon_threads": 4,
+    "receiver": "z30_dsp::slot::Receiver::decode_slot (the production receive entry point)",
+    "rustc": "rustc 1.95.0 (59807616e 2026-04-14)",
+    "started_utc": "2026-09-24T16:11:37Z",
+    "target": "x86_64-unknown-linux-gnu",
+    "version": "0.9.0"
+  },
+  "seed": {
+    "per_frame": "SUITE_SEED ^ (benchmark << 40) ^ (point << 20) ^ frame, ChaCha8 (z30_channel::rng)",
+    "suite_seed": 20260830
+  },
+  "title": "ITU-R F.1487 two-path Watterson channels (average SNR)"
+}

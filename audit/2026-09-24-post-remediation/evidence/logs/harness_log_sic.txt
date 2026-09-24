@@ -1,0 +1,13 @@
+SIC dP +10 df  0.0 dDT 0.0: strong 50/50; weak with SIC 0, without 0; false 0; physical suppression 14.1 dB (sd 0.3, n 50); receiver-reported 30.2 dB; residual modified in 50
+SIC dP +10 df  0.0 dDT 0.4: strong 50/50; weak with SIC 50, without 0; false 0; physical suppression 18.7 dB (sd 0.6, n 50); receiver-reported 30.5 dB; residual modified in 50
+SIC dP +10 df  5.0 dDT 0.0: strong 50/50; weak with SIC 50, without 0; false 0; physical suppression 18.9 dB (sd 0.6, n 50); receiver-reported 30.6 dB; residual modified in 50
+SIC dP +10 df  5.0 dDT 0.4: strong 50/50; weak with SIC 50, without 0; false 0; physical suppression 18.6 dB (sd 0.6, n 50); receiver-reported 30.3 dB; residual modified in 50
+SIC dP +10 df 20.0 dDT 0.0: strong 50/50; weak with SIC 50, without 0; false 0; physical suppression 19.5 dB (sd 0.6, n 50); receiver-reported 31.2 dB; residual modified in 50
+SIC dP +10 df 20.0 dDT 0.4: strong 50/50; weak with SIC 50, without 0; false 0; physical suppression 18.9 dB (sd 0.5, n 50); receiver-reported 30.5 dB; residual modified in 50
+SIC dP +20 df  0.0 dDT 0.0: strong 50/50; weak with SIC 0, without 0; false 0; physical suppression 24.0 dB (sd 0.3, n 50); receiver-reported 40.0 dB; residual modified in 50
+SIC dP +20 df  0.0 dDT 0.4: strong 50/50; weak with SIC 50, without 0; false 0; physical suppression 28.6 dB (sd 0.5, n 50); receiver-reported 40.1 dB; residual modified in 50
+SIC dP +20 df  5.0 dDT 0.0: strong 50/50; weak with SIC 50, without 0; false 0; physical suppression 28.9 dB (sd 0.6, n 50); receiver-reported 40.3 dB; residual modified in 50
+SIC dP +20 df  5.0 dDT 0.4: strong 50/50; weak with SIC 50, without 0; false 0; physical suppression 28.6 dB (sd 0.5, n 50); receiver-reported 40.3 dB; residual modified in 50
+SIC dP +20 df 20.0 dDT 0.0: strong 50/50; weak with SIC 50, without 0; false 0; physical suppression 29.6 dB (sd 0.7, n 50); receiver-reported 41.1 dB; residual modified in 50
+SIC dP +20 df 20.0 dDT 0.4: strong 50/50; weak with SIC 50, without 0; false 0; physical suppression 28.9 dB (sd 0.6, n 50); receiver-reported 40.4 dB; residual modified in 50
+wrote audit_sic.json in 548 s

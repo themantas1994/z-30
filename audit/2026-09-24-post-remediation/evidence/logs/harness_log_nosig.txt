@@ -1,0 +1,7 @@
+                                            white noise: 200 slots, unexpected decodes 0, control decoded 0, mean snr NaN sd NaN
+                                    silence (all zeros): 200 slots, unexpected decodes 0, control decoded 0, mean snr NaN sd NaN
+                               uniform random audio +-1: 200 slots, unexpected decodes 0, control decoded 0, mean snr NaN sd NaN
+        Costas-correct frame, random data symbols, 0 dB: 200 slots, unexpected decodes 0, control decoded 0, mean snr NaN sd NaN
+      LDPC-valid codeword with random (wrong) CRC, 0 dB: 200 slots, unexpected decodes 1, control decoded 0, mean snr NaN sd NaN
+       valid synthetic frame, -10 dB (positive control): 200 slots, unexpected decodes 0, control decoded 200, mean snr -9.99 sd 0.16
+wrote audit_nosig.json in 249 s

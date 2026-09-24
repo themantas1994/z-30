@@ -1,0 +1,59 @@
+{
+  "elapsed_s": 249.139721208,
+  "note": "independent audit harness; software simulation only",
+  "receiver": "z30_dsp::slot::Receiver::decode_slot, RxConfig::default()",
+  "result": {
+    "points": [
+      {
+        "control_decoded": 0,
+        "control_snr_mean": null,
+        "control_snr_sd": null,
+        "input": "white noise",
+        "slots": 200,
+        "unexpected_decodes": 0
+      },
+      {
+        "control_decoded": 0,
+        "control_snr_mean": null,
+        "control_snr_sd": null,
+        "input": "silence (all zeros)",
+        "slots": 200,
+        "unexpected_decodes": 0
+      },
+      {
+        "control_decoded": 0,
+        "control_snr_mean": null,
+        "control_snr_sd": null,
+        "input": "uniform random audio +-1",
+        "slots": 200,
+        "unexpected_decodes": 0
+      },
+      {
+        "control_decoded": 0,
+        "control_snr_mean": null,
+        "control_snr_sd": null,
+        "input": "Costas-correct frame, random data symbols, 0 dB",
+        "slots": 200,
+        "unexpected_decodes": 0
+      },
+      {
+        "control_decoded": 0,
+        "control_snr_mean": null,
+        "control_snr_sd": null,
+        "input": "LDPC-valid codeword with random (wrong) CRC, 0 dB",
+        "slots": 200,
+        "unexpected_decodes": 1
+      },
+      {
+        "control_decoded": 200,
+        "control_snr_mean": -9.987558845316073,
+        "control_snr_sd": 0.15546898983446758,
+        "input": "valid synthetic frame, -10 dB (positive control)",
+        "slots": 200,
+        "unexpected_decodes": 0
+      }
+    ]
+  },
+  "seed_base": "0x5eeda0d10924",
+  "what": "nosig"
+}
