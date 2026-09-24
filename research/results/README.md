@@ -15,9 +15,11 @@ NumPy 2.2.6; Rust 1.94.1 (awgn_paired_200) and 1.98.1 (the rest).
 
 Provenance notes:
 
-- `awgn_paired_200`: the header's commit (`8be9e00`) is the HEAD the harness read when it
-  started; the `z30` wheel it loaded was built from the working tree that became `f180122`, and
-  `decode_slot`'s code is unchanged between that tree and `f180122`. The oracle arm reproduces
+- `awgn_paired_200`: first measured with the wheel built from the tree that became `f180122`
+  (header `8be9e00`, the HEAD the harness read when it started). Re-run at `83b1b70`, after the
+  fine-sync interpolation, whitening and SIC changes, with a clean wheel built from that commit:
+  every point reproduced frame for frame, so the crossings and the McNemar result are unchanged.
+  The file now holds the `83b1b70` run. The oracle arm reproduces
   the published `--mode realistic` table frame for frame (-22.92 dB [-23.07, -22.79]). Later
   changes to SIC cannot move it: every frame holds one station, SIC runs only after a decode,
   and a decode is already counted.
