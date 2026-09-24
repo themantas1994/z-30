@@ -155,7 +155,7 @@ impl Modulator {
 
     /// Complex analytic replica `env(t) exp(j phase(t))`, with an optional linear frequency
     /// drift (`drift_hz` total across the frame, zero at mid-frame) and a fractional start
-    /// offset in samples. Used by SIC and the fine-sync reference; unnormalised (peak ~1).
+    /// offset in samples. Used by SIC and the channel simulator; unnormalised (peak ~1).
     pub fn analytic(&self, symbols: &[u8; TOTAL_SYMBOLS], f0: f64, drift_hz: f64, frac_delay: f64) -> (Vec<f64>, Vec<f64>) {
         let f = self.instantaneous_frequency(symbols, f0);
         let n = f.len();
@@ -169,11 +169,19 @@ impl Modulator {
             let t = (i as f64 - frac_delay) / self.fs;
             let drift = drift_hz * (t / frame_sec - 0.5);
             acc += f[i] + drift;
+            // The phase is only needed modulo 2 pi, so the accumulator is kept modulo fs (one
+            // turn): sin_cos then never sees the ~5e5 rad a 24 s frame reaches, whose range
+            // reduction was most of this function's cost, and no absolute precision is lost.
+            if acc >= self.fs {
+                acc -= self.fs;
+            } else if acc < 0.0 {
+                acc += self.fs;
+            }
             // Integrate to the delayed sample instant: subtract the fraction of this sample's
             // frequency that the delay shifts out.
-            let ph = 2.0 * std::f64::consts::PI * (acc - frac_delay * (f[i] + drift)) / self.fs;
-            re.push(env[i] * ph.cos());
-            im.push(env[i] * ph.sin());
+            let (s, c) = (2.0 * std::f64::consts::PI * (acc - frac_delay * (f[i] + drift)) / self.fs).sin_cos();
+            re.push(env[i] * c);
+            im.push(env[i] * s);
         }
         (re, im)
     }
@@ -203,6 +211,19 @@ mod tests {
             let a = (re[i] * re[i] + im[i] * im[i]).sqrt();
             assert!((a - 1.0).abs() < 1e-12);
         }
+    }
+
+    #[test]
+    fn the_analytic_replica_is_the_transmitted_waveform() {
+        // Re(analytic) must be the modulator's own waveform (up to the sin/cos convention and
+        // the peak normalisation): SIC subtracts what was actually sent (audit C3).
+        let m = Modulator::new(6000.0).unwrap();
+        let symbols: [u8; TOTAL_SYMBOLS] = std::array::from_fn(|i| ((i * 7 + 3) % 16) as u8);
+        let tx = m.synthesize(&symbols, 1234.5).unwrap();
+        let (re, im) = m.analytic(&symbols, 1234.5, 0.0, 0.0);
+        let peak = re.iter().zip(&im).map(|(a, b)| b.abs().max(a.abs())).fold(0.0f64, f64::max);
+        let worst = tx.iter().zip(&im).map(|(&t, &s)| (t as f64 - s / peak).abs()).fold(0.0f64, f64::max);
+        assert!(worst < 1e-6, "{worst}");
     }
 
     #[test]
