@@ -1,0 +1,26 @@
+verify_round_trip [data symbol 3 +1]: REFUSED
+verify_round_trip [data symbol 4 +1]: REFUSED
+verify_round_trip [data symbol 5 +1]: REFUSED
+verify_round_trip [data symbol 6 +1]: REFUSED
+verify_round_trip [data symbol 10 +1]: REFUSED
+verify_round_trip [sync symbol changed]: REFUSED
+verify_round_trip [tone 16]: REFUSED
+verify_round_trip [CRC bit flipped, LDPC re-encoded (valid codeword, bad CRC)]: REFUSED
+verify_round_trip [payload altered to -13 with valid CRC and LDPC, message still says -12]: REFUSED
+verify_round_trip [parity bit flipped, symbols consistent with it]: REFUSED
+verify_round_trip [partner call altered at symbol level (G4XYZ -> G4XYY)]: REFUSED
+verify_round_trip [message field altered, frame unchanged]: REFUSED
+encode [CQ K1ABC FN42]: refused: grid FN42 is not in the 63-entry z-30 v1 grid table, so v1 cannot transmit it (the old software sent a different grid instead)
+encode [ZY2ABC K1ABC -10]: refused: "ZY2ABC" cannot be carried by z-30 v1: prefixes from ZV upward overflow the 28-bit field and would be transmitted as a different callsign
+encode [CQ K1ABC/P FN31]: refused: "K1ABC/P" is not a callsign z-30 v1 can carry: v1 carries only a 1-2 character prefix, one digit and a 1-3 letter suffix (no /P, no compound or 3-character prefixes)
+encode [G4XYZ K1ABC R-12]: refused: "R-12": z-30 v1 has no roger flag; a report sent in reply to a report carries the roger by its place in the sequence
+encode [G4XYZ K1ABC -31]: refused: "-31" is not a signal report v1 can carry (-30 to +30 dB)
+encode [G4XYZ K1ABC +31]: refused: "+31" is not a signal report v1 can carry (-30 to +30 dB)
+encode [CQ NOCAL FN31]: refused: the callsign is still the placeholder NOCAL; set your own callsign
+encode [CQ K1ABC]: refused: "CQ K1ABC" is not a z-30 v1 message (CQ <call> <grid> | <to> <from> <grid|report|RRR|73|RR73>)
+encode [G4XYZ K1ABC HELLO]: refused: "HELLO" is not a z-30 v1 message (CQ <call> <grid> | <to> <from> <grid|report|RRR|73|RR73>)
+encode [TNX K1ABC 73]: refused: "TNX" is not a callsign z-30 v1 can carry: v1 carries only a 1-2 character prefix, one digit and a 1-3 letter suffix (no /P, no compound or 3-character prefixes)
+encode [CQ K1ABC -10]: refused: "CQ K1ABC -10" is not a z-30 v1 message (CQ <call> <grid> | <to> <from> <grid|report|RRR|73|RR73>)
+encode [EA8/G4XYZ K1ABC 73]: refused: "EA8/G4XYZ" is not a callsign z-30 v1 can carry: v1 carries only a 1-2 character prefix, one digit and a 1-3 letter suffix (no /P, no compound or 3-character prefixes)
+encode [CQ 3DA0XYZ FN31]: refused: "3DA0XYZ" is not a callsign z-30 v1 can carry: v1 carries only a 1-2 character prefix, one digit and a 1-3 letter suffix (no /P, no compound or 3-character prefixes)
+wrote audit_roundtrip.json in 0 s

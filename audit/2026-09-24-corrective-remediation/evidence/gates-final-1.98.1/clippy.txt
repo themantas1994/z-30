@@ -1,0 +1,5 @@
+### clippy: cargo +stable clippy --workspace --all-targets --exclude z30-py -- -D warnings
+   Compiling z30-cli v0.9.0 (/home/user/z-30/crates/z30-cli)
+   Compiling z30-gui v0.9.0 (/home/user/z-30/crates/z30-gui)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.65s
+EXIT 0 (1 s)

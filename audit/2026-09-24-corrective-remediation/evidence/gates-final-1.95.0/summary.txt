@@ -1,0 +1,7 @@
+rustc 1.95.0 (59807616e 2026-04-14)
+fmt 0
+clippy 0
+test_release 0
+build_release_cm108 0
+build_workspace_release 0
+done

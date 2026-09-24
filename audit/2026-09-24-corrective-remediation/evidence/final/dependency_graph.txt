@@ -1,0 +1,23 @@
+## cargo tree -p z30-cli -p z30-gui --features z30-cli/cm108,z30-gui/cm108 -e normal: workspace crates and any python/pyo3/node
+z30-channel v0.9.0 (/home/user/z-30/crates/z30-channel)
+z30-cli v0.9.0 (/home/user/z-30/crates/z30-cli)
+z30-dsp v0.9.0 (/home/user/z-30/crates/z30-dsp)
+z30-dsp v0.9.0 (/home/user/z-30/crates/z30-dsp) (*)
+z30-engine v0.9.0 (/home/user/z-30/crates/z30-engine)
+z30-engine v0.9.0 (/home/user/z-30/crates/z30-engine) (*)
+z30-gui v0.9.0 (/home/user/z-30/crates/z30-gui)
+z30-io v0.9.0 (/home/user/z-30/crates/z30-io)
+z30-io v0.9.0 (/home/user/z-30/crates/z30-io) (*)
+z30-protocol v0.9.0 (/home/user/z-30/crates/z30-protocol)
+z30-protocol v0.9.0 (/home/user/z-30/crates/z30-protocol) (*)
+
+## reverse: who depends on pyo3
+pyo3 v0.25.1
+z30-py v0.9.0 (/home/user/z-30/crates/z30-py)
+
+## reverse: who depends on z30-channel (test/benchmark channel model)
+z30-channel v0.9.0 (/home/user/z-30/crates/z30-channel)
+z30-cli v0.9.0 (/home/user/z-30/crates/z30-cli)
+z30-py v0.9.0 (/home/user/z-30/crates/z30-py)
+
+## any reference to legacy/ from crates/

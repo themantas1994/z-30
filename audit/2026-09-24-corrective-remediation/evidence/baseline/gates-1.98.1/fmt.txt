@@ -1,0 +1,2 @@
+### fmt: cargo +stable fmt --all --check
+EXIT 0 (0 s)

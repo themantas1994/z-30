@@ -1,0 +1,4 @@
+Config::default().operating.dial_hz = 14076000
+planned: K1ABC G4XYZ RR73
+logged with no rig control and the default dial: dial_hz = Sourced { value: 14076000.0, source: Commanded }
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s

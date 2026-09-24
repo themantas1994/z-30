@@ -1,0 +1,1 @@
+own-frame power vs unit_frame_power over 2000 random frames: mean -0.00000 dB, min -0.00000, max +0.00000

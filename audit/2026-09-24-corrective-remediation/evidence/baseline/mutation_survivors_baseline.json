@@ -1,0 +1,85 @@
+{
+  "baseline": {
+    "-p z30-engine --test live_runtime | -p z30-engine --test virtual_clock": true,
+    "-p z30-dsp --test sic_regression | -p z30-dsp --test channel_scenarios": true,
+    "-p z30-dsp --test snr_accuracy | -p z30-engine --test qso_logging": true,
+    "-p z30-protocol | -p z30-engine --test safety": true,
+    "-p z30-engine --test qso_logging | -p z30-io --test logbook_integrity | -p z30-io --lib | -p z30-engine --test virtual_clock": true,
+    "-p z30-io --lib": true
+  },
+  "mutations": [
+    {
+      "id": "C03-c",
+      "area": "C-03",
+      "mutation": "an own time offset of +0.3 s applied to UTC",
+      "file": "crates/z30-io/src/wallclock.rs",
+      "result": "SURVIVED",
+      "failing_tests": [],
+      "tests_run": [
+        "-p z30-io --lib"
+      ]
+    },
+    {
+      "id": "C06-a",
+      "area": "C-06",
+      "mutation": "verify_round_trip always succeeds",
+      "file": "crates/z30-protocol/src/codec.rs",
+      "result": "SURVIVED",
+      "failing_tests": [],
+      "tests_run": [
+        "-p z30-protocol",
+        "-p z30-engine --test safety"
+      ]
+    },
+    {
+      "id": "C06-b",
+      "area": "C-06",
+      "mutation": "transmit gate no longer calls verify_round_trip",
+      "file": "crates/z30-engine/src/txgate.rs",
+      "result": "SURVIVED",
+      "failing_tests": [],
+      "tests_run": [
+        "-p z30-protocol",
+        "-p z30-engine --test safety"
+      ]
+    },
+    {
+      "id": "C06-c",
+      "area": "C-06",
+      "mutation": "encoder's payload round-trip check removed",
+      "file": "crates/z30-protocol/src/codec.rs",
+      "result": "SURVIVED",
+      "failing_tests": [],
+      "tests_run": [
+        "-p z30-protocol",
+        "-p z30-engine --test safety"
+      ]
+    },
+    {
+      "id": "LOG-c",
+      "area": "C-05",
+      "mutation": "missing received report logged as -16",
+      "file": "crates/z30-engine/src/qso.rs",
+      "result": "SURVIVED",
+      "failing_tests": [],
+      "tests_run": [
+        "-p z30-engine --test qso_logging",
+        "-p z30-io --test logbook_integrity",
+        "-p z30-io --lib",
+        "-p z30-engine --test virtual_clock"
+      ]
+    },
+    {
+      "id": "SNR-e",
+      "area": "M-07",
+      "mutation": "no-estimate case floored to -30 dB instead of None",
+      "file": "crates/z30-dsp/src/demod.rs",
+      "result": "SURVIVED",
+      "failing_tests": [],
+      "tests_run": [
+        "-p z30-dsp --test snr_accuracy",
+        "-p z30-engine --test qso_logging"
+      ]
+    }
+  ]
+}

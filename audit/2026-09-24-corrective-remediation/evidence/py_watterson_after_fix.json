@@ -1,0 +1,82 @@
+{
+  "good": {
+    "nominal_2sigma_spread_hz": 0.1,
+    "delay_ms": 0.5,
+    "frame_power_mean": 0.9779003738564453,
+    "frame_power_cv": 0.5063648853356141,
+    "frac_below_minus10db": 0.0,
+    "tap_mean_abs2": 0.978449173274369,
+    "spreads": [
+      {
+        "lag_s": 2.0,
+        "rho": 0.8201428595264361,
+        "two_sigma_spread_hz": 0.10022383318163791
+      },
+      {
+        "lag_s": 4.0,
+        "rho": 0.4505545308233563,
+        "two_sigma_spread_hz": 0.1004869174576461
+      }
+    ]
+  },
+  "moderate": {
+    "nominal_2sigma_spread_hz": 0.5,
+    "delay_ms": 1.0,
+    "frame_power_mean": 1.0052781575827359,
+    "frame_power_cv": 0.21219801602514302,
+    "frac_below_minus10db": 0.0,
+    "tap_mean_abs2": 0.9381695433271175,
+    "spreads": [
+      {
+        "lag_s": 0.4,
+        "rho": 0.8194236991886535,
+        "two_sigma_spread_hz": 0.5022265196555077
+      },
+      {
+        "lag_s": 0.8,
+        "rho": 0.4513582659610724,
+        "two_sigma_spread_hz": 0.5018726832069635
+      }
+    ]
+  },
+  "poor": {
+    "nominal_2sigma_spread_hz": 1.0,
+    "delay_ms": 2.0,
+    "frame_power_mean": 1.0043141681735797,
+    "frame_power_cv": 0.14942585029958355,
+    "frac_below_minus10db": 0.0,
+    "tap_mean_abs2": 0.9913961464456187,
+    "spreads": [
+      {
+        "lag_s": 0.2,
+        "rho": 0.8209872260890673,
+        "two_sigma_spread_hz": 0.9996342664743165
+      },
+      {
+        "lag_s": 0.4,
+        "rho": 0.4550913199322406,
+        "two_sigma_spread_hz": 0.9985353587051429
+      }
+    ]
+  },
+  "high-moderate": {
+    "nominal_2sigma_spread_hz": 10.0,
+    "delay_ms": 3.0,
+    "frame_power_mean": 1.0018302499005547,
+    "frame_power_cv": 0.05054085569894628,
+    "frac_below_minus10db": 0.0,
+    "tap_mean_abs2": 0.9832064694923834,
+    "spreads": [
+      {
+        "lag_s": 0.02,
+        "rho": 0.8210885338678267,
+        "two_sigma_spread_hz": 9.99321552950999
+      },
+      {
+        "lag_s": 0.04,
+        "rho": 0.4544379523071318,
+        "two_sigma_spread_hz": 9.994460890701859
+      }
+    ]
+  }
+}

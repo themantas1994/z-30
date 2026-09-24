@@ -1,0 +1,837 @@
+{
+  "commit": "672cef9b3cdba2134cb9d95cce2fb19dd42cc4bf",
+  "rustc": "rustc 1.98.1 (48a229cea 2026-09-01)",
+  "baseline": {
+    "-p z30-engine --test live_runtime | -p z30-engine --test virtual_clock": true,
+    "-p z30-io --lib": true,
+    "-p z30-protocol | -p z30-engine --test safety": true,
+    "-p z30-engine --test safety": true,
+    "-p z30-cli": true,
+    "-p z30-channel": true,
+    "PY tests/test_watterson_doppler.py": true,
+    "-p z30-engine --test qso_logging | -p z30-engine --lib | -p z30-io --test logbook_integrity | -p z30-io --lib | -p z30-engine --test virtual_clock": true,
+    "-p z30-engine --test dial_provenance | -p z30-engine --lib | -p z30-io --lib": true,
+    "-p z30-dsp --test sic_regression | -p z30-dsp --test channel_scenarios": true,
+    "-p z30-dsp --test snr_accuracy | -p z30-engine --test qso_logging": true
+  },
+  "mutations": [
+    {
+      "id": "C01-a",
+      "origin": "audit",
+      "area": "C-01",
+      "mutation": "window shortened by 0.5 s (ends at slot + 25.0 s)",
+      "file": "crates/z30-engine/src/slots.rs",
+      "result": "KILLED",
+      "failing_tests": [
+        "-p z30-engine --test live_runtime: c01_a_slot_is_decoded_only_from_its_complete_window_through_the_production_runtime",
+        "-p z30-engine --test virtual_clock: soak_24_hours_every_slot_once_aligned_to_utc_through_drift_jitter_and_a_dropout, closed_loop_qso_through_the_real_pipeline_decoder_gate_sequencer_and_logger"
+      ],
+      "tests_run": [
+        "-p z30-engine --test live_runtime",
+        "-p z30-engine --test virtual_clock"
+      ]
+    },
+    {
+      "id": "C01-b",
+      "origin": "audit",
+      "area": "C-01",
+      "mutation": "decode triggered 0.5 s early; missing tail zero-padded (the legacy defect)",
+      "file": "crates/z30-engine/src/slots.rs",
+      "result": "KILLED",
+      "failing_tests": [
+        "-p z30-engine --test live_runtime: c01_a_slot_is_decoded_only_from_its_complete_window_through_the_production_runtime",
+        "-p z30-engine --test virtual_clock: soak_24_hours_every_slot_once_aligned_to_utc_through_drift_jitter_and_a_dropout"
+      ],
+      "tests_run": [
+        "-p z30-engine --test live_runtime",
+        "-p z30-engine --test virtual_clock"
+      ]
+    },
+    {
+      "id": "C01-c",
+      "origin": "audit",
+      "area": "C-01",
+      "mutation": "slot boundary shifted by +100 ms",
+      "file": "crates/z30-engine/src/slots.rs",
+      "result": "KILLED",
+      "failing_tests": [
+        "-p z30-engine --test live_runtime: c01_a_slot_is_decoded_only_from_its_complete_window_through_the_production_runtime",
+        "-p z30-engine --test virtual_clock: closed_loop_qso_through_the_real_pipeline_decoder_gate_sequencer_and_logger"
+      ],
+      "tests_run": [
+        "-p z30-engine --test live_runtime",
+        "-p z30-engine --test virtual_clock"
+      ]
+    },
+    {
+      "id": "C01-d",
+      "origin": "audit",
+      "area": "C-01",
+      "mutation": "slot boundary shifted by +5 ms (30 samples)",
+      "file": "crates/z30-engine/src/slots.rs",
+      "result": "KILLED",
+      "failing_tests": [
+        "-p z30-engine --test live_runtime: c01_a_slot_is_decoded_only_from_its_complete_window_through_the_production_runtime"
+      ],
+      "tests_run": [
+        "-p z30-engine --test live_runtime",
+        "-p z30-engine --test virtual_clock"
+      ]
+    },
+    {
+      "id": "C01-e",
+      "origin": "audit",
+      "area": "C-01",
+      "mutation": "final 0.1 s of the window zeroed",
+      "file": "crates/z30-engine/src/slots.rs",
+      "result": "KILLED",
+      "failing_tests": [
+        "-p z30-engine --test live_runtime: c01_a_slot_is_decoded_only_from_its_complete_window_through_the_production_runtime"
+      ],
+      "tests_run": [
+        "-p z30-engine --test live_runtime",
+        "-p z30-engine --test virtual_clock"
+      ]
+    },
+    {
+      "id": "C03-a",
+      "origin": "audit",
+      "area": "C-03",
+      "mutation": "'synchronised' claimed when timedatectl could not be run",
+      "file": "crates/z30-io/src/wallclock.rs",
+      "result": "KILLED",
+      "failing_tests": [
+        "-p z30-io --lib: wallclock::tests::synchronised_is_claimed_only_when_the_os_says_so"
+      ],
+      "tests_run": [
+        "-p z30-io --lib"
+      ]
+    },
+    {
+      "id": "C03-b",
+      "origin": "audit*",
+      "area": "C-03",
+      "mutation": "an own time offset of +0.7 s applied to UTC",
+      "file": "crates/z30-io/src/wallclock.rs",
+      "result": "KILLED",
+      "failing_tests": [
+        "-p z30-io --lib: wallclock::tests::utc_is_the_operating_systems_with_no_offset_applied"
+      ],
+      "tests_run": [
+        "-p z30-io --lib"
+      ]
+    },
+    {
+      "id": "C03-c",
+      "origin": "audit*",
+      "area": "C-03",
+      "mutation": "an own time offset of +0.3 s applied to UTC",
+      "file": "crates/z30-io/src/wallclock.rs",
+      "result": "KILLED",
+      "failing_tests": [
+        "-p z30-io --lib: wallclock::tests::utc_is_the_operating_systems_with_no_offset_applied"
+      ],
+      "tests_run": [
+        "-p z30-io --lib"
+      ]
+    },
+    {
+      "id": "C03-d",
+      "origin": "new",
+      "area": "C-03",
+      "mutation": "an own time offset of +0.01 s applied to UTC",
+      "file": "crates/z30-io/src/wallclock.rs",
+      "result": "KILLED",
+      "failing_tests": [
+        "-p z30-io --lib: wallclock::tests::utc_is_the_operating_systems_with_no_offset_applied"
+      ],
+      "tests_run": [
+        "-p z30-io --lib"
+      ]
+    },
+    {
+      "id": "C06-a",
+      "origin": "audit",
+      "area": "C-06",
+      "mutation": "verify_round_trip always succeeds",
+      "file": "crates/z30-protocol/src/codec.rs",
+      "result": "KILLED",
+      "failing_tests": [
+        "-p z30-protocol: every_kind_of_corrupted_frame_is_refused",
+        "-p z30-engine --test safety: n3_the_gate_refuses_every_corrupted_frame_and_hands_out_no_frame"
+      ],
+      "tests_run": [
+        "-p z30-protocol",
+        "-p z30-engine --test safety"
+      ]
+    },
+    {
+      "id": "C06-b",
+      "origin": "audit*",
+      "area": "C-06",
+      "mutation": "the frame is made transmittable without the round trip (verify() ignores it)",
+      "file": "crates/z30-protocol/src/codec.rs",
+      "result": "KILLED",
+      "failing_tests": [
+        "-p z30-protocol: every_kind_of_corrupted_frame_is_refused",
+        "-p z30-engine --test safety: n3_the_gate_refuses_every_corrupted_frame_and_hands_out_no_frame"
+      ],
+      "tests_run": [
+        "-p z30-protocol",
+        "-p z30-engine --test safety"
+      ]
+    },
+    {
+      "id": "C06-b2",
+      "origin": "new",
+      "area": "C-06",
+      "mutation": "the gate hands out a verified frame of a different message",
+      "file": "crates/z30-engine/src/txgate.rs",
+      "result": "KILLED",
+      "failing_tests": [
+        "-p z30-engine --test safety: n3_a_valid_frame_of_a_different_message_is_refused"
+      ],
+      "tests_run": [
+        "-p z30-protocol",
+        "-p z30-engine --test safety"
+      ]
+    },
+    {
+      "id": "C06-b3",
+      "origin": "new",
+      "area": "C-06",
+      "mutation": "a failed round trip is not reported as a violation",
+      "file": "crates/z30-engine/src/txgate.rs",
+      "result": "KILLED",
+      "failing_tests": [
+        "-p z30-engine --test safety: g6_the_whole_frame_is_checked_partner_call_grid_and_report_not_just_our_call, n3_the_gate_refuses_every_corrupted_frame_and_hands_out_no_frame"
+      ],
+      "tests_run": [
+        "-p z30-protocol",
+        "-p z30-engine --test safety"
+      ]
+    },
+    {
+      "id": "C06-b4",
+      "origin": "new",
+      "area": "C-06",
+      "mutation": "'allowed' no longer requires the verified frame (second fail-closed guard removed)",
+      "file": "crates/z30-engine/src/txgate.rs",
+      "result": "SURVIVED",
+      "failing_tests": [],
+      "tests_run": [
+        "-p z30-protocol",
+        "-p z30-engine --test safety"
+      ]
+    },
+    {
+      "id": "C06-b5",
+      "origin": "new",
+      "area": "C-06",
+      "mutation": "the round trip no longer checks the Costas symbols",
+      "file": "crates/z30-protocol/src/codec.rs",
+      "result": "SURVIVED",
+      "failing_tests": [],
+      "tests_run": [
+        "-p z30-protocol",
+        "-p z30-engine --test safety"
+      ]
+    },
+    {
+      "id": "C06-b6",
+      "origin": "new",
+      "area": "C-06",
+      "mutation": "the round trip no longer compares the carried codeword/info with the symbols",
+      "file": "crates/z30-protocol/src/codec.rs",
+      "result": "KILLED",
+      "failing_tests": [
+        "-p z30-protocol: every_kind_of_corrupted_frame_is_refused",
+        "-p z30-engine --test safety: n3_the_gate_refuses_every_corrupted_frame_and_hands_out_no_frame"
+      ],
+      "tests_run": [
+        "-p z30-protocol",
+        "-p z30-engine --test safety"
+      ]
+    },
+    {
+      "id": "C06-b7",
+      "origin": "new",
+      "area": "C-06",
+      "mutation": "the round trip no longer checks the syndrome",
+      "file": "crates/z30-protocol/src/codec.rs",
+      "result": "SURVIVED",
+      "failing_tests": [],
+      "tests_run": [
+        "-p z30-protocol",
+        "-p z30-engine --test safety"
+      ]
+    },
+    {
+      "id": "C06-b8",
+      "origin": "new",
+      "area": "C-06",
+      "mutation": "the round trip no longer compares the decoded fields with the message",
+      "file": "crates/z30-protocol/src/codec.rs",
+      "result": "SURVIVED",
+      "failing_tests": [],
+      "tests_run": [
+        "-p z30-protocol",
+        "-p z30-engine --test safety"
+      ]
+    },
+    {
+      "id": "C06-b9",
+      "origin": "new",
+      "area": "C-06",
+      "mutation": "the round trip's canonical re-encoding comparison removed",
+      "file": "crates/z30-protocol/src/codec.rs",
+      "result": "SURVIVED",
+      "failing_tests": [],
+      "tests_run": [
+        "-p z30-protocol",
+        "-p z30-engine --test safety"
+      ]
+    },
+    {
+      "id": "C06-c",
+      "origin": "audit*",
+      "area": "C-06",
+      "mutation": "(audit: encoder's payload round-trip check removed) - that check was deleted as a weaker duplicate of verify's; see C06-b8",
+      "result": "NOT APPLICABLE"
+    },
+    {
+      "id": "C06-d",
+      "origin": "audit",
+      "area": "C-06",
+      "mutation": "gate no longer checks the frame is sent from this station",
+      "file": "crates/z30-engine/src/txgate.rs",
+      "result": "KILLED",
+      "failing_tests": [
+        "-p z30-engine --test safety: g5_the_frame_must_encode_and_be_sent_from_this_station"
+      ],
+      "tests_run": [
+        "-p z30-protocol",
+        "-p z30-engine --test safety"
+      ]
+    },
+    {
+      "id": "C06-e",
+      "origin": "audit",
+      "area": "C-06",
+      "mutation": "encoder hashes an off-table grid onto the table (legacy FN42->RE78), round-trip checks intact",
+      "file": "crates/z30-protocol/src/codec.rs",
+      "result": "KILLED",
+      "failing_tests": [
+        "-p z30-protocol: codec::tests::audit_h2_h3_m6_are_refused_not_transformed",
+        "-p z30-engine --test safety: g6_the_whole_frame_is_checked_partner_call_grid_and_report_not_just_our_call"
+      ],
+      "tests_run": [
+        "-p z30-protocol",
+        "-p z30-engine --test safety"
+      ]
+    },
+    {
+      "id": "TXG-mode",
+      "origin": "new",
+      "area": "L-07",
+      "mutation": "the gate ignores a radio reporting LSB/FM/AM/CW",
+      "file": "crates/z30-engine/src/txgate.rs",
+      "result": "KILLED",
+      "failing_tests": [
+        "-p z30-engine --test safety: l7_a_radio_reporting_a_mode_other_than_usb_is_refused_and_only_while_fresh"
+      ],
+      "tests_run": [
+        "-p z30-engine --test safety"
+      ]
+    },
+    {
+      "id": "TXG-level",
+      "origin": "new",
+      "area": "N-09",
+      "mutation": "the gate keys with a zero transmit level",
+      "file": "crates/z30-engine/src/engine.rs",
+      "result": "KILLED",
+      "failing_tests": [
+        "-p z30-engine --test safety: n9_a_zero_transmit_level_is_refused"
+      ],
+      "tests_run": [
+        "-p z30-engine --test safety"
+      ]
+    },
+    {
+      "id": "LOOP-a",
+      "origin": "new",
+      "area": "N-04",
+      "mutation": "the software loopback opens the output sound card",
+      "file": "crates/z30-cli/src/loopback.rs",
+      "result": "KILLED",
+      "failing_tests": [
+        "-p z30-cli: the_software_loopback_has_no_audio_device_ptt_or_rig_control_in_it"
+      ],
+      "tests_run": [
+        "-p z30-cli"
+      ]
+    },
+    {
+      "id": "LOOP-b",
+      "origin": "new",
+      "area": "N-04",
+      "mutation": "the audio loopback refusal lets VOX through",
+      "file": "crates/z30-cli/src/audio_loopback.rs",
+      "result": "KILLED",
+      "failing_tests": [
+        "-p z30-cli: audio_loopback::tests::it_refuses_every_configuration_that_can_key_a_transmitter_before_opening_a_device"
+      ],
+      "tests_run": [
+        "-p z30-cli"
+      ]
+    },
+    {
+      "id": "LOOP-c",
+      "origin": "new",
+      "area": "N-04",
+      "mutation": "the audio loopback ignores its refusal",
+      "file": "crates/z30-cli/src/audio_loopback.rs",
+      "result": "KILLED",
+      "failing_tests": [
+        "-p z30-cli: audio_loopback::tests::it_will_not_play_audio_without_the_confirmation, audio_loopback::tests::it_refuses_every_configuration_that_can_key_a_transmitter_before_opening_a_device"
+      ],
+      "tests_run": [
+        "-p z30-cli"
+      ]
+    },
+    {
+      "id": "LOOP-d",
+      "origin": "new",
+      "area": "N-04",
+      "mutation": "--loopback-test runs the sound-card test",
+      "file": "crates/z30-cli/src/main.rs",
+      "result": "KILLED",
+      "failing_tests": [
+        "-p z30-cli: the_cli_runs_the_software_loopback_for_loopback_test_and_the_hardware_one_only_for_its_own_flag"
+      ],
+      "tests_run": [
+        "-p z30-cli"
+      ]
+    },
+    {
+      "id": "WAT-a",
+      "origin": "new",
+      "area": "N-01",
+      "mutation": "Rust: the 1/sqrt 2 defect re-introduced (amplitude response = power spectrum)",
+      "file": "crates/z30-channel/src/lib.rs",
+      "result": "KILLED",
+      "failing_tests": [
+        "-p z30-channel: tests::watterson_power_spectrum_has_the_labelled_2_sigma_spread, tests::generated_taps_have_the_labelled_doppler_spread, tests::watterson_preserves_power_over_the_ensemble_and_not_per_frame"
+      ],
+      "tests_run": [
+        "-p z30-channel"
+      ]
+    },
+    {
+      "id": "WAT-b",
+      "origin": "new",
+      "area": "N-01",
+      "mutation": "Rust: sigma_D defined as spread / (2 sqrt 2)",
+      "file": "crates/z30-channel/src/lib.rs",
+      "result": "KILLED",
+      "failing_tests": [
+        "-p z30-channel: tests::watterson_power_spectrum_has_the_labelled_2_sigma_spread, tests::generated_taps_have_the_labelled_doppler_spread"
+      ],
+      "tests_run": [
+        "-p z30-channel"
+      ]
+    },
+    {
+      "id": "WAT-c",
+      "origin": "new",
+      "area": "N-01",
+      "mutation": "Rust: sigma_D defined as spread (1-sigma convention)",
+      "file": "crates/z30-channel/src/lib.rs",
+      "result": "KILLED",
+      "failing_tests": [
+        "-p z30-channel: tests::watterson_power_spectrum_has_the_labelled_2_sigma_spread, tests::generated_taps_have_the_labelled_doppler_spread"
+      ],
+      "tests_run": [
+        "-p z30-channel"
+      ]
+    },
+    {
+      "id": "WAT-py",
+      "origin": "new",
+      "area": "N-01",
+      "mutation": "oracle: the 1/sqrt 2 defect re-introduced",
+      "file": "legacy/python-oracle/z30_dsp/channel.py",
+      "result": "KILLED",
+      "failing_tests": [
+        "PY tests/test_watterson_doppler.py: tests/test_watterson_doppler.py::test_generated_taps_have_the_labelled_doppler_spread[good-0.07], tests/test_watterson_doppler.py::test_generated_taps_have_the_labelled_doppler_spread[moderate-0.04], tests/test_watterson_doppler.py::test_generated_taps_have_the_labelled_doppler_spread[poor-0.04], tests/test_watterson_doppler.py::test_generated_taps_have_the_labelled_doppler_spread[high-moderate-0.04]"
+      ],
+      "tests_run": [
+        "PY tests/test_watterson_doppler.py"
+      ]
+    },
+    {
+      "id": "LOG-a",
+      "origin": "audit",
+      "area": "C-05",
+      "mutation": "QsoRecord::validate always accepts",
+      "file": "crates/z30-engine/src/qso.rs",
+      "result": "KILLED",
+      "failing_tests": [
+        "-p z30-engine --test qso_logging: a_record_without_a_partner_or_a_real_utc_time_is_refused",
+        "-p z30-io --test logbook_integrity: a_record_describing_no_contact_is_not_written"
+      ],
+      "tests_run": [
+        "-p z30-engine --test qso_logging",
+        "-p z30-engine --lib",
+        "-p z30-io --test logbook_integrity",
+        "-p z30-io --lib",
+        "-p z30-engine --test virtual_clock"
+      ]
+    },
+    {
+      "id": "LOG-b",
+      "origin": "audit",
+      "area": "C-05",
+      "mutation": "missing grid logged as FN31",
+      "file": "crates/z30-engine/src/qso.rs",
+      "result": "KILLED",
+      "failing_tests": [
+        "-p z30-engine --test qso_logging: a_contact_with_no_grid_received_logs_no_grid_and_real_utc",
+        "-p z30-engine --lib: qso::tests::the_record_holds_no_report_that_was_not_received_or_sent"
+      ],
+      "tests_run": [
+        "-p z30-engine --test qso_logging",
+        "-p z30-engine --lib",
+        "-p z30-io --test logbook_integrity",
+        "-p z30-io --lib",
+        "-p z30-engine --test virtual_clock"
+      ]
+    },
+    {
+      "id": "LOG-c",
+      "origin": "audit",
+      "area": "C-05",
+      "mutation": "missing received report logged as -16",
+      "file": "crates/z30-engine/src/qso.rs",
+      "result": "KILLED",
+      "failing_tests": [
+        "-p z30-engine --lib: qso::tests::the_record_holds_no_report_that_was_not_received_or_sent"
+      ],
+      "tests_run": [
+        "-p z30-engine --test qso_logging",
+        "-p z30-engine --lib",
+        "-p z30-io --test logbook_integrity",
+        "-p z30-io --lib",
+        "-p z30-engine --test virtual_clock"
+      ]
+    },
+    {
+      "id": "LOG-d",
+      "origin": "audit",
+      "area": "C-05/M-07",
+      "mutation": "unmeasured SNR produces a -16 report",
+      "file": "crates/z30-engine/src/qso.rs",
+      "result": "KILLED",
+      "failing_tests": [
+        "-p z30-engine --test qso_logging: no_measured_snr_means_no_report_is_sent_and_none_is_logged"
+      ],
+      "tests_run": [
+        "-p z30-engine --test qso_logging",
+        "-p z30-engine --lib",
+        "-p z30-io --test logbook_integrity",
+        "-p z30-io --lib",
+        "-p z30-engine --test virtual_clock"
+      ]
+    },
+    {
+      "id": "LOG-e",
+      "origin": "audit",
+      "area": "C-05",
+      "mutation": "UTC shifted by +1 h (local time written as UTC)",
+      "file": "crates/z30-io/src/logbook.rs",
+      "result": "KILLED",
+      "failing_tests": [
+        "-p z30-io --test logbook_integrity: utc_in_the_log_does_not_depend_on_the_local_time_zone",
+        "-p z30-io --lib: logbook::tests::utc_is_utc"
+      ],
+      "tests_run": [
+        "-p z30-engine --test qso_logging",
+        "-p z30-engine --lib",
+        "-p z30-io --test logbook_integrity",
+        "-p z30-io --lib",
+        "-p z30-engine --test virtual_clock"
+      ]
+    },
+    {
+      "id": "LOG-f",
+      "origin": "audit",
+      "area": "C-05",
+      "mutation": "validate accepts start times before 2020",
+      "file": "crates/z30-engine/src/qso.rs",
+      "result": "KILLED",
+      "failing_tests": [
+        "-p z30-engine --test qso_logging: a_record_without_a_partner_or_a_real_utc_time_is_refused",
+        "-p z30-io --test logbook_integrity: a_record_describing_no_contact_is_not_written"
+      ],
+      "tests_run": [
+        "-p z30-engine --test qso_logging",
+        "-p z30-engine --lib",
+        "-p z30-io --test logbook_integrity",
+        "-p z30-io --lib",
+        "-p z30-engine --test virtual_clock"
+      ]
+    },
+    {
+      "id": "DIAL-a",
+      "origin": "new",
+      "area": "N-05",
+      "mutation": "a configured dial is logged as commanded",
+      "file": "crates/z30-engine/src/engine.rs",
+      "result": "KILLED",
+      "failing_tests": [
+        "-p z30-engine --test dial_provenance: p5_a_command_the_radio_refused_is_not_commanded, p2_a_configured_dial_with_no_radio_is_logged_as_configuration_not_as_commanded, p6_stale_readings_old_acknowledgements_and_defaults_are_not_evidence"
+      ],
+      "tests_run": [
+        "-p z30-engine --test dial_provenance",
+        "-p z30-engine --lib",
+        "-p z30-io --lib"
+      ]
+    },
+    {
+      "id": "DIAL-b",
+      "origin": "new",
+      "area": "N-05",
+      "mutation": "any answer from the radio (even a refusal) counts as commanded",
+      "file": "crates/z30-engine/src/engine.rs",
+      "result": "KILLED",
+      "failing_tests": [
+        "-p z30-engine --test dial_provenance: p5_a_command_the_radio_refused_is_not_commanded, runtime_path::p7_through_the_runtime_only_an_acknowledged_set_frequency_is_commanded"
+      ],
+      "tests_run": [
+        "-p z30-engine --test dial_provenance",
+        "-p z30-engine --lib",
+        "-p z30-io --lib"
+      ]
+    },
+    {
+      "id": "DIAL-c",
+      "origin": "new",
+      "area": "N-05",
+      "mutation": "the 14.076 MHz default dial re-introduced",
+      "file": "crates/z30-engine/src/config.rs",
+      "result": "KILLED",
+      "failing_tests": [
+        "-p z30-engine --test dial_provenance: p6_stale_readings_old_acknowledgements_and_defaults_are_not_evidence",
+        "-p z30-engine --lib: config::tests::a_new_installation_is_unconfigured_and_cannot_transmit"
+      ],
+      "tests_run": [
+        "-p z30-engine --test dial_provenance",
+        "-p z30-engine --lib",
+        "-p z30-io --lib"
+      ]
+    },
+    {
+      "id": "DIAL-d",
+      "origin": "new",
+      "area": "N-05",
+      "mutation": "changing the dial keeps the old dial's 'commanded'",
+      "file": "crates/z30-engine/src/engine.rs",
+      "result": "KILLED",
+      "failing_tests": [
+        "-p z30-engine --test dial_provenance: p6_stale_readings_old_acknowledgements_and_defaults_are_not_evidence"
+      ],
+      "tests_run": [
+        "-p z30-engine --test dial_provenance",
+        "-p z30-engine --lib",
+        "-p z30-io --lib"
+      ]
+    },
+    {
+      "id": "DIAL-e",
+      "origin": "new",
+      "area": "N-05",
+      "mutation": "the v1 logbook migration keeps 'commanded'",
+      "file": "crates/z30-io/src/logbook.rs",
+      "result": "KILLED",
+      "failing_tests": [
+        "-p z30-io --lib: logbook::tests::a_version_1_logbook_is_migrated_without_upgrading_any_claim"
+      ],
+      "tests_run": [
+        "-p z30-engine --test dial_provenance",
+        "-p z30-engine --lib",
+        "-p z30-io --lib"
+      ]
+    },
+    {
+      "id": "DIAL-f",
+      "origin": "new",
+      "area": "N-05",
+      "mutation": "migration keeps the legacy auto-logger's dial-plus-offset frequency",
+      "file": "crates/z30-io/src/migrate.rs",
+      "result": "KILLED",
+      "failing_tests": [
+        "-p z30-io --lib: migrate::tests::each_legacy_writers_defaults_stay_unknown_and_only_those, migrate::tests::the_legacy_auto_loggers_defaults_and_runtime_state_are_not_migrated"
+      ],
+      "tests_run": [
+        "-p z30-engine --test dial_provenance",
+        "-p z30-engine --lib",
+        "-p z30-io --lib"
+      ]
+    },
+    {
+      "id": "DIAL-g",
+      "origin": "new",
+      "area": "N-05",
+      "mutation": "a stale rig reading is logged as reported by the rig",
+      "file": "crates/z30-engine/src/rig.rs",
+      "result": "KILLED",
+      "failing_tests": [
+        "-p z30-engine --test dial_provenance: p6_stale_readings_old_acknowledgements_and_defaults_are_not_evidence"
+      ],
+      "tests_run": [
+        "-p z30-engine --test dial_provenance",
+        "-p z30-engine --lib",
+        "-p z30-io --lib"
+      ]
+    },
+    {
+      "id": "SIC-a",
+      "origin": "audit",
+      "area": "SIC",
+      "mutation": "subtraction computes but does not modify the residual",
+      "file": "crates/z30-dsp/src/sic.rs",
+      "result": "KILLED",
+      "failing_tests": [
+        "-p z30-dsp --test sic_regression: a_subtraction_never_adds_energy_and_removes_what_the_station_contributed",
+        "-p z30-dsp --test channel_scenarios: sic_suppresses_a_decoded_station_by_more_than_20_db_and_reveals_the_one_underneath"
+      ],
+      "tests_run": [
+        "-p z30-dsp --test sic_regression",
+        "-p z30-dsp --test channel_scenarios"
+      ]
+    },
+    {
+      "id": "SIC-b",
+      "origin": "audit",
+      "area": "SIC",
+      "mutation": "only half of the fitted component subtracted",
+      "file": "crates/z30-dsp/src/sic.rs",
+      "result": "KILLED",
+      "failing_tests": [
+        "-p z30-dsp --test sic_regression: a_subtraction_never_adds_energy_and_removes_what_the_station_contributed",
+        "-p z30-dsp --test channel_scenarios: sic_suppresses_a_decoded_station_by_more_than_20_db_and_reveals_the_one_underneath"
+      ],
+      "tests_run": [
+        "-p z30-dsp --test sic_regression",
+        "-p z30-dsp --test channel_scenarios"
+      ]
+    },
+    {
+      "id": "SIC-c",
+      "origin": "audit",
+      "area": "SIC",
+      "mutation": "the station's span is zeroed instead of subtracted",
+      "file": "crates/z30-dsp/src/sic.rs",
+      "result": "KILLED",
+      "failing_tests": [
+        "-p z30-dsp --test sic_regression: subtracting_a_frame_that_is_not_there_removes_only_the_noise_projection_and_creates_nothing, a_subtraction_never_adds_energy_and_removes_what_the_station_contributed",
+        "-p z30-dsp --test channel_scenarios: sic_suppresses_a_decoded_station_by_more_than_20_db_and_reveals_the_one_underneath"
+      ],
+      "tests_run": [
+        "-p z30-dsp --test sic_regression",
+        "-p z30-dsp --test channel_scenarios"
+      ]
+    },
+    {
+      "id": "SNR-a",
+      "origin": "audit",
+      "area": "M-07",
+      "mutation": "noise taken from the received off-tone bins (the audited saturating estimator)",
+      "file": "crates/z30-dsp/src/demod.rs",
+      "result": "KILLED",
+      "failing_tests": [
+        "-p z30-dsp --test snr_accuracy: an_estimate_is_never_reported_above_the_strongest_signal_measured, reported_snr_tracks_the_true_snr_from_threshold_to_plus_30_db"
+      ],
+      "tests_run": [
+        "-p z30-dsp --test snr_accuracy",
+        "-p z30-engine --test qso_logging"
+      ]
+    },
+    {
+      "id": "SNR-b",
+      "origin": "audit",
+      "area": "M-07",
+      "mutation": "SNR clipped at +6.6 dB",
+      "file": "crates/z30-dsp/src/demod.rs",
+      "result": "KILLED",
+      "failing_tests": [
+        "-p z30-dsp --test snr_accuracy: an_estimate_is_never_reported_above_the_strongest_signal_measured, reported_snr_tracks_the_true_snr_from_threshold_to_plus_30_db"
+      ],
+      "tests_run": [
+        "-p z30-dsp --test snr_accuracy",
+        "-p z30-engine --test qso_logging"
+      ]
+    },
+    {
+      "id": "SNR-c",
+      "origin": "audit",
+      "area": "M-07",
+      "mutation": "SNR is a constant -16 dB",
+      "file": "crates/z30-dsp/src/demod.rs",
+      "result": "KILLED",
+      "failing_tests": [
+        "-p z30-dsp --test snr_accuracy: no_signal_is_no_estimate_never_a_floor_value, an_estimate_is_never_reported_above_the_strongest_signal_measured, reported_snr_tracks_the_true_snr_from_threshold_to_plus_30_db"
+      ],
+      "tests_run": [
+        "-p z30-dsp --test snr_accuracy",
+        "-p z30-engine --test qso_logging"
+      ]
+    },
+    {
+      "id": "SNR-d",
+      "origin": "audit",
+      "area": "M-07",
+      "mutation": "LS-projection noise bias correction removed",
+      "file": "crates/z30-dsp/src/demod.rs",
+      "result": "KILLED",
+      "failing_tests": [
+        "-p z30-dsp --test snr_accuracy: reported_snr_tracks_the_true_snr_from_threshold_to_plus_30_db"
+      ],
+      "tests_run": [
+        "-p z30-dsp --test snr_accuracy",
+        "-p z30-engine --test qso_logging"
+      ]
+    },
+    {
+      "id": "SNR-e",
+      "origin": "audit",
+      "area": "M-07",
+      "mutation": "no-estimate case floored to -30 dB instead of None",
+      "file": "crates/z30-dsp/src/demod.rs",
+      "result": "KILLED",
+      "failing_tests": [
+        "-p z30-dsp --test snr_accuracy: no_signal_is_no_estimate_never_a_floor_value"
+      ],
+      "tests_run": [
+        "-p z30-dsp --test snr_accuracy",
+        "-p z30-engine --test qso_logging"
+      ]
+    },
+    {
+      "id": "SNR-f",
+      "origin": "audit",
+      "area": "M-07",
+      "mutation": "SNR biased by +1.0 dB",
+      "file": "crates/z30-dsp/src/demod.rs",
+      "result": "KILLED",
+      "failing_tests": [
+        "-p z30-dsp --test snr_accuracy: reported_snr_tracks_the_true_snr_from_threshold_to_plus_30_db"
+      ],
+      "tests_run": [
+        "-p z30-dsp --test snr_accuracy",
+        "-p z30-engine --test qso_logging"
+      ]
+    }
+  ]
+}
