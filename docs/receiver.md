@@ -104,7 +104,20 @@ Every value is measured from the slot's own samples after the frame has decoded:
   `z30 --benchmark snr` (bias and spread per point in
   [benchmarking.md](benchmarking.md#reported-snr-dt-and-frequency)). Outside it the GUI and CLI
   show a bound (`<-22`, `>+30`), not a number. `None` means the signal estimate was not
-  positive: it is shown as `--`, and the sequencer sends no report rather than a made-up one.
+  positive: it is shown as `--`, and the sequencer sends no report rather than a made-up one
+  (`tests/snr_accuracy.rs::no_signal_is_no_estimate_never_a_floor_value`).
+- **What "validated" covers:** an exact-replica signal in AWGN, in simulation. The
+  post-remediation audit measured the estimate on non-ideal signals with an independent harness:
+  with 5°/symbol random-walk phase noise it read 0.5 dB low at +20 dB and 2.9 dB low at +30 dB,
+  and on Watterson "poor" 4.4 dB low at +20 dB (moderate: 0.4 dB low at +10 dB, 1.9 dB low at
+  +20 dB), because the replica fit leaves the unmodelled part of the signal in the residual it
+  takes the noise from. Below about +10 dB it stayed within 0.5 dB. Those Watterson figures were
+  measured with the channel model before its Doppler correction (N-01). It has not been measured
+  on real audio: **NOT HARDWARE VALIDATED**.
+- **Reports below −22 dB** are sent as the rounded estimate (down to v1's −30 dB), although the
+  display shows the bound `<-22`: v1 carries a number, and the estimate there is outside the
+  validated range (the audit measured +0.4 dB bias at −24 dB, from the frames that happened to
+  decode).
 
 ## Determinism
 

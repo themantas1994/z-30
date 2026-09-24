@@ -23,11 +23,11 @@ performed.**
 | :--- | :--- | :--- | :---: |
 | Cycle / transmission | 30 s / 24.0 s | 15 s / 12.64 s | [D] |
 | Modulation | 16-GFSK, BT 2.0, 3.125 Hz spacing, 3.125 baud | 8-GFSK, BT 2.0, 6.25 Hz spacing, 6.25 baud | [D] / [P] |
-| Occupied bandwidth | ≈ 50 Hz (99%), ≈ 66 Hz (−40 dB) of the audio waveform | ≈ 50 Hz | [M] (`z30 --loopback-test`) / [P] |
+| Occupied bandwidth | ≈ 50 Hz (99%), ≈ 66 Hz (−40 dB) of the audio waveform | ≈ 50 Hz | [M] in software (`loopback::tests`, `z30 --loopback-test`; no transmitter measured) / [P] |
 | Message bits | **63** | **77** | [D] |
 | Information bits into the code (message + CRC-14) | 77 | 91 | [D] |
 | Code | IRA-LDPC (216, 77), rate 0.356 | LDPC (174, 91), rate 0.523 | [D] |
-| Sync | 21 Costas symbols (3 × 7) | 21 Costas symbols (3 × 7) | [D] |
+| Sync | 21 symbols: 7 groups of 3 (positions 0–2, 7–9, 17–19, 27–29, 37–39, 47–49, 72–74) | 21 Costas symbols (3 groups of 7) | [D] |
 | Interference cancellation | subtract and re-decode, up to 3 passes | subtract and re-decode (`subtractft8`), multiple passes | [M] / [P] |
 | A priori decoding | yes, off by default ([17](17-A-Priori-(AP)-Decoding.md)) | yes | [D] / [P] |
 
@@ -43,7 +43,7 @@ performed.**
 | Shannon limit, SNR in 2500 Hz (Eb/N0 = −1.59 dB) | −31.38 dB | −27.72 dB | [D] |
 | Distance from own Shannon limit | 8.35 dB | 6.72 dB | [D] |
 
-The z-30 figures: `research/results/d8983eeef66e/awgn.json` — blind acquisition (tone 0 uniform
+The z-30 figures: `research/results/672cef9b3cdb/awgn.json` — blind acquisition (tone 0 uniform
 over 210–2740 Hz, DT uniform over ±1.4 s, random carrier phase, random payload), success = the
 decoded 63 payload bits equal the transmitted ones, 200 frames per SNR point, suite seed
 20260830, Wilson 95% intervals. The FT8 figure is from Franke, Somerville & Taylor, "The FT4 and
@@ -63,26 +63,35 @@ airtime and the bit count is the error this page used to make.
 
 | | z-30 | FT8 | Class |
 | :--- | :--- | :--- | :---: |
-| 50% decode, ITU-R F.1487 good / moderate / poor (Watterson, average SNR) | −20.79 / −21.31 / −21.07 dB | [N] here | [M] |
+| 50% decode, ITU-R F.1487 good / moderate / poor (Watterson, average SNR) | −20.94 / −21.37 / −20.88 dB | [N] here | [M] |
 | 50% decode, high-latitude moderate (3 ms / 10 Hz) | none: 0 of 800 frames from −20 to +10 dB | [N] here | [M] |
 
-| ITU-R F.1487 preset (delay / Doppler) | −22 dB | −20 dB | −18 dB | −16 dB | −14 dB | −10 dB | 50% crossing |
+| ITU-R F.1487 preset (delay / Doppler 2σ) | −22 dB | −20 dB | −18 dB | −16 dB | −14 dB | −10 dB | 50% crossing |
 | :--- | ---: | ---: | ---: | ---: | ---: | ---: | :--- |
-| good (0.5 ms / 0.1 Hz) | 34.0% | 60.5% | 80.0% | 91.5% | 95.0% | 98.5% | −20.79 dB [−21.30, −20.28] |
-| moderate (1 ms / 0.5 Hz) | 34.5% | 79.5% | 96.0% | 99.0% | 100% | 100% | −21.31 dB [−21.60, −21.04] |
-| poor (2 ms / 1 Hz) | 27.0% | 76.5% | 99.0% | 100% | 100% | 100% | −21.07 dB [−21.32, −20.83] |
+| good (0.5 ms / 0.1 Hz) | 32.0% | 66.0% | 87.5% | 92.0% | 96.0% | 99.5% | −20.94 dB [−21.33, −20.55] |
+| moderate (1 ms / 0.5 Hz) | 34.5% | 83.5% | 98.5% | 100% | 100% | 100% | −21.37 dB [−21.63, −21.12] |
+| poor (2 ms / 1 Hz) | 18.5% | 75.0% | 98.5% | 100% | 100% | 100% | −20.88 dB [−21.09, −20.68] |
 | high-latitude moderate (3 ms / 10 Hz) | — | 0% | — | — | — | 0% (and 0% at 0 and +10 dB) | **no decode at any SNR** |
 
 Against AWGN (−23.03 dB), fading costs z-30 about 1.7–2.2 dB at the 50% point. On the slowest
 channel ("good", 0.1 Hz Doppler) the cost grows toward high decode rates: a frame whose whole
-24 s falls in a fade is lost whatever the average SNR, so 95% is reached only at −14 dB and
-98.5% at −10 dB. On the faster "poor" channel the fading averages out within a frame and 99%
-is reached at −18 dB.
+24 s falls in a fade is lost whatever the average SNR, so 96% is reached only at −14 dB and
+99.5% at −10 dB. On the faster "poor" channel the fading averages out within a frame and 98.5%
+is reached at −18 dB, but its 50% point is the worst of the three (its coherence time,
+1/(2πσ_D) ≈ 0.32 s, is one symbol long; why that costs this much has not been isolated).
 
-Source: `research/results/d8983eeef66e/fading.json`; `z30_channel::Watterson`, two equal-power
-paths with complex Gaussian taps and a Gaussian Doppler spectrum, normalised to unit power over
-the ensemble (so an individual frame fades as a Rayleigh channel does); SNR is the average
-SNR; 200 frames per point; seed 20260830. [M]
+Source: `research/results/672cef9b3cdb/fading.json`; `z30_channel::Watterson`, two independent
+equal-power paths with complex Gaussian taps whose Doppler **power** spectrum is Gaussian with
+standard deviation σ_D = spread / 2 (the ITU-R F.1487 2σ spread), normalised to unit power over
+the ensemble (so an individual frame fades as the channel dictates); SNR is the average SNR;
+200 frames per point; seed 20260830. Software simulation, no hardware. [M]
+
+**Previous figures corrected.** The fading rows published before 2026-09-24 (−20.79 / −21.31 /
+−21.07 dB) were measured with a channel model whose taps had 1/√2 of the labelled Doppler
+spread (both the Rust model and the Python oracle; post-remediation audit N-01). They described
+0.071 / 0.35 / 0.71 / 7.1 Hz channels, not the presets named, and are withdrawn. The corrected
+model's spread is measured by tests that fail on the old one (`z30-channel`,
+`legacy/python-oracle/tests/test_watterson_doppler.py`).
 
 **On a path with 10 Hz of Doppler spread z-30 does not decode at any SNR.** The spread is wider
 than the 3.125 Hz tone spacing, so the tones are no longer separable; the long, narrow symbol

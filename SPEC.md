@@ -259,6 +259,12 @@ sample rate; vNext computes the same quantity from an FFT of a decimated complex
 `SNR = 10·log10(P_signal / (σ² · 2500/(fs/2)))`: signal power over noise power in a 2500 Hz
 bandwidth, for real white noise of per-sample variance σ² at sample rate fs.
 
+Fading results (not part of the protocol, but quoted against it) use the ITU-R F.1487 Watterson
+convention: a path's **Doppler spread** is `2σ_D`, where σ_D is the standard deviation of the
+path tap's Gaussian Doppler **power** spectral density; the SNR is the average over the fading
+ensemble. `z30_channel::Watterson` and the reference oracle's `channel.py` implement exactly this
+(before 2026-09-24 both ran at 1/√2 of the stated spread; see `docs/benchmarking.md#fading`).
+
 ## 11. Numeric semantics summary
 
 | Stage | Precision | Bit-exact with the reference? |

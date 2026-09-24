@@ -15,11 +15,14 @@ beside them.
 
 | Directory | Binary | Contents |
 | :--- | :--- | :--- |
-| [`d8983eeef66e/`](d8983eeef66e/SUMMARY.md) | release build of `d8983ee`, rustc 1.98.1, x86_64 Linux, 4 logical CPUs | `awgn`, `snr`, `drift`, `timing`, `clock`, `impair`, `busy`, `false`, `sic`, `fading` at publishable size (200 frames per point; 100 for `snr` and per `sic` cell; 400 slots per `false` kind); suite seed 20260830 |
+| [`18fbd78d8fb8/`](18fbd78d8fb8/) | release build of `18fbd78`, rustc 1.98.1, x86_64 Linux, 4 logical CPUs | `awgn.json` (replicate 0 = the published seed; identical to `672cef9b3cdb/awgn.json`) and `awgn_replicates/replicate-1` … `replicate-10`: the AWGN benchmark on ten disjoint sets of frames (`--replicate`), to measure the run-to-run spread of the crossing; each says it is not the published run. `18fbd78` changes only the harness's replicate seeding, not the receiver |
+| [`672cef9b3cdb/`](672cef9b3cdb/SUMMARY.md) | release build of `672cef9` (corrective remediation), rustc 1.98.1, x86_64 Linux, 4 logical CPUs | **current.** The whole suite at publishable size, suite seed 20260830 |
+| [`d8983eeef66e/`](d8983eeef66e/SUMMARY.md) | release build of `d8983ee`, rustc 1.98.1, x86_64 Linux, 4 logical CPUs | the first suite run: `awgn`, `snr`, `drift`, `timing`, `clock`, `impair`, `busy`, `false`, `sic`, `fading` (200 frames per point; 100 for `snr` and per `sic` cell; 400 slots per `false` kind); suite seed 20260830. **Its `fading.json` is withdrawn**: the channel model then ran every Watterson preset at 1/√2 of its labelled Doppler spread (post-remediation audit N-01). The other nine files are reproduced identically by `672cef9b3cdb/` |
 
 Command: `cargo build --release -p z30-cli && ./target/release/z30 --benchmark suite`.
-The receiver crates (`z30-dsp`, `z30-protocol`, `z30-channel`) are unchanged from `d8983ee` to
-the end of the 2026-09-24 remediation, so these results describe the receiver at its head.
+The receiver (`z30-dsp`, and the protocol's modulator, LDPC, CRC and symbol map) is unchanged
+from `d8983ee` to `672cef9`; `z30-channel`'s Watterson model changed at `b75f773` (N-01), which
+is why only `fading` differs between the two directories.
 
 ## Earlier instruments (top level)
 

@@ -47,7 +47,8 @@ No release has been published at the time of writing; until one is, build from s
 ## From source
 
 1. **Rust 1.95 or newer** ([rustup.rs](https://rustup.rs)). 1.95 is the workspace's declared
-   minimum and CI builds and tests it; older compilers cannot build the GUI.
+   minimum: CI builds, lints (`clippy -D warnings`) and tests it; older compilers cannot build
+   the GUI.
 2. **System libraries** (Linux only):
    ```bash
    # Debian / Ubuntu

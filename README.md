@@ -45,7 +45,7 @@ uses it.
 
 | | Status |
 | :--- | :--- |
-| **Protocol validated** | **Yes.** An independent re-implementation written from [`SPEC.md`](SPEC.md) alone reproduces the CRC, LDPC encoder, symbol map and waveform bit for bit. |
+| **Protocol validated** | **Yes, against the reference.** The Rust implementation reproduces the frozen reference oracle's golden vectors - CRC, LDPC encoder, symbol map, codec and waveform - bit for bit ([`fixtures/golden/`](fixtures/golden/), checked in CI). An independent re-implementation from [`SPEC.md`](SPEC.md) alone was reported by the original 2026-09-24 audit (its evidence E007 is not in this repository, so it cannot be checked here). |
 | **Software simulation validated** | **Yes.** The receiver is measured through its production entry point in seeded simulation (AWGN, drift, timing, clock error, impairments, busy bands, collisions, fading, false decodes) — [measurements](docs/benchmarking.md). |
 | **Hardware validated** | **No.** Real-radio validation: **not yet performed.** No radio, audio interface or PTT interface has been used with z-30. |
 | **On-air validated** | **No.** No z-30 frame has been decoded over a real radio path. No other software speaks z-30. |
@@ -61,7 +61,10 @@ procedure](docs/hardware-validation.md) has been carried out and recorded.
 > acquisition (tone 0 uniform over 210–2740 Hz, DT uniform over ±1.4 s, random carrier phase,
 > random payload); success = the decoded 63 payload bits equal the transmitted ones; 200 frames
 > per SNR point; suite seed 20260830; Wilson 95% intervals; 0 false decodes in the sweep.
-> Source: [`research/results/d8983eeef66e/awgn.json`](research/results/d8983eeef66e/awgn.json).
+> Source: [`research/results/672cef9b3cdb/awgn.json`](research/results/672cef9b3cdb/awgn.json) (identical, point for
+> point, to the first run at `d8983ee`). Ten further runs on disjoint frames put the 50% point's run-to-run
+> standard deviation at 0.05 dB; pooled over 2200 frames per point it is −23.00 dB [−23.04, −22.96]
+> ([docs/benchmarking.md](docs/benchmarking.md#awgn-decode-threshold)).
 > **Not measured on real radio hardware.**
 
 Against FT8, all of it or none of it:
@@ -74,7 +77,7 @@ Against FT8, all of it or none of it:
   (6.8 dB against 5.1 dB).
 - **Fading:** on ITU-R F.1487 high-latitude moderate (3 ms / 10 Hz Doppler) z-30 **does not
   decode at any SNR**: the Doppler spread is wider than the 3.125 Hz tone spacing. On slower
-  fading paths see the ensemble-normalised Watterson simulations in [docs/benchmarking.md](docs/benchmarking.md#fading): 50% at about −21 dB on the ITU-R F.1487 good, moderate and poor presets (−20.8 / −21.3 / −21.1 dB), with a slow-fading tail on the good channel (95% only at −14 dB).
+  fading paths see the ensemble-normalised Watterson simulations in [docs/benchmarking.md](docs/benchmarking.md#fading): 50% at about −21 dB on the ITU-R F.1487 good, moderate and poor presets (−20.9 / −21.4 / −20.9 dB), with a slow-fading tail on the good channel (96% only at −14 dB). These are the corrected figures: the channel model used to run every preset at 1/√2 of its labelled Doppler spread, and the earlier fading figures are withdrawn.
 - **Collisions:** both modes subtract decoded signals and decode again; WSJT-X's FT8 decoder
   runs three passes with subtraction. z-30's measured collision behaviour (simulation, two
   stations, paired SIC on/off) is in [docs/benchmarking.md](docs/benchmarking.md#collisions-sic-on-versus-off).

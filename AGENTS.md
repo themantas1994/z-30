@@ -51,7 +51,9 @@ crates/                      THE APPLICATION
   z30-io/                    cpal audio, rigctld, serial RTS/DTR, CM108 (feature), SQLite+ADIF
                              logbook, migration from the legacy app, paths, OS clock status.
   z30-cli/                   `z30`: receive-only station, decode, encode, diagnostics, migrate,
-                             ADIF, --loopback-test, --benchmark (suite.rs: every published figure).
+                             ADIF, --loopback-test (software, in memory), --audio-loopback-test
+                             (sound card; refuses PTT/rig configs), --benchmark (suite.rs: every
+                             published figure).
   z30-gui/                   `z30-gui` (egui). Renders snapshots, sends commands, runs no DSP.
   z30-channel/               seeded channel models (AWGN, drift, clock error, Watterson, CW, bands).
                              Test/benchmark tooling only; never in the receive path.
@@ -101,7 +103,18 @@ the test to match. Full rationale: [`docs/safety.md`](docs/safety.md).
   width) inside a permitted data segment; the radio's settled readback not contradicting the
   dial; **the whole encoded frame reading back as exactly the requested message** (symbols,
   parity, CRC, fields, text — partner call, grid and report included; audit C-06); the frame
-  sent from this station; a PTT method configured and the transmit hardware open.
+  sent from this station; a PTT method configured and the transmit hardware open; a non-zero
+  transmit level; no fresh rig reading of a non-USB mode.
+- **What is verified is what is transmitted.** The transmit path accepts only a
+  `z30_protocol::codec::VerifiedFrame`, which only `EncodedMessage::verify` can construct; the
+  gate hands it out in `Permission::frame` and `plan_tx` sends that object, never a re-encoding.
+  Never add a way to build a `VerifiedFrame` without the round trip, and never let the transmit
+  path take an `EncodedMessage` or bare symbols (post-remediation audit N-03;
+  `z30-protocol/tests/frame_integrity.rs`, `safety.rs` n3).
+- **Loopback never transmits.** `z30 --loopback-test` is in memory and has no audio output, PTT or
+  rig control (`z30-cli/tests/loopback_isolation.rs`). The sound-card test
+  `--audio-loopback-test` refuses any configuration with a PTT method (VOX included) or rig
+  control (N-04).
 - **Readback only adds refusals.** No readback is "unverified", not "wrong"; an unsettled QSY
   (three polls) and a difference inside the rig's tuning resolution are not refusals.
 - **One keying implementation** (`PttController`), which reports whether the hardware accepted
@@ -111,7 +124,7 @@ the test to match. Full rationale: [`docs/safety.md`](docs/safety.md).
   thread, the panic/signal handlers and the OS's release of serial lines are separate layers.
   Do not collapse them.
 - rigctld PTT runs on its own connection, never queued behind polls.
-- **No default callsign, region, class or PTT.** A new install cannot transmit
+- **No default callsign, region, class, PTT, dial or transmit level.** A new install cannot transmit
   (`config::tests::a_new_installation_is_unconfigured_and_cannot_transmit`); CI scans release
   binaries for the old W1AW default.
 
@@ -133,6 +146,10 @@ the test to match. Full rationale: [`docs/safety.md`](docs/safety.md).
   suppression (it overstates by ~10 dB). Never quote it as how much of a station was removed.
 - Log records carry per-field provenance; absent fields stay absent; `QsoRecord::validate`
   refuses records with no partner or no plausible UTC time; times are UTC from slot numbers.
+- The logged dial claims only its evidence: `reported_by_rig` (fresh CAT reading), `commanded`
+  (a set-frequency the radio acknowledged), `configured` (the operator's setting), or absent.
+  Never log a configured or default value as commanded or measured (N-05;
+  `z30-engine/tests/dial_provenance.rs`).
 - Configured TX power is configuration. Forward power and SWR are "not measured".
 
 **Time** (`crates/z30-io/src/wallclock.rs`)
@@ -176,6 +193,11 @@ the test to match. Full rationale: [`docs/safety.md`](docs/safety.md).
 - Watterson taps are normalised to unit **ensemble** power (both `z30-channel` and the oracle's
   `channel.py`). Per-realisation normalisation deleted slow-fading power variation and made
   fading results optimistic (audit H-10); do not restore it.
+- `doppler_hz` is the ITU-R F.1487 **2σ spread of the Doppler POWER spectrum** (σ_D =
+  doppler_hz / 2); the tap's AMPLITUDE response is its square root, exp(−f²/(4σ_D²)). Both
+  implementations used the power formula as the amplitude, running every preset at 1/√2 of its
+  label (post-remediation audit N-01); the spectral tests in `z30-channel` and the oracle's
+  `test_watterson_doppler.py` fail on that.
 
 ---
 
@@ -190,18 +212,24 @@ purpose. Every published figure follows these rules:
 - **Quote the implementation, the measurement type, the channel, the SNR definition (2500 Hz,
   SPEC §10), the sample count, the seed, the success criterion, the interval, and that it is a
   simulation with no hardware involved.** A bare "−23 dB" is not a z-30 figure.
-- Current AWGN figure (`research/results/d8983eeef66e/awgn.json`): **vNext `decode_slot`, 50%
+- Current AWGN figure (`research/results/672cef9b3cdb/awgn.json`, identical to `d8983eeef66e`): **vNext `decode_slot`, 50%
   decode at −23.03 dB [−23.13, −22.89], 90% at −22.06 dB [−22.15, −21.80]**, blind acquisition
   (tone 0 uniform 210–2740 Hz, DT uniform ±1.4 s, random phase and payload), AWGN, 200 frames
   per point, suite seed 20260830, Wilson 95%. **Simulation; not measured on real hardware.**
+  Its run-to-run sd over ten disjoint replicates is 0.048 dB; pooled over 2200 frames per point,
+  −23.00 dB [−23.04, −22.96] (`research/results/18fbd78d8fb8/`). Quote replicates with
+  `--replicate`, never with another base seed (small seeds reused the published frames, §D of the
+  corrective audit).
 - **Against FT8, quote all of it or none of it:** about 2 dB deeper than FT8's published −21 dB
   (a simulation figure from Franke, Somerville & Taylor, QEX 2020, conditions not identical),
   bought with 1.9× the airtime and 14 fewer message bits; **per message bit z-30 needs about
   1.6 dB more Eb/N0 than FT8** (6.8 vs 5.1 dB); and on ITU-R F.1487 high-latitude moderate (10 Hz Doppler) z-30
   does not decode at any SNR. FT8 **does** recover collisions (WSJT-X runs three passes with
   subtraction); never write otherwise.
-- **Fading figures** come only from the ensemble-normalised model; results from the old
-  per-realisation model (including the retired "−21.4 dB mid-latitude") are withdrawn.
+- **Fading figures** come only from the ensemble-normalised model **with the corrected Doppler
+  spread** (`research/results/672cef9b3cdb/fading.json` or later); results from the old
+  per-realisation model (including the retired "−21.4 dB mid-latitude") and from the 1/√2-Doppler
+  model (`d8983eeef66e/fading.json`, −20.79 / −21.31 / −21.07 dB) are withdrawn.
 - **Busy-band figures state the placement** (random, overlapping) and the SNR range.
 - **The oracle's figures are the oracle's.** `legacy/python-oracle` results describe that
   reference receiver, never "z-30" or "the decoder that ships".
@@ -256,8 +284,9 @@ legacy reference tests, repository hygiene and the production/legacy separation)
 
 ## 7. House rules
 
-- **Rust MSRV is 1.95** (`Cargo.toml`), checked by CI. `z30-protocol`, `z30-dsp` and
-  `z30-engine` are `#![forbid(unsafe_code)]`. Clippy warnings are errors.
+- **Rust MSRV is 1.95** (`Cargo.toml`): CI builds, runs clippy `-D warnings` and tests on it.
+  `z30-protocol`, `z30-dsp` and `z30-engine` are `#![forbid(unsafe_code)]`. Clippy warnings are
+  errors.
 - **Nothing in `crates/` may depend on `legacy/`**, and no fallback to anything else may be
   added: a failure is reported, not worked around.
 - **The audio callback does not allocate** (`z30-io/tests/callback_alloc.rs`).
@@ -289,4 +318,4 @@ legacy reference tests, repository hygiene and the production/legacy separation)
 | GUI | `crates/z30-gui/src/app.rs`, `wiki/14` |
 | Benchmarks | `crates/z30-cli/src/suite.rs`, `docs/benchmarking.md`, `research/` |
 | Packaging, releases | `.github/workflows/release.yml`, `docs/install.md` |
-| Hardware validation | `docs/hardware-validation.md`, `crates/z30-cli/src/loopback.rs` |
+| Hardware validation | `docs/hardware-validation.md`, `crates/z30-cli/src/{loopback,audio_loopback}.rs` |

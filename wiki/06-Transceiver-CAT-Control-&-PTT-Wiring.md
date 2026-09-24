@@ -28,15 +28,22 @@ z-30 sends only `f` (read dial), `t` (read PTT), `m` (read mode), `F <hz>` (set 
 CAT PTT, `T 1` / `T 0`. Every command times out after 1.5 s; any reply other than `RPRT 0` is a
 failure, never a success. It does not set the mode: **put the radio in USB (or its USB data
 mode) yourself**. The emission is computed as dial + audio offset, i.e. USB; in LSB the transmit
-gate would be checking the wrong frequency.
+gate would be checking the wrong frequency, so when `rigctld` reports a mode other than `USB` or
+`PKTUSB` in a fresh reading, the gate refuses (`RigModeNotUsb`). Without rig control the mode
+cannot be read and is not checked.
 
-With no `rigctld` configured, the dial is whatever you entered and is shown as *not verified*.
+With no `rigctld` configured, the dial is whatever you entered and is shown as *configured; no
+radio confirms it*; contacts log it as `configured`. With no dial entered at all, transmit is
+refused and contacts log no frequency.
 
 ## Reading the rig back
 
 The model is WSJT-X's (`PollingTransceiver`/`TransceiverBase`), ported to
-`crates/z30-engine/src/rig.rs`: the dial the software commanded and the dial the radio reports
-are two different things, and only the reading is knowledge.
+`crates/z30-engine/src/rig.rs`: the dial the software set (and, with rig control, sent to the
+radio) and the dial the radio reports are two different things, and only the reading is
+knowledge. A dial change is sent to the radio with rigctld's set-frequency; only the radio's
+acknowledgement of that command lets a contact log the dial as "commanded", and a fresh
+reading logs it as "reported by the radio".
 
 - The dial is polled once a second, never within 100 ms of a PTT change (some rigs cannot
   process CAT while switching).

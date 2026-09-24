@@ -33,8 +33,9 @@ the seed, the benchmark, the point and the frame index, so any single frame can 
 
 ## The measured set
 
-Results: [`research/results/d8983eeef66e/`](../research/results/d8983eeef66e/SUMMARY.md),
-from the release binary built at `d8983ee` (the receiver is unchanged since). 200 frames per
+Results: [`research/results/672cef9b3cdb/`](../research/results/672cef9b3cdb/SUMMARY.md), from the release
+binary built at `672cef9`. Nine of the ten benchmarks are identical to the first run at `d8983ee`
+(the receiver did not change); fading changed because its channel model was corrected. 200 frames per
 point unless stated. Blind placement: tone 0 uniform over 210–2740 Hz, DT uniform over ±1.4 s,
 random carrier phase and payload.
 
@@ -49,7 +50,7 @@ random carrier phase and payload.
 | Busy band, random overlapping placement | K = 40 at −20…0 dB: 98.8% [98.2, 99.2]; K = 20 at −22…−16 dB: 97.6%; 0 false decodes |
 | False decodes, no z-30 frame present | 0 in 2000 slots (white noise, CW carriers, 16-FSK without Costas, FT8-like 8-FSK, impulses); 95% upper bound 1.5 × 10⁻³ per slot |
 | Two-station collisions, SIC on vs off | weak station (−18 dB, 3–20 dB below) decoded 100/100 with SIC in every cell except exact co-location (0/100 in both arms); single pass loses it at 5–20 Hz; p ≤ 1.2 × 10⁻¹⁰ where the arms differ; 0 false, 0 duplicates in 2400 trials |
-| Watterson fading (ensemble-normalised) | 50% at −20.79 / −21.31 / −21.07 dB on ITU-R F.1487 good / moderate / poor (average SNR); slow-fading tail on good (95% at −14 dB); **high-latitude moderate (10 Hz Doppler): 0 of 800 frames from −20 to +10 dB** |
+| Watterson fading (ensemble-normalised; Doppler = 2σ of the power spectrum) | 50% at −20.94 / −21.37 / −20.88 dB on ITU-R F.1487 good / moderate / poor (average SNR); slow-fading tail on good (96% at −14 dB); **high-latitude moderate (10 Hz Doppler): 0 of 800 frames from −20 to +10 dB**. The earlier −20.79 / −21.31 / −21.07 dB came from a model running at 1/√2 of the labelled Doppler and are withdrawn |
 
 Not measured: any real recording, any hardware, any on-air path; collisions of three or more
 stations as a function of power difference; FT8 on the same channels.
@@ -88,7 +89,8 @@ marked exploratory in the JSON. The full suite takes a few hours on 4 cores.
 
 | Suite | Command | What it covers |
 | :--- | :--- | :--- |
-| Rust workspace | `cargo test --workspace --exclude z30-py --release` | golden vectors from the frozen oracle; protocol round trip of every grid, report and sampled callsign; the transmit gate and PTT fail-closed rules; the live runtime decoding a slot only from its complete window (virtual sound card and clock); QSO logging with missing values and non-UTC time zones; SNR accuracy; SIC; a sensitivity regression floor at −22 dB; migration idempotence; loopback analysis |
+| Rust workspace | `cargo test --workspace --exclude z30-py --release` | golden vectors from the frozen oracle; protocol round trip of every grid, report and sampled callsign; the transmit gate and PTT fail-closed rules; the live runtime decoding a slot only from its complete window (virtual sound card and clock); QSO logging with missing values and non-UTC time zones; SNR accuracy (and no estimate, not a floor, from silence); SIC; a sensitivity regression floor at −22 dB; migration idempotence and each legacy writer's defaults; dial-frequency provenance through the engine and the runtime; every kind of corrupted frame refused by the round trip and by the transmit gate, and the transmitted audio decoding back to the verified frame; the Watterson model's measured Doppler spread; the software loopback through the resampler, and that it contains no audio/PTT/rig code |
+| Python oracle Doppler | `cd legacy/python-oracle && python -m pytest tests/test_watterson_doppler.py` | the oracle's fading model has its labelled Doppler spread |
 | Formatting and lints | `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D warnings` | |
 | Python oracle (non-production) | `cd legacy/python-oracle && python -m pytest tests` | the reference implementation, and that its source still matches `FROZEN.sha256` |
 | Golden vectors | `python reference/golden/generate.py --check` | the oracle still produces `fixtures/golden/` byte for byte |
@@ -99,7 +101,7 @@ marked exploratory in the JSON. The full suite takes a few hours on 4 cores.
 - **`rust.yml`** — formatting, clippy, tests (debug and release) on Linux, Windows and macOS;
   the release binaries with CM108 PTT; `--version` names the commit and features; no real
   callsign in a binary; a CLI decode round trip; a message v1 cannot carry is refused; the
-  **declared MSRV (1.95) builds and passes**; every suite benchmark runs through the shipped
+  **declared MSRV (1.95) builds, passes clippy -D warnings and passes the tests**; every suite benchmark runs through the shipped
   binary at exploratory size and records its provenance; the golden vectors reproduce; the
   paired oracle-vs-`decode_slot` harness runs.
 - **`ci.yml`** — the oracle on Python 3.10–3.13 including its freeze check, the retired

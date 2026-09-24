@@ -40,13 +40,21 @@ Rules:
 
 | ID | Test | How | Pass criterion |
 | :--- | :--- | :--- | :--- |
-| A1 | Loopback decode, timing, frequency, bandwidth | Cable from the output to the input of the same (or a second) sound card, **no transmitter in the path**. `z30 --loopback-test --confirm-no-transmitter --out a1.json`, 10 runs | decoded, nothing else decoded; `\|dt_minus_prediction_ms\|` ≤ 50; `\|freq_error_hz\|` ≤ 1.0; 99% BW ≤ 55 Hz, −40 dB BW ≤ 80 Hz (Welch, 8192 points at 6 kHz); no clipping |
-| A2 | Sample-clock behaviour over hours | Loopback as A1, repeated every 10 min for 4 h (script around `--loopback-test`); record `sample_clock_ppm` and DT | DT drift < 10 ms over 4 h; ppm estimate stable within ±5 ppm |
+| A1 | Loopback decode, timing, frequency, bandwidth | Cable from the output to the input of the same (or a second) sound card, **no transmitter in the path**. With a configuration that has **no PTT method and no rig control**: `z30 --config loopback.toml --audio-loopback-test --confirm-no-transmitter --out a1.json`, 10 runs | decoded, nothing else decoded; `\|dt_minus_prediction_ms\|` ≤ 50; `\|freq_error_hz\|` ≤ 1.0; 99% BW ≤ 55 Hz, −40 dB BW ≤ 80 Hz (Welch, 8192 points at 6 kHz); no clipping |
+| A2 | Sample-clock behaviour over hours | Loopback as A1, repeated every 10 min for 4 h (script around `--audio-loopback-test`); record `sample_clock_ppm` and DT | DT drift < 10 ms over 4 h; ppm estimate stable within ±5 ppm |
 | A3 | Device rates | A1 at 44.1 kHz and 48 kHz input and output (set in the OS mixer) | as A1 |
 | A4 | Device loss | During a `z30 --receive` run, unplug the USB audio device for 10 s and replug | the missed slots are reported (`slot N missed: BeforeEpoch`), reception resumes, no crash |
 
-`--loopback-test` plays audio only; it keys nothing. It still refuses to run without
-`--confirm-no-transmitter`, because a radio on VOX connected to that output would transmit.
+`--audio-loopback-test` plays audio only; it keys nothing. It refuses to run without
+`--confirm-no-transmitter`, because a radio on VOX connected to that output would transmit, and
+it refuses any configuration with a PTT method (VOX included) or rig control, before opening a
+device: such a configuration describes a station with a radio attached (post-remediation audit
+N-04). Keep a separate configuration file for the loopback setup.
+
+`z30 --loopback-test` (no confirmation needed) is the **software** loopback: the same analysis on
+the production transmit synthesis and receive chain (resampler, sample clock, scheduler,
+`decode_slot`) at 48 and 44.1 kHz, entirely in memory. It opens no device and says
+`source: software-loopback`. It is not hardware evidence and does not replace A1.
 
 ## R — radio into a dummy load
 
