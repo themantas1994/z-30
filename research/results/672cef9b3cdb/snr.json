@@ -1,0 +1,478 @@
+{
+  "benchmark": "snr",
+  "channel": "AWGN",
+  "definitions": {
+    "duplicates_dropped": "decodes of an already-decoded payload that the receiver itself discarded (PassStats::duplicates)",
+    "duplicates_emitted": "the same payload reported more than once in the output (must be 0)",
+    "false_decode": "a CRC-valid decode whose payload was not transmitted in that slot",
+    "ground_truth": "the harness knows the transmitted payloads; the receiver is given only the 27 s window",
+    "interval": "Wilson score 95% interval, percent",
+    "latency": "wall-clock time of decode_slot per slot, measured while other slots were decoded concurrently on the same pool; indicative only (see `z30 --benchmark perf` for controlled latency)",
+    "sample_rate_hz": 6000.0,
+    "snr": "SPEC.md section 10: frame signal power over the noise power in 2500 Hz; real white Gaussian noise, sigma = 1 per sample at 6 kHz, so SNR = P / (5000 / 6000)",
+    "success": "a decode whose 63 payload bits equal the transmitted payload"
+  },
+  "frames_per_point": 100,
+  "placement": "as awgn",
+  "points": [
+    {
+      "decoded": 0,
+      "dt_error_ms": {
+        "bias": null,
+        "max_abs": 0.0,
+        "n": 0,
+        "sd": null
+      },
+      "duplicates_dropped": 0,
+      "duplicates_emitted": 0,
+      "false_decodes": 0,
+      "frames": 100,
+      "freq_error_hz": {
+        "bias": null,
+        "max_abs": 0.0,
+        "n": 0,
+        "sd": null
+      },
+      "label": "true -25 dB",
+      "latency_ms": {
+        "max": 3444.605227,
+        "p50": 363.69073499999996,
+        "p95": 415.906505
+      },
+      "param": -25.0,
+      "percent": 0.0,
+      "snr_measured": {
+        "bias_db": null,
+        "max_error_db": null,
+        "min_error_db": null,
+        "n": 0,
+        "not_measured": 0,
+        "sd_db": null
+      },
+      "wilson95": [
+        3.469446951953614e-16,
+        3.699349820698568
+      ]
+    },
+    {
+      "decoded": 89,
+      "dt_error_ms": {
+        "bias": 0.37692351658143436,
+        "max_abs": 23.825497330108192,
+        "n": 89,
+        "sd": 5.545118595035498
+      },
+      "duplicates_dropped": 0,
+      "duplicates_emitted": 0,
+      "false_decodes": 0,
+      "frames": 100,
+      "freq_error_hz": {
+        "bias": -0.015824502076617748,
+        "max_abs": 0.46039115774965467,
+        "n": 89,
+        "sd": 0.17262633430979862
+      },
+      "label": "true -22 dB",
+      "latency_ms": {
+        "max": 1258.028244,
+        "p50": 655.849009,
+        "p95": 839.832759
+      },
+      "param": -22.0,
+      "percent": 89.0,
+      "snr_measured": {
+        "bias_db": -0.08415564614590537,
+        "max_error_db": 0.7837949796255828,
+        "min_error_db": -0.939228308721237,
+        "n": 89,
+        "not_measured": 0,
+        "sd_db": 0.379097856088396
+      },
+      "wilson95": [
+        81.3687034969197,
+        93.74580364293543
+      ]
+    },
+    {
+      "decoded": 100,
+      "dt_error_ms": {
+        "bias": 0.45056498836657627,
+        "max_abs": 15.553110946817217,
+        "n": 100,
+        "sd": 3.0491520028150823
+      },
+      "duplicates_dropped": 0,
+      "duplicates_emitted": 0,
+      "false_decodes": 0,
+      "frames": 100,
+      "freq_error_hz": {
+        "bias": -0.02311216699385085,
+        "max_abs": 0.4036929458100076,
+        "n": 100,
+        "sd": 0.12379145901411491
+      },
+      "label": "true -20 dB",
+      "latency_ms": {
+        "max": 1536.599865,
+        "p50": 773.19173,
+        "p95": 1045.1585969999999
+      },
+      "param": -20.0,
+      "percent": 100.0,
+      "snr_measured": {
+        "bias_db": -0.03274550125373487,
+        "max_error_db": 0.9287835717048836,
+        "min_error_db": -0.703791534955279,
+        "n": 100,
+        "not_measured": 0,
+        "sd_db": 0.3331468421944996
+      },
+      "wilson95": [
+        96.30065017930143,
+        100.0
+      ]
+    },
+    {
+      "decoded": 100,
+      "dt_error_ms": {
+        "bias": 0.15373921633894166,
+        "max_abs": 3.965780550466702,
+        "n": 100,
+        "sd": 1.283376312555574
+      },
+      "duplicates_dropped": 0,
+      "duplicates_emitted": 0,
+      "false_decodes": 0,
+      "frames": 100,
+      "freq_error_hz": {
+        "bias": -0.021891468910035315,
+        "max_abs": 0.20075032128897874,
+        "n": 100,
+        "sd": 0.07384477123443606
+      },
+      "label": "true -15 dB",
+      "latency_ms": {
+        "max": 3788.642068,
+        "p50": 782.3469130000001,
+        "p95": 1185.640943
+      },
+      "param": -15.0,
+      "percent": 100.0,
+      "snr_measured": {
+        "bias_db": 0.012185715033501498,
+        "max_error_db": 0.6712701816831022,
+        "min_error_db": -0.4840799165148173,
+        "n": 100,
+        "not_measured": 0,
+        "sd_db": 0.21470938729514005
+      },
+      "wilson95": [
+        96.30065017930143,
+        100.0
+      ]
+    },
+    {
+      "decoded": 100,
+      "dt_error_ms": {
+        "bias": -0.016707104828870372,
+        "max_abs": 1.5081904257932544,
+        "n": 100,
+        "sd": 0.6153257647279138
+      },
+      "duplicates_dropped": 0,
+      "duplicates_emitted": 0,
+      "false_decodes": 0,
+      "frames": 100,
+      "freq_error_hz": {
+        "bias": -0.014544316955686724,
+        "max_abs": 0.10103723390716368,
+        "n": 100,
+        "sd": 0.04031138054620478
+      },
+      "label": "true -10 dB",
+      "latency_ms": {
+        "max": 1611.521185,
+        "p50": 1271.867795,
+        "p95": 1436.430285
+      },
+      "param": -10.0,
+      "percent": 100.0,
+      "snr_measured": {
+        "bias_db": 0.004308571165625565,
+        "max_error_db": 0.4862357004383675,
+        "min_error_db": -0.3145231286931285,
+        "n": 100,
+        "not_measured": 0,
+        "sd_db": 0.15528357140128357
+      },
+      "wilson95": [
+        96.30065017930143,
+        100.0
+      ]
+    },
+    {
+      "decoded": 100,
+      "dt_error_ms": {
+        "bias": -0.16934666780392463,
+        "max_abs": 1.238600124203737,
+        "n": 100,
+        "sd": 0.42602286305248394
+      },
+      "duplicates_dropped": 0,
+      "duplicates_emitted": 0,
+      "false_decodes": 0,
+      "frames": 100,
+      "freq_error_hz": {
+        "bias": -0.008554082819473762,
+        "max_abs": 0.08093437631191591,
+        "n": 100,
+        "sd": 0.02653261524790026
+      },
+      "label": "true -6 dB",
+      "latency_ms": {
+        "max": 1627.684519,
+        "p50": 1357.565476,
+        "p95": 1491.02181
+      },
+      "param": -6.0,
+      "percent": 100.0,
+      "snr_measured": {
+        "bias_db": 0.0054930878775827805,
+        "max_error_db": 0.3581875636470002,
+        "min_error_db": -0.46408051710174547,
+        "n": 100,
+        "not_measured": 0,
+        "sd_db": 0.1494848997963244
+      },
+      "wilson95": [
+        96.30065017930143,
+        100.0
+      ]
+    },
+    {
+      "decoded": 100,
+      "dt_error_ms": {
+        "bias": -0.041645910674333465,
+        "max_abs": 0.4722722196848217,
+        "n": 100,
+        "sd": 0.21815565044106328
+      },
+      "duplicates_dropped": 0,
+      "duplicates_emitted": 0,
+      "false_decodes": 0,
+      "frames": 100,
+      "freq_error_hz": {
+        "bias": -0.005004359705737045,
+        "max_abs": 0.06766726140904211,
+        "n": 100,
+        "sd": 0.018476261431399944
+      },
+      "label": "true +0 dB",
+      "latency_ms": {
+        "max": 5298.830108,
+        "p50": 1064.280641,
+        "p95": 1435.771819
+      },
+      "param": 0.0,
+      "percent": 100.0,
+      "snr_measured": {
+        "bias_db": -0.04062130614951606,
+        "max_error_db": 0.22275516221385772,
+        "min_error_db": -0.36445495372892367,
+        "n": 100,
+        "not_measured": 0,
+        "sd_db": 0.11911674494372501
+      },
+      "wilson95": [
+        96.30065017930143,
+        100.0
+      ]
+    },
+    {
+      "decoded": 100,
+      "dt_error_ms": {
+        "bias": -0.10985457861000542,
+        "max_abs": 0.42386175644726354,
+        "n": 100,
+        "sd": 0.13143819254641004
+      },
+      "duplicates_dropped": 0,
+      "duplicates_emitted": 0,
+      "false_decodes": 0,
+      "frames": 100,
+      "freq_error_hz": {
+        "bias": -0.005990736925110127,
+        "max_abs": 0.04261847844475142,
+        "n": 100,
+        "sd": 0.013606793458287058
+      },
+      "label": "true +5 dB",
+      "latency_ms": {
+        "max": 9249.843457,
+        "p50": 685.2007970000001,
+        "p95": 877.01214
+      },
+      "param": 5.0,
+      "percent": 100.0,
+      "snr_measured": {
+        "bias_db": -0.056514886878000395,
+        "max_error_db": 0.24871868428425614,
+        "min_error_db": -0.39566933171557395,
+        "n": 100,
+        "not_measured": 0,
+        "sd_db": 0.12189624538204301
+      },
+      "wilson95": [
+        96.30065017930143,
+        100.0
+      ]
+    },
+    {
+      "decoded": 100,
+      "dt_error_ms": {
+        "bias": -0.08014535237169808,
+        "max_abs": 0.35704979146511384,
+        "n": 100,
+        "sd": 0.07974424023086069
+      },
+      "duplicates_dropped": 0,
+      "duplicates_emitted": 0,
+      "false_decodes": 0,
+      "frames": 100,
+      "freq_error_hz": {
+        "bias": -0.006580615588719354,
+        "max_abs": 0.03974552654335639,
+        "n": 100,
+        "sd": 0.013035489456205734
+      },
+      "label": "true +10 dB",
+      "latency_ms": {
+        "max": 6248.503642000001,
+        "p50": 674.406333,
+        "p95": 773.916593
+      },
+      "param": 10.0,
+      "percent": 100.0,
+      "snr_measured": {
+        "bias_db": -0.06415041337598013,
+        "max_error_db": 0.20381046270053815,
+        "min_error_db": -0.3328273647034976,
+        "n": 100,
+        "not_measured": 0,
+        "sd_db": 0.12613682623617176
+      },
+      "wilson95": [
+        96.30065017930143,
+        100.0
+      ]
+    },
+    {
+      "decoded": 100,
+      "dt_error_ms": {
+        "bias": -0.08794818698644633,
+        "max_abs": 0.21779565975132975,
+        "n": 100,
+        "sd": 0.05657356441408634
+      },
+      "duplicates_dropped": 0,
+      "duplicates_emitted": 0,
+      "false_decodes": 0,
+      "frames": 100,
+      "freq_error_hz": {
+        "bias": -0.006821310524104262,
+        "max_abs": 0.040605996013027834,
+        "n": 100,
+        "sd": 0.01419705752650702
+      },
+      "label": "true +20 dB",
+      "latency_ms": {
+        "max": 806.548266,
+        "p50": 670.449094,
+        "p95": 744.900613
+      },
+      "param": 20.0,
+      "percent": 100.0,
+      "snr_measured": {
+        "bias_db": -0.08216801840686315,
+        "max_error_db": 0.3129250103736183,
+        "min_error_db": -0.44056761708865366,
+        "n": 100,
+        "not_measured": 0,
+        "sd_db": 0.1280710607239493
+      },
+      "wilson95": [
+        96.30065017930143,
+        100.0
+      ]
+    },
+    {
+      "decoded": 100,
+      "dt_error_ms": {
+        "bias": -0.08642849467225336,
+        "max_abs": 0.18312260743624797,
+        "n": 100,
+        "sd": 0.04615906086459478
+      },
+      "duplicates_dropped": 0,
+      "duplicates_emitted": 0,
+      "false_decodes": 0,
+      "frames": 100,
+      "freq_error_hz": {
+        "bias": -0.008122991750335018,
+        "max_abs": 0.04363982057770954,
+        "n": 100,
+        "sd": 0.01195548854980361
+      },
+      "label": "true +30 dB",
+      "latency_ms": {
+        "max": 1157.2988209999999,
+        "p50": 702.670786,
+        "p95": 851.4837640000001
+      },
+      "param": 30.0,
+      "percent": 100.0,
+      "snr_measured": {
+        "bias_db": -0.24536407122854087,
+        "max_error_db": 0.17276013797307144,
+        "min_error_db": -1.165074596202544,
+        "n": 100,
+        "not_measured": 0,
+        "sd_db": 0.2439102204536071
+      },
+      "wilson95": [
+        96.30065017930143,
+        100.0
+      ]
+    }
+  ],
+  "provenance": {
+    "arch": "x86_64",
+    "binary": "z30 (z30-cli), the shipped command-line station",
+    "build_profile": "release",
+    "built": "2026-09-24T20:16:02Z",
+    "cpu": "Intel(R) Xeon(R) Processor @ 2.10GHz",
+    "decoder_config": "RxConfig { band_lo_hz: 200.0, band_hi_hz: 2800.0, max_candidates: 50, sync_threshold: 1.5, passes: 3, max_drift_hz: 4.0, drift_gain: 1.05, min_fine_sync: 2.5, whiten: true, ap: None, sic: SicParams { window_sec: 0.4, timing_search: 16 } }",
+    "elapsed_s": 232.258156821,
+    "git_commit": "672cef9b3cdb",
+    "hardware_involved": false,
+    "logical_cpus": 4,
+    "note": "Software simulation only. No radio, sound card or RF path was involved.",
+    "os": "linux",
+    "rayon_threads": 4,
+    "receiver": "z30_dsp::slot::Receiver::decode_slot (the production receive entry point)",
+    "rustc": "rustc 1.98.1 (48a229cea 2026-09-01)",
+    "started_utc": "2026-09-24T20:28:28Z",
+    "target": "x86_64-unknown-linux-gnu",
+    "version": "0.9.0"
+  },
+  "seed": {
+    "per_frame": "suite_seed ^ (benchmark << 40) ^ (point << 20) ^ frame, ChaCha8 (z30_channel::rng)",
+    "published_seed": true,
+    "suite_seed": 20260830
+  },
+  "title": "Accuracy of the reported SNR, DT and frequency against the truth",
+  "validated_range_db": [
+    -22.0,
+    30.0
+  ]
+}

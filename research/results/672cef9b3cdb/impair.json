@@ -1,0 +1,178 @@
+{
+  "benchmark": "impair",
+  "channel": "AWGN, -20 dB",
+  "definitions": {
+    "duplicates_dropped": "decodes of an already-decoded payload that the receiver itself discarded (PassStats::duplicates)",
+    "duplicates_emitted": "the same payload reported more than once in the output (must be 0)",
+    "false_decode": "a CRC-valid decode whose payload was not transmitted in that slot",
+    "ground_truth": "the harness knows the transmitted payloads; the receiver is given only the 27 s window",
+    "interval": "Wilson score 95% interval, percent",
+    "latency": "wall-clock time of decode_slot per slot, measured while other slots were decoded concurrently on the same pool; indicative only (see `z30 --benchmark perf` for controlled latency)",
+    "sample_rate_hz": 6000.0,
+    "snr": "SPEC.md section 10: frame signal power over the noise power in 2500 Hz; real white Gaussian noise, sigma = 1 per sample at 6 kHz, so SNR = P / (5000 / 6000)",
+    "success": "a decode whose 63 payload bits equal the transmitted payload"
+  },
+  "frames_per_point": 200,
+  "placement": "as awgn",
+  "points": [
+    {
+      "decoded": 200,
+      "duplicates_dropped": 0,
+      "duplicates_emitted": 0,
+      "false_decodes": 0,
+      "frames": 200,
+      "label": "baseline @ -20 dB",
+      "latency_ms": {
+        "max": 9233.700784,
+        "p50": 336.75634199999996,
+        "p95": 400.931386
+      },
+      "param": "baseline",
+      "percent": 100.0,
+      "wilson95": [
+        98.11546736227335,
+        100.0
+      ]
+    },
+    {
+      "decoded": 200,
+      "duplicates_dropped": 0,
+      "duplicates_emitted": 0,
+      "false_decodes": 0,
+      "frames": 200,
+      "label": "hard clip at 3 x RMS @ -20 dB",
+      "latency_ms": {
+        "max": 9175.607715,
+        "p50": 341.349618,
+        "p95": 413.877544
+      },
+      "param": "hard clip at 3 x RMS",
+      "percent": 100.0,
+      "wilson95": [
+        98.11546736227335,
+        100.0
+      ]
+    },
+    {
+      "decoded": 200,
+      "duplicates_dropped": 0,
+      "duplicates_emitted": 0,
+      "false_decodes": 0,
+      "frames": 200,
+      "label": "hard clip at 1 x RMS @ -20 dB",
+      "latency_ms": {
+        "max": 437.662822,
+        "p50": 335.85827,
+        "p95": 398.688916
+      },
+      "param": "hard clip at 1 x RMS",
+      "percent": 100.0,
+      "wilson95": [
+        98.11546736227335,
+        100.0
+      ]
+    },
+    {
+      "decoded": 200,
+      "duplicates_dropped": 0,
+      "duplicates_emitted": 0,
+      "false_decodes": 0,
+      "frames": 200,
+      "label": "8-bit quantisation, full scale 4 x RMS @ -20 dB",
+      "latency_ms": {
+        "max": 442.94662800000003,
+        "p50": 351.16846000000004,
+        "p95": 414.60969600000004
+      },
+      "param": "8-bit quantisation, full scale 4 x RMS",
+      "percent": 100.0,
+      "wilson95": [
+        98.11546736227335,
+        100.0
+      ]
+    },
+    {
+      "decoded": 200,
+      "duplicates_dropped": 0,
+      "duplicates_emitted": 0,
+      "false_decodes": 0,
+      "frames": 200,
+      "label": "0.5 s dropout mid-frame @ -20 dB",
+      "latency_ms": {
+        "max": 521.90583,
+        "p50": 368.577565,
+        "p95": 438.475223
+      },
+      "param": "0.5 s dropout mid-frame",
+      "percent": 100.0,
+      "wilson95": [
+        98.11546736227335,
+        100.0
+      ]
+    },
+    {
+      "decoded": 200,
+      "duplicates_dropped": 1,
+      "duplicates_emitted": 0,
+      "false_decodes": 0,
+      "frames": 200,
+      "label": "2 s dropout mid-frame @ -20 dB",
+      "latency_ms": {
+        "max": 2858.01693,
+        "p50": 384.15278800000004,
+        "p95": 446.338946
+      },
+      "param": "2 s dropout mid-frame",
+      "percent": 100.0,
+      "wilson95": [
+        98.11546736227335,
+        100.0
+      ]
+    },
+    {
+      "decoded": 73,
+      "duplicates_dropped": 3,
+      "duplicates_emitted": 0,
+      "false_decodes": 0,
+      "frames": 200,
+      "label": "200 impulses at 50 x RMS @ -20 dB",
+      "latency_ms": {
+        "max": 3741.753485,
+        "p50": 216.65545,
+        "p95": 403.82630400000005
+      },
+      "param": "200 impulses at 50 x RMS",
+      "percent": 36.5,
+      "wilson95": [
+        30.140526464926797,
+        43.3682973472594
+      ]
+    }
+  ],
+  "provenance": {
+    "arch": "x86_64",
+    "binary": "z30 (z30-cli), the shipped command-line station",
+    "build_profile": "release",
+    "built": "2026-09-24T20:16:02Z",
+    "cpu": "Intel(R) Xeon(R) Processor @ 2.10GHz",
+    "decoder_config": "RxConfig { band_lo_hz: 200.0, band_hi_hz: 2800.0, max_candidates: 50, sync_threshold: 1.5, passes: 3, max_drift_hz: 4.0, drift_gain: 1.05, min_fine_sync: 2.5, whiten: true, ap: None, sic: SicParams { window_sec: 0.4, timing_search: 16 } }",
+    "elapsed_s": 124.511560713,
+    "git_commit": "672cef9b3cdb",
+    "hardware_involved": false,
+    "logical_cpus": 4,
+    "note": "Software simulation only. No radio, sound card or RF path was involved.",
+    "os": "linux",
+    "rayon_threads": 4,
+    "receiver": "z30_dsp::slot::Receiver::decode_slot (the production receive entry point)",
+    "rustc": "rustc 1.98.1 (48a229cea 2026-09-01)",
+    "started_utc": "2026-09-24T20:47:20Z",
+    "target": "x86_64-unknown-linux-gnu",
+    "version": "0.9.0"
+  },
+  "seed": {
+    "per_frame": "suite_seed ^ (benchmark << 40) ^ (point << 20) ^ frame, ChaCha8 (z30_channel::rng)",
+    "published_seed": true,
+    "suite_seed": 20260830
+  },
+  "title": "Audio impairments applied to the 6 kHz slot after noise (i.e. after resampling, not at the device rate)"
+}
