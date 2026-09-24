@@ -662,6 +662,33 @@ group('The shipped placeholder callsign cannot be transmitted under');
   );
 }
 
+// ------------------------ C5: a callsign the v1 packer cannot carry is refused, not mangled
+group('C5: the gate refuses callsigns that would be transmitted as a different callsign');
+{
+  const rig = new CatController();
+  const licensed = { regulatoryRegion: 'US', licenseClass: 'US_GENERAL' };
+  // Audit 2026-09-23 C5: every one of these passes isValidCallsign(), and every one packed to
+  // somebody else's callsign. The gate is the only place that can stop that before keying.
+  for (const [call, becomes] of [
+    ['ZY2ABC', 'ZV-ZZ prefixes wrap modulo 2^28'],
+    ['G4XYZ/P', 'portable suffix falls to the lossy base-37 path'],
+    ['EA8/G4XYZ', 'compound prefix falls to the lossy base-37 path'],
+    ['3DA0XYZ', 'three-character prefix falls to the lossy base-37 path'],
+  ]) {
+    const permission = rig.canTransmit({ ...DEFAULT_STATION_CONFIG, ...licensed, myCall: call }, 1500, 14_076_000);
+    check(
+      `${call} is refused (${becomes})`,
+      permission.allowed === false && permission.violations.some((v) => v.includes('v1 message format')),
+      JSON.stringify(permission.violations)
+    );
+  }
+  // ...and the rule costs nothing to a callsign v1 does carry.
+  for (const call of ['K1ABC', 'W1AW', 'G4XYZ', 'VK2ABC', 'ZS6ABC', 'ZU1AB', '9A1AA']) {
+    const permission = rig.canTransmit({ ...DEFAULT_STATION_CONFIG, ...licensed, myCall: call }, 1500, 14_076_000);
+    check(`${call} is still allowed`, permission.allowed === true, JSON.stringify(permission.violations));
+  }
+}
+
 if (failures > 0) {
   console.error(`\n${failures} check(s) failed.`);
   process.exit(1);

@@ -1,0 +1,20 @@
+[package]
+name = "z30-engine"
+description = "z-30 application core: sample-clock model, slot scheduler, RX pipeline, TX scheduler, transmit gate, rig-state tracking, PTT safety, QSO state machine, command/event/snapshot API. No OS I/O: hardware sits behind traits."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+z30-protocol.workspace = true
+z30-dsp.workspace = true
+serde.workspace = true
+crossbeam-channel.workspace = true
+arc-swap.workspace = true
+rustfft.workspace = true
+
+[dev-dependencies]
+z30-channel.workspace = true
+serde_json.workspace = true
+toml.workspace = true

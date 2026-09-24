@@ -1,0 +1,18 @@
+paired receiver comparison | seed 20260830 | 200 frames/point | fading none | carrier +-5.0 Hz | timing +-0.5 s | vNext 0.9.0 @ 83b1b70
+ -28.0 dB  vNext    0/200 [  0.0-  1.9%]  oracle    0 [  0.0-  1.9%]  discordant vNext-only   0 oracle-only   0  false v/o 0/0  275 ms/slot (1 thread)
+ -27.0 dB  vNext    0/200 [  0.0-  1.9%]  oracle    0 [  0.0-  1.9%]  discordant vNext-only   0 oracle-only   0  false v/o 0/0  280 ms/slot (1 thread)
+ -26.0 dB  vNext    0/200 [  0.0-  1.9%]  oracle    0 [  0.0-  1.9%]  discordant vNext-only   0 oracle-only   0  false v/o 0/0  334 ms/slot (1 thread)
+ -25.0 dB  vNext    2/200 [  0.3-  3.6%]  oracle    1 [  0.1-  2.8%]  discordant vNext-only   1 oracle-only   0  false v/o 0/0  282 ms/slot (1 thread)
+ -24.0 dB  vNext   23/200 [  7.8- 16.7%]  oracle   17 [  5.4- 13.2%]  discordant vNext-only   8 oracle-only   2  false v/o 0/0  567 ms/slot (1 thread)
+ -23.0 dB  vNext  101/200 [ 43.6- 57.4%]  oracle   92 [ 39.2- 52.9%]  discordant vNext-only  20 oracle-only  11  false v/o 0/0  494 ms/slot (1 thread)
+ -22.0 dB  vNext  189/200 [ 90.4- 96.9%]  oracle  189 [ 90.4- 96.9%]  discordant vNext-only   4 oracle-only   4  false v/o 0/0  462 ms/slot (1 thread)
+ -21.0 dB  vNext  200/200 [ 98.1-100.0%]  oracle  199 [ 97.2- 99.9%]  discordant vNext-only   1 oracle-only   0  false v/o 0/0  496 ms/slot (1 thread)
+ -20.0 dB  vNext  200/200 [ 98.1-100.0%]  oracle  200 [ 98.1-100.0%]  discordant vNext-only   0 oracle-only   0  false v/o 0/0  514 ms/slot (1 thread)
+ -19.0 dB  vNext  200/200 [ 98.1-100.0%]  oracle  200 [ 98.1-100.0%]  discordant vNext-only   0 oracle-only   0  false v/o 0/0  550 ms/slot (1 thread)
+ -18.0 dB  vNext  200/200 [ 98.1-100.0%]  oracle  200 [ 98.1-100.0%]  discordant vNext-only   0 oracle-only   0  false v/o 0/0  576 ms/slot (1 thread)
+ -17.0 dB  vNext  200/200 [ 98.1-100.0%]  oracle  200 [ 98.1-100.0%]  discordant vNext-only   0 oracle-only   0  false v/o 0/0  631 ms/slot (1 thread)
+ vnext 50% crossing: -23.01 dB [-23.18, -22.86]
+ vnext 90% crossing: -22.10 dB [-22.17, -22.01]
+oracle 50% crossing: -22.92 dB [-23.07, -22.79]
+oracle 90% crossing: -22.09 dB [-22.16, -22.01]
+pooled discordant pairs: vNext-only 34, oracle-only 17; exact two-sided McNemar p = 0.0241

@@ -1,0 +1,23 @@
+{
+ "generator": "reference/golden/generate.py",
+ "numpy": "2.2.6",
+ "sha256": {
+  "ap.json": "62a64cdab21a1276b043e434ffaaf19f8aef92b6fa7190c8fc7adbc6f8f43f13",
+  "ap_corpus_llr.f32": "f053a3d147349bc55048f4b99ee6adf3f83cc94deadcb06644b2e86182ca4ea0",
+  "callsigns.json": "0aa21f32c78df2d3dde9be5209e84bb4f10cab021bc319f5ac7febc8ee07d24a",
+  "codec.json": "75a7ba427c88e5ebae437102348044a541afbcb6d89a90912e5d31b5ca39f744",
+  "demod.json": "2641a2fd1fa034f3f409941806211f7dc01171479c1cd1238df4628d0d07a8a2",
+  "demod_llr.f32": "1391aed5996adb7ea8cc3e6c24e3686158b7cb3849d37328a6d8a4e8a27e6225",
+  "demod_wave.f32": "6de5912308370f17669f6e8349a692e2545a4b4ba97315ace204c9acefda52de",
+  "dither.json": "59399a5dfb777bf30625dc1f269eb4e2371d849896a7d71f73c4a64951162e75",
+  "ldpc_corpus.json": "762f06e6254f2013fa131e7efad5adc8d97eb32324d3ff7db04b7ab4b35c3ede",
+  "ldpc_corpus_llr.f32": "6cdaef42690e94f85f4384ab10f059ccaa0d03b97b6a4dce2b028b570dc65116",
+  "osd_corpus.json": "59a028079e64fc2480df5a317237b9d40a32c16ab52611fa593d72f759aca83b",
+  "osd_corpus_llr.f32": "bf7f22150ceb2029b1eb30e9a2b91398f666dd8405fcd9494d876dc1acbf9f82",
+  "waveform.json": "e2fcd985d519717d42bee672342ac0a1d118d45f90764d3d87638db624008651",
+  "waveform_0.f32": "b7a52ab755d3f0657f473fdf6c019ad2f7b4561d81846832fa262b3b237dcb31",
+  "waveform_1.f32": "430521093253456834a6bb06eedc9534518646cb651f78f1a32eeac67fd8f751",
+  "waveform_2.f32": "335114d2486256c73ae02c9ec4ae1558d5d39c82ee648041d62040234377bae9",
+  "waveform_3.f32": "51a357671be18bbdb002960ba58983494b59d942e35f520ee432f32675a47f60"
+ }
+}

@@ -1,0 +1,13 @@
+[build-system]
+requires = ["maturin>=1.5,<2"]
+build-backend = "maturin"
+
+[project]
+name = "z30"
+description = "Bindings to the z-30 vNext Rust receiver, for the research harness (research/). Not an end-user package."
+requires-python = ">=3.9"
+dynamic = ["version"]
+
+[tool.maturin]
+features = ["extension-module"]
+module-name = "z30"

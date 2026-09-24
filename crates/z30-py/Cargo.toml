@@ -1,0 +1,22 @@
+[package]
+name = "z30-py"
+description = "PyO3 bindings for the research harness: the Python benchmark calls the production decode_slot. Development only; never shipped."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish = false
+
+[lib]
+name = "z30"
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+z30-protocol.workspace = true
+z30-dsp.workspace = true
+z30-channel.workspace = true
+pyo3 = { version = "0.25", features = ["abi3-py39"] }
+
+[features]
+# maturin turns this on; plain `cargo build/test` of the workspace does not need libpython.
+extension-module = ["pyo3/extension-module"]

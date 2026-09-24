@@ -1,0 +1,30 @@
+[package]
+name = "z30-io"
+description = "z-30 hardware and platform adapters: native audio (cpal), WAV, rigctld CAT/PTT, serial RTS/DTR PTT, CM108 GPIO PTT, SQLite logbook with ADIF, paths, TOML config and migration of legacy z-30 data."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+z30-protocol.workspace = true
+z30-dsp.workspace = true
+z30-engine.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+toml.workspace = true
+rtrb = "0.4"
+cpal = "0.18"
+hound = "3.5"
+serialport = { version = "4", default-features = false }
+rusqlite = { version = "0.40", features = ["bundled"] }
+hidapi = { version = "2.6", optional = true, default-features = false, features = ["linux-static-hidraw"] }
+
+[features]
+default = []
+# CM108/CM119 GPIO PTT over HID. Off by default because it links hidapi (and, on Linux, needs
+# the hidraw headers); the station builds that use a CM108 interface turn it on.
+cm108 = ["dep:hidapi"]
+
+[dev-dependencies]
+z30-channel.workspace = true

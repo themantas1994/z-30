@@ -1,0 +1,23 @@
+[package]
+name = "z30-dsp"
+description = "z-30 receiver: resampler, Costas-array acquisition, fine dt/f/drift sync, non-coherent Log-MAP demodulator, LDPC cascade, AP, least-squares SIC, decode_slot. Pure: no I/O."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+z30-protocol.workspace = true
+rustfft.workspace = true
+realfft.workspace = true
+rayon = { workspace = true, optional = true }
+
+[features]
+default = ["parallel"]
+# Candidates within one SIC pass decode on a rayon pool. Off, decode_slot is single-threaded and
+# produces bit-identical reports (the per-candidate work is a pure function of its input).
+parallel = ["dep:rayon"]
+
+[dev-dependencies]
+z30-channel = { path = "../z30-channel" }
+serde_json.workspace = true

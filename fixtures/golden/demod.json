@@ -1,0 +1,9 @@
+{
+ "_comment": "Oracle: z30_dsp.benchmark.demodulate_mfsk_llrs (RECEIVER_PILOT_COHERENCE)",
+ "base_freq_hz": 1250.37,
+ "llr": "demod_llr.f32",
+ "sample_rate_hz": 6000,
+ "sigma": 6.899979489812861,
+ "start_sample": 1234,
+ "wave": "demod_wave.f32"
+}

@@ -6,6 +6,10 @@ want the shape of this repository on one page. Read this before your first edit.
 **Documentation authority:** the markdown under [`wiki/`](wiki/Home.md) is this project's source
 of truth. `README.md` is a front page and links into it. If you learn something here that
 contradicts a wiki page, the wiki page wins — and the contradiction is a bug worth fixing.
+The Rust rebuild (`crates/`, "vNext") is documented in [`docs/`](docs/README.md), which holds
+the same standing for that code; `SPEC.md` is the normative protocol text for both. `wiki/`
+remains the operator documentation until the legacy runtime is retired, which is an operator
+decision (`VNEXT_IMPLEMENTATION_PLAN.md` section 8).
 
 ---
 
@@ -29,6 +33,16 @@ produces an out-of-band or stuck transmission on somebody's licence. Section 4 i
 README.md                  Front page. Introduces and links; holds no reference material.
 AGENTS.md                  This file.
 wiki/                      THE DOCUMENTATION. Source of truth. Also served inside the app.
+SPEC.md                    Protocol v1, normative, derived from the code and pinned by fixtures/golden/.
+VNEXT_IMPLEMENTATION_PLAN.md
+                           The Rust rebuild: plan, acceptance gates, decisions left to the operator.
+docs/                      vNext documentation (architecture, receiver, safety, benchmarking, ...).
+crates/                    vNext Rust workspace: z30-protocol, z30-dsp (decode_slot - the one
+                           receiver), z30-channel, z30-engine (gate, PTT, clock, QSO), z30-io,
+                           z30-cli, z30-gui (egui), z30-py (bindings for research/).
+reference/golden/          Golden-vector generators run against the frozen oracle (--check in CI).
+fixtures/golden/           The vectors. Generated; never edited by hand.
+research/                  paired_receiver.py (oracle vs vNext decode_slot, McNemar) and results/.
 
 z30_dsp/                   Native Python 3 DSP package (NumPy/SciPy).
   main.py                  CLI/GUI entry router behind the `z30` command.

@@ -1,0 +1,26 @@
+[package]
+name = "z30-cli"
+description = "z-30 headless command line: receive, decode recordings, capture slots, benchmark, diagnostics, migration."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[[bin]]
+name = "z30"
+path = "src/main.rs"
+
+[dependencies]
+z30-protocol.workspace = true
+z30-dsp.workspace = true
+z30-channel.workspace = true
+z30-engine.workspace = true
+z30-io.workspace = true
+clap = { version = "4", features = ["derive"] }
+ctrlc = "3"
+serde_json.workspace = true
+crossbeam-channel.workspace = true
+rayon.workspace = true
+
+[features]
+cm108 = ["z30-io/cm108"]
