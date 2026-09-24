@@ -1,8 +1,14 @@
 name: CI
 
-# Every finding this workflow guards was previously a change to 36,000 lines of code with no
-# safety net beneath it - and the codec, the modem and the decoder are exactly the kind of code
-# where a subtle regression produces plausible-looking output that is quietly wrong.
+# Reference code and repository hygiene. The production application (the Rust workspace in
+# crates/) is built, tested and benchmarked by rust.yml; this workflow covers what surrounds it:
+#
+# - the frozen Python protocol oracle (legacy/python-oracle), which generates the golden vectors
+#   the Rust code is tested against;
+# - the retired browser runtime's reference tests (legacy/browser-runtime), kept because its
+#   TypeScript codec is the reference for whole-message packing;
+# - the separation itself: no legacy runtime, bundle or installer may reappear in the
+#   production path (2026-09-24 audit, C-04 and section 5 of the remediation brief).
 
 on:
   push:
@@ -11,11 +17,6 @@ on:
   workflow_dispatch:
 
 # Least privilege for GITHUB_TOKEN, set once at workflow level so every job inherits it.
-# Without this block the token is granted whatever the repository default is - historically
-# read/write on everything, including `contents`, which is push access to the branch that keys
-# operators' transmitters. Nothing here needs more than the ability to read the checkout; a job
-# that later needs more should ask for it in its own `permissions:`, not widen this one.
-# Reported by CodeQL (github/workflows/ci.yml, "Workflow does not contain permissions").
 permissions:
   contents: read
 
@@ -24,243 +25,121 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  python:
-    name: Python DSP suite (${{ matrix.python-version }})
+  oracle:
+    name: Python oracle (${{ matrix.python-version }})
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        # 3.10 is the floor the PINNED requirements.txt set can install on (numpy 2.2 and
-        # scipy 1.15 both require it); 3.13 is the documented upper bound, now actually tested
-        # rather than only claimed. The package's own `requires-python` stays >=3.9 because its
-        # loose dependency ranges do resolve there - see wiki/02 for the two-floors explanation.
-        python-version: ['3.10', '3.12', '3.13']
+        # Exactly the versions legacy/python-oracle/pyproject.toml declares (>=3.10): the pinned
+        # NumPy 2.2 / SciPy 1.15 need 3.10. The old CI tested 3.10/3.12/3.13 against a declared
+        # floor of 3.9 (2026-09-24 audit, L-04).
+        python-version: ['3.10', '3.11', '3.12', '3.13']
+    defaults:
+      run:
+        working-directory: legacy/python-oracle
     steps:
       - uses: actions/checkout@v7
-
       - uses: actions/setup-python@v7
         with:
           python-version: ${{ matrix.python-version }}
           cache: pip
-
-      - name: Install dependencies
-        # From requirements.txt, not a bare `pip install numpy scipy`. That file pins exact
-        # versions for the reason its own header gives - "a DSP suite whose numerical behaviour
-        # depends on its NumPy and SciPy versions is the last place" for an unpinned install -
-        # and CI installing something else meant CI was not testing what an operator following
-        # the documented install path actually runs. A NumPy release that shifts floating-point
-        # behaviour in the min-sum decoder or the channel model could then pass or fail here
-        # with no corresponding change on any real station.
+          cache-dependency-path: legacy/python-oracle/requirements.txt
+      - name: Install the pinned dependencies
         run: |
           python -m pip install --upgrade pip
-          python -m pip install -r requirements.txt
-          python -m pip install pytest
-
-      - name: Lint the Python sources
-        # Static checks the test suite structurally cannot make: an unused import is harmless,
-        # but the same rule caught a real defect - band_manager.tune_radio() computed the CAT
-        # mode-set result and discarded it, so a rig that refused the mode change reported a
-        # fully successful tune. Kept to a conservative rule set on purpose: a linter that
-        # shouts about formatting is one contributors learn to ignore.
-        #
-        # The version is pinned for the same reason requirements.txt pins NumPy: an unpinned
-        # `pip install ruff` installed 0.16.5 on the first CI run of this job and reported 408
-        # findings against a tree that was clean under 0.15, because 0.16 widened its default
-        # rule set. The rule set itself is pinned in pyproject.toml's [tool.ruff.lint]; bump
-        # both deliberately, together, as with any other pin here.
-        run: |
-          python -m pip install 'ruff==0.16.5'
-          ruff check z30_dsp tests scripts
-
-      - name: Run the test suite
-        run: python -m pytest tests -v
-
-      - name: Verify the package builds and imports cleanly
-        run: |
-          python -m pip install --upgrade build
-          python -m build --wheel --outdir dist-wheel
-          python -m pip install dist-wheel/*.whl
-          python -c "import z30_dsp.ldpc, z30_dsp.modem, z30_dsp.web_server, z30_dsp.paths, z30_dsp.channel, z30_dsp.acquisition, z30_dsp.benchmark; print('package imports OK')"
-
-      - name: Benchmark runs end to end and stays reproducible
-        # A short seeded sweep in both modes. This is a smoke test, not a sensitivity
-        # measurement - it catches an exception or a non-deterministic result in the
-        # channel/acquisition path, which would otherwise only surface when someone tried to
-        # reproduce a published curve.
-        #
-        # The sweep deliberately straddles the decode threshold. It used to run at -18 to
-        # -16 dB, where every frame converges in the first decode schedule - so it never
-        # reached the fourth ("DITHER") schedule, which perturbed the LLRs from the unseeded
-        # global RNG. The check passed for years over a genuinely non-deterministic decoder
-        # because its sample never executed the non-deterministic line. Frames below threshold
-        # run all four schedules.
-        #
-        # Three runs, not two. The first two are the run-to-run check this always made. The
-        # third runs the same sweep across two processes: --workers only ever changes wall-clock
-        # time, and a sweep that reduced its counts in worker-completion order rather than in
-        # frame order would satisfy the run-to-run check on a quiet machine and drift on a busy
-        # one. tests/test_benchmark_parallel.py covers the same ground in more detail; this
-        # keeps the end-to-end path honest on every supported Python.
+          python -m pip install -r requirements.txt pytest 'ruff==0.16.5'
+      - name: Lint
+        run: ruff check z30_dsp tests
+      - name: Oracle test suite (includes the freeze check)
+        run: python -m pytest tests -q
+      - name: The oracle reference benchmark stays reproducible across runs and worker counts
+        # A short seeded sweep straddling the threshold, so the dithered fourth schedule runs.
         run: |
           python - <<'PY'
           from z30_dsp.benchmark import run_monte_carlo_snr_sweep
 
           def curve(rows):
-              # elapsed_sec is a stopwatch and workers is the knob under test; everything
-              # else is the result and must not move.
-              return [{k: v for k, v in r.items() if k not in ("elapsed_sec", "workers")}
-                      for r in rows]
+              return [{k: v for k, v in r.items() if k not in ("elapsed_sec", "workers")} for r in rows]
 
           for mode in ("ideal", "realistic"):
-              for lo, hi in ((-18, -16), (-27, -25)):
-                  kwargs = dict(min_snr_db=lo, max_snr_db=hi, step_snr_db=2,
-                                frames_per_snr=3, mode=mode, fading="none", seed=1)
-                  a = run_monte_carlo_snr_sweep(**kwargs)
-                  b = run_monte_carlo_snr_sweep(**kwargs)
-                  c = run_monte_carlo_snr_sweep(workers=2, **kwargs)
-                  assert curve(a) == curve(b), \
-                      f"{mode} mode is not reproducible with a fixed seed at {lo}..{hi} dB"
-                  assert curve(a) == curve(c), \
-                      f"{mode} mode at {lo}..{hi} dB gives a different curve on 2 workers than on 1"
-                  # Below threshold every frame should exhaust the whole four-schedule
-                  # cascade; if it stops converging early this check silently stops
-                  # covering the dithered pass again.
-                  if (lo, hi) == (-27, -25):
-                      assert a[0]["avg_iters"] > 100, \
-                          f"{mode} sweep at {lo} dB is not reaching the later schedules"
-                  print(f"{mode} mode reproducible at {lo}..{hi} dB, serially and on 2 workers")
+              kwargs = dict(min_snr_db=-27, max_snr_db=-25, step_snr_db=2, frames_per_snr=3,
+                            mode=mode, fading="none", seed=1)
+              a = run_monte_carlo_snr_sweep(**kwargs)
+              b = run_monte_carlo_snr_sweep(**kwargs)
+              c = run_monte_carlo_snr_sweep(workers=2, **kwargs)
+              assert curve(a) == curve(b) == curve(c), mode
+              assert a[0]["avg_iters"] > 100, "the sweep no longer reaches the later schedules"
+              print(f"{mode}: reproducible serially and on 2 workers")
           PY
 
-  frontend:
-    name: TypeScript frontend
+  legacy-browser:
+    name: Retired browser runtime (reference tests only)
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: legacy/browser-runtime
     steps:
       - uses: actions/checkout@v7
-
       - uses: actions/setup-node@v7
         with:
           node-version: '22'
           cache: npm
-
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Generated sources are up to date
-        # src/data/pythonSource.ts and src/data/wikiArticles.ts are produced from the real
-        # Python files and the wiki markdown. Both were hand-copied snapshots that had drifted
-        # from what they claimed to show - the wiki copy still carried retracted sensitivity
-        # claims long after the markdown was corrected.
-        run: npm run check:generated
-
+          cache-dependency-path: legacy/browser-runtime/package-lock.json
+      - run: npm ci
       - name: Typecheck
         run: npm run lint
-
-      - name: Codec and DSP module tests
+      - name: Reference tests (codec vectors, transmit-gate regressions, determinism)
         run: npm run test:ts
-
-      - name: Production build
-        run: npm run build
-
-      - name: Verify the PWA ships its service worker and icons
-        # The bundle used to be built without sw.js or either icon: there was no public/
-        # directory for Vite to copy them from, so main.tsx registered a /sw.js that 404'd and
-        # installing the PWA got no icon at all.
+      - name: It is not buildable as an application
         run: |
           set -e
-          for asset in dist/index.html dist/sw.js dist/manifest.json dist/icon-192.svg dist/icon-512.svg; do
-            test -f "$asset" || { echo "missing from the build: $asset"; exit 1; }
-          done
-          grep -q '__Z30_BUILD_ID__' dist/sw.js && {
-            echo "sw.js still contains the build-id placeholder; the cache name would never change"
-            exit 1
-          }
-          echo "PWA assets present and the service worker cache name is stamped."
+          node -e 'const s=require("./package.json").scripts; for (const k of ["dev","build","preview","start"]) if (s[k]) { console.error("script " + k + " reintroduced"); process.exit(1) }'
+          echo "no dev/build/preview/start script"
 
-  audit:
-    name: Dependency audit
+  dependency-audit:
+    name: Dependency audit (oracle)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-
       - uses: actions/setup-python@v7
         with:
           python-version: '3.12'
-
-      - uses: actions/setup-node@v7
-        with:
-          node-version: '22'
-          cache: npm
-
-      - name: Audit the pinned Python dependencies
-        # requirements.txt documents a hash-verified pip-compile path that nothing ever ran.
-        # This at least checks the pinned versions against the advisory database, so a known
-        # vulnerability in NumPy or requests is noticed here rather than by an operator.
-        run: |
+      - run: |
           python -m pip install --upgrade pip pip-audit
-          pip-audit --requirement requirements.txt --strict
+          pip-audit --requirement legacy/python-oracle/requirements.txt --strict
 
-      - name: Audit the npm dependency tree
-        run: |
-          npm ci
-          npm audit --audit-level=high
-
-  packaging:
-    name: Packaging smoke (${{ matrix.os }})
-    # The project ships a Windows PyInstaller build, an Arch PKGBUILD and a Termux installer,
-    # and every job above this one ran on ubuntu-latest only - so a change that broke the
-    # package on Windows or macOS was found by whoever installed it, not by CI. This does not
-    # build installers; it checks the package builds and imports on each platform, which is the
-    # cheap half that catches path and platform-API mistakes.
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [windows-latest, macos-latest]
-    steps:
-      - uses: actions/checkout@v7
-
-      - uses: actions/setup-python@v7
-        with:
-          python-version: '3.12'
-          cache: pip
-
-      - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          python -m pip install -r requirements.txt
-          python -m pip install pytest
-
-      - name: Run the platform-independent suite
-        run: python -m pytest tests -q
-
-      - name: Build and import the wheel
-        run: |
-          python -m pip install --upgrade build
-          python -m build --wheel --outdir dist-wheel
-          python -c "import z30_dsp.ldpc, z30_dsp.modem, z30_dsp.paths, z30_dsp.channel, z30_dsp.acquisition, z30_dsp.benchmark; print('package imports OK')"
-
-  license:
-    name: Repository hygiene
+  hygiene:
+    name: Repository hygiene and production separation
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
 
       - name: LICENSE file must exist
-        # Four places declare MIT. Without the licence text the default is exclusive copyright,
-        # which blocks redistribution and the AUR/Debian packaging the README documents.
         run: test -f LICENSE && grep -q 'MIT License' LICENSE
 
       - name: No build artifacts or bytecode may be committed
         run: |
           set -e
-          if git ls-files | grep -E '(^|/)__pycache__/|\.pyc$|^dist/'; then
+          if git ls-files | grep -E '(^|/)__pycache__/|\.pyc$|(^|/)dist/|(^|/)target/|(^|/)node_modules/'; then
             echo "Build artifacts are tracked in git; remove them and rely on .gitignore."
             exit 1
           fi
-          echo "No tracked build artifacts."
 
-      - name: Exactly one JavaScript lockfile
+      - name: No stale web bundle, no legacy launcher, no installer of the retired runtime
+        # The committed web_dist/ bundle was 63 commits stale and defaulted to the real callsign
+        # W1AW (audit C-04); the launcher fell back to Tk and then to a benchmark (L-01); the
+        # installers installed a runtime that did not receive (C-01). None may come back.
         run: |
           set -e
-          count=$(git ls-files | grep -cE '^(package-lock\.json|bun\.lock|bun\.lockb|yarn\.lock|pnpm-lock\.yaml)$' || true)
-          test "$count" -eq 1 || { echo "Found $count lockfiles; the built dependency tree must not depend on which package manager is run."; exit 1; }
+          bad=$(git ls-files | grep -E '(^|/)web_dist/|(^|/)web_server\.py$|(^|/)rf_time_sync\.py$|(^|/)gui_tkinter\.py$|^z30_dsp/|^src/|^pyproject\.toml$|^package\.json$|^install_[a-z_]+\.sh$|^run_windows\.bat$|^PKGBUILD$|^z30\.spec$' || true)
+          if [ -n "$bad" ]; then echo "retired runtime files are back in the production tree:"; echo "$bad"; exit 1; fi
+          echo "production tree is Rust-only"
+
+      - name: One lockfile per package manager, in the places that own them
+        run: |
+          set -e
+          test "$(git ls-files | grep -cE '(^|/)(bun\.lockb?|yarn\.lock|pnpm-lock\.yaml)$' || true)" -eq 0
+          test "$(git ls-files | grep -cE '(^|/)package-lock\.json$')" -eq 1
+          git ls-files | grep -qx 'legacy/browser-runtime/package-lock.json'
+          git ls-files | grep -qx 'Cargo.lock'

@@ -1,0 +1,31 @@
+{
+  "name": "z30-legacy-browser-runtime",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "lint": "tsc --noEmit",
+    "test:ts": "tsx tests/crc14.test.mjs && tsx tests/frontend.test.mjs && tsx tests/transmitPath.test.mjs && tsx tests/rigReadback.test.mjs && tsx tests/rigProbeAndWatchdog.test.mjs && tsx tests/dspDeterminism.test.mjs && tsx tests/audioChannelSafety.test.mjs && tsx tests/apDecode.test.mjs",
+    "test": "npm run lint && npm run test:ts"
+  },
+  "dependencies": {
+    "@tailwindcss/vite": "^4.1.14",
+    "@vitejs/plugin-react": "^6.1.1",
+    "lucide-react": "^1.37.0",
+    "react": "^19.0.1",
+    "react-dom": "^19.0.1",
+    "recharts": "^3.10.1"
+  },
+  "devDependencies": {
+    "@types/node": "^26.4.0",
+    "@types/react": "^19.2.18",
+    "@types/react-dom": "^19.2.5",
+    "autoprefixer": "^10.4.21",
+    "esbuild": "^0.28.2",
+    "tailwindcss": "^4.1.14",
+    "tsx": "^4.21.0",
+    "typescript": "~7.0.2",
+    "vite": "^8.2.2"
+  },
+  "description": "RETIRED legacy browser runtime of z-30, kept as a frozen reference (TypeScript codec twin, gate tests, prior-audit probes). Not built, served, installed or maintained. The z-30 application is the Rust workspace in crates/."
+}

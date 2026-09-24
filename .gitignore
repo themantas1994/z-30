@@ -5,7 +5,7 @@ coverage/
 .DS_Store
 *.log
 .env*
-!.env.example
+
 __pycache__/
 *.py[cod]
 *.egg-info/
@@ -15,3 +15,6 @@ config.json
 
 # Rust build output
 /target/
+
+# Benchmark smoke output (published results live in research/results/<commit>/)
+/smoke/

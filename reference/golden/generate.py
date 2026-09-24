@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """
-Exports golden vectors from the frozen Python oracle (z30_dsp/) into fixtures/golden/.
+Exports golden vectors from the frozen Python oracle (legacy/python-oracle/z30_dsp/) into
+fixtures/golden/.
 
     python reference/golden/generate.py            # writes fixtures/golden/*
     python reference/golden/generate.py --check    # regenerates into a temp dir and compares
@@ -25,7 +26,8 @@ import tempfile
 from multiprocessing import Pool
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-sys.path.insert(0, ROOT)
+# The frozen oracle lives in legacy/python-oracle (non-production; see its README).
+sys.path.insert(0, os.path.join(ROOT, "legacy", "python-oracle"))
 
 import numpy as np  # noqa: E402
 

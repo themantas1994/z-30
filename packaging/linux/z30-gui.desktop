@@ -1,0 +1,14 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=z-30
+GenericName=z-30 weak-signal digital mode (vNext)
+Comment=Experimental 16-GFSK weak-signal amateur radio mode. Not yet validated on real radio hardware.
+Exec=z30-gui
+Icon=z30
+Terminal=false
+Categories=HamRadio;Network;
+Keywords=HamRadio;DigitalMode;WeakSignal;GFSK;LDPC;
+StartupNotify=true
+# Install: copy this file to ~/.local/share/applications/ and z30.svg to
+# ~/.local/share/icons/hicolor/scalable/apps/ (docs/install.md).
