@@ -1,0 +1,153 @@
+{
+  "elapsed_s": 72.117464479,
+  "note": "independent audit harness; software simulation only",
+  "receiver": "z30_dsp::slot::Receiver::decode_slot, RxConfig::default()",
+  "result": {
+    "good": {
+      "delay_ms": 0.5,
+      "frame_power": {
+        "cv": 0.6279514387247839,
+        "frac_below_minus10db": 0.0,
+        "mean": 1.075365326819489,
+        "p10": 0.42453059187758646,
+        "p50": 0.9345911651396362,
+        "p90": 2.0258157529509586,
+        "sd": 0.6752772041310455
+      },
+      "measured_spread": [
+        {
+          "lag_s": 2.0,
+          "psd_sigma_hz": 0.03309244557573941,
+          "rho": 0.9171663502098836,
+          "two_sigma_spread_hz": 0.06618489115147883
+        },
+        {
+          "lag_s": 4.0,
+          "psd_sigma_hz": 0.03337489957694418,
+          "rho": 0.7034243112820907,
+          "two_sigma_spread_hz": 0.06674979915388836
+        }
+      ],
+      "nominal_doppler_spread_hz": 0.1,
+      "realisations": 400,
+      "tap_midframe": {
+        "frac_abs2_below_0.1": 0.08,
+        "im_mean": 0.023932902895950948,
+        "im_sd": 0.7314080938405211,
+        "mean_abs2": 1.0550824486190633,
+        "re_mean": -0.025398018500454,
+        "re_sd": 0.7221828510662205
+      }
+    },
+    "high-moderate": {
+      "delay_ms": 3.0,
+      "frame_power": {
+        "cv": 0.05879473034272142,
+        "frac_below_minus10db": 0.0,
+        "mean": 1.0040807527800397,
+        "p10": 0.9327082263620913,
+        "p50": 1.0012475251886979,
+        "p90": 1.0869767158968868,
+        "sd": 0.05903465710201916
+      },
+      "measured_spread": [
+        {
+          "lag_s": 0.02,
+          "psd_sigma_hz": 3.5317840067431625,
+          "rho": 0.9062076592427215,
+          "two_sigma_spread_hz": 7.063568013486325
+        },
+        {
+          "lag_s": 0.04,
+          "psd_sigma_hz": 3.5321729390320633,
+          "rho": 0.6743311627170258,
+          "two_sigma_spread_hz": 7.064345878064127
+        }
+      ],
+      "nominal_doppler_spread_hz": 10.0,
+      "realisations": 400,
+      "tap_midframe": {
+        "frac_abs2_below_0.1": 0.0975,
+        "im_mean": 0.016057683712887138,
+        "im_sd": 0.7007924684396128,
+        "mean_abs2": 0.9987711198588617,
+        "re_mean": -0.017867953680876725,
+        "re_sd": 0.7138526895850681
+      }
+    },
+    "moderate": {
+      "delay_ms": 1.0,
+      "frame_power": {
+        "cv": 0.26748675227054003,
+        "frac_below_minus10db": 0.0,
+        "mean": 1.0059786213958042,
+        "p10": 0.6653449417542893,
+        "p50": 0.9668877570173421,
+        "p90": 1.3805806211343568,
+        "sd": 0.2690859542907589
+      },
+      "measured_spread": [
+        {
+          "lag_s": 0.4,
+          "psd_sigma_hz": 0.17654282033470645,
+          "rho": 0.9062545358909724,
+          "two_sigma_spread_hz": 0.3530856406694129
+        },
+        {
+          "lag_s": 0.8,
+          "psd_sigma_hz": 0.176380377045992,
+          "rho": 0.6750179367500695,
+          "two_sigma_spread_hz": 0.352760754091984
+        }
+      ],
+      "nominal_doppler_spread_hz": 0.5,
+      "realisations": 400,
+      "tap_midframe": {
+        "frac_abs2_below_0.1": 0.1175,
+        "im_mean": 0.011411843699392696,
+        "im_sd": 0.7365090475622899,
+        "mean_abs2": 1.0047309555962256,
+        "re_mean": 0.046348653101741466,
+        "re_sd": 0.6800877612370794
+      }
+    },
+    "poor": {
+      "delay_ms": 2.0,
+      "frame_power": {
+        "cv": 0.18414715849559965,
+        "frac_below_minus10db": 0.0,
+        "mean": 1.001141289058277,
+        "p10": 0.7799674161468364,
+        "p50": 0.9860593955382521,
+        "p90": 1.2530216025596979,
+        "sd": 0.18435732363270346
+      },
+      "measured_spread": [
+        {
+          "lag_s": 0.2,
+          "psd_sigma_hz": 0.352894470167074,
+          "rho": 0.9063511134919107,
+          "two_sigma_spread_hz": 0.705788940334148
+        },
+        {
+          "lag_s": 0.4,
+          "psd_sigma_hz": 0.3527756428684483,
+          "rho": 0.6749955425133182,
+          "two_sigma_spread_hz": 0.7055512857368966
+        }
+      ],
+      "nominal_doppler_spread_hz": 1.0,
+      "realisations": 400,
+      "tap_midframe": {
+        "frac_abs2_below_0.1": 0.105,
+        "im_mean": -0.0040735577613656235,
+        "im_sd": 0.7346608377425663,
+        "mean_abs2": 1.006001991522116,
+        "re_mean": 0.04348887832299602,
+        "re_sd": 0.6832891739250435
+      }
+    }
+  },
+  "seed_base": "0x5eeda0d10924",
+  "what": "watterson"
+}

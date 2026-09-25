@@ -1,0 +1,237 @@
+{
+  "benchmark": "awgn",
+  "channel": "AWGN (z30_channel::synthesize, noise sigma = 1)",
+  "crossing_50pct_db": {
+    "at": -23.03472222222222,
+    "interval": [
+      -23.125644236706247,
+      -22.888880932672524
+    ],
+    "method": "linear interpolation between adjacent points of the rate and of its Wilson 95% bounds"
+  },
+  "crossing_90pct_db": {
+    "at": -22.0609756097561,
+    "interval": [
+      -22.153137546546663,
+      -21.801937251582093
+    ],
+    "method": "linear interpolation between adjacent points of the rate and of its Wilson 95% bounds"
+  },
+  "definitions": {
+    "duplicates_dropped": "decodes of an already-decoded payload that the receiver itself discarded (PassStats::duplicates)",
+    "duplicates_emitted": "the same payload reported more than once in the output (must be 0)",
+    "false_decode": "a CRC-valid decode whose payload was not transmitted in that slot",
+    "ground_truth": "the harness knows the transmitted payloads; the receiver is given only the 27 s window",
+    "interval": "Wilson score 95% interval, percent",
+    "latency": "wall-clock time of decode_slot per slot, measured while other slots were decoded concurrently on the same pool; indicative only (see `z30 --benchmark perf` for controlled latency)",
+    "sample_rate_hz": 6000.0,
+    "snr": "SPEC.md section 10: frame signal power over the noise power in 2500 Hz; real white Gaussian noise, sigma = 1 per sample at 6 kHz, so SNR = P / (5000 / 6000)",
+    "success": "a decode whose 63 payload bits equal the transmitted payload"
+  },
+  "frames_per_point": 200,
+  "placement": {
+    "carrier_phase": "uniform 0-2 pi",
+    "drift_hz": 0,
+    "dt_s": "uniform -1.4..+1.4",
+    "payload": "uniform random 63 bits",
+    "tone0_hz": "uniform 210-2740"
+  },
+  "points": [
+    {
+      "decoded": 0,
+      "duplicates_dropped": 0,
+      "duplicates_emitted": 0,
+      "false_decodes": 0,
+      "frames": 200,
+      "label": "AWGN -26.0 dB",
+      "latency_ms": {
+        "max": 312.502999,
+        "p50": 215.267597,
+        "p95": 263.65311099999997
+      },
+      "param": -26.0,
+      "percent": 0.0,
+      "wilson95": [
+        1.734723475976807e-16,
+        1.8845326377266574
+      ]
+    },
+    {
+      "decoded": 0,
+      "duplicates_dropped": 0,
+      "duplicates_emitted": 0,
+      "false_decodes": 0,
+      "frames": 200,
+      "label": "AWGN -25.0 dB",
+      "latency_ms": {
+        "max": 395.706335,
+        "p50": 214.00833599999999,
+        "p95": 264.59918300000004
+      },
+      "param": -25.0,
+      "percent": 0.0,
+      "wilson95": [
+        1.734723475976807e-16,
+        1.8845326377266574
+      ]
+    },
+    {
+      "decoded": 12,
+      "duplicates_dropped": 0,
+      "duplicates_emitted": 0,
+      "false_decodes": 0,
+      "frames": 200,
+      "label": "AWGN -24.0 dB",
+      "latency_ms": {
+        "max": 1058.8113290000001,
+        "p50": 214.56982499999998,
+        "p95": 344.810832
+      },
+      "param": -24.0,
+      "percent": 6.0,
+      "wilson95": [
+        3.465219425433187,
+        10.193169295766271
+      ]
+    },
+    {
+      "decoded": 33,
+      "duplicates_dropped": 0,
+      "duplicates_emitted": 0,
+      "false_decodes": 0,
+      "frames": 200,
+      "label": "AWGN -23.5 dB",
+      "latency_ms": {
+        "max": 448.419631,
+        "p50": 218.07846899999998,
+        "p95": 395.066687
+      },
+      "param": -23.5,
+      "percent": 16.5,
+      "wilson95": [
+        11.996855328217308,
+        22.26578153905955
+      ]
+    },
+    {
+      "decoded": 105,
+      "duplicates_dropped": 0,
+      "duplicates_emitted": 0,
+      "false_decodes": 0,
+      "frames": 200,
+      "label": "AWGN -23.0 dB",
+      "latency_ms": {
+        "max": 6130.448577,
+        "p50": 330.026744,
+        "p95": 426.100469
+      },
+      "param": -23.0,
+      "percent": 52.5,
+      "wilson95": [
+        45.59739601468475,
+        59.30837735342891
+      ]
+    },
+    {
+      "decoded": 144,
+      "duplicates_dropped": 0,
+      "duplicates_emitted": 0,
+      "false_decodes": 0,
+      "frames": 200,
+      "label": "AWGN -22.5 dB",
+      "latency_ms": {
+        "max": 522.9502219999999,
+        "p50": 368.745092,
+        "p95": 449.173424
+      },
+      "param": -22.5,
+      "percent": 72.0,
+      "wilson95": [
+        65.40769541334929,
+        77.76311022605097
+      ]
+    },
+    {
+      "decoded": 185,
+      "duplicates_dropped": 2,
+      "duplicates_emitted": 0,
+      "false_decodes": 0,
+      "frames": 200,
+      "label": "AWGN -22.0 dB",
+      "latency_ms": {
+        "max": 528.393617,
+        "p50": 384.93982900000003,
+        "p95": 456.27565
+      },
+      "param": -22.0,
+      "percent": 92.5,
+      "wilson95": [
+        87.99563897637054,
+        95.40250828156181
+      ]
+    },
+    {
+      "decoded": 200,
+      "duplicates_dropped": 0,
+      "duplicates_emitted": 0,
+      "false_decodes": 0,
+      "frames": 200,
+      "label": "AWGN -21.0 dB",
+      "latency_ms": {
+        "max": 516.392956,
+        "p50": 399.62631,
+        "p95": 473.647819
+      },
+      "param": -21.0,
+      "percent": 100.0,
+      "wilson95": [
+        98.11546736227335,
+        100.0
+      ]
+    },
+    {
+      "decoded": 200,
+      "duplicates_dropped": 0,
+      "duplicates_emitted": 0,
+      "false_decodes": 0,
+      "frames": 200,
+      "label": "AWGN -20.0 dB",
+      "latency_ms": {
+        "max": 587.473656,
+        "p50": 417.82442100000003,
+        "p95": 510.50583500000005
+      },
+      "param": -20.0,
+      "percent": 100.0,
+      "wilson95": [
+        98.11546736227335,
+        100.0
+      ]
+    }
+  ],
+  "provenance": {
+    "arch": "x86_64",
+    "binary": "z30 (z30-cli), the shipped command-line station",
+    "build_profile": "release",
+    "built": "2026-09-24T15:32:45Z",
+    "cpu": "Intel(R) Xeon(R) Processor @ 2.80GHz",
+    "decoder_config": "RxConfig { band_lo_hz: 200.0, band_hi_hz: 2800.0, max_candidates: 50, sync_threshold: 1.5, passes: 3, max_drift_hz: 4.0, drift_gain: 1.05, min_fine_sync: 2.5, whiten: true, ap: None, sic: SicParams { window_sec: 0.4, timing_search: 16 } }",
+    "elapsed_s": 146.99105435,
+    "git_commit": "84033d4531b3",
+    "hardware_involved": false,
+    "logical_cpus": 4,
+    "note": "Software simulation only. No radio, sound card or RF path was involved.",
+    "os": "linux",
+    "rayon_threads": 4,
+    "receiver": "z30_dsp::slot::Receiver::decode_slot (the production receive entry point)",
+    "rustc": "rustc 1.95.0 (59807616e 2026-04-14)",
+    "started_utc": "2026-09-24T16:09:01Z",
+    "target": "x86_64-unknown-linux-gnu",
+    "version": "0.9.0"
+  },
+  "seed": {
+    "per_frame": "SUITE_SEED ^ (benchmark << 40) ^ (point << 20) ^ frame, ChaCha8 (z30_channel::rng)",
+    "suite_seed": 20260830
+  },
+  "title": "Single-station sensitivity, AWGN, blind acquisition"
+}

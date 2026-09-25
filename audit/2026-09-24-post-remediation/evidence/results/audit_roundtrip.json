@@ -1,0 +1,126 @@
+{
+  "elapsed_s": 0.000169188,
+  "note": "independent audit harness; software simulation only",
+  "receiver": "z30_dsp::slot::Receiver::decode_slot, RxConfig::default()",
+  "result": {
+    "all_refused": true,
+    "encoder_refusals": [
+      {
+        "message": "CQ K1ABC FN42",
+        "refused": true
+      },
+      {
+        "message": "ZY2ABC K1ABC -10",
+        "refused": true
+      },
+      {
+        "message": "CQ K1ABC/P FN31",
+        "refused": true
+      },
+      {
+        "message": "G4XYZ K1ABC R-12",
+        "refused": true
+      },
+      {
+        "message": "G4XYZ K1ABC -31",
+        "refused": true
+      },
+      {
+        "message": "G4XYZ K1ABC +31",
+        "refused": true
+      },
+      {
+        "message": "CQ NOCAL FN31",
+        "refused": true
+      },
+      {
+        "message": "CQ K1ABC",
+        "refused": true
+      },
+      {
+        "message": "G4XYZ K1ABC HELLO",
+        "refused": true
+      },
+      {
+        "message": "TNX K1ABC 73",
+        "refused": true
+      },
+      {
+        "message": "CQ K1ABC -10",
+        "refused": true
+      },
+      {
+        "message": "EA8/G4XYZ K1ABC 73",
+        "refused": true
+      },
+      {
+        "message": "CQ 3DA0XYZ FN31",
+        "refused": true
+      }
+    ],
+    "verify_round_trip_negative_cases": [
+      {
+        "case": "data symbol 3 +1",
+        "error": "internal error: \"G4XYZ K1ABC -12\" did not survive its own round trip; refusing to transmit it",
+        "refused": true
+      },
+      {
+        "case": "data symbol 4 +1",
+        "error": "internal error: \"G4XYZ K1ABC -12\" did not survive its own round trip; refusing to transmit it",
+        "refused": true
+      },
+      {
+        "case": "data symbol 5 +1",
+        "error": "internal error: \"G4XYZ K1ABC -12\" did not survive its own round trip; refusing to transmit it",
+        "refused": true
+      },
+      {
+        "case": "data symbol 6 +1",
+        "error": "internal error: \"G4XYZ K1ABC -12\" did not survive its own round trip; refusing to transmit it",
+        "refused": true
+      },
+      {
+        "case": "data symbol 10 +1",
+        "error": "internal error: \"G4XYZ K1ABC -12\" did not survive its own round trip; refusing to transmit it",
+        "refused": true
+      },
+      {
+        "case": "sync symbol changed",
+        "error": "internal error: \"G4XYZ K1ABC -12\" did not survive its own round trip; refusing to transmit it",
+        "refused": true
+      },
+      {
+        "case": "tone 16",
+        "error": "internal error: \"G4XYZ K1ABC -12\" did not survive its own round trip; refusing to transmit it",
+        "refused": true
+      },
+      {
+        "case": "CRC bit flipped, LDPC re-encoded (valid codeword, bad CRC)",
+        "error": "internal error: \"G4XYZ K1ABC -12\" did not survive its own round trip; refusing to transmit it",
+        "refused": true
+      },
+      {
+        "case": "payload altered to -13 with valid CRC and LDPC, message still says -12",
+        "error": "internal error: \"G4XYZ K1ABC -12\" did not survive its own round trip; refusing to transmit it",
+        "refused": true
+      },
+      {
+        "case": "parity bit flipped, symbols consistent with it",
+        "error": "internal error: \"G4XYZ K1ABC -12\" did not survive its own round trip; refusing to transmit it",
+        "refused": true
+      },
+      {
+        "case": "partner call altered at symbol level (G4XYZ -> G4XYY)",
+        "error": "internal error: \"G4XYZ K1ABC -12\" did not survive its own round trip; refusing to transmit it",
+        "refused": true
+      },
+      {
+        "case": "message field altered, frame unchanged",
+        "error": "internal error: \"G4XYZ K1ABC -11\" did not survive its own round trip; refusing to transmit it",
+        "refused": true
+      }
+    ]
+  },
+  "seed_base": "0x5eeda0d10924",
+  "what": "roundtrip"
+}

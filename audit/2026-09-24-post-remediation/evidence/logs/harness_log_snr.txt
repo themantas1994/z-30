@@ -1,0 +1,18 @@
+SNR true -30.0: decoded   0/100 measured 0 none 0 bias NaN sd NaN min +inf max -inf false 0
+SNR true -28.0: decoded   0/100 measured 0 none 0 bias NaN sd NaN min +inf max -inf false 0
+SNR true -26.0: decoded   0/100 measured 0 none 0 bias NaN sd NaN min +inf max -inf false 0
+SNR true -24.0: decoded   7/100 measured 7 none 0 bias +0.413 sd 0.455 min -24.12 max -22.68 false 0
+SNR true -23.0: decoded  40/100 measured 40 none 0 bias +0.171 sd 0.424 min -23.60 max -21.97 false 0
+SNR true -22.0: decoded  92/100 measured 92 none 0 bias +0.040 sd 0.395 min -22.76 max -21.00 false 0
+SNR true -20.0: decoded 100/100 measured 100 none 0 bias -0.017 sd 0.300 min -20.74 max -19.26 false 0
+SNR true -15.0: decoded 100/100 measured 100 none 0 bias -0.004 sd 0.181 min -15.41 max -14.60 false 0
+SNR true -10.0: decoded 100/100 measured 100 none 0 bias +0.023 sd 0.147 min -10.37 max -9.64 false 0
+SNR true  -5.0: decoded 100/100 measured 100 none 0 bias -0.001 sd 0.138 min -5.34 max -4.66 false 0
+SNR true  +0.0: decoded 100/100 measured 100 none 0 bias -0.018 sd 0.132 min -0.40 max +0.44 false 0
+SNR true  +5.0: decoded 100/100 measured 100 none 0 bias -0.047 sd 0.124 min +4.64 max +5.35 false 0
+SNR true +10.0: decoded 100/100 measured 100 none 0 bias -0.070 sd 0.119 min +9.62 max +10.21 false 0
+SNR true +20.0: decoded 100/100 measured 100 none 0 bias -0.096 sd 0.132 min +19.48 max +20.18 false 0
+SNR true +30.0: decoded 100/100 measured 100 none 0 bias -0.304 sd 0.265 min +28.44 max +30.12 false 0
+SNR true +40.0: decoded 100/100 measured 100 none 0 bias -1.739 sd 1.689 min +32.10 max +40.01 false 0
+SNR true +50.0: decoded 100/100 measured 100 none 0 bias -6.573 sd 4.025 min +34.36 max +49.83 false 0
+wrote audit_snr.json in 421 s
