@@ -26,5 +26,6 @@ contradiction is a bug. The retired browser/Python runtime is documented only in
 | [hardware-validation.md](hardware-validation.md) | The procedure for validating on real equipment (none performed yet) |
 | [safety.md](safety.md) | The transmit gate, PTT defences, and the tests behind each rule |
 | [benchmarking.md](benchmarking.md) | Every measured figure, how it was measured, and what is not measured |
+| [research-process.md](research-process.md) | How a change reaches `main`: proposal, paired experiment against the baseline, review, board acceptance |
 | [development.md](development.md) | Building, testing, golden vectors, CI, house rules for this workspace |
 | [troubleshooting.md](troubleshooting.md) | Symptoms, what they usually mean, and what to check |
