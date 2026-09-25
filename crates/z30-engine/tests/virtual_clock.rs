@@ -139,7 +139,8 @@ fn closed_loop_qso_through_the_real_pipeline_decoder_gate_sequencer_and_logger()
     cfg.station.region = Some(Region::IaruR1);
     cfg.station.license_class = Some(LicenseClass::Full);
     cfg.ptt = PttConfig::Vox;
-    cfg.operating.dial_hz = 14_076_000;
+    cfg.audio.tx_level = 0.5;
+    cfg.operating.dial_hz = Some(14_076_000);
     cfg.operating.tx_audio_hz = 1400.0;
     let mut engine = Engine::new(cfg);
     let mut txs = TxScheduler::new(0.0);

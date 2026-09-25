@@ -1,0 +1,18 @@
+z30 0.9.0 (z-30 vNext, Rust)
+commit:       130796f76bb0
+built:        2026-09-24T19:01:22Z with rustc 1.98.1 (48a229cea 2026-09-01)
+target:       x86_64-unknown-linux-gnu
+architecture: x86_64 (linux)
+profile:      release
+features:     none (CM108 GPIO PTT not built in)
+protocol:     v1
+runtime:      native; no Python, Node or browser component
+
+strings W1AW: 0
+strings web_dist: 0
+linux-vdso.so.1
+libasound.so.2
+libgcc_s.so.1
+libm.so.6
+libc.so.6
+/lib64/ld-linux-x86-64.so.2

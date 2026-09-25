@@ -37,7 +37,18 @@ method, and the gate refuses until all are set. The retired browser app shipped 
 W1AW as its default (audit C-04); CI now scans every release binary for it.
 
 **USB only.** The emission is computed as dial + audio (upper sideband). z-30 does not set the
-radio's mode; operating in LSB would put the signal somewhere the gate did not check.
+radio's mode; operating in LSB would put the signal somewhere the gate did not check. When rig
+control reads the radio's mode, a fresh reading of anything but `USB`/`PKTUSB` is refused;
+without rig control the mode cannot be checked.
+
+**What is checked is what is sent.** The frame the gate verifies (symbols, parity, CRC, fields,
+text, and a symbol-for-symbol rebuild from the message) is the very object the transmitter
+modulates: nothing else can be transmitted, by construction (`VerifiedFrame`; post-remediation
+audit N-03). A transmit level of 0 is refused, as is a missing dial frequency.
+
+**Loopback tests do not transmit.** `z30 --loopback-test` runs entirely in memory. The sound-card
+test, `z30 --audio-loopback-test`, needs `--confirm-no-transmitter` and refuses any configuration
+with a PTT method (VOX included) or rig control (post-remediation audit N-04).
 
 The band plans (IARU Regions 1–3 and FCC Part 97 data segments) are compile-time data, not
 configuration. National variations are not modelled: the gate catches a mistuned dial or wrong
@@ -75,7 +86,7 @@ persisted the result (audit C-03); it is gone, and its offsets are never migrate
 
 ## The logbook records only what happened
 
-A log record holds what was received, measured, sent, read back from the rig, commanded,
+A log record holds what was received, measured, sent, reported by the radio, commanded,
 configured or entered — and each field says which. A field nothing supplied is left empty:
 
 - no grid received → no grid logged (the retired logger wrote `FN31`);
@@ -83,15 +94,21 @@ configured or entered — and each field says which. A field nothing supplied is
 - no distance field at all (it computed one from the default grid `EM00`);
 - times are UTC, computed from slot numbers, independent of the computer's time zone (it wrote
   local time labelled UTC);
-- the dial is marked `rig_verified` only when the radio confirmed it, otherwise `commanded`;
+- the dial is `reported_by_rig` when a fresh CAT reading gave it (the radio's value), `commanded`
+  only when z-30 sent the radio that exact frequency **and the radio acknowledged it**,
+  `configured` when it is only your setting, and absent when there is none. There is no default
+  dial: until 2026-09-24 a default 14.076 MHz could be logged as "commanded" on a station with
+  no rig control (post-remediation audit N-05);
 - power is the power you *configured*, labelled as configuration; forward power and SWR are "not
   measured" because nothing measures them.
 
 A record with no partner callsign or no plausible UTC time is refused, not written. ADIF exports
 carry the provenance in `APP_Z30_PROVENANCE`. Imported legacy records are marked `legacy_import`,
-and on entries the old auto-logger wrote, its default grid and report are dropped because they
-cannot be told apart from its fabrications (`crates/z30-io/tests/logbook_integrity.rs`,
-`crates/z30-engine/tests/qso_logging.rs`).
+and each legacy writer's own defaults are dropped from the entries it wrote because they cannot
+be told apart from its fabrications: the auto-logger's FN31, −16 and dial-plus-audio-offset
+"frequency", the manual form's FN31 and band default dial, the legacy importer's −15 and
+14.076 MHz (`crates/z30-io/tests/logbook_integrity.rs`, `crates/z30-engine/tests/qso_logging.rs`,
+`crates/z30-engine/tests/dial_provenance.rs`, `z30-io` `migrate::tests`).
 
 ## Reports you send
 

@@ -8,7 +8,7 @@ radio, and for the software that operates it: **`z30-gui`** (desktop station) an
 >
 > | | |
 > | :--- | :--- |
-> | Protocol validated | **yes** — an independent re-implementation from `SPEC.md` reproduces it bit for bit |
+> | Protocol validated | **yes, against the reference** — the Rust implementation reproduces the frozen oracle's golden vectors bit for bit (an independent re-implementation from `SPEC.md` was reported by the original audit, E007, whose evidence is not in this repository) |
 > | Software simulation validated | **yes** — seeded measurements through the production receiver ([16](16-Benchmarking-Testing-&-CI.md)) |
 > | Hardware validated | **no** — no radio, audio interface or PTT interface has been used |
 > | On-air validated | **no** — no frame has been decoded over a real radio path; nobody else runs z-30 |

@@ -62,9 +62,10 @@ refuses. There is no portable (`/P`) or compound call support in v1.
   window started before audio did.
 
 **The transmit gate refuses.** Read the reasons: each names the condition. Common ones: no
-callsign / region / licence class / PTT method set; the emission would fall outside a permitted
-data segment (move the audio offset or dial); `rigctld` reports a different dial than the one
-commanded (re-send the frequency or check the radio).
+callsign / region / licence class / PTT method / dial set; transmit level 0; the emission
+would fall outside a permitted data segment (move the audio offset or dial); `rigctld` reports a
+different dial than the one set (re-send the frequency or check the radio); the radio reports a
+mode other than USB/PKTUSB.
 
 **The radio does not key.**
 - `cat`: is `rigctld` started with the right `-P` PTT option for your interface? A reply other

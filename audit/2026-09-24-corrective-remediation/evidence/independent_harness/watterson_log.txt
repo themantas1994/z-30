@@ -1,0 +1,5 @@
+Watterson          good (nominal 2-sigma spread 0.1 Hz): frame power mean 1.061 sd 0.549 cv 0.518 p10 0.509 p50 0.968 p90 1.853 P(<-10 dB) 0.000 | tap |g|^2 mean 1.000 re -0.007/0.709 im +0.023/0.707 P(|g|^2<0.1) 0.098 | spreads 0.097/0.096
+Watterson      moderate (nominal 2-sigma spread 0.5 Hz): frame power mean 1.003 sd 0.223 cv 0.223 p10 0.728 p50 0.980 p90 1.310 P(<-10 dB) 0.000 | tap |g|^2 mean 1.006 re +0.045/0.682 im +0.005/0.736 P(|g|^2<0.1) 0.125 | spreads 0.498/0.498
+Watterson          poor (nominal 2-sigma spread 1 Hz): frame power mean 1.001 sd 0.152 cv 0.151 p10 0.809 p50 0.988 p90 1.213 P(<-10 dB) 0.000 | tap |g|^2 mean 1.005 re +0.044/0.682 im -0.006/0.735 P(|g|^2<0.1) 0.098 | spreads 1.000/1.000
+Watterson high-moderate (nominal 2-sigma spread 10 Hz): frame power mean 1.003 sd 0.050 cv 0.050 p10 0.941 p50 1.001 p90 1.073 P(<-10 dB) 0.000 | tap |g|^2 mean 0.989 re -0.021/0.709 im -0.001/0.698 P(|g|^2<0.1) 0.095 | spreads 9.980/9.979
+wrote audit_watterson.json in 68 s

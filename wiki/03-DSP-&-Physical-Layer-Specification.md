@@ -21,7 +21,7 @@ code that exists; nothing here describes intended behaviour.
 | FEC | IRA-LDPC (216, 77), rate 0.356 | dual-diagonal parity, degree-5 connection table |
 | Symbol mapping | **natural binary**, 4 bits/symbol, MSB first | not Gray-coded; the loss against Gray has not been measured |
 | Receiver timing window | slot − 1.5 s … slot + 25.5 s | DT search ±1.5 s, hard edge |
-| Sideband | USB assumed | radiated = dial + audio; LSB is not modelled |
+| Sideband | USB assumed | radiated = dial + audio; a radio that reports a non-USB mode over CAT is refused; without CAT the mode is not checked |
 
 The sensitivity figures are on [16](16-Benchmarking-Testing-&-CI.md) and
 [11](11-Physics-&-Comparative-Analysis-z30-vs-FT8.md), each with its conditions. None is a
@@ -38,8 +38,9 @@ message text -> v1 codec (refuses anything it cannot carry exactly) -> 63 bits
 
 The modulator is `z30_protocol::gfsk::Modulator`; the same one generates the SIC replica and
 the benchmark's test signals. It is bit-exact with the frozen Python oracle on the golden
-waveforms at 6, 12 and 48 kHz, and an independent re-implementation from `SPEC.md` alone
-reproduced it exactly (2026-09-24 audit, E007).
+waveforms at 6, 12 and 48 kHz (checked in CI). The original 2026-09-24 audit reported that an
+independent re-implementation from `SPEC.md` alone reproduced it exactly (E007); that evidence
+is not in this repository.
 
 Two properties are load-bearing: **continuous phase** (a phase step at a symbol boundary would
 splatter across the passband) and **constant amplitude** (the only amplitude shaping is one

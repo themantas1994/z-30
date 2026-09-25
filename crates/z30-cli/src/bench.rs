@@ -182,12 +182,12 @@ fn sweep(frames: usize) -> Result<(), String> {
 }
 
 /// Entry point.
-pub fn run(what: &str, frames: Option<usize>, out: Option<&std::path::Path>) -> Result<(), String> {
+pub fn run(what: &str, frames: Option<usize>, out: Option<&std::path::Path>, replicate: Option<u16>) -> Result<(), String> {
     match what {
         "perf" => perf(frames.unwrap_or(20)),
         "false-decodes" => false_decodes(frames.unwrap_or(20)),
         "sweep" => sweep(frames.unwrap_or(20)),
-        other => crate::suite::run(other, frames, out),
+        other => crate::suite::run(other, frames, out, replicate),
     }
 }
 

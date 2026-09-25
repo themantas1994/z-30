@@ -1,0 +1,10 @@
+[package]
+name = "powercheck"
+version = "0.1.0"
+edition = "2021"
+publish = false
+[dependencies]
+z30-protocol = { path = "/home/user/z-30/crates/z30-protocol" }
+z30-channel = { path = "/home/user/z-30/crates/z30-channel" }
+rand = "0.8"
+[workspace]

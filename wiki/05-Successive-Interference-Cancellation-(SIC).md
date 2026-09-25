@@ -71,7 +71,7 @@ Weak station decoded, out of 100 trials per cell (with SIC / single pass; result
 
 Full per-cell results, including the strong station's decode rate, false decodes and duplicates:
 [`docs/benchmarking.md`](../docs/benchmarking.md#collisions-sic-on-versus-off) and
-[`research/results/d8983eeef66e/sic.json`](../research/results/d8983eeef66e/sic.json).
+[`research/results/672cef9b3cdb/sic.json`](../research/results/672cef9b3cdb/sic.json) (identical to the first run at `d8983ee`).
 
 Unit-level checks (`crates/z30-dsp/tests/`): measured against the true transmitted waveform, a
 +10 dB station is suppressed by 26–39 dB; a subtraction never adds energy; subtracting a frame

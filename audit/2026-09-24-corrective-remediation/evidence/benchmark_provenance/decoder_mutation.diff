@@ -1,0 +1,13 @@
+diff --git a/crates/z30-dsp/src/ldpc.rs b/crates/z30-dsp/src/ldpc.rs
+index 7a2bd93..587873c 100644
+--- a/crates/z30-dsp/src/ldpc.rs
++++ b/crates/z30-dsp/src/ldpc.rs
+@@ -44,7 +44,7 @@ const SCHEDULES: [Schedule; 4] = [
+ ];
+ 
+ /// Iteration cap of schedule 1 (`LDPC_MAX_ITERATIONS` in the reference).
+-pub const LDPC_MAX_ITERATIONS: usize = 45;
++pub const LDPC_MAX_ITERATIONS: usize = 5;
+ /// Total iterations of a cascade that never converges.
+ pub const CASCADE_ITERATIONS: usize = 45 + 40 + 35 + 30;
+ /// Peak-to-peak dither of schedule 4.

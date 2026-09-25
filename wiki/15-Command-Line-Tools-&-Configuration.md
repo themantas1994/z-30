@@ -2,9 +2,10 @@
 
 ## `z30` — the command-line station and toolbox
 
-`z30` **never transmits**: it has no PTT and no audio output path to a radio. (The one command
-that plays audio, `--loopback-test`, is for a cable loopback and refuses to run without
-`--confirm-no-transmitter`.)
+`z30` **never transmits**: it has no PTT and no audio output path to a radio. The one command
+that plays audio, `--audio-loopback-test`, is for a cable loopback: it refuses to run without
+`--confirm-no-transmitter`, and refuses any configuration with a PTT method (VOX included) or
+rig control. `--loopback-test` plays nothing; it is a software loopback in memory.
 
 | Command | What it does |
 | :--- | :--- |
@@ -12,15 +13,17 @@ that plays audio, `--loopback-test`, is for a cable loopback and refuses to run 
 | `z30 --diagnostics` | configuration file, OS clock status, PTT method and whether it opens, `rigctld` reachability and readings, audio devices, and every reason the transmit gate would refuse |
 | `z30 --devices` | audio input/output devices and serial ports |
 | `z30 --receive [--capture-slots DIR]` | a live receive-only station on the configured input; with `--capture-slots`, every slot's 27 s window (WAV, 6 kHz) and decode report (JSON, `source: live-audio`) |
-| `z30 --decode FILE.wav [--start-utc T]` | decode a recording (any rate; resampled to 6 kHz); a 27 s 6 kHz file from `--capture-slots` is decoded as one slot |
-| `z30 --encode "CQ K1ABC FN31" --wav out.wav [--f0 1500] [--rate 48000]` | write a frame to a WAV file; refuses a message v1 cannot carry exactly |
+| `z30 --decode FILE.wav [--start-utc T]` | decode a recording (any rate; resampled to 6 kHz); a 27 s 6 kHz file from `--capture-slots` is decoded as one slot. Without `--start-utc` the recording's time is unknown and decodes are labelled `window N (UTC unknown)`, not given a date |
+| `z30 --encode "CQ K1ABC FN31" --wav out.wav [--f0 1500] [--rate 48000]` | write a frame to a WAV file; refuses a message v1 cannot carry exactly, and writes only a frame that passed the same round-trip verification as a transmission |
 | `z30 --migrate [--force]` | import the retired app's configuration and logbook ([01](01-New-User-Guide-&-First-Steps.md#7-coming-from-the-old-browserpython-z-30)) |
 | `z30 --export-adif FILE` / `--import-adif FILE` | ADIF 3.1.4 export; import marks every field `legacy_import` |
-| `z30 --loopback-test --confirm-no-transmitter [--out a1.json]` | hardware validation test A1 ([`docs/hardware-validation.md`](../docs/hardware-validation.md)) |
-| `z30 --benchmark suite` | every published measurement, through `decode_slot`, JSON with provenance ([16](16-Benchmarking-Testing-&-CI.md)) |
+| `z30 --loopback-test [--out lb.json]` | software loopback: a known frame through the transmit synthesis and the receive chain (resampler, clock, scheduler, `decode_slot`) at 48 and 44.1 kHz, in memory; opens no device, cannot transmit |
+| `z30 --config loopback.toml --audio-loopback-test --confirm-no-transmitter [--out a1.json]` | hardware validation test A1 through a real sound card and cable ([`docs/hardware-validation.md`](../docs/hardware-validation.md)); refuses configurations with PTT or rig control |
+| `z30 --benchmark suite [--replicate N]` | every published measurement, through `decode_slot`, JSON with provenance ([16](16-Benchmarking-Testing-&-CI.md)); `--replicate N` (N ≥ 1) re-runs on frames no other replicate or the published run uses, to measure sampling variability (marked as not the published run) |
 | `z30 --benchmark perf` | decode latency, CPU and allocations at K = 1, 5, 20, 50 stations |
 
-The printed decode line is `YYYYMMDD HHMMSS  SNR dB  DT s  frequency Hz  message [aN]`.
+The printed decode line is `YYYYMMDD HHMMSS  SNR dB  DT s  frequency Hz  message [aN]`
+(`window N (UTC unknown)` in place of the date and time for a recording with no start time).
 
 ## `z30-gui` — the desktop station
 

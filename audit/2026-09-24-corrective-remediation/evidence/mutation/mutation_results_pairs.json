@@ -1,0 +1,71 @@
+{
+  "commit": "672cef9b3cdba2134cb9d95cce2fb19dd42cc4bf",
+  "rustc": "rustc 1.98.1 (48a229cea 2026-09-01)",
+  "baseline": {
+    "-p z30-protocol | -p z30-engine --test safety": true
+  },
+  "mutations": [
+    {
+      "id": "C06-p1",
+      "origin": "new",
+      "area": "C-06",
+      "mutation": "PAIR: Costas check AND canonical re-encoding comparison removed",
+      "file": "crates/z30-protocol/src/codec.rs",
+      "result": "KILLED",
+      "failing_tests": [
+        "-p z30-protocol: every_kind_of_corrupted_frame_is_refused",
+        "-p z30-engine --test safety: n3_the_gate_refuses_every_corrupted_frame_and_hands_out_no_frame"
+      ],
+      "tests_run": [
+        "-p z30-protocol",
+        "-p z30-engine --test safety"
+      ]
+    },
+    {
+      "id": "C06-p2",
+      "origin": "new",
+      "area": "C-06",
+      "mutation": "PAIR: syndrome check AND canonical re-encoding comparison removed",
+      "file": "crates/z30-protocol/src/codec.rs",
+      "result": "KILLED",
+      "failing_tests": [
+        "-p z30-protocol: every_kind_of_corrupted_frame_is_refused"
+      ],
+      "tests_run": [
+        "-p z30-protocol",
+        "-p z30-engine --test safety"
+      ]
+    },
+    {
+      "id": "C06-p3",
+      "origin": "new",
+      "area": "C-06",
+      "mutation": "PAIR: decoded-fields comparison AND canonical re-encoding comparison removed",
+      "file": "crates/z30-protocol/src/codec.rs",
+      "result": "KILLED",
+      "failing_tests": [
+        "-p z30-protocol: every_kind_of_corrupted_frame_is_refused",
+        "-p z30-engine --test safety: n3_the_gate_refuses_every_corrupted_frame_and_hands_out_no_frame"
+      ],
+      "tests_run": [
+        "-p z30-protocol",
+        "-p z30-engine --test safety"
+      ]
+    },
+    {
+      "id": "C06-p4",
+      "origin": "new",
+      "area": "C-06",
+      "mutation": "PAIR: a failed round trip not reported AND 'allowed' not requiring the frame",
+      "file": "crates/z30-engine/src/txgate.rs",
+      "result": "KILLED",
+      "failing_tests": [
+        "-p z30-engine --test safety: g6_the_whole_frame_is_checked_partner_call_grid_and_report_not_just_our_call, n3_the_gate_refuses_every_corrupted_frame_and_hands_out_no_frame"
+      ],
+      "tests_run": [
+        "-p z30-protocol",
+        "-p z30-engine --test safety"
+      ]
+    }
+  ]
+}

@@ -9,10 +9,13 @@ mod waterfall;
 fn main() -> eframe::Result {
     if std::env::args().skip(1).any(|a| a == "--version" || a == "-V") {
         println!(
-            "z30-gui {} (z-30 vNext, Rust)\ncommit:       {}\nbuilt:        {}\ntarget:       {}\narchitecture: {} ({})\nprofile:      {}\nfeatures:     {}\nprotocol:     v{}",
+            // The same fields as `z30 --version`, compiler and runtime included (they were
+            // missing here; post-remediation audit N-14).
+            "z30-gui {} (z-30 vNext, Rust)\ncommit:       {}\nbuilt:        {} with {}\ntarget:       {}\narchitecture: {} ({})\nprofile:      {}\nfeatures:     {}\nprotocol:     v{}\nruntime:      native; no Python, Node or browser component",
             env!("CARGO_PKG_VERSION"),
             env!("Z30_BUILD_COMMIT"),
             env!("Z30_BUILD_DATE"),
+            env!("Z30_BUILD_RUSTC"),
             env!("Z30_BUILD_TARGET"),
             std::env::consts::ARCH,
             std::env::consts::OS,

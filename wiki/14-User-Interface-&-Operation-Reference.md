@@ -10,9 +10,10 @@ sequencing and watching PTT whatever the window is doing.
 ## Layout
 
 **Top bar.** Your callsign (or "z-30 (no callsign)"); the UTC time from the operating system;
-the slot progress bar (even/odd, seconds into the slot); the dial — "(radio agrees)" when
-`rigctld` reports the same dial, "commanded, radio reports …" when it does not, "(not
-verified)" without rig control; the TX state (RX / TX armed / TX and the message being sent);
+the slot progress bar (even/odd, seconds into the slot); the dial — "(radio reports it)" when
+`rigctld` reports the same dial, "set, radio reports …" when it does not, "(commanded, not read
+back)" when the radio acknowledged a set-frequency but cannot be read, "(configured; no radio
+confirms it)" otherwise, and "dial not set" when there is none (transmit is then refused); the TX state (RX / TX armed / TX and the message being sent);
 buttons for **Settings**, **Logbook** and **Diagnostics**.
 
 **Waterfall.** 0–3 kHz of the received audio. The green box is the receive frequency, the red
@@ -74,8 +75,9 @@ transmission: the gate approved the old configuration, not the new one.
 ## Logbook
 
 Completed contacts, with **Export ADIF** (written to the data directory as `export.adi`).
-Fields that were not received or measured are empty; the dial is labelled rig-verified or
-commanded; power is labelled as configured. Forward power and SWR are "not measured" — nothing
+Fields that were not received or measured are empty; the frequency is labelled with where it
+came from (reported by the radio, commanded and acknowledged, or configured) or shown as `-`
+when unknown; power is labelled as configured. Forward power and SWR are "not measured" — nothing
 in z-30 measures them. See [13](13-Operating-Safety-Compliance-&-Security.md#the-logbook-records-only-what-happened).
 
 ## Diagnostics

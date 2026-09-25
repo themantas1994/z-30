@@ -54,8 +54,9 @@ $$P(x) = x^{14} + x^{13} + x^{10} + x^{6} + x + 1 \quad (\text{register constant
 > $x^{14} + x^{11} + x^2 + 1$ - a different polynomial (register constant `0x0805`). The two
 > legacy implementations agreed with each other so nothing broke, but a third implementation
 > written from that specification would have produced a CRC failing against both.
-> `tests/vectors/crc14_vectors.json` now pins the answer for every implementation, and an
-> independent re-implementation from `SPEC.md` reproduced all golden vectors (audit E007).
+> `tests/vectors/crc14_vectors.json` now pins the answer for every implementation. The original
+> audit reported an independent re-implementation from `SPEC.md` reproducing all golden vectors
+> (E007); that evidence is not in this repository.
 
 - **Protected block**: $K = 63 + 14 = 77$ bits.
 - **False accepts**: a CRC-14 passes a random wrong word with probability $2^{-14} \approx 6.1 \times 10^{-5}$.

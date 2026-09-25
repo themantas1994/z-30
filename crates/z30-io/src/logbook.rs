@@ -23,7 +23,7 @@ fn prov_str(p: Provenance) -> &'static str {
         Provenance::Received => "received",
         Provenance::Measured => "measured",
         Provenance::Sent => "sent",
-        Provenance::RigVerified => "rig_verified",
+        Provenance::ReportedByRig => "reported_by_rig",
         Provenance::Commanded => "commanded",
         Provenance::Configured => "configured",
         Provenance::LegacyImport => "legacy_import",
@@ -36,12 +36,71 @@ fn prov_parse(s: &str) -> Provenance {
         "received" => Provenance::Received,
         "measured" => Provenance::Measured,
         "sent" => Provenance::Sent,
-        "rig_verified" => Provenance::RigVerified,
+        // Written as "rig_verified" before 2026-09-24: the same meaning.
+        "reported_by_rig" | "rig_verified" => Provenance::ReportedByRig,
         "commanded" => Provenance::Commanded,
         "configured" => Provenance::Configured,
         "manual" => Provenance::Manual,
         _ => Provenance::LegacyImport,
     }
+}
+
+/// The `qso` table. Version 2 (2026-09-24): `dial_hz`/`dial_src` and `tx_audio_hz` may be
+/// NULL, because a contact whose frequency nothing established has no frequency (N-05).
+const SCHEMA_V2: &str = "
+    id INTEGER PRIMARY KEY,
+    call TEXT NOT NULL,
+    grid TEXT, grid_src TEXT,
+    rst_sent INTEGER, rst_sent_src TEXT,
+    rst_rcvd INTEGER, rst_rcvd_src TEXT,
+    start_utc REAL NOT NULL, end_utc REAL NOT NULL,
+    dial_hz REAL, dial_src TEXT,
+    tx_audio_hz REAL,
+    band TEXT,
+    my_call TEXT NOT NULL, my_grid TEXT,
+    tx_power_w REAL, tx_power_src TEXT,
+    ap_assisted INTEGER NOT NULL,
+    comment TEXT NOT NULL DEFAULT ''";
+
+/// Brings a version-1 logbook (dial and audio offset NOT NULL) to version 2, correcting what
+/// version 1 could not represent:
+///
+/// - `dial_src = 'commanded'` becomes `'configured'`. Version 1 labelled the operator's
+///   configured dial "commanded" whenever the radio had not read it back, including on stations
+///   with no rig control at all (N-05). Every such value was the operator's setting; whether it
+///   was ever sent to a radio is not recorded. "Configured" is the claim that is true of all of
+///   them.
+/// - `dial_hz <= 0` (a legacy import with no frequency, written as 0 Hz) becomes NULL, and so
+///   does `tx_audio_hz = 0` (legacy imports, which have no audio offset; z-30 never transmits
+///   below 200 Hz).
+/// - `rig_verified` is renamed `reported_by_rig`.
+fn migrate_schema(db: &Connection) -> Result<(), String> {
+    let dial_not_null: bool = db
+        .prepare("SELECT \"notnull\" FROM pragma_table_info('qso') WHERE name = 'dial_hz'")
+        .and_then(|mut st| st.query_row([], |r| r.get::<_, i64>(0)))
+        .map(|v| v != 0)
+        .map_err(|e| e.to_string())?;
+    if !dial_not_null {
+        return Ok(());
+    }
+    db.execute_batch(&format!(
+        "BEGIN;
+         ALTER TABLE qso RENAME TO qso_v1;
+         DROP INDEX IF EXISTS qso_call;
+         DROP INDEX IF EXISTS qso_start;
+         CREATE TABLE qso ({SCHEMA_V2});
+         INSERT INTO qso (id, call, grid, grid_src, rst_sent, rst_sent_src, rst_rcvd, rst_rcvd_src, start_utc, end_utc,
+                          dial_hz, dial_src, tx_audio_hz, band, my_call, my_grid, tx_power_w, tx_power_src, ap_assisted, comment)
+           SELECT id, call, grid, grid_src, rst_sent, rst_sent_src, rst_rcvd, rst_rcvd_src, start_utc, end_utc,
+                  CASE WHEN dial_hz > 0 THEN dial_hz END,
+                  CASE WHEN dial_hz > 0 THEN (CASE dial_src WHEN 'commanded' THEN 'configured' WHEN 'rig_verified' THEN 'reported_by_rig' ELSE dial_src END) END,
+                  CASE WHEN tx_audio_hz > 0 THEN tx_audio_hz END,
+                  band, my_call, my_grid, tx_power_w, tx_power_src, ap_assisted, comment
+           FROM qso_v1;
+         DROP TABLE qso_v1;
+         COMMIT;"
+    ))
+    .map_err(|e| format!("logbook schema migration to version 2 failed: {e}"))
 }
 
 impl Logbook {
@@ -57,25 +116,12 @@ impl Logbook {
     }
 
     fn init(db: Connection) -> Result<Self, String> {
+        db.execute_batch(&format!("PRAGMA journal_mode=WAL; CREATE TABLE IF NOT EXISTS qso ({SCHEMA_V2});")).map_err(|e| e.to_string())?;
+        migrate_schema(&db)?;
         db.execute_batch(
-            "PRAGMA journal_mode=WAL;
-             CREATE TABLE IF NOT EXISTS qso (
-               id INTEGER PRIMARY KEY,
-               call TEXT NOT NULL,
-               grid TEXT, grid_src TEXT,
-               rst_sent INTEGER, rst_sent_src TEXT,
-               rst_rcvd INTEGER, rst_rcvd_src TEXT,
-               start_utc REAL NOT NULL, end_utc REAL NOT NULL,
-               dial_hz REAL NOT NULL, dial_src TEXT NOT NULL,
-               tx_audio_hz REAL NOT NULL,
-               band TEXT,
-               my_call TEXT NOT NULL, my_grid TEXT,
-               tx_power_w REAL, tx_power_src TEXT,
-               ap_assisted INTEGER NOT NULL,
-               comment TEXT NOT NULL DEFAULT ''
-             );
-             CREATE INDEX IF NOT EXISTS qso_call ON qso(call);
-             CREATE INDEX IF NOT EXISTS qso_start ON qso(start_utc);",
+            "CREATE INDEX IF NOT EXISTS qso_call ON qso(call);
+             CREATE INDEX IF NOT EXISTS qso_start ON qso(start_utc);
+             PRAGMA user_version = 2;",
         )
         .map_err(|e| e.to_string())?;
         Ok(Logbook { db })
@@ -99,8 +145,8 @@ impl Logbook {
                     r.rst_rcvd.as_ref().map(|v| prov_str(v.source)),
                     r.start_utc,
                     r.end_utc,
-                    r.dial_hz.value,
-                    prov_str(r.dial_hz.source),
+                    r.dial_hz.as_ref().map(|d| d.value),
+                    r.dial_hz.as_ref().map(|d| prov_str(d.source)),
                     r.tx_audio_hz,
                     r.band,
                     r.my_call,
@@ -138,7 +184,7 @@ impl Logbook {
                     rst_rcvd: row.get::<_, Option<i64>>(5)?.map(|v| Sourced::new(v as i8, src(6).unwrap_or(Provenance::LegacyImport))),
                     start_utc: row.get(7)?,
                     end_utc: row.get(8)?,
-                    dial_hz: Sourced::new(row.get(9)?, src(10)?),
+                    dial_hz: row.get::<_, Option<f64>>(9)?.map(|v| Sourced::new(v, src(10).unwrap_or(Provenance::LegacyImport))),
                     tx_audio_hz: row.get(11)?,
                     band: row.get(12)?,
                     my_call: row.get(13)?,
@@ -152,11 +198,13 @@ impl Logbook {
         rows.collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())
     }
 
-    /// Whether a contact with this callsign, start time and dial frequency is already logged.
-    pub fn contains_contact(&self, call: &str, start_utc: f64, dial_hz: f64) -> Result<bool, String> {
+    /// Whether a contact with this callsign, start time and dial frequency (both absent counts
+    /// as the same) is already logged.
+    pub fn contains_contact(&self, call: &str, start_utc: f64, dial_hz: Option<f64>) -> Result<bool, String> {
         self.db
             .query_row(
-                "SELECT EXISTS(SELECT 1 FROM qso WHERE call = ?1 AND abs(start_utc - ?2) < 0.5 AND abs(dial_hz - ?3) < 1.0)",
+                "SELECT EXISTS(SELECT 1 FROM qso WHERE call = ?1 AND abs(start_utc - ?2) < 0.5
+                   AND ((dial_hz IS NULL AND ?3 IS NULL) OR abs(dial_hz - ?3) < 1.0))",
                 params![call, start_utc, dial_hz],
                 |row| row.get::<_, bool>(0),
             )
@@ -239,7 +287,12 @@ pub fn to_adif(records: &[QsoRecord]) -> String {
         if let Some(b) = &r.band {
             field(&mut out, "BAND", &b.to_ascii_lowercase());
         }
-        field(&mut out, "FREQ", &format!("{:.6}", (r.dial_hz.value + r.tx_audio_hz) / 1e6));
+        // FREQ is the transmitted frequency (dial + audio offset) when both are known, the dial
+        // alone when the offset is not (said so in the provenance), and absent when the dial is:
+        // an absent frequency stays absent rather than becoming a default.
+        if let Some(d) = &r.dial_hz {
+            field(&mut out, "FREQ", &format!("{:.6}", (d.value + r.tx_audio_hz.unwrap_or(0.0)) / 1e6));
+        }
         if let Some(g) = &r.grid {
             field(&mut out, "GRIDSQUARE", &g.value);
         }
@@ -256,7 +309,10 @@ pub fn to_adif(records: &[QsoRecord]) -> String {
         if let Some(p) = &r.tx_power_w {
             field(&mut out, "TX_PWR", &format!("{}", p.value));
         }
-        let mut prov = vec![format!("FREQ={}", prov_str(r.dial_hz.source))];
+        let mut prov = Vec::new();
+        if let Some(d) = &r.dial_hz {
+            prov.push(format!("FREQ={}{}", prov_str(d.source), if r.tx_audio_hz.is_none() { ",dial_only" } else { "" }));
+        }
         if let Some(g) = &r.grid {
             prov.push(format!("GRIDSQUARE={}", prov_str(g.source)));
         }
@@ -323,8 +379,8 @@ mod tests {
             rst_rcvd: None,
             start_utc: 1_790_000_010.0,
             end_utc: 1_790_000_184.0,
-            dial_hz: Sourced::new(14_076_000.0, Provenance::RigVerified),
-            tx_audio_hz: 1400.0,
+            dial_hz: Some(Sourced::new(14_076_000.0, Provenance::ReportedByRig)),
+            tx_audio_hz: Some(1400.0),
             band: Some("20m".into()),
             my_call: "G4XYZ".into(),
             my_grid: Some("IO91".into()),
@@ -349,6 +405,56 @@ mod tests {
         let all = lb.all().unwrap();
         assert_eq!(all, vec![rec()]);
         assert!(all[0].rst_rcvd.is_none(), "nothing received means nothing logged");
+    }
+
+    #[test]
+    fn a_version_1_logbook_is_migrated_without_upgrading_any_claim() {
+        // A logbook written by 0.9.0 before N-05 was fixed: its "commanded" dial was the
+        // operator's configured dial, and a legacy import had no frequency, written as 0 Hz.
+        let dir = std::env::temp_dir().join(format!("z30-lb-v1-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("logbook.sqlite");
+        let _ = std::fs::remove_file(&path);
+        {
+            let db = Connection::open(&path).unwrap();
+            db.execute_batch(
+                "CREATE TABLE qso (id INTEGER PRIMARY KEY, call TEXT NOT NULL, grid TEXT, grid_src TEXT, rst_sent INTEGER, rst_sent_src TEXT,
+                   rst_rcvd INTEGER, rst_rcvd_src TEXT, start_utc REAL NOT NULL, end_utc REAL NOT NULL, dial_hz REAL NOT NULL,
+                   dial_src TEXT NOT NULL, tx_audio_hz REAL NOT NULL, band TEXT, my_call TEXT NOT NULL, my_grid TEXT, tx_power_w REAL,
+                   tx_power_src TEXT, ap_assisted INTEGER NOT NULL, comment TEXT NOT NULL DEFAULT '');
+                 INSERT INTO qso VALUES (1,'K1ABC','FN31','received',-14,'sent',NULL,NULL,1790000010,1790000184,14076000,'commanded',1400,'20m','G4XYZ','IO91',NULL,NULL,0,'');
+                 INSERT INTO qso VALUES (2,'W1AW',NULL,NULL,NULL,NULL,NULL,NULL,1790001010,1790001010,14074000,'rig_verified',1500,'20m','G4XYZ',NULL,NULL,NULL,0,'');
+                 INSERT INTO qso VALUES (3,'G3ABC',NULL,NULL,NULL,NULL,NULL,NULL,1780000000,1780000000,0,'legacy_import',0,NULL,'',NULL,NULL,NULL,0,'imported');",
+            )
+            .unwrap();
+        }
+        let lb = Logbook::open(&path).unwrap();
+        let all = lb.all().unwrap();
+        let get = |c: &str| all.iter().find(|r| r.call == c).unwrap();
+        assert_eq!(get("K1ABC").dial_hz, Some(Sourced::new(14_076_000.0, Provenance::Configured)), "commanded was never shown to be");
+        assert_eq!(get("K1ABC").tx_audio_hz, Some(1400.0));
+        assert_eq!(get("W1AW").dial_hz, Some(Sourced::new(14_074_000.0, Provenance::ReportedByRig)));
+        assert_eq!(get("G3ABC").dial_hz, None, "0 Hz was a placeholder, not a frequency");
+        assert_eq!(get("G3ABC").tx_audio_hz, None);
+        drop(lb);
+        // Opening again is a no-op: already version 2.
+        assert_eq!(Logbook::open(&path).unwrap().all().unwrap(), all);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn an_absent_frequency_is_absent_in_sqlite_and_adif() {
+        let mut r = rec();
+        r.dial_hz = None;
+        r.band = None;
+        let mut lb = Logbook::in_memory().unwrap();
+        lb.insert(&r).unwrap();
+        assert_eq!(lb.all().unwrap(), vec![r.clone()]);
+        let a = to_adif(&[r]);
+        assert!(!a.contains("<FREQ:") && !a.contains("FREQ="), "{a}");
+        let mut configured = rec();
+        configured.dial_hz = Some(Sourced::new(14_076_000.0, Provenance::Configured));
+        assert!(to_adif(&[configured]).contains("FREQ=configured"));
     }
 
     #[test]

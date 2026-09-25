@@ -8,8 +8,11 @@ by hash in FROZEN.sha256, and changing one means changing that file too, in the 
 the reason in the commit message - after `python reference/golden/generate.py --check` shows
 whether the golden vectors moved (if they did, that is a protocol change, see SPEC.md).
 
-The last deliberate change: channel.py, 2026-09-24, Watterson taps normalised to unit ensemble
-power instead of per realisation (audit H-10). No golden vector depends on the fading model.
+Deliberate changes: channel.py, 2026-09-24, Watterson taps normalised to unit ensemble power
+instead of per realisation (audit H-10); channel.py again, 2026-09-24, the tap's amplitude
+response made the square root of the Gaussian Doppler power spectrum, so the power spectrum has
+the labelled 2-sigma spread instead of 1/sqrt(2) of it (post-remediation audit N-01). No golden
+vector depends on the fading model.
 """
 
 import hashlib

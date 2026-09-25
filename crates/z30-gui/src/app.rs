@@ -3,7 +3,7 @@
 use crate::waterfall::{Waterfall, SPAN_HZ};
 use egui::{Color32, RichText};
 use std::sync::Arc;
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant};
 use z30_engine::api::{Command, EngineSnapshot, Event, TxStatus};
 use z30_engine::bandplan::{LicenseClass, Region};
 use z30_engine::config::{Config, PttConfig, SerialLine, TxSlot};
@@ -237,7 +237,7 @@ impl App {
 }
 
 fn utc_now() -> f64 {
-    SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs_f64()).unwrap_or(0.0)
+    z30_io::wallclock::system_utc()
 }
 
 impl eframe::App for App {
@@ -270,15 +270,21 @@ impl eframe::App for App {
                 )));
                 ui.separator();
                 let rig = &snap.rig;
-                let dial = format!("{:.6} MHz", snap.commanded_dial_hz as f64 / 1e6);
-                match rig.reported_dial_hz {
-                    Some(r) if rig.online && (r - snap.commanded_dial_hz as f64).abs() < 2.0 => {
-                        ui.label(RichText::new(format!("{dial} (radio agrees)")).color(Color32::LIGHT_GREEN))
+                // Say exactly what backs the dial shown (N-05): the radio's report, an
+                // acknowledged command, or only the operator's setting.
+                match (snap.dial_hz, rig.reported_dial_hz.filter(|_| rig.online)) {
+                    (Some(d), Some(r)) if (r - d as f64).abs() < 2.0 => {
+                        ui.label(RichText::new(format!("{:.6} MHz (radio reports it)", d as f64 / 1e6)).color(Color32::LIGHT_GREEN))
                     }
-                    Some(r) if rig.online => {
-                        ui.label(RichText::new(format!("{dial} commanded, radio reports {:.6}", r / 1e6)).color(Color32::YELLOW))
+                    (Some(d), Some(r)) => ui.label(
+                        RichText::new(format!("{:.6} MHz set, radio reports {:.6}", d as f64 / 1e6, r / 1e6)).color(Color32::YELLOW),
+                    ),
+                    (None, Some(r)) => {
+                        ui.label(RichText::new(format!("dial not set; radio reports {:.6} MHz", r / 1e6)).color(Color32::YELLOW))
                     }
-                    _ => ui.label(format!("{dial} (not verified)")),
+                    (Some(d), None) if snap.dial_commanded => ui.label(format!("{:.6} MHz (commanded, not read back)", d as f64 / 1e6)),
+                    (Some(d), None) => ui.label(format!("{:.6} MHz (configured; no radio confirms it)", d as f64 / 1e6)),
+                    (None, None) => ui.label(RichText::new("dial not set (Settings)").color(Color32::YELLOW)),
                 };
                 ui.separator();
                 let (txt, col) = match &snap.tx {
@@ -294,8 +300,14 @@ impl eframe::App for App {
                     if ui.button("Logbook").clicked() {
                         self.show_log = !self.show_log;
                         if self.show_log {
-                            self.log_rows =
-                                z30_io::logbook::Logbook::open(&paths::logbook_path()).and_then(|b| b.all()).unwrap_or_default();
+                            // An unreadable logbook is reported, not shown as an empty one.
+                            match z30_io::logbook::Logbook::open(&paths::logbook_path()).and_then(|b| b.all()) {
+                                Ok(rows) => self.log_rows = rows,
+                                Err(e) => {
+                                    self.log_rows.clear();
+                                    self.messages.push((format!("Logbook could not be read: {e}"), Color32::RED));
+                                }
+                            }
                         }
                     }
                     if ui.button("Settings").clicked() {
@@ -488,10 +500,12 @@ impl eframe::App for App {
                             ui.monospace(r.grid.as_ref().map(|g| g.value.clone()).unwrap_or_else(|| "-".into()));
                             ui.monospace(r.rst_sent.as_ref().map(|v| format!("{:+03}", v.value)).unwrap_or_else(|| "-".into()));
                             ui.monospace(r.rst_rcvd.as_ref().map(|v| format!("{:+03}", v.value)).unwrap_or_else(|| "-".into()));
-                            ui.monospace(format!("{:.6}", (r.dial_hz.value + r.tx_audio_hz) / 1e6));
-                            ui.label(
-                                RichText::new(format!("freq {:?}{}", r.dial_hz.source, if r.ap_assisted { ", AP" } else { "" })).small(),
-                            );
+                            ui.monospace(match &r.dial_hz {
+                                Some(d) => format!("{:.6}", (d.value + r.tx_audio_hz.unwrap_or(0.0)) / 1e6),
+                                None => "-".into(),
+                            });
+                            let src = r.dial_hz.as_ref().map_or("freq unknown".to_string(), |d| format!("freq {:?}", d.source));
+                            ui.label(RichText::new(format!("{src}{}", if r.ap_assisted { ", AP" } else { "" })).small());
                             ui.end_row();
                         }
                     });
@@ -594,17 +608,36 @@ fn settings_ui(ui: &mut egui::Ui, c: &mut Config, devices: &(Vec<String>, Vec<St
             });
         ui.end_row();
         ui.label("TX power you set (W)");
-        let mut p = c.station.configured_tx_power_w.unwrap_or(0.0);
-        if ui.add(egui::DragValue::new(&mut p).range(0.0..=1500.0)).changed() {
-            c.station.configured_tx_power_w = Some(p);
-        }
+        ui.horizontal(|ui| {
+            // Unset stays unset (and is not logged); it is not shown as 0 W.
+            let mut set = c.station.configured_tx_power_w.is_some();
+            if ui.checkbox(&mut set, "set").changed() {
+                c.station.configured_tx_power_w = set.then_some(c.station.configured_tx_power_w.unwrap_or(0.0));
+            }
+            if let Some(p) = c.station.configured_tx_power_w.as_mut() {
+                ui.add(egui::DragValue::new(p).range(0.0..=1500.0));
+            } else {
+                ui.label("not set");
+            }
+        });
         ui.end_row();
     });
     ui.separator();
     ui.heading("Operating");
     egui::Grid::new("op").num_columns(2).show(ui, |ui| {
         ui.label("Dial (Hz, USB)");
-        ui.add(egui::DragValue::new(&mut c.operating.dial_hz).speed(100.0));
+        ui.horizontal(|ui| {
+            // No default dial (N-05): unset until the operator sets one.
+            let mut set = c.operating.dial_hz.is_some();
+            if ui.checkbox(&mut set, "set").changed() {
+                c.operating.dial_hz = if set { Some(c.operating.dial_hz.unwrap_or(14_076_000)) } else { None };
+            }
+            if let Some(d) = c.operating.dial_hz.as_mut() {
+                ui.add(egui::DragValue::new(d).speed(100.0));
+            } else {
+                ui.label("not set: transmit refused, contacts log no frequency unless the radio reports one");
+            }
+        });
         ui.end_row();
         ui.label("TX audio (tone 0, Hz)");
         ui.add(egui::DragValue::new(&mut c.operating.tx_audio_hz).range(200.0..=2750.0));

@@ -135,10 +135,12 @@ def main():
     doc = load(directory, "fading")
     if doc:
         add("## Watterson fading (ensemble-normalised), average SNR\n")
+        if "doppler_definition" in doc:
+            add(f"Doppler spread: {doc['doppler_definition']}.\n")
         add(provenance(doc) + ".\n")
         add(rate_table(doc, "Preset, SNR"))
         add("")
-        add("| Preset | Delay / Doppler | 50% crossing |")
+        add("| Preset | Delay / Doppler spread (2 sigma) | 50% crossing |")
         add("| :--- | :--- | :--- |")
         for name, v in doc["presets"].items():
             add(f"| {name} | {v['delay_ms']} ms / {v['doppler_hz']} Hz | {crossing(v['crossing_50pct_db'])} |")

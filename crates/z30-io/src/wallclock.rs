@@ -48,9 +48,19 @@ fn query_status() -> String {
     }
 }
 
+/// The system clock as UTC seconds since the epoch. A clock set before 1970 is reported as the
+/// (negative) time it says, not as 1970: every reader used `unwrap_or(0.0)`, a made-up instant
+/// (post-remediation audit N-13). `QsoRecord::validate` refuses such a time either way.
+pub fn system_utc() -> f64 {
+    match SystemTime::now().duration_since(UNIX_EPOCH) {
+        Ok(d) => d.as_secs_f64(),
+        Err(e) => -e.duration().as_secs_f64(),
+    }
+}
+
 impl WallClock for SystemWallClock {
     fn utc_now(&self) -> f64 {
-        SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs_f64()).unwrap_or(0.0)
+        system_utc()
     }
 
     fn status(&self) -> String {
@@ -79,8 +89,17 @@ mod tests {
     fn utc_is_the_operating_systems_with_no_offset_applied() {
         // vNext has no RF or network time source and applies no offset of its own (the legacy
         // RF sync persisted offsets measured from noise, audit C-03).
+        //
+        // Bracketed by two OS readings taken around it, with 1 ms of slack for the reads
+        // themselves. The old tolerance was 0.5 s - a third of the +-1.5 s DT window - and an
+        // own offset of 0.3 s passed it (post-remediation audit, mutation C03-c).
         let c = SystemWallClock::default();
-        let os = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs_f64();
-        assert!((c.utc_now() - os).abs() < 0.5);
+        let os = || SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs_f64();
+        for _ in 0..100 {
+            let before = os();
+            let t = c.utc_now();
+            let after = os();
+            assert!(t >= before - 1e-3 && t <= after + 1e-3, "utc_now {t} outside the OS's [{before}, {after}]");
+        }
     }
 }

@@ -1,0 +1,19 @@
+### build_release_cm108: cargo +1.95.0 build --release --locked -p z30-cli -p z30-gui --features z30-cli/cm108,z30-gui/cm108
+ Downloading crates ...
+  Downloaded hidapi v2.6.7
+   Compiling getrandom v0.3.4
+   Compiling hidapi v2.6.7
+   Compiling z30-cli v0.9.0 (/home/user/z-30/crates/z30-cli)
+   Compiling z30-gui v0.9.0 (/home/user/z-30/crates/z30-gui)
+   Compiling ahash v0.8.12
+   Compiling winit v0.30.13
+   Compiling epaint v0.36.2
+   Compiling z30-io v0.9.0 (/home/user/z-30/crates/z30-io)
+   Compiling egui v0.36.2
+   Compiling accesskit_winit v0.32.2
+   Compiling egui_glow v0.36.2
+   Compiling egui-winit v0.36.2
+   Compiling glutin-winit v0.5.0
+   Compiling eframe v0.36.2
+    Finished `release` profile [optimized + debuginfo] target(s) in 2m 36s
+EXIT 0 (156 s)

@@ -1,0 +1,5 @@
+baseline ['-p z30-protocol', '-p z30-engine --test safety'] PASS
+C06-p1 [C-06] PAIR: Costas check AND canonical re-encoding comparison removed: KILLED (4 s) ['-p z30-protocol: every_kind_of_corrupted_frame_is_refused', '-p z30-engine --test safety: n3_the_gate_refuses_every_corrupted_frame_and_hands_out_no_frame']
+C06-p2 [C-06] PAIR: syndrome check AND canonical re-encoding comparison removed: KILLED (5 s) ['-p z30-protocol: every_kind_of_corrupted_frame_is_refused']
+C06-p3 [C-06] PAIR: decoded-fields comparison AND canonical re-encoding comparison removed: KILLED (4 s) ['-p z30-protocol: every_kind_of_corrupted_frame_is_refused', '-p z30-engine --test safety: n3_the_gate_refuses_every_corrupted_frame_and_hands_out_no_frame']
+C06-p4 [C-06] PAIR: a failed round trip not reported AND 'allowed' not requiring the frame: KILLED (5 s) ['-p z30-engine --test safety: g6_the_whole_frame_is_checked_partner_call_grid_and_report_not_just_our_call, n3_the_gate_refuses_every_corrupted_frame_and_hands_out_no_frame']

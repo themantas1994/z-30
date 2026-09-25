@@ -1,0 +1,670 @@
+{
+  "benchmark": "sic",
+  "channel": "AWGN",
+  "definitions": {
+    "duplicates_dropped": "decodes of an already-decoded payload that the receiver itself discarded (PassStats::duplicates)",
+    "duplicates_emitted": "the same payload reported more than once in the output (must be 0)",
+    "false_decode": "a CRC-valid decode whose payload was not transmitted in that slot",
+    "ground_truth": "the harness knows the transmitted payloads; the receiver is given only the 27 s window",
+    "interval": "Wilson score 95% interval, percent",
+    "latency": "wall-clock time of decode_slot per slot, measured while other slots were decoded concurrently on the same pool; indicative only (see `z30 --benchmark perf` for controlled latency)",
+    "sample_rate_hz": 6000.0,
+    "snr": "SPEC.md section 10: frame signal power over the noise power in 2500 Hz; real white Gaussian noise, sigma = 1 per sample at 6 kHz, so SNR = P / (5000 / 6000)",
+    "success": "a decode whose 63 payload bits equal the transmitted payload"
+  },
+  "note": "PassStats::suppression_db is the receiver's own fit-residual ratio, not physical suppression, and is not reported here",
+  "placement": "strong at tone 0 f (uniform), DT uniform -1.0..+0.6 s; weak at f + df, DT + dDT; random payloads and phases",
+  "points": [
+    {
+      "discordant_sic_only": 0,
+      "discordant_single_pass_only": 0,
+      "duplicates_emitted": 0,
+      "false_decodes": 0,
+      "label": "dP +3 dB, df 0 Hz, dDT 0.0 s",
+      "mcnemar_exact_p": 1.0,
+      "param": {
+        "frequency_separation_hz": 0.0,
+        "power_difference_db": 3.0,
+        "timing_separation_s": 0.0,
+        "weak_snr_db": -18.0
+      },
+      "strong_decoded_with_sic": 100,
+      "trials": 100,
+      "weak_decoded_with_sic": 0,
+      "weak_decoded_without_sic": 0,
+      "weak_with_sic_wilson95": [
+        3.469446951953614e-16,
+        3.699349820698568
+      ],
+      "weak_without_sic_wilson95": [
+        3.469446951953614e-16,
+        3.699349820698568
+      ]
+    },
+    {
+      "discordant_sic_only": 100,
+      "discordant_single_pass_only": 0,
+      "duplicates_emitted": 0,
+      "false_decodes": 0,
+      "label": "dP +3 dB, df 0 Hz, dDT 0.4 s",
+      "mcnemar_exact_p": 1.577721810442021e-30,
+      "param": {
+        "frequency_separation_hz": 0.0,
+        "power_difference_db": 3.0,
+        "timing_separation_s": 0.4,
+        "weak_snr_db": -18.0
+      },
+      "strong_decoded_with_sic": 100,
+      "trials": 100,
+      "weak_decoded_with_sic": 100,
+      "weak_decoded_without_sic": 0,
+      "weak_with_sic_wilson95": [
+        96.30065017930143,
+        100.0
+      ],
+      "weak_without_sic_wilson95": [
+        3.469446951953614e-16,
+        3.699349820698568
+      ]
+    },
+    {
+      "discordant_sic_only": 100,
+      "discordant_single_pass_only": 0,
+      "duplicates_emitted": 0,
+      "false_decodes": 0,
+      "label": "dP +3 dB, df 5 Hz, dDT 0.0 s",
+      "mcnemar_exact_p": 1.577721810442021e-30,
+      "param": {
+        "frequency_separation_hz": 5.0,
+        "power_difference_db": 3.0,
+        "timing_separation_s": 0.0,
+        "weak_snr_db": -18.0
+      },
+      "strong_decoded_with_sic": 100,
+      "trials": 100,
+      "weak_decoded_with_sic": 100,
+      "weak_decoded_without_sic": 0,
+      "weak_with_sic_wilson95": [
+        96.30065017930143,
+        100.0
+      ],
+      "weak_without_sic_wilson95": [
+        3.469446951953614e-16,
+        3.699349820698568
+      ]
+    },
+    {
+      "discordant_sic_only": 96,
+      "discordant_single_pass_only": 0,
+      "duplicates_emitted": 0,
+      "false_decodes": 0,
+      "label": "dP +3 dB, df 5 Hz, dDT 0.4 s",
+      "mcnemar_exact_p": 2.5243548967072524e-29,
+      "param": {
+        "frequency_separation_hz": 5.0,
+        "power_difference_db": 3.0,
+        "timing_separation_s": 0.4,
+        "weak_snr_db": -18.0
+      },
+      "strong_decoded_with_sic": 100,
+      "trials": 100,
+      "weak_decoded_with_sic": 100,
+      "weak_decoded_without_sic": 4,
+      "weak_with_sic_wilson95": [
+        96.30065017930143,
+        100.0
+      ],
+      "weak_without_sic_wilson95": [
+        1.566330399154762,
+        9.83707143588792
+      ]
+    },
+    {
+      "discordant_sic_only": 50,
+      "discordant_single_pass_only": 0,
+      "duplicates_emitted": 0,
+      "false_decodes": 0,
+      "label": "dP +3 dB, df 20 Hz, dDT 0.0 s",
+      "mcnemar_exact_p": 1.7763568394002489e-15,
+      "param": {
+        "frequency_separation_hz": 20.0,
+        "power_difference_db": 3.0,
+        "timing_separation_s": 0.0,
+        "weak_snr_db": -18.0
+      },
+      "strong_decoded_with_sic": 100,
+      "trials": 100,
+      "weak_decoded_with_sic": 100,
+      "weak_decoded_without_sic": 50,
+      "weak_with_sic_wilson95": [
+        96.30065017930143,
+        100.0
+      ],
+      "weak_without_sic_wilson95": [
+        40.38315303659956,
+        59.61684696340044
+      ]
+    },
+    {
+      "discordant_sic_only": 34,
+      "discordant_single_pass_only": 0,
+      "duplicates_emitted": 0,
+      "false_decodes": 0,
+      "label": "dP +3 dB, df 20 Hz, dDT 0.4 s",
+      "mcnemar_exact_p": 1.164153218269349e-10,
+      "param": {
+        "frequency_separation_hz": 20.0,
+        "power_difference_db": 3.0,
+        "timing_separation_s": 0.4,
+        "weak_snr_db": -18.0
+      },
+      "strong_decoded_with_sic": 100,
+      "trials": 100,
+      "weak_decoded_with_sic": 100,
+      "weak_decoded_without_sic": 66,
+      "weak_with_sic_wilson95": [
+        96.30065017930143,
+        100.0
+      ],
+      "weak_without_sic_wilson95": [
+        56.277728854724614,
+        74.53847920265184
+      ]
+    },
+    {
+      "discordant_sic_only": 0,
+      "discordant_single_pass_only": 0,
+      "duplicates_emitted": 0,
+      "false_decodes": 0,
+      "label": "dP +3 dB, df 50 Hz, dDT 0.0 s",
+      "mcnemar_exact_p": 1.0,
+      "param": {
+        "frequency_separation_hz": 50.0,
+        "power_difference_db": 3.0,
+        "timing_separation_s": 0.0,
+        "weak_snr_db": -18.0
+      },
+      "strong_decoded_with_sic": 100,
+      "trials": 100,
+      "weak_decoded_with_sic": 100,
+      "weak_decoded_without_sic": 100,
+      "weak_with_sic_wilson95": [
+        96.30065017930143,
+        100.0
+      ],
+      "weak_without_sic_wilson95": [
+        96.30065017930143,
+        100.0
+      ]
+    },
+    {
+      "discordant_sic_only": 0,
+      "discordant_single_pass_only": 0,
+      "duplicates_emitted": 0,
+      "false_decodes": 0,
+      "label": "dP +3 dB, df 50 Hz, dDT 0.4 s",
+      "mcnemar_exact_p": 1.0,
+      "param": {
+        "frequency_separation_hz": 50.0,
+        "power_difference_db": 3.0,
+        "timing_separation_s": 0.4,
+        "weak_snr_db": -18.0
+      },
+      "strong_decoded_with_sic": 100,
+      "trials": 100,
+      "weak_decoded_with_sic": 100,
+      "weak_decoded_without_sic": 100,
+      "weak_with_sic_wilson95": [
+        96.30065017930143,
+        100.0
+      ],
+      "weak_without_sic_wilson95": [
+        96.30065017930143,
+        100.0
+      ]
+    },
+    {
+      "discordant_sic_only": 0,
+      "discordant_single_pass_only": 0,
+      "duplicates_emitted": 0,
+      "false_decodes": 0,
+      "label": "dP +10 dB, df 0 Hz, dDT 0.0 s",
+      "mcnemar_exact_p": 1.0,
+      "param": {
+        "frequency_separation_hz": 0.0,
+        "power_difference_db": 10.0,
+        "timing_separation_s": 0.0,
+        "weak_snr_db": -18.0
+      },
+      "strong_decoded_with_sic": 100,
+      "trials": 100,
+      "weak_decoded_with_sic": 0,
+      "weak_decoded_without_sic": 0,
+      "weak_with_sic_wilson95": [
+        3.469446951953614e-16,
+        3.699349820698568
+      ],
+      "weak_without_sic_wilson95": [
+        3.469446951953614e-16,
+        3.699349820698568
+      ]
+    },
+    {
+      "discordant_sic_only": 100,
+      "discordant_single_pass_only": 0,
+      "duplicates_emitted": 0,
+      "false_decodes": 0,
+      "label": "dP +10 dB, df 0 Hz, dDT 0.4 s",
+      "mcnemar_exact_p": 1.577721810442021e-30,
+      "param": {
+        "frequency_separation_hz": 0.0,
+        "power_difference_db": 10.0,
+        "timing_separation_s": 0.4,
+        "weak_snr_db": -18.0
+      },
+      "strong_decoded_with_sic": 100,
+      "trials": 100,
+      "weak_decoded_with_sic": 100,
+      "weak_decoded_without_sic": 0,
+      "weak_with_sic_wilson95": [
+        96.30065017930143,
+        100.0
+      ],
+      "weak_without_sic_wilson95": [
+        3.469446951953614e-16,
+        3.699349820698568
+      ]
+    },
+    {
+      "discordant_sic_only": 100,
+      "discordant_single_pass_only": 0,
+      "duplicates_emitted": 0,
+      "false_decodes": 0,
+      "label": "dP +10 dB, df 5 Hz, dDT 0.0 s",
+      "mcnemar_exact_p": 1.577721810442021e-30,
+      "param": {
+        "frequency_separation_hz": 5.0,
+        "power_difference_db": 10.0,
+        "timing_separation_s": 0.0,
+        "weak_snr_db": -18.0
+      },
+      "strong_decoded_with_sic": 100,
+      "trials": 100,
+      "weak_decoded_with_sic": 100,
+      "weak_decoded_without_sic": 0,
+      "weak_with_sic_wilson95": [
+        96.30065017930143,
+        100.0
+      ],
+      "weak_without_sic_wilson95": [
+        3.469446951953614e-16,
+        3.699349820698568
+      ]
+    },
+    {
+      "discordant_sic_only": 100,
+      "discordant_single_pass_only": 0,
+      "duplicates_emitted": 0,
+      "false_decodes": 0,
+      "label": "dP +10 dB, df 5 Hz, dDT 0.4 s",
+      "mcnemar_exact_p": 1.577721810442021e-30,
+      "param": {
+        "frequency_separation_hz": 5.0,
+        "power_difference_db": 10.0,
+        "timing_separation_s": 0.4,
+        "weak_snr_db": -18.0
+      },
+      "strong_decoded_with_sic": 100,
+      "trials": 100,
+      "weak_decoded_with_sic": 100,
+      "weak_decoded_without_sic": 0,
+      "weak_with_sic_wilson95": [
+        96.30065017930143,
+        100.0
+      ],
+      "weak_without_sic_wilson95": [
+        3.469446951953614e-16,
+        3.699349820698568
+      ]
+    },
+    {
+      "discordant_sic_only": 100,
+      "discordant_single_pass_only": 0,
+      "duplicates_emitted": 0,
+      "false_decodes": 0,
+      "label": "dP +10 dB, df 20 Hz, dDT 0.0 s",
+      "mcnemar_exact_p": 1.577721810442021e-30,
+      "param": {
+        "frequency_separation_hz": 20.0,
+        "power_difference_db": 10.0,
+        "timing_separation_s": 0.0,
+        "weak_snr_db": -18.0
+      },
+      "strong_decoded_with_sic": 100,
+      "trials": 100,
+      "weak_decoded_with_sic": 100,
+      "weak_decoded_without_sic": 0,
+      "weak_with_sic_wilson95": [
+        96.30065017930143,
+        100.0
+      ],
+      "weak_without_sic_wilson95": [
+        3.469446951953614e-16,
+        3.699349820698568
+      ]
+    },
+    {
+      "discordant_sic_only": 100,
+      "discordant_single_pass_only": 0,
+      "duplicates_emitted": 0,
+      "false_decodes": 0,
+      "label": "dP +10 dB, df 20 Hz, dDT 0.4 s",
+      "mcnemar_exact_p": 1.577721810442021e-30,
+      "param": {
+        "frequency_separation_hz": 20.0,
+        "power_difference_db": 10.0,
+        "timing_separation_s": 0.4,
+        "weak_snr_db": -18.0
+      },
+      "strong_decoded_with_sic": 100,
+      "trials": 100,
+      "weak_decoded_with_sic": 100,
+      "weak_decoded_without_sic": 0,
+      "weak_with_sic_wilson95": [
+        96.30065017930143,
+        100.0
+      ],
+      "weak_without_sic_wilson95": [
+        3.469446951953614e-16,
+        3.699349820698568
+      ]
+    },
+    {
+      "discordant_sic_only": 0,
+      "discordant_single_pass_only": 0,
+      "duplicates_emitted": 0,
+      "false_decodes": 0,
+      "label": "dP +10 dB, df 50 Hz, dDT 0.0 s",
+      "mcnemar_exact_p": 1.0,
+      "param": {
+        "frequency_separation_hz": 50.0,
+        "power_difference_db": 10.0,
+        "timing_separation_s": 0.0,
+        "weak_snr_db": -18.0
+      },
+      "strong_decoded_with_sic": 100,
+      "trials": 100,
+      "weak_decoded_with_sic": 100,
+      "weak_decoded_without_sic": 100,
+      "weak_with_sic_wilson95": [
+        96.30065017930143,
+        100.0
+      ],
+      "weak_without_sic_wilson95": [
+        96.30065017930143,
+        100.0
+      ]
+    },
+    {
+      "discordant_sic_only": 0,
+      "discordant_single_pass_only": 0,
+      "duplicates_emitted": 0,
+      "false_decodes": 0,
+      "label": "dP +10 dB, df 50 Hz, dDT 0.4 s",
+      "mcnemar_exact_p": 1.0,
+      "param": {
+        "frequency_separation_hz": 50.0,
+        "power_difference_db": 10.0,
+        "timing_separation_s": 0.4,
+        "weak_snr_db": -18.0
+      },
+      "strong_decoded_with_sic": 100,
+      "trials": 100,
+      "weak_decoded_with_sic": 100,
+      "weak_decoded_without_sic": 100,
+      "weak_with_sic_wilson95": [
+        96.30065017930143,
+        100.0
+      ],
+      "weak_without_sic_wilson95": [
+        96.30065017930143,
+        100.0
+      ]
+    },
+    {
+      "discordant_sic_only": 0,
+      "discordant_single_pass_only": 0,
+      "duplicates_emitted": 0,
+      "false_decodes": 0,
+      "label": "dP +20 dB, df 0 Hz, dDT 0.0 s",
+      "mcnemar_exact_p": 1.0,
+      "param": {
+        "frequency_separation_hz": 0.0,
+        "power_difference_db": 20.0,
+        "timing_separation_s": 0.0,
+        "weak_snr_db": -18.0
+      },
+      "strong_decoded_with_sic": 100,
+      "trials": 100,
+      "weak_decoded_with_sic": 0,
+      "weak_decoded_without_sic": 0,
+      "weak_with_sic_wilson95": [
+        3.469446951953614e-16,
+        3.699349820698568
+      ],
+      "weak_without_sic_wilson95": [
+        3.469446951953614e-16,
+        3.699349820698568
+      ]
+    },
+    {
+      "discordant_sic_only": 100,
+      "discordant_single_pass_only": 0,
+      "duplicates_emitted": 0,
+      "false_decodes": 0,
+      "label": "dP +20 dB, df 0 Hz, dDT 0.4 s",
+      "mcnemar_exact_p": 1.577721810442021e-30,
+      "param": {
+        "frequency_separation_hz": 0.0,
+        "power_difference_db": 20.0,
+        "timing_separation_s": 0.4,
+        "weak_snr_db": -18.0
+      },
+      "strong_decoded_with_sic": 100,
+      "trials": 100,
+      "weak_decoded_with_sic": 100,
+      "weak_decoded_without_sic": 0,
+      "weak_with_sic_wilson95": [
+        96.30065017930143,
+        100.0
+      ],
+      "weak_without_sic_wilson95": [
+        3.469446951953614e-16,
+        3.699349820698568
+      ]
+    },
+    {
+      "discordant_sic_only": 100,
+      "discordant_single_pass_only": 0,
+      "duplicates_emitted": 0,
+      "false_decodes": 0,
+      "label": "dP +20 dB, df 5 Hz, dDT 0.0 s",
+      "mcnemar_exact_p": 1.577721810442021e-30,
+      "param": {
+        "frequency_separation_hz": 5.0,
+        "power_difference_db": 20.0,
+        "timing_separation_s": 0.0,
+        "weak_snr_db": -18.0
+      },
+      "strong_decoded_with_sic": 100,
+      "trials": 100,
+      "weak_decoded_with_sic": 100,
+      "weak_decoded_without_sic": 0,
+      "weak_with_sic_wilson95": [
+        96.30065017930143,
+        100.0
+      ],
+      "weak_without_sic_wilson95": [
+        3.469446951953614e-16,
+        3.699349820698568
+      ]
+    },
+    {
+      "discordant_sic_only": 100,
+      "discordant_single_pass_only": 0,
+      "duplicates_emitted": 0,
+      "false_decodes": 0,
+      "label": "dP +20 dB, df 5 Hz, dDT 0.4 s",
+      "mcnemar_exact_p": 1.577721810442021e-30,
+      "param": {
+        "frequency_separation_hz": 5.0,
+        "power_difference_db": 20.0,
+        "timing_separation_s": 0.4,
+        "weak_snr_db": -18.0
+      },
+      "strong_decoded_with_sic": 100,
+      "trials": 100,
+      "weak_decoded_with_sic": 100,
+      "weak_decoded_without_sic": 0,
+      "weak_with_sic_wilson95": [
+        96.30065017930143,
+        100.0
+      ],
+      "weak_without_sic_wilson95": [
+        3.469446951953614e-16,
+        3.699349820698568
+      ]
+    },
+    {
+      "discordant_sic_only": 100,
+      "discordant_single_pass_only": 0,
+      "duplicates_emitted": 0,
+      "false_decodes": 0,
+      "label": "dP +20 dB, df 20 Hz, dDT 0.0 s",
+      "mcnemar_exact_p": 1.577721810442021e-30,
+      "param": {
+        "frequency_separation_hz": 20.0,
+        "power_difference_db": 20.0,
+        "timing_separation_s": 0.0,
+        "weak_snr_db": -18.0
+      },
+      "strong_decoded_with_sic": 100,
+      "trials": 100,
+      "weak_decoded_with_sic": 100,
+      "weak_decoded_without_sic": 0,
+      "weak_with_sic_wilson95": [
+        96.30065017930143,
+        100.0
+      ],
+      "weak_without_sic_wilson95": [
+        3.469446951953614e-16,
+        3.699349820698568
+      ]
+    },
+    {
+      "discordant_sic_only": 100,
+      "discordant_single_pass_only": 0,
+      "duplicates_emitted": 0,
+      "false_decodes": 0,
+      "label": "dP +20 dB, df 20 Hz, dDT 0.4 s",
+      "mcnemar_exact_p": 1.577721810442021e-30,
+      "param": {
+        "frequency_separation_hz": 20.0,
+        "power_difference_db": 20.0,
+        "timing_separation_s": 0.4,
+        "weak_snr_db": -18.0
+      },
+      "strong_decoded_with_sic": 100,
+      "trials": 100,
+      "weak_decoded_with_sic": 100,
+      "weak_decoded_without_sic": 0,
+      "weak_with_sic_wilson95": [
+        96.30065017930143,
+        100.0
+      ],
+      "weak_without_sic_wilson95": [
+        3.469446951953614e-16,
+        3.699349820698568
+      ]
+    },
+    {
+      "discordant_sic_only": 0,
+      "discordant_single_pass_only": 0,
+      "duplicates_emitted": 0,
+      "false_decodes": 0,
+      "label": "dP +20 dB, df 50 Hz, dDT 0.0 s",
+      "mcnemar_exact_p": 1.0,
+      "param": {
+        "frequency_separation_hz": 50.0,
+        "power_difference_db": 20.0,
+        "timing_separation_s": 0.0,
+        "weak_snr_db": -18.0
+      },
+      "strong_decoded_with_sic": 100,
+      "trials": 100,
+      "weak_decoded_with_sic": 100,
+      "weak_decoded_without_sic": 100,
+      "weak_with_sic_wilson95": [
+        96.30065017930143,
+        100.0
+      ],
+      "weak_without_sic_wilson95": [
+        96.30065017930143,
+        100.0
+      ]
+    },
+    {
+      "discordant_sic_only": 70,
+      "discordant_single_pass_only": 0,
+      "duplicates_emitted": 0,
+      "false_decodes": 0,
+      "label": "dP +20 dB, df 50 Hz, dDT 0.4 s",
+      "mcnemar_exact_p": 1.6940658945086082e-21,
+      "param": {
+        "frequency_separation_hz": 50.0,
+        "power_difference_db": 20.0,
+        "timing_separation_s": 0.4,
+        "weak_snr_db": -18.0
+      },
+      "strong_decoded_with_sic": 100,
+      "trials": 100,
+      "weak_decoded_with_sic": 100,
+      "weak_decoded_without_sic": 30,
+      "weak_with_sic_wilson95": [
+        96.30065017930143,
+        100.0
+      ],
+      "weak_without_sic_wilson95": [
+        21.89488529493276,
+        39.58485463334666
+      ]
+    }
+  ],
+  "provenance": {
+    "arch": "x86_64",
+    "binary": "z30 (z30-cli), the shipped command-line station",
+    "build_profile": "release",
+    "built": "2026-09-24T20:16:02Z",
+    "cpu": "Intel(R) Xeon(R) Processor @ 2.10GHz",
+    "decoder_config": "RxConfig { band_lo_hz: 200.0, band_hi_hz: 2800.0, max_candidates: 50, sync_threshold: 1.5, passes: 3, max_drift_hz: 4.0, drift_gain: 1.05, min_fine_sync: 2.5, whiten: true, ap: None, sic: SicParams { window_sec: 0.4, timing_search: 16 } }",
+    "elapsed_s": 836.5799544,
+    "git_commit": "672cef9b3cdb",
+    "hardware_involved": false,
+    "logical_cpus": 4,
+    "note": "Software simulation only. No radio, sound card or RF path was involved.",
+    "os": "linux",
+    "rayon_threads": 4,
+    "receiver": "z30_dsp::slot::Receiver::decode_slot (the production receive entry point)",
+    "rustc": "rustc 1.98.1 (48a229cea 2026-09-01)",
+    "started_utc": "2026-09-24T20:54:28Z",
+    "target": "x86_64-unknown-linux-gnu",
+    "version": "0.9.0"
+  },
+  "seed": {
+    "per_frame": "suite_seed ^ (benchmark << 40) ^ (point << 20) ^ frame, ChaCha8 (z30_channel::rng)",
+    "published_seed": true,
+    "suite_seed": 20260830
+  },
+  "title": "Two-station collisions: the weaker station decoded with SIC (3 passes) and without (1 pass), paired on the same audio",
+  "trials_per_cell": 100
+}

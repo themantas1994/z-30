@@ -1,0 +1,364 @@
+### test_release: cargo +stable test --workspace --exclude z30-py --release --locked
+   Compiling z30-dsp v0.9.0 (/home/user/z-30/crates/z30-dsp)
+   Compiling z30-channel v0.9.0 (/home/user/z-30/crates/z30-channel)
+   Compiling z30-protocol v0.9.0 (/home/user/z-30/crates/z30-protocol)
+   Compiling z30-engine v0.9.0 (/home/user/z-30/crates/z30-engine)
+   Compiling z30-io v0.9.0 (/home/user/z-30/crates/z30-io)
+   Compiling z30-cli v0.9.0 (/home/user/z-30/crates/z30-cli)
+   Compiling z30-gui v0.9.0 (/home/user/z-30/crates/z30-gui)
+    Finished `release` profile [optimized + debuginfo] target(s) in 3m 07s
+     Running unittests src/lib.rs (/home/user/tgt-stable/release/deps/z30_channel-b547659e838af961)
+
+running 7 tests
+test tests::explore_spread_estimator_scatter ... ignored, exploratory, ~2 min: the estimator scatter the tolerances above are derived from
+test tests::stretch_scales_frequency ... ok
+test tests::watterson_power_spectrum_has_the_labelled_2_sigma_spread ... ok
+test tests::snr_is_calibrated ... ok
+test tests::deterministic ... ok
+test tests::generated_taps_have_the_labelled_doppler_spread ... ok
+test tests::watterson_preserves_power_over_the_ensemble_and_not_per_frame ... ok
+
+test result: ok. 6 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 24.47s
+
+     Running unittests src/main.rs (/home/user/tgt-stable/release/deps/z30-04d9bedca304bf37)
+
+running 10 tests
+test audio_loopback::tests::it_will_not_play_audio_without_the_confirmation ... ok
+test audio_loopback::tests::it_refuses_every_configuration_that_can_key_a_transmitter_before_opening_a_device ... ok
+test bench::tests::upper_bound_matches_the_rule_of_three ... ok
+test suite::tests::crossing_interpolates_and_brackets ... ok
+test suite::tests::frame_seeds_do_not_collide_across_points_and_benchmarks ... ok
+test suite::tests::mcnemar_matches_the_audit ... ok
+test suite::tests::wilson_matches_a_known_value ... ok
+test loopback::tests::a_recording_without_the_frame_fails ... ok
+test loopback::tests::a_clean_loopback_recording_passes_and_measures_the_waveforms_bandwidth ... ok
+test loopback::tests::the_software_loopback_decodes_through_the_resampler_at_both_device_rates ... ok
+
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.70s
+
+     Running tests/loopback_isolation.rs (/home/user/tgt-stable/release/deps/loopback_isolation-67576184b3d36cbf)
+
+running 2 tests
+test the_software_loopback_has_no_audio_device_ptt_or_rig_control_in_it ... ok
+test the_cli_runs_the_software_loopback_for_loopback_test_and_the_hardware_one_only_for_its_own_flag ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/lib.rs (/home/user/tgt-stable/release/deps/z30_dsp-5538e6ccfc4c51ab)
+
+running 13 tests
+test ap::tests::crc_bits_are_never_asserted ... ok
+test ap::tests::deep_types_are_frequency_gated ... ok
+test demod::tests::coherence_weight_is_the_shipped_zero ... ok
+test ldpc::tests::clean_codeword_decodes_from_the_hard_decision ... ok
+test ldpc::tests::corrects_errors_by_belief_propagation ... ok
+test math::tests::asymptote_switch_matches_the_reference_step ... ok
+test math::tests::i0_known_values ... ok
+test baseband::tests::a_tone_lands_on_the_expected_baseband_frequency_and_amplitude ... ok
+test resample::tests::passes_the_band_and_rejects_aliases ... ok
+test sic::tests::incremental_interpolation_matches_direct ... ok
+test resample::tests::streaming_equals_one_shot ... ok
+test resample::tests::input_delay_locates_an_impulse ... ok
+test ldpc::tests::noise_does_not_decode_and_is_deterministic ... ok
+
+test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.07s
+
+     Running tests/channel_scenarios.rs (/home/user/tgt-stable/release/deps/channel_scenarios-aefc905975f4958b)
+
+running 11 tests
+test a_busy_band_decodes_every_station_once_with_no_false_decodes ... ok
+test decode_slot_is_deterministic ... ok
+test fading_is_reported_not_gated ... ok
+test a_strong_cw_carrier_inside_the_signal_does_not_stop_the_decode ... ok
+test noise_only_slots_produce_no_decodes ... ok
+test clean_plus_10_db_decodes_everything_everywhere ... ok
+test sic_suppresses_a_decoded_station_by_more_than_20_db_and_reveals_the_one_underneath ... ok
+test sound_card_clock_error_of_1000_ppm_costs_nothing_at_minus_18_db ... ok
+test moderate_minus_18_db_across_band_timing_and_phase ... ok
+test weak_minus_22_db_decodes_most_frames ... ok
+test frequency_drift_up_to_4_hz_is_tracked_h9 ... ok
+
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 24.82s
+
+     Running tests/golden_demod.rs (/home/user/tgt-stable/release/deps/golden_demod-a636ffb0da0980ee)
+
+running 2 tests
+test both_demodulators_lead_to_the_same_decode ... ok
+test the_fft_demodulator_is_the_reference_demodulator ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests/golden_ldpc.rs (/home/user/tgt-stable/release/deps/golden_ldpc-bc3191de9bb3ffee)
+
+running 8 tests
+test dither_matches_the_oracle ... ok
+test ap_ladders_match_the_oracle ... ok
+test legacy_osd_path_is_bit_exact_and_the_fixed_rule_agrees_on_it ... ok
+test ap_decode_is_bit_exact_on_the_corpus ... ok
+test screen_osd_pool ... ignored
+test ldpc_cascade_is_bit_exact_on_the_corpus ... ok
+test production_decoder_never_accepts_a_crc_failure_and_agrees_with_bp ... ok
+test an_empty_ap_mask_decodes_bit_identically_to_no_mask ... ok
+
+test result: ok. 7 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 5.59s
+
+     Running tests/sensitivity_regression.rs (/home/user/tgt-stable/release/deps/sensitivity_regression-e9a71614a01d6a19)
+
+running 1 test
+test minus_22_db_blind_decodes_at_least_84_of_100_with_no_false_decodes ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 11.23s
+
+     Running tests/sic_regression.rs (/home/user/tgt-stable/release/deps/sic_regression-d327e691282e5fab)
+
+running 4 tests
+test subtracting_a_frame_that_is_not_there_removes_only_the_noise_projection_and_creates_nothing ... ok
+test a_subtraction_never_adds_energy_and_removes_what_the_station_contributed ... ok
+test a_busy_band_decodes_identically_on_one_thread_and_on_many ... ok
+test random_overlapping_bands_sic_on_versus_off_paired ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 12.95s
+
+     Running tests/snr_accuracy.rs (/home/user/tgt-stable/release/deps/snr_accuracy-578a098221b925dd)
+
+running 3 tests
+test no_signal_is_no_estimate_never_a_floor_value ... ok
+test an_estimate_is_never_reported_above_the_strongest_signal_measured ... ok
+test reported_snr_tracks_the_true_snr_from_threshold_to_plus_30_db ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 46.80s
+
+     Running unittests src/lib.rs (/home/user/tgt-stable/release/deps/z30_engine-c3571dbf699bc1b0)
+
+running 7 tests
+test bandplan::tests::edges_not_centres ... ok
+test clock::tests::a_jump_starts_a_new_epoch ... ok
+test api::snr_text_tests::unmeasured_and_out_of_range_values_are_not_shown_as_measurements ... ok
+test config::tests::a_new_installation_is_unconfigured_and_cannot_transmit ... ok
+test qso::tests::the_record_holds_no_report_that_was_not_received_or_sent ... ok
+test bandplan::tests::nearest_segment_reports_distance ... ok
+test clock::tests::tracks_a_drifting_device_with_jittery_timestamps ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests/dial_provenance.rs (/home/user/tgt-stable/release/deps/dial_provenance-0b2b26b18154d25a)
+
+running 7 tests
+test p1_no_dial_and_no_radio_logs_no_frequency_and_refuses_to_transmit ... ok
+test p3_an_acknowledged_command_is_commanded ... ok
+test p4_a_fresh_radio_reading_is_reported_by_rig_with_the_radios_value ... ok
+test p2_a_configured_dial_with_no_radio_is_logged_as_configuration_not_as_commanded ... ok
+test p5_a_command_the_radio_refused_is_not_commanded ... ok
+test p6_stale_readings_old_acknowledgements_and_defaults_are_not_evidence ... ok
+test runtime_path::p7_through_the_runtime_only_an_acknowledged_set_frequency_is_commanded ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 13.44s
+
+     Running tests/emergency.rs (/home/user/tgt-stable/release/deps/emergency-ef2e5c08bb00fe4e)
+
+running 1 test
+test p5_emergency_release_and_drop_release_a_keyed_line ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/live_runtime.rs (/home/user/tgt-stable/release/deps/live_runtime-525c6c42d3d4de1e)
+
+running 1 test
+test c01_a_slot_is_decoded_only_from_its_complete_window_through_the_production_runtime ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.84s
+
+     Running tests/qso_logging.rs (/home/user/tgt-stable/release/deps/qso_logging-fd8dbc0af2c0707c)
+
+running 4 tests
+test an_exchange_that_never_completes_logs_nothing ... ok
+test no_measured_snr_means_no_report_is_sent_and_none_is_logged ... ok
+test a_contact_with_no_grid_received_logs_no_grid_and_real_utc ... ok
+test a_record_without_a_partner_or_a_real_utc_time_is_refused ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/safety.rs (/home/user/tgt-stable/release/deps/safety-50aac4ae3e4dff24)
+
+running 29 tests
+test g2_region_and_class_are_required_and_must_match ... ok
+test g1_unconfigured_placeholder_and_malformed_callsigns_are_refused_with_the_right_reason ... ok
+test callsign_syntax_matches_the_shared_vectors ... ok
+test g3_the_radiated_emission_not_the_dial_is_checked_at_its_edges ... ok
+test g4_fails_closed_and_reports_every_violation ... ok
+test g5_the_frame_must_encode_and_be_sent_from_this_station ... ok
+test h1_no_ptt_method_or_unavailable_tx_hardware_refuses_before_keying ... ok
+test h2_a_halt_between_plan_and_key_abandons_the_transmission ... ok
+test c5_callsigns_v1_would_transmit_as_another_station_are_refused ... ok
+test g6_the_whole_frame_is_checked_partner_call_grid_and_report_not_just_our_call ... ok
+test l7_a_radio_reporting_a_mode_other_than_usb_is_refused_and_only_while_fresh ... ok
+test n3_a_valid_frame_of_a_different_message_is_refused ... ok
+test n3_the_gate_refuses_every_corrupted_frame_and_hands_out_no_frame ... ok
+test n3_tune_and_sequenced_frames_go_through_the_same_gate ... ok
+test n9_a_zero_transmit_level_is_refused ... ok
+test p4_the_watchdog_unkeys_at_the_hardware_after_max_tx_seconds ... ok
+test p4c_the_limit_can_never_be_raised ... ok
+test r1_a_settled_rig_that_disagrees_is_reported ... ok
+test r2_no_readback_is_unverified_not_wrong ... ok
+test r3_an_unsettled_qsy_is_not_a_refusal ... ok
+test r4_measured_tuning_resolution ... ok
+test r5_ptt_settle_window ... ok
+test r6_the_gate_refuses_a_dial_the_radio_contradicts_and_only_that ... ok
+test z1_a_release_drives_what_the_key_drove ... ok
+test z1b_replacing_the_line_while_keyed_releases_the_old_line_first ... ok
+test z2_a_key_the_hardware_refused_leaves_nothing_keyed ... ok
+test z2b_vox_never_reports_verified_and_no_ptt_cannot_key ... ok
+test p4b_the_watchdog_thread_works_without_the_engine ... ok
+test n3_the_transmitted_audio_is_the_verified_frame_and_decodes_as_the_message ... ok
+
+test result: ok. 29 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.43s
+
+     Running tests/virtual_clock.rs (/home/user/tgt-stable/release/deps/virtual_clock-0f8117890a89a008)
+
+running 2 tests
+test closed_loop_qso_through_the_real_pipeline_decoder_gate_sequencer_and_logger ... ok
+test soak_24_hours_every_slot_once_aligned_to_utc_through_drift_jitter_and_a_dropout ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 13.18s
+
+     Running unittests src/main.rs (/home/user/tgt-stable/release/deps/z30_gui-25aac6a437010d88)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/lib.rs (/home/user/tgt-stable/release/deps/z30_io-e95b51335090ed19)
+
+running 14 tests
+test logbook::tests::adif_carries_only_what_exists ... ok
+test logbook::tests::utc_is_utc ... ok
+test logbook::tests::sqlite_round_trip_keeps_absent_fields_absent_and_provenance ... ok
+test logbook::tests::an_absent_frequency_is_absent_in_sqlite_and_adif ... ok
+test migrate::tests::each_legacy_writers_defaults_stay_unknown_and_only_those ... ok
+test migrate::tests::migrates_the_web_config_and_reports_every_decision ... ok
+test migrate::tests::running_the_migration_twice_changes_nothing_the_second_time ... ok
+test migrate::tests::the_legacy_auto_loggers_defaults_and_runtime_state_are_not_migrated ... ok
+test paths::tests::config_round_trips_through_toml ... ok
+test wallclock::tests::synchronised_is_claimed_only_when_the_os_says_so ... ok
+test rigctld::tests::ptt_keys_and_releases_and_an_unreachable_daemon_fails ... ok
+test wallclock::tests::utc_is_the_operating_systems_with_no_offset_applied ... ok
+test rigctld::tests::reads_sets_and_reports_refusals_as_failures ... ok
+test logbook::tests::a_version_1_logbook_is_migrated_without_upgrading_any_claim ... ok
+
+test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests/callback_alloc.rs (/home/user/tgt-stable/release/deps/callback_alloc-682cbef1dbd97ba3)
+
+running 1 test
+test the_capture_callback_never_allocates_and_reports_overruns_as_gaps ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/logbook_integrity.rs (/home/user/tgt-stable/release/deps/logbook_integrity-705659d93915bbaa)
+
+running 4 tests
+test utc_in_the_log_does_not_depend_on_the_local_time_zone ... ok
+test adif_is_well_formed ... ok
+test a_record_describing_no_contact_is_not_written ... ok
+test missing_fields_stay_missing_in_sqlite_and_adif ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/lib.rs (/home/user/tgt-stable/release/deps/z30_protocol-99749797b4003851)
+
+running 18 tests
+test codec::tests::audit_c5_callsigns_are_refused ... ok
+test codec::tests::audit_h2_h3_m6_are_refused_not_transformed ... ok
+test crc::tests::known_answers ... ok
+test codec::tests::display_is_canonical ... ok
+test crc::tests::single_bit_errors_are_all_detected ... ok
+test gfsk::tests::pulses_sum_to_one_in_the_interior ... ok
+test gfsk::tests::refuses_what_would_be_a_malformed_emission ... ok
+test ldpc::tests::check_edges_total ... ok
+test ldpc::tests::every_codeword_has_zero_syndrome ... ok
+test ldpc::tests::girth_six_no_four_cycles ... ok
+test ldpc::tests::table_is_degree_five_without_repeats_and_in_range ... ok
+test symbols::tests::round_trip ... ok
+test tests::costas_pattern_is_the_frozen_one ... ok
+test tests::frame_arithmetic ... ok
+test tests::nsps_matches_reference_truncation ... ok
+test codec::tests::exhaustive_canonical_decode_round_trip ... ok
+test gfsk::tests::constant_envelope_between_the_ramps ... ok
+test gfsk::tests::the_analytic_replica_is_the_transmitted_waveform ... ok
+
+test result: ok. 18 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+     Running tests/frame_integrity.rs (/home/user/tgt-stable/release/deps/frame_integrity-5e6bea7c6da2c2b3)
+
+running 2 tests
+test a_valid_frame_is_accepted_and_is_exactly_the_encoders ... ok
+test every_kind_of_corrupted_frame_is_refused ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/golden.rs (/home/user/tgt-stable/release/deps/golden-407d5ec3c0b46385)
+
+running 5 tests
+test callsign_field_matches_the_oracle_where_it_round_trips_and_refuses_where_it_does_not ... ok
+test grid_table_matches_the_shipped_decoder ... ok
+test crc_ldpc_and_symbols_are_bit_exact ... ok
+test whole_messages_match_the_shipped_packer_or_are_refused ... ok
+test gfsk_pulse_and_waveforms_match_within_tolerance ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s
+
+     Running tests/properties.rs (/home/user/tgt-stable/release/deps/properties-092958df12f98d2d)
+
+running 5 tests
+test standard_calls_round_trip_or_are_refused_for_the_documented_reason ... ok
+test grids_outside_the_table_are_refused ... ok
+test any_payload_decodes_without_panicking_and_canonical_messages_re_encode ... ok
+test unusual_calls_are_refused_never_transformed ... ok
+test accepted_messages_round_trip_through_bits ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests/round_trip.rs (/home/user/tgt-stable/release/deps/round_trip-ef298520ce1c0f28)
+
+running 6 tests
+test cq_forms_and_qrz ... ok
+test hand_built_out_of_range_fields_are_refused_not_panicked_on ... ok
+test the_audit_substitutions_are_all_refused ... ok
+test every_report_and_acknowledgement ... ok
+test every_maidenhead_square_is_sent_exactly_or_refused ... ok
+test sampled_callsign_space_partner_and_own_calls ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.21s
+
+   Doc-tests z30_channel
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests z30_dsp
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests z30_engine
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests z30_io
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests z30_protocol
+
+running 1 test
+test crates/z30-protocol/src/codec.rs - codec::VerifiedFrame (line 640) - compile fail ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+
+EXIT 0 (346 s)

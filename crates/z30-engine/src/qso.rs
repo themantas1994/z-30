@@ -71,7 +71,20 @@ impl QsoState {
     }
 }
 
-/// Where a logged value came from.
+/// Where a logged value came from. A value with no defensible source is not logged at all
+/// (the field is `None`, shown and exported as absent); these are the sources a present value
+/// can have, from the strongest claim to the weakest.
+///
+/// For the dial frequency in particular (2026-09-24 post-remediation audit, N-05, where a
+/// default 14.076 MHz reached the log tagged "commanded" on a station with no rig control):
+///
+/// - `ReportedByRig`: the radio itself reported this dial over CAT, in a reading that was fresh
+///   when the contact was logged;
+/// - `Commanded`: this software sent the radio a set-frequency command for exactly this value
+///   and the radio (rigctld) acknowledged it, but no fresh readback confirms it;
+/// - `Configured`: the operator's setting in z-30, which nothing has sent to or read from a
+///   radio. It is what the operator says the dial is, not what it was;
+/// - absent: no dial is configured and no radio reported one.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Provenance {
@@ -81,11 +94,13 @@ pub enum Provenance {
     Measured,
     /// Sent by this station.
     Sent,
-    /// Read back from the radio.
-    RigVerified,
-    /// What this software commanded (the radio did not confirm it).
+    /// Reported by the radio over CAT, in a fresh reading. (Stored as `rig_verified` before
+    /// 2026-09-24; read back as this.)
+    #[serde(alias = "rig_verified")]
+    ReportedByRig,
+    /// Commanded to the radio by this software, and the command acknowledged; not read back.
     Commanded,
-    /// The operator's configuration (e.g. the power they set).
+    /// The operator's configuration (e.g. the power they set, or a dial no radio confirmed).
     Configured,
     /// Imported from a legacy logbook whose fields cannot be told apart from fabrications.
     LegacyImport,
@@ -124,11 +139,14 @@ pub struct QsoRecord {
     pub start_utc: f64,
     /// UTC of the end of the last frame of the exchange.
     pub end_utc: f64,
-    /// Dial frequency, Hz, and whether the radio confirmed it.
-    pub dial_hz: Sourced<f64>,
-    /// Transmit tone-0 audio frequency, Hz.
-    pub tx_audio_hz: f64,
-    /// Band label, if the frequency is in the band plan.
+    /// Dial frequency, Hz, and where it came from (see `Provenance`). Absent when no dial is
+    /// configured and no radio reported one - never a default.
+    pub dial_hz: Option<Sourced<f64>>,
+    /// Tone-0 audio frequency of this station's last transmission in the exchange, Hz (the
+    /// software generated it, so it is known exactly). Absent if unknown (legacy imports).
+    pub tx_audio_hz: Option<f64>,
+    /// Band label of the logged dial, if the dial is known and inside the band plan. It is as
+    /// good as the dial it is derived from, and carries the dial's provenance.
     pub band: Option<String>,
     /// Our callsign.
     pub my_call: String,
@@ -396,8 +414,9 @@ impl Sequencer {
             rst_rcvd: self.dx.rst_rcvd.map(|r| Sourced::new(r, Provenance::Received)),
             start_utc: crate::slots::slot_start(first),
             end_utc: crate::slots::slot_start(last_slot) + z30_protocol::FRAME_SEC,
-            dial_hz: Sourced::new(0.0, Provenance::Commanded),
-            tx_audio_hz: 0.0,
+            // Filled in by the engine, which knows the rig state; absent until it does.
+            dial_hz: None,
+            tx_audio_hz: None,
             band: None,
             my_call: self.my_call.to_string(),
             my_grid: self.my_grid.as_ref().map(|g| g.to_string()),
@@ -405,5 +424,34 @@ impl Sequencer {
             ap_assisted: self.dx.ap_assisted,
             comment: String::new(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_record_holds_no_report_that_was_not_received_or_sent() {
+        // Post-remediation audit, mutation LOG-c: logging a missing received report as -16
+        // survived every test, because every exchange the sequencer can complete today does
+        // receive a report. The record builder must not depend on that: here it is made to close
+        // an exchange in which no report went either way.
+        let mut s = Sequencer::new(Callsign::new("G4XYZ").unwrap(), "IO91", 6);
+        s.state = QsoState::Sending73(Callsign::new("K1ABC").unwrap());
+        s.dx = DxInfo { grid: None, rst_rcvd: None, rst_sent: None, last_snr: None, first_slot: Some(100), ap_assisted: false };
+        let notes = s.on_transmitted(102);
+        let rec = notes.iter().find_map(|n| if let QsoNote::Complete(r) = n { Some(r) } else { None }).expect("closed");
+        assert_eq!(rec.rst_rcvd, None, "no report was received");
+        assert_eq!(rec.rst_sent, None, "no report was sent");
+        assert_eq!(rec.grid, None);
+        assert_eq!(rec.dial_hz, None, "the engine fills the dial; the sequencer knows none");
+        // And the ones that were, are, with their provenance.
+        s.state = QsoState::Sending73(Callsign::new("K1ABC").unwrap());
+        s.dx = DxInfo { rst_rcvd: Some(-7), rst_sent: Some(-12), first_slot: Some(100), ..Default::default() };
+        let notes = s.on_transmitted(102);
+        let rec = notes.iter().find_map(|n| if let QsoNote::Complete(r) = n { Some(r) } else { None }).unwrap();
+        assert_eq!(rec.rst_rcvd, Some(Sourced::new(-7, Provenance::Received)));
+        assert_eq!(rec.rst_sent, Some(Sourced::new(-12, Provenance::Sent)));
     }
 }

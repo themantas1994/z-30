@@ -1,0 +1,2 @@
+all 18 golden files reproduce byte for byte
+EXIT 0

@@ -1,0 +1,82 @@
+{
+  "good": {
+    "nominal_2sigma_spread_hz": 0.1,
+    "delay_ms": 0.5,
+    "frame_power_mean": 0.9766141832920717,
+    "frame_power_cv": 0.6215568556673661,
+    "frac_below_minus10db": 0.0,
+    "tap_mean_abs2": 0.9771082907896252,
+    "spreads": [
+      {
+        "lag_s": 2.0,
+        "rho": 0.9038172481043499,
+        "two_sigma_spread_hz": 0.07157659746549742
+      },
+      {
+        "lag_s": 4.0,
+        "rho": 0.6661369530009563,
+        "two_sigma_spread_hz": 0.07173104584463025
+      }
+    ]
+  },
+  "moderate": {
+    "nominal_2sigma_spread_hz": 0.5,
+    "delay_ms": 1.0,
+    "frame_power_mean": 1.0036308980502568,
+    "frame_power_cv": 0.25702706389600266,
+    "frac_below_minus10db": 0.0,
+    "tap_mean_abs2": 0.9198427293554801,
+    "spreads": [
+      {
+        "lag_s": 0.4,
+        "rho": 0.9052115917585903,
+        "two_sigma_spread_hz": 0.3551448311897106
+      },
+      {
+        "lag_s": 0.8,
+        "rho": 0.6723976058198382,
+        "two_sigma_spread_hz": 0.35450197805620626
+      }
+    ]
+  },
+  "poor": {
+    "nominal_2sigma_spread_hz": 1.0,
+    "delay_ms": 2.0,
+    "frame_power_mean": 1.0055873660766685,
+    "frame_power_cv": 0.17786383291445307,
+    "frac_below_minus10db": 0.0,
+    "tap_mean_abs2": 0.9634944876491434,
+    "spreads": [
+      {
+        "lag_s": 0.2,
+        "rho": 0.9056410858597317,
+        "two_sigma_spread_hz": 0.7085959995882029
+      },
+      {
+        "lag_s": 0.4,
+        "rho": 0.6732932794956811,
+        "two_sigma_spread_hz": 0.7078140004649008
+      }
+    ]
+  },
+  "high-moderate": {
+    "nominal_2sigma_spread_hz": 10.0,
+    "delay_ms": 3.0,
+    "frame_power_mean": 1.0020580574696916,
+    "frame_power_cv": 0.06050689439387874,
+    "frac_below_minus10db": 0.0,
+    "tap_mean_abs2": 1.0079162021379522,
+    "spreads": [
+      {
+        "lag_s": 0.02,
+        "rho": 0.9060487810637027,
+        "two_sigma_spread_hz": 7.069852901798734
+      },
+      {
+        "lag_s": 0.04,
+        "rho": 0.6738511776223278,
+        "two_sigma_spread_hz": 7.07072588837914
+      }
+    ]
+  }
+}

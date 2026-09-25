@@ -105,6 +105,41 @@ const LEGACY_AUTOLOG_NOTE: &str = "z-30 16-MFSK LDPC";
 const LEGACY_DEFAULT_GRID: &str = "FN31";
 /// The received report it logged when none had been received.
 const LEGACY_DEFAULT_RST_RCVD: i8 = -16;
+/// The report the legacy ADIF importer (qsoLogger.ts) filled in for a record without one.
+const LEGACY_IMPORT_DEFAULT_RST: i8 = -15;
+/// The legacy app's per-band default dials (z30Constants.ts HAM_BANDS). Its manual-entry form
+/// logged the selected band's default dial as the contact's frequency, and its ADIF importer and
+/// exporter used the 20 m one (14.076 MHz) for a record without a frequency: on an entry those
+/// wrote, a frequency equal to one of these is a default, not a measurement.
+const LEGACY_BAND_DEFAULT_DIALS_HZ: [u64; 13] = [
+    1_842_000,
+    3_576_000,
+    5_359_000,
+    7_076_000,
+    10_139_000,
+    14_076_000,
+    18_102_000,
+    21_076_000,
+    24_917_000,
+    28_076_000,
+    50_316_000,
+    144_176_000,
+    432_176_000,
+];
+
+/// Which part of the legacy app wrote a logbook.json entry, from its `id` (and, for entries
+/// that predate ids, the auto-logger's note).
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum LegacyOrigin {
+    /// `log-*` / the auto-logger note: qsoEngine.ts.
+    AutoLogger,
+    /// `manual-*`: the logbook's manual-entry form.
+    ManualForm,
+    /// `import-*`: the legacy app's own ADIF importer.
+    AdifImporter,
+    /// No id: cannot be told.
+    Unknown,
+}
 
 /// Builds a vNext configuration from the legacy files in `dir`.
 pub fn migrate_config(dir: &Path) -> (Config, Report) {
@@ -177,8 +212,9 @@ pub fn migrate_config(dir: &Path) -> (Config, Report) {
         ));
     }
     if let Some(d) = tk.get("dial_freq_hz").and_then(|v| v.as_u64()) {
-        cfg.operating.dial_hz = d;
-        rep.fields.push(Outcome::Migrated(format!("dial = {d} Hz")));
+        // Configuration: the operator's setting in the old app, nothing a radio confirmed.
+        cfg.operating.dial_hz = Some(d);
+        rep.fields.push(Outcome::Migrated(format!("dial = {d} Hz (configuration)")));
     }
     if let Some(f) = tk.get("tx_audio_freq_hz").and_then(|v| v.as_f64()) {
         cfg.operating.tx_audio_hz = f;
@@ -314,43 +350,109 @@ fn legacy_record(e: &Value, rep: &mut Report) -> Option<QsoRecord> {
     let rpt = |k: &str| {
         str_of(e, k)
             .and_then(|s| s.trim_start_matches('R').parse::<f64>().ok())
-            .map(|v| Sourced::new(v.round().clamp(-99.0, 99.0) as i8, Provenance::LegacyImport))
+            // Out of range is not a report; it used to be clamped to +-99, i.e. changed.
+            .filter(|v| (-99.0..=99.0).contains(v))
+            .map(|v| Sourced::new(v.round() as i8, Provenance::LegacyImport))
     };
-    // The legacy auto-logger (qsoEngine.ts) filled a missing grid with FN31 and a missing
-    // received report with -16, and marked its entries with this note. On such an entry those
-    // exact values cannot be told apart from the fabrications, so they are dropped: an absent
-    // field is honest, a possibly-invented one is not. Its time was local time labelled UTC,
-    // which cannot be undone either; the comment says so.
-    let auto_logged = str_of(e, "notes").is_some_and(|n| n.starts_with(LEGACY_AUTOLOG_NOTE));
+    // Which code wrote the entry decides which of its values can be defaults. On such an entry
+    // a value equal to that code's default cannot be told apart from the fabrication, so it is
+    // dropped: an absent field is honest, a possibly-invented one is not (audit C-05, N-05).
+    //
+    // - The auto-logger (qsoEngine.ts) filled a missing grid with FN31 and a missing received
+    //   report with -16, logged the computer's LOCAL time labelled UTC, and logged as its
+    //   frequency the configured dial PLUS the receive audio offset: neither a dial nor
+    //   anything a radio reported.
+    // - The manual form defaulted the grid to FN31 when left empty, took its frequency from
+    //   the band's default dial, and also logged local time as UTC.
+    // - The legacy ADIF importer filled missing reports with -15 and a missing frequency with
+    //   14.076 MHz.
+    let id = str_of(e, "id").unwrap_or("");
+    let origin = if id.starts_with("log-") || str_of(e, "notes").is_some_and(|n| n.starts_with(LEGACY_AUTOLOG_NOTE)) {
+        LegacyOrigin::AutoLogger
+    } else if id.starts_with("manual-") {
+        LegacyOrigin::ManualForm
+    } else if id.starts_with("import-") {
+        LegacyOrigin::AdifImporter
+    } else {
+        LegacyOrigin::Unknown
+    };
     let mut grid = str_of(e, "grid").map(|g| li(g.to_string()));
     let mut rst_rcvd = rpt("rstRcvd");
-    if auto_logged {
-        if grid.as_ref().is_some_and(|g| g.value.eq_ignore_ascii_case(LEGACY_DEFAULT_GRID)) {
-            grid = None;
-            rep.log_fields_dropped.push(format!(
-                "{call} {date} {time}: grid {LEGACY_DEFAULT_GRID} (the legacy auto-logger's default when no grid was received)"
-            ));
-        }
-        if rst_rcvd.as_ref().is_some_and(|r| r.value == LEGACY_DEFAULT_RST_RCVD) {
-            rst_rcvd = None;
-            rep.log_fields_dropped
-                .push(format!("{call} {date} {time}: received report {LEGACY_DEFAULT_RST_RCVD} (the legacy auto-logger's default)"));
+    let mut rst_sent = rpt("rstSent");
+    let freq_hz = e.get("freqMhz").and_then(|v| v.as_f64()).filter(|f| f.is_finite() && *f > 0.0).map(|f| (f * 1e6).round());
+    let mut dial = freq_hz.map(li_f);
+    let dropped = |what: String, rep: &mut Report| rep.log_fields_dropped.push(format!("{call} {date} {time}: {what}"));
+    let default_grid = grid.as_ref().is_some_and(|g| g.value.eq_ignore_ascii_case(LEGACY_DEFAULT_GRID));
+    let band_default_freq = freq_hz.is_some_and(|f| LEGACY_BAND_DEFAULT_DIALS_HZ.contains(&(f as u64)));
+    for k in ["rstRcvd", "rstSent"] {
+        if let Some(v) = str_of(e, k).and_then(|s| s.trim_start_matches('R').parse::<f64>().ok()).filter(|v| !(-99.0..=99.0).contains(v)) {
+            dropped(format!("{k} {v} (not a signal report)"), rep);
         }
     }
-    let comment = if auto_logged {
-        "imported from the legacy z-30 auto-logger: its time was the computer's LOCAL time labelled UTC, and its default grid/report were dropped on import (audit C-05); verify before uploading"
-    } else {
-        "imported from the legacy z-30 logbook, whose auto-logger could write local time as UTC and default grid/report values (audit C-05); verify before uploading"
+    match origin {
+        LegacyOrigin::AutoLogger => {
+            if default_grid {
+                grid = None;
+                dropped(format!("grid {LEGACY_DEFAULT_GRID} (the legacy auto-logger's default when no grid was received)"), rep);
+            }
+            if rst_rcvd.as_ref().is_some_and(|r| r.value == LEGACY_DEFAULT_RST_RCVD) {
+                rst_rcvd = None;
+                dropped(format!("received report {LEGACY_DEFAULT_RST_RCVD} (the legacy auto-logger's default)"), rep);
+            }
+            if let Some(f) = dial.take() {
+                dropped(
+                    format!("frequency {:.6} MHz (the legacy auto-logger's configured dial plus receive audio offset: not a dial, and not read from a radio)", f.value / 1e6),
+                    rep,
+                );
+            }
+        }
+        LegacyOrigin::ManualForm => {
+            if default_grid {
+                grid = None;
+                dropped(format!("grid {LEGACY_DEFAULT_GRID} (the legacy manual form's default for an empty grid)"), rep);
+            }
+            if band_default_freq {
+                dial = None;
+                dropped("frequency (the legacy manual form's default dial for the band)".into(), rep);
+            }
+        }
+        LegacyOrigin::AdifImporter => {
+            for (name, r) in [("received", &mut rst_rcvd), ("sent", &mut rst_sent)] {
+                if r.as_ref().is_some_and(|v| v.value == LEGACY_IMPORT_DEFAULT_RST) {
+                    *r = None;
+                    dropped(format!("{name} report {LEGACY_IMPORT_DEFAULT_RST} (the legacy ADIF importer's default)"), rep);
+                }
+            }
+            if freq_hz == Some(14_076_000.0) {
+                dial = None;
+                dropped("frequency 14.076000 MHz (the legacy ADIF importer's default)".into(), rep);
+            }
+        }
+        LegacyOrigin::Unknown => {}
+    }
+    let comment = match origin {
+        LegacyOrigin::AutoLogger => {
+            "imported from the legacy z-30 auto-logger: its time was the computer's LOCAL time labelled UTC, its frequency was not a dial, and its default grid/report were dropped on import (audit C-05); verify before uploading"
+        }
+        LegacyOrigin::ManualForm => {
+            "imported from the legacy z-30 manual entry form: its time was the computer's LOCAL time labelled UTC, and its default grid/frequency were dropped on import (audit C-05); verify before uploading"
+        }
+        LegacyOrigin::AdifImporter => {
+            "imported from the legacy z-30 logbook, which had imported it from ADIF filling missing reports and frequency with defaults (dropped here); verify before uploading"
+        }
+        LegacyOrigin::Unknown => {
+            "imported from the legacy z-30 logbook, whose auto-logger could write local time as UTC and default grid/report values (audit C-05); verify before uploading"
+        }
     };
     Some(QsoRecord {
         call,
         grid,
-        rst_sent: rpt("rstSent"),
+        rst_sent,
         rst_rcvd,
         start_utc: t,
         end_utc: t,
-        dial_hz: Sourced::new(e.get("freqMhz").and_then(|v| v.as_f64()).unwrap_or(0.0) * 1e6, Provenance::LegacyImport),
-        tx_audio_hz: 0.0,
+        dial_hz: dial,
+        tx_audio_hz: None,
         band: str_of(e, "band").map(str::to_string),
         my_call: str_of(e, "myCall").unwrap_or("").to_string(),
         my_grid: str_of(e, "myGrid").map(str::to_string),
@@ -358,6 +460,10 @@ fn legacy_record(e: &Value, rep: &mut Report) -> Option<QsoRecord> {
         ap_assisted: false,
         comment: comment.into(),
     })
+}
+
+fn li_f(v: f64) -> Sourced<f64> {
+    Sourced::new(v, Provenance::LegacyImport)
 }
 
 /// Imports `logbook.json` (or, failing that, `logbook.adi`) from `dir` into `book`.
@@ -381,10 +487,17 @@ pub fn migrate_logbook(dir: &Path, book: &mut Logbook, rep: &mut Report) {
     }
 }
 
-/// Imports ADIF text (from the legacy app or elsewhere), marking every field legacy.
+/// Imports ADIF text (from the legacy app or elsewhere), marking every field legacy. A file the
+/// legacy z-30 app exported (`PROGRAMID` z-30) gets that app's default rules: its exporter
+/// wrote 14.076 MHz for an entry with no frequency, and its entries may have come from its ADIF
+/// importer's -15 defaults or, when the comment carries the auto-logger's note, its auto-logger.
 pub fn import_adif(text: &str, book: &mut Logbook, rep: &mut Report) {
+    let header = text.find("<EOH>").or_else(|| text.find("<eoh>")).map_or("", |i| &text[..i]);
+    let legacy_export = header.to_ascii_lowercase().contains("<programid:4>z-30");
     for f in parse_adif(text) {
         let e = serde_json::json!({
+            "id": if legacy_export { "import-legacy-export" } else { "" },
+            "notes": f.get("COMMENT"),
             "callsign": f.get("CALL"), "utcDate": f.get("QSO_DATE"), "utcTime": f.get("TIME_ON"),
             "grid": f.get("GRIDSQUARE"), "rstSent": f.get("RST_SENT"), "rstRcvd": f.get("RST_RCVD"),
             "freqMhz": f.get("FREQ").and_then(|s| s.parse::<f64>().ok()), "band": f.get("BAND"),
@@ -399,7 +512,7 @@ pub fn import_adif(text: &str, book: &mut Logbook, rep: &mut Report) {
 /// Inserts a legacy record unless an identical contact (call, start time, frequency) is already
 /// in the book, so running the migration twice imports nothing the second time.
 fn insert_once(book: &mut Logbook, r: &QsoRecord, rep: &mut Report) {
-    match book.contains_contact(&r.call, r.start_utc, r.dial_hz.value) {
+    match book.contains_contact(&r.call, r.start_utc, r.dial_hz.as_ref().map(|d| d.value)) {
         Ok(true) => rep.log_already_present += 1,
         Ok(false) => match book.insert(r) {
             Ok(_) => rep.log_imported += 1,
@@ -505,10 +618,64 @@ mod tests {
         assert_eq!(auto.rst_rcvd, None);
         assert_eq!(auto.rst_sent.as_ref().map(|r| r.value), Some(-9), "the report it sent is a real value");
         assert!(auto.comment.contains("LOCAL time"));
-        // A hand-entered entry keeps its values (marked legacy_import).
+        // An entry that does not say what wrote it keeps its values (marked legacy_import).
         let manual = all.iter().find(|r| r.call == "W1AW").unwrap();
         assert_eq!(manual.grid.as_ref().map(|g| g.value.as_str()), Some("FN31"));
-        assert_eq!(rep.log_fields_dropped.len(), 2);
+        // The auto-logger's frequency was the configured dial plus the receive offset: dropped.
+        assert_eq!(auto.dial_hz, None);
+        assert_eq!(auto.tx_audio_hz, None);
+        assert_eq!(rep.log_fields_dropped.len(), 3, "{:?}", rep.log_fields_dropped);
+        std::fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn each_legacy_writers_defaults_stay_unknown_and_only_those() {
+        // C-05 / N-05: by the id the legacy app gave each entry, the manual form's FN31 and band
+        // default dial, and the ADIF importer's -15 reports and 14.076 MHz, are dropped. The same
+        // values on an entry written by something else are kept.
+        let dir = std::env::temp_dir().join(format!("z30-mig-origin-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join("logbook.json"),
+            r#"[{"id":"manual-1790000000","callsign":"K1ABC","utcDate":"2026-09-20","utcTime":"10:00:00","grid":"FN31","rstSent":"-10","rstRcvd":"-12","freqMhz":7.076,"band":"40m"},
+                {"id":"manual-1790000100","callsign":"K2ABC","utcDate":"2026-09-20","utcTime":"10:05:00","grid":"FN20","rstSent":"-10","rstRcvd":"-12","freqMhz":7.0781,"band":"40m"},
+                {"id":"import-1790000200-ab12","callsign":"K3ABC","utcDate":"2026-09-20","utcTime":"10:10:00","grid":"FN31","rstSent":"-15","rstRcvd":"-15","freqMhz":14.076},
+                {"id":"import-1790000300-cd34","callsign":"K4ABC","utcDate":"2026-09-20","utcTime":"10:15:00","rstSent":"-07","rstRcvd":"-15","freqMhz":14.0786},
+                {"id":"log-1790000400","callsign":"K5ABC","utcDate":"2026-09-20","utcTime":"10:20:00","grid":"EM12","rstSent":"-03","rstRcvd":"-16","freqMhz":14.0776,"notes":"z-30 16-MFSK LDPC / SIC Pass 1"},
+                {"callsign":"K6ABC","utcDate":"2026-09-20","utcTime":"10:25:00","rstRcvd":"-150","freqMhz":14.076}]"#,
+        )
+        .unwrap();
+        let mut rep = Report::default();
+        let mut book = Logbook::in_memory().unwrap();
+        migrate_logbook(&dir, &mut book, &mut rep);
+        let all = book.all().unwrap();
+        let get = |c: &str| all.iter().find(|r| r.call == c).unwrap().clone();
+        let li = |v: f64| Some(Sourced::new(v, Provenance::LegacyImport));
+        // Manual form: FN31 and the band's default dial are its defaults.
+        let r = get("K1ABC");
+        assert_eq!((r.grid.clone(), r.dial_hz.clone()), (None, None));
+        assert_eq!(r.rst_rcvd.map(|v| v.value), Some(-12));
+        assert_eq!(r.band.as_deref(), Some("40m"));
+        let r = get("K2ABC");
+        assert_eq!(r.grid.map(|g| g.value), Some("FN20".into()));
+        assert_eq!(r.dial_hz, li(7_078_100.0));
+        // ADIF importer: -15 and 14.076 MHz are its defaults; FN31 is not.
+        let r = get("K3ABC");
+        assert_eq!((r.rst_sent.clone(), r.rst_rcvd.clone(), r.dial_hz.clone()), (None, None, None));
+        assert_eq!(r.grid.map(|g| g.value), Some("FN31".into()));
+        let r = get("K4ABC");
+        assert_eq!((r.rst_sent.map(|v| v.value), r.rst_rcvd), (Some(-7), None));
+        assert_eq!(r.dial_hz, li(14_078_600.0));
+        // Auto-logger: -16 and its dial-plus-offset frequency; a received grid is kept.
+        let r = get("K5ABC");
+        assert_eq!((r.rst_rcvd, r.dial_hz), (None, None));
+        assert_eq!(r.grid.map(|g| g.value), Some("EM12".into()));
+        // Unknown writer: kept - except a report outside +-99 dB, which is not a report (it
+        // used to be clamped to -99, i.e. changed into one).
+        let r = get("K6ABC");
+        assert_eq!(r.dial_hz, li(14_076_000.0));
+        assert_eq!(r.rst_rcvd, None);
+        assert_eq!(rep.log_fields_dropped.len(), 9, "{:#?}", rep.log_fields_dropped);
         std::fs::remove_dir_all(dir).ok();
     }
 }

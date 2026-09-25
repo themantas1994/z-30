@@ -1,0 +1,229 @@
+expected	crates/z30-py/src/lib.rs:19	return Err(PyValueError::new_err("sample buffer length is not a multiple of 4 (expected float32 little-endian)"));
+unwrap_or_default	crates/z30-py/src/lib.rs:98	worked_freqs_hz: worked_freqs_hz.unwrap_or_default(),
+expected	crates/z30-py/src/lib.rs:141	let l: [f32; 216] = v.try_into().map_err(|_| PyValueError::new_err("216 LLRs expected"))?;
+unwrap_or_default	crates/z30-io/src/audio.rs:140	let ins = host.input_devices().map(|it| it.map(|d| name(&d)).collect()).unwrap_or_default();
+unwrap_or_default	crates/z30-io/src/audio.rs:141	let outs = host.output_devices().map(|it| it.map(|d| name(&d)).collect()).unwrap_or_default();
+unwrap_or\(0	crates/z30-io/src/audio.rs:249	let v = consumer.pop().unwrap_or(0.0);
+unwrap_or_default	crates/z30-io/src/logbook.rs:176	|i: usize| -> rusqlite::Result<Provenance> { Ok(prov_parse(&row.get::<_, Option<String>>(i)?.unwrap_or_default())) };
+unwrap_or\(0	crates/z30-io/src/logbook.rs:294	field(&mut out, "FREQ", &format!("{:.6}", (d.value + r.tx_audio_hz.unwrap_or(0.0)) / 1e6));
+N0CALL	crates/z30-io/src/migrate.rs:100	const PLACEHOLDERS: [&str; 2] = ["NOCAL", "N0CALL"];
+NOCAL	crates/z30-io/src/migrate.rs:100	const PLACEHOLDERS: [&str; 2] = ["NOCAL", "N0CALL"];
+placeholder	crates/z30-io/src/migrate.rs:100	const PLACEHOLDERS: [&str; 2] = ["NOCAL", "N0CALL"];
+FN31	crates/z30-io/src/migrate.rs:105	const LEGACY_DEFAULT_GRID: &str = "FN31";
+-16\b	crates/z30-io/src/migrate.rs:107	const LEGACY_DEFAULT_RST_RCVD: i8 = -16;
+14[._]?076	crates/z30-io/src/migrate.rs:112	/// exporter used the 20 m one (14.076 MHz) for a record without a frequency: on an entry those
+14[._]?076	crates/z30-io/src/migrate.rs:120	14_076_000,
+placeholder	crates/z30-io/src/migrate.rs:161	Some(c) if PLACEHOLDERS.contains(&c.to_ascii_uppercase().as_str()) => {
+placeholder	crates/z30-io/src/migrate.rs:162	rep.fields.push(Outcome::Skipped("callsign".into(), format!("\"{c}\" is the unconfigured placeholder")))
+placeholder	crates/z30-io/src/migrate.rs:178	Some("AA00aa") | Some("AA00") => rep.fields.push(Outcome::Skipped("grid".into(), "the wizard's placeholder AA00aa".into())),
+synthetic	crates/z30-io/src/migrate.rs:318	"synthetic/self-test state",
+simulat	crates/z30-io/src/migrate.rs:319	"the legacy self-test injected simulated decodes into the live list; vNext has no such mode",
+FN31	crates/z30-io/src/migrate.rs:361	// - The auto-logger (qsoEngine.ts) filled a missing grid with FN31 and a missing received
+-16\b	crates/z30-io/src/migrate.rs:362	//   report with -16, logged the computer's LOCAL time labelled UTC, and logged as its
+FN31	crates/z30-io/src/migrate.rs:365	// - The manual form defaulted the grid to FN31 when left empty, took its frequency from
+14[._]?076	crates/z30-io/src/migrate.rs:368	//   14.076 MHz.
+14[._]?076	crates/z30-io/src/migrate.rs:426	if freq_hz == Some(14_076_000.0) {
+14[._]?076	crates/z30-io/src/migrate.rs:428	dropped("frequency 14.076000 MHz (the legacy ADIF importer's default)".into(), rep);
+unwrap_or_default	crates/z30-io/src/migrate.rs:476	.unwrap_or_default();
+14[._]?076	crates/z30-io/src/migrate.rs:492	/// wrote 14.076 MHz for an entry with no frequency, and its entries may have come from its ADIF
+expected	crates/z30-io/src/rigctld.rs:73	let dial = f[0].parse::<f64>().map_err(|_| format!("unexpected frequency reply \"{}\"", f[0]))?;
+unwrap_or_default	crates/z30-io/src/serial_ptt.rs:32	serialport::available_ports().map(|v| v.into_iter().map(|p| p.port_name).collect()).unwrap_or_default()
+unwrap_or\(0	crates/z30-io/src/wallclock.rs:52	/// (negative) time it says, not as 1970: every reader used `unwrap_or(0.0)`, a made-up instant
+placeholder	crates/z30-protocol/src/codec.rs:16	use crate::{K, N, PAYLOAD_BITS, PLACEHOLDER_CALLSIGN, TOTAL_SYMBOLS};
+placeholder	crates/z30-protocol/src/codec.rs:26	/// The unconfigured placeholder; transmitting it would be transmitting nobody's callsign.
+placeholder	crates/z30-protocol/src/codec.rs:27	PlaceholderCallsign,
+placeholder	crates/z30-protocol/src/codec.rs:49	PlaceholderCallsign => write!(f, "the callsign is still the placeholder {PLACEHOLDER_CALLSIGN}; set your own callsign"),
+placeholder	crates/z30-protocol/src/codec.rs:133	if call == PLACEHOLDER_CALLSIGN {
+placeholder	crates/z30-protocol/src/codec.rs:134	return Err(CodecError::PlaceholderCallsign);
+FN31	crates/z30-protocol/src/codec.rs:287	"FN31", "FN20", "FN30", "FM19", "FM29", "EM00", "EM10", "EM29", "EM79", "EL98", "EL89", "DM79", "DM04", "DM13", "CM87", "CM97", "CN87",
+FN31	crates/z30-protocol/src/codec.rs:642	/// let m = z30_protocol::codec::Message::parse("CQ K1ABC FN31").unwrap();
+simulat	crates/z30-protocol/src/gfsk.rs:158	/// offset in samples. Used by SIC and the channel simulator; unnormalised (peak ~1).
+golden	crates/z30-protocol/src/lib.rs:6	//! `fixtures/golden/` pins it against the frozen Python/TypeScript oracle.
+NOCAL	crates/z30-protocol/src/lib.rs:60	pub const PLACEHOLDER_CALLSIGN: &str = "NOCAL";
+placeholder	crates/z30-protocol/src/lib.rs:60	pub const PLACEHOLDER_CALLSIGN: &str = "NOCAL";
+\bsnr\b|SNR	crates/z30-engine/src/api.rs:49	/// SNR in 2500 Hz, dB (measured).
+accuracy	crates/z30-engine/src/api.rs:191	/// How a reported SNR is displayed: the value inside the range its accuracy has been measured
+\bsnr\b|SNR	crates/z30-engine/src/api.rs:191	/// How a reported SNR is displayed: the value inside the range its accuracy has been measured
+\bsnr\b|SNR	crates/z30-engine/src/api.rs:192	/// over (z30-dsp `SNR_VALIDATED_MIN_DB..=SNR_VALIDATED_MAX_DB`), a bound outside it, and
+\bsnr\b|SNR	crates/z30-engine/src/api.rs:195	use z30_dsp::demod::{SNR_VALIDATED_MAX_DB, SNR_VALIDATED_MIN_DB};
+\bsnr\b|SNR	crates/z30-engine/src/api.rs:198	Some(v) if v < SNR_VALIDATED_MIN_DB => format!("<{SNR_VALIDATED_MIN_DB:+.0}"),
+\bsnr\b|SNR	crates/z30-engine/src/api.rs:199	Some(v) if v > SNR_VALIDATED_MAX_DB => format!(">{SNR_VALIDATED_MAX_DB:+.0}"),
+fake	crates/z30-engine/src/lib.rs:7	//! `z30-io` implements and tests fake.
+expected	crates/z30-engine/src/pipeline.rs:36	expected_next: Option<u64>,
+expected	crates/z30-engine/src/pipeline.rs:55	expected_next: None,
+expected	crates/z30-engine/src/pipeline.rs:91	if let Some(exp) = self.expected_next {
+expected	crates/z30-engine/src/pipeline.rs:106	self.expected_next = Some(block.first_index + block.samples.len() as u64);
+fake	crates/z30-engine/src/ptt.rs:49	/// A keying line. Implemented in `z30-io` (serial, CM108, rigctld, VOX) and by test fakes.
+14[._]?076	crates/z30-engine/src/qso.rs:79	/// default 14.076 MHz reached the log tagged "commanded" on a station with no rig control):
+\bsnr\b|SNR	crates/z30-engine/src/qso.rs:220	/// Report value for a measured SNR: rounded, and clamped to the -30..+30 dB v1 can carry.
+accuracy	crates/z30-engine/src/qso.rs:224	/// The estimate's accuracy is measured from `SNR_VALIDATED_MIN_DB` to `SNR_VALIDATED_MAX_DB`
+\bsnr\b|SNR	crates/z30-engine/src/qso.rs:224	/// The estimate's accuracy is measured from `SNR_VALIDATED_MIN_DB` to `SNR_VALIDATED_MAX_DB`
+accuracy	crates/z30-engine/src/qso.rs:225	/// (z30-dsp `tests/snr_accuracy.rs`); the upper edge is also v1's largest report, so a clamp
+unwrap_or_default	crates/z30-engine/src/qso.rs:411	call: self.state.dx().map(|c| c.to_string()).unwrap_or_default(),
+placeholder	crates/z30-engine/src/txgate.rs:23	use z30_protocol::{NUM_TONES, PLACEHOLDER_CALLSIGN, TONE_SPACING_HZ};
+placeholder	crates/z30-engine/src/txgate.rs:37	/// The shipped placeholder.
+placeholder	crates/z30-engine/src/txgate.rs:38	PlaceholderCallsign,
+placeholder	crates/z30-engine/src/txgate.rs:85	PlaceholderCallsign => write!(f, "The callsign is still the placeholder {PLACEHOLDER_CALLSIGN}. Set your own callsign - transmitting under another sta
+placeholder	crates/z30-engine/src/txgate.rs:176	} else if call == PLACEHOLDER_CALLSIGN {
+placeholder	crates/z30-engine/src/txgate.rs:177	v.push(Violation::PlaceholderCallsign);
+FN31	crates/z30-cli/src/audio_loopback.rs:19	//! station configured for VOX could radiate `CQ Q0TST FN31` with no callsign or band-plan
+benchmark	crates/z30-cli/src/bench.rs:1	//! `z30 --benchmark`: measured, never projected (directive section 33).
+sensitivity	crates/z30-cli/src/bench.rs:9	//! - `sweep`: a quick Rust-native AWGN sensitivity sweep on `z30-channel` bands (exploratory).
+benchmark	crates/z30-cli/src/bench.rs:11	//! The publishable measurements are `suite.rs` (`--benchmark suite`).
+\bsnr\b|SNR	crates/z30-cli/src/bench.rs:44	let snr = -20.0 + ((j * 7 + seed as usize) % 21) as f64;
+\bsnr\b|SNR	crates/z30-cli/src/bench.rs:46	let (p, st) = random_station(&mut r, f0, dt, snr);
+\bsnr\b|SNR	crates/z30-cli/src/bench.rs:171	for snr in [-26.0, -25.0, -24.0, -23.0, -22.0, -21.0, -20.0] {
+\bsnr\b|SNR	crates/z30-cli/src/bench.rs:175	let (p, st) = random_station(&mut r, 300.0 + (i as f64 * 331.7) % 2400.0, -1.4 + (i as f64 * 0.77) % 2.8, snr);
+\bsnr\b|SNR	crates/z30-cli/src/bench.rs:179	println!("{snr:+6.1} dB  {ok:4}/{frames}");
+\bsnr\b|SNR	crates/z30-cli/src/loopback.rs:11	//! - frequency error, reported SNR against the SNR the noise was added at, the sample-clock
+FN31	crates/z30-cli/src/loopback.rs:43	pub const TEST_MESSAGE: &str = "CQ Q0TST FN31";
+expected	crates/z30-cli/src/loopback.rs:105	pub fn analyse(window: &[f32], report: &SlotReport, expected: &Message, predicted_dt_sec: f64) -> Value {
+expected	crates/z30-cli/src/loopback.rs:106	let want = expected.frame().expect("the test message encodes and verifies").encoded().info;
+\bsnr\b|SNR	crates/z30-cli/src/loopback.rs:139	/// SNR (2500 Hz, SPEC.md section 10) of the white noise added in the software cable for the
+\bsnr\b|SNR	crates/z30-cli/src/loopback.rs:140	/// decode, timing, frequency and SNR measurement: inside the SNR estimate's validated range.
+\bsnr\b|SNR	crates/z30-cli/src/loopback.rs:141	pub const SOFTWARE_SNR_DB: f64 = 20.0;
+\bsnr\b|SNR	crates/z30-cli/src/loopback.rs:149	///   the reported SNR is within 1 dB of the SNR the noise was added at;
+\bsnr\b|SNR	crates/z30-cli/src/loopback.rs:168	if let Some(snr) = snr_db {
+\bsnr\b|SNR	crates/z30-cli/src/loopback.rs:169	// Noise sigma for `snr`: frame power over noise power in 2500 Hz.
+\bsnr\b|SNR	crates/z30-cli/src/loopback.rs:171	let sigma = (p_sig / (10f64.powf(snr / 10.0) * 5000.0 / fs)).sqrt();
+\bsnr\b|SNR	crates/z30-cli/src/loopback.rs:192	Some(snr) => {
+\bsnr\b|SNR	crates/z30-cli/src/loopback.rs:193	let snr_err = v["snr_db"].as_f64().map(|s| s - snr);
+\bsnr\b|SNR	crates/z30-cli/src/loopback.rs:208	Some(_) => "decodes, nothing else does, |DT| <= 20 ms, |f error| <= 0.5 Hz, |SNR error| <= 1 dB",
+\bsnr\b|SNR	crates/z30-cli/src/loopback.rs:217	Some(snr) => json!({ "snr_db_2500hz": snr, "seed": seed, "generator": "ChaCha8 (z30_channel::rng), Box-Muller" }),
+\bsnr\b|SNR	crates/z30-cli/src/loopback.rs:244	runs.push(software_loopback(rate, Some(SOFTWARE_SNR_DB))?);
+benchmark	crates/z30-cli/src/main.rs:23	/// A counting allocator, so `--benchmark` can report allocations per decode.
+benchmark	crates/z30-cli/src/main.rs:48	about = "z-30 vNext: headless receiver, decoder, benchmark and diagnostics (never transmits)"
+benchmark	crates/z30-cli/src/main.rs:73	/// Benchmarks, all through decode_slot: perf (latency/CPU/allocations at K = 1, 5, 20, 50),
+\bsnr\b|SNR	crates/z30-cli/src/main.rs:75	/// timing, clock, impair, snr, busy, false, sic, fading and writes JSON with provenance.
+benchmark	crates/z30-cli/src/main.rs:77	benchmark: Option<String>,
+benchmark	crates/z30-cli/src/main.rs:78	/// Frames/slots per point for --benchmark (default: 20 for perf/false-decodes/sweep; each
+benchmark	crates/z30-cli/src/main.rs:79	/// suite benchmark's own publishable size otherwise).
+FN31	crates/z30-cli/src/main.rs:100	/// Encode a message to a WAV file (does not transmit): --encode "CQ K1ABC FN31" --wav out.wav
+\bsnr\b|SNR	crates/z30-cli/src/main.rs:118	/// transmit. Reports decode, DT, frequency, SNR and occupied bandwidth as JSON.
+benchmark	crates/z30-cli/src/main.rs:211	if let Some(what) = &cli.benchmark {
+confidence	crates/z30-cli/src/main.rs:372	// No per-decode confidence is reported: the decoder has no calibrated one. The CRC
+benchmark	crates/z30-cli/src/suite.rs:1	//! `z30 --benchmark suite`: the measurement suite behind every figure the documentation quotes.
+\bsnr\b|SNR	crates/z30-cli/src/suite.rs:9	//! - Channels come from `z30-channel` (seeded ChaCha8, SPEC.md section 10 SNR). Every frame's
+benchmark	crates/z30-cli/src/suite.rs:10	//!   generator is seeded from (benchmark seed, point, frame index), so results do not depend on
+\bsnr\b|SNR	crates/z30-cli/src/suite.rs:13	//!   channel, the SNR definition, the placement distributions, the seed, the frame count, the
+\bsnr\b|SNR	crates/z30-cli/src/suite.rs:39	const BENCHMARKS: [&str; 10] = ["awgn", "snr", "drift", "timing", "clock", "impair", "busy", "false", "sic", "fading"];
+benchmark	crates/z30-cli/src/suite.rs:39	const BENCHMARKS: [&str; 10] = ["awgn", "snr", "drift", "timing", "clock", "impair", "busy", "false", "sic", "fading"];
+unwrap_or\(0	crates/z30-cli/src/suite.rs:127	"logical_cpus": std::thread::available_parallelism().map(|n| n.get()).unwrap_or(0),
+simulat	crates/z30-cli/src/suite.rs:133	"note": "Software simulation only. No radio, sound card or RF path was involved.",
+\bsnr\b|SNR	crates/z30-cli/src/suite.rs:140	"snr": "SPEC.md section 10: frame signal power over the noise power in 2500 Hz; real white Gaussian noise, sigma = 1 per sample at 6 kHz, so SNR = P /
+benchmark	crates/z30-cli/src/suite.rs:146	"latency": "wall-clock time of decode_slot per slot, measured while other slots were decoded concurrently on the same pool; indicative only (see `z30 
+\bsnr\b|SNR	crates/z30-cli/src/suite.rs:188	fn blind_station(r: &mut ChannelRng, snr: f64, dt_max: f64) -> ([u8; 63], Station) {
+\bsnr\b|SNR	crates/z30-cli/src/suite.rs:192	z30_channel::random_station(r, f0, dt, snr)
+benchmark	crates/z30-cli/src/suite.rs:195	/// Seed of frame `i` of point `p` of a benchmark.
+benchmark	crates/z30-cli/src/suite.rs:270	// ------------------------------------------------------------------------------ benchmarks
+\bsnr\b|SNR	crates/z30-cli/src/suite.rs:276	for (p, &snr) in snrs.iter().enumerate() {
+\bsnr\b|SNR	crates/z30-cli/src/suite.rs:278	let (pl, st) = blind_station(r, snr, 1.4);
+\bsnr\b|SNR	crates/z30-cli/src/suite.rs:281	let pj = point_json(&format!("AWGN {snr:+.1} dB"), json!(snr), &v);
+\bsnr\b|SNR	crates/z30-cli/src/suite.rs:283	curve.push((snr, pj["decoded"].as_u64().unwrap() as usize, v.len()));
+benchmark	crates/z30-cli/src/suite.rs:287	"benchmark": "awgn",
+sensitivity	crates/z30-cli/src/suite.rs:288	"title": "Single-station sensitivity, AWGN, blind acquisition",
+accuracy	crates/z30-cli/src/suite.rs:298	fn snr_accuracy(frames: usize) -> Value {
+\bsnr\b|SNR	crates/z30-cli/src/suite.rs:301	for (p, &snr) in snrs.iter().enumerate() {
+\bsnr\b|SNR	crates/z30-cli/src/suite.rs:303	let (pl, st) = blind_station(r, snr, 1.4);
+\bsnr\b|SNR	crates/z30-cli/src/suite.rs:306	let errs: Vec<f64> = v.iter().filter_map(|o| o.snr_measured.map(|m| m - snr)).collect();
+\bsnr\b|SNR	crates/z30-cli/src/suite.rs:313	let mut pj = point_json(&format!("true {snr:+.0} dB"), json!(snr), &v);
+\bsnr\b|SNR	crates/z30-cli/src/suite.rs:318	eprintln!("true {snr:+5.1} dB: decoded {}/{}  SNR bias {b:+.2} sd {sd:.2} dB | DT bias {db:+.2} sd {dsd:.2} ms | f bias {fb:+.3} sd {fsd:.3} Hz", errs
+\bsnr\b|SNR	crates/z30-cli/src/suite.rs:322	"benchmark": "snr",
+benchmark	crates/z30-cli/src/suite.rs:322	"benchmark": "snr",
+accuracy	crates/z30-cli/src/suite.rs:323	"title": "Accuracy of the reported SNR, DT and frequency against the truth",
+\bsnr\b|SNR	crates/z30-cli/src/suite.rs:323	"title": "Accuracy of the reported SNR, DT and frequency against the truth",
+\bsnr\b|SNR	crates/z30-cli/src/suite.rs:326	"validated_range_db": [z30_dsp::demod::SNR_VALIDATED_MIN_DB, z30_dsp::demod::SNR_VALIDATED_MAX_DB],
+\bsnr\b|SNR	crates/z30-cli/src/suite.rs:334	for snr in [-22.0, -20.0] {
+\bsnr\b|SNR	crates/z30-cli/src/suite.rs:337	let (pl, mut st) = blind_station(r, snr, 1.4);
+\bsnr\b|SNR	crates/z30-cli/src/suite.rs:341	let pj = point_json(&format!("drift {d:+.0} Hz @ {snr:+.0} dB"), json!({"drift_hz": d, "snr_db": snr}), &v);
+benchmark	crates/z30-cli/src/suite.rs:347	json!({ "benchmark": "drift", "title": "Linear carrier drift across the 24 s frame (total Hz, zero at mid-frame)",
+benchmark	crates/z30-cli/src/suite.rs:363	json!({ "benchmark": "timing", "title": "Frame start offset (DT) from the slot boundary",
+benchmark	crates/z30-cli/src/suite.rs:393	json!({ "benchmark": "clock", "title": "Receiver sample-clock error (the whole slot recorded by a sound card running fast or slow)",
+benchmark	crates/z30-cli/src/suite.rs:478	json!({ "benchmark": "impair", "title": "Audio impairments applied to the 6 kHz slot after noise (i.e. after resampling, not at the device rate)",
+-16\b	crates/z30-cli/src/suite.rs:485	let configs: [(usize, f64, f64); 5] = [(5, -20.0, 0.0), (10, -20.0, 0.0), (20, -20.0, 0.0), (40, -20.0, 0.0), (20, -22.0, -16.0)];
+\bsnr\b|SNR	crates/z30-cli/src/suite.rs:494	let snr = r.gen_range(lo..hi);
+\bsnr\b|SNR	crates/z30-cli/src/suite.rs:495	let (pl, st) = blind_station(&mut r, snr, 1.4);
+benchmark	crates/z30-cli/src/suite.rs:525	json!({ "benchmark": "busy", "title": "Busy band: K stations, random overlapping placement",
+benchmark	crates/z30-cli/src/suite.rs:530	/// Structured interference for the false-decode benchmark, added to sigma = 1 noise.
+benchmark	crates/z30-cli/src/suite.rs:617	json!({ "benchmark": "false", "title": "False decodes on slots containing no z-30 frame",
+benchmark	crates/z30-cli/src/suite.rs:674	json!({ "benchmark": "sic", "title": "Two-station collisions: the weaker station decoded with SIC (3 passes) and without (1 pass), paired on the same 
+-16\b	crates/z30-cli/src/suite.rs:685	("good", &[-24.0, -22.0, -20.0, -18.0, -16.0, -14.0, -10.0][..]),
+-16\b	crates/z30-cli/src/suite.rs:686	("moderate", &[-24.0, -22.0, -20.0, -18.0, -16.0, -14.0, -10.0][..]),
+-16\b	crates/z30-cli/src/suite.rs:687	("poor", &[-24.0, -22.0, -20.0, -18.0, -16.0, -14.0, -10.0][..]),
+\bsnr\b|SNR	crates/z30-cli/src/suite.rs:692	for &snr in snrs {
+\bsnr\b|SNR	crates/z30-cli/src/suite.rs:694	let (pl, mut st) = blind_station(r, snr, 1.4);
+\bsnr\b|SNR	crates/z30-cli/src/suite.rs:698	let pj = point_json(&format!("{preset} {snr:+.0} dB"), json!({"preset": preset, "snr_db": snr}), &v);
+\bsnr\b|SNR	crates/z30-cli/src/suite.rs:700	curve.push((snr, pj["decoded"].as_u64().unwrap() as usize, v.len()));
+Doppler|doppler	crates/z30-cli/src/suite.rs:706	json!({ "delay_ms": w.delay_ms, "doppler_hz": w.doppler_hz, "crossing_50pct_db": crossing(&curve, 50.0) }),
+\bsnr\b|SNR	crates/z30-cli/src/suite.rs:709	json!({ "benchmark": "fading", "title": "ITU-R F.1487 two-path Watterson channels (average SNR)",
+benchmark	crates/z30-cli/src/suite.rs:709	json!({ "benchmark": "fading", "title": "ITU-R F.1487 two-path Watterson channels (average SNR)",
+Doppler|doppler	crates/z30-cli/src/suite.rs:710	"channel": "z30_channel::Watterson: two independent equal-power paths separated by delay_ms; each tap a complex Gaussian process whose Doppler POWER s
+Doppler|doppler	crates/z30-cli/src/suite.rs:711	"doppler_definition": "doppler_hz = 2 sigma_D, sigma_D the standard deviation of the tap's Gaussian Doppler power spectral density (two-sided, centred
+simulat	crates/z30-cli/src/suite.rs:712	"doppler_fix": "Before 2026-09-24 (post-remediation audit N-01) the amplitude response was exp(-f^2 / (2 sigma_D^2)), so the simulated spread was dopp
+Doppler|doppler	crates/z30-cli/src/suite.rs:712	"doppler_fix": "Before 2026-09-24 (post-remediation audit N-01) the amplitude response was exp(-f^2 / (2 sigma_D^2)), so the simulated spread was dopp
+benchmark	crates/z30-cli/src/suite.rs:716	/// Entry point for suite benchmarks.
+benchmark	crates/z30-cli/src/suite.rs:720	BENCHMARKS.to_vec()
+benchmark	crates/z30-cli/src/suite.rs:721	} else if BENCHMARKS.contains(&what) {
+benchmark	crates/z30-cli/src/suite.rs:724	return Err(format!("unknown benchmark \"{what}\" (perf, false-decodes, sweep, suite, {})", BENCHMARKS.join(", ")));
+accuracy	crates/z30-cli/src/suite.rs:737	"snr" => snr_accuracy(frames.unwrap_or(100)),
+\bsnr\b|SNR	crates/z30-cli/src/suite.rs:737	"snr" => snr_accuracy(frames.unwrap_or(100)),
+benchmark	crates/z30-cli/src/suite.rs:752	"per_frame": "suite_seed ^ (benchmark << 40) ^ (point << 20) ^ frame, ChaCha8 (z30_channel::rng)" });
+benchmark	crates/z30-channel/src/lib.rs:2	//! Seeded, deterministic channel models for testing and benchmarking the receiver.
+\bsnr\b|SNR	crates/z30-channel/src/lib.rs:8	//! SNR convention (SPEC.md section 10): signal power over noise power in 2500 Hz, for real white
+\bsnr\b|SNR	crates/z30-channel/src/lib.rs:9	//! noise of per-sample variance sigma^2 at rate fs: `SNR = P / (sigma^2 * 5000 / fs)`.
+Doppler|doppler	crates/z30-channel/src/lib.rs:47	/// paths of equal average power, a differential delay between them, and a Doppler spread.
+Doppler|doppler	crates/z30-channel/src/lib.rs:49	/// **Doppler spread, defined.** Each path's complex tap `g(t)` is a zero-mean complex Gaussian
+Doppler|doppler	crates/z30-channel/src/lib.rs:50	/// process whose Doppler POWER spectral density is a Gaussian centred on 0 Hz,
+Doppler|doppler	crates/z30-channel/src/lib.rs:53	///   S(f) = exp(-f^2 / (2 sigma_D^2)) / (sqrt(2 pi) sigma_D),     sigma_D = doppler_hz / 2,
+Doppler|doppler	crates/z30-channel/src/lib.rs:56	/// i.e. `doppler_hz` is the two-sided "2-sigma" frequency spread `2 sigma_D` of the power
+Doppler|doppler	crates/z30-channel/src/lib.rs:59	/// `rho(tau) = exp(-2 pi^2 sigma_D^2 tau^2)`. Units: Hz; `doppler_hz = 0.5` means
+Doppler|doppler	crates/z30-channel/src/lib.rs:68	/// `sigma_D / sqrt 2`: every preset ran at 1/sqrt 2 of its labelled Doppler spread ("moderate
+Doppler|doppler	crates/z30-channel/src/lib.rs:72	/// `tests::generated_taps_have_the_labelled_doppler_spread` fail on that defect.
+Doppler|doppler	crates/z30-channel/src/lib.rs:77	/// Doppler spread: twice the standard deviation of the tap's Gaussian Doppler POWER
+Doppler|doppler	crates/z30-channel/src/lib.rs:79	pub doppler_hz: f64,
+Doppler|doppler	crates/z30-channel/src/lib.rs:82	/// Standard deviation of the Doppler power spectrum for a spread of `doppler_hz` (2 sigma).
+Doppler|doppler	crates/z30-channel/src/lib.rs:83	pub fn doppler_sigma_hz(doppler_hz: f64) -> f64 {
+Doppler|doppler	crates/z30-channel/src/lib.rs:84	doppler_hz / 2.0
+Doppler|doppler	crates/z30-channel/src/lib.rs:88	pub fn doppler_power_response(f_hz: f64, doppler_hz: f64) -> f64 {
+Doppler|doppler	crates/z30-channel/src/lib.rs:89	let sigma = doppler_sigma_hz(doppler_hz).max(1e-6);
+Doppler|doppler	crates/z30-channel/src/lib.rs:94	pub fn doppler_amplitude_response(f_hz: f64, doppler_hz: f64) -> f64 {
+Doppler|doppler	crates/z30-channel/src/lib.rs:95	doppler_power_response(f_hz, doppler_hz).sqrt()
+Doppler|doppler	crates/z30-channel/src/lib.rs:102	"good" => Watterson { delay_ms: 0.5, doppler_hz: 0.1 },
+Doppler|doppler	crates/z30-channel/src/lib.rs:103	"moderate" => Watterson { delay_ms: 1.0, doppler_hz: 0.5 },
+Doppler|doppler	crates/z30-channel/src/lib.rs:104	"poor" => Watterson { delay_ms: 2.0, doppler_hz: 1.0 },
+Doppler|doppler	crates/z30-channel/src/lib.rs:105	"high-moderate" => Watterson { delay_ms: 3.0, doppler_hz: 10.0 },
+\bsnr\b|SNR	crates/z30-channel/src/lib.rs:120	/// SNR in 2500 Hz.
+\bsnr\b|SNR	crates/z30-channel/src/lib.rs:135	/// CW carriers: (frequency Hz, SNR in 2500 Hz).
+Doppler|doppler	crates/z30-channel/src/lib.rs:174	// The AMPLITUDE response: its square is the Doppler power spectrum (see `Watterson`).
+Doppler|doppler	crates/z30-channel/src/lib.rs:176	*v *= doppler_amplitude_response(bin_freq(i, n, fs), w.doppler_hz);
+\bsnr\b|SNR	crates/z30-channel/src/lib.rs:182	// the 2026-09-24 audit, H-10) forced every frame to average exactly the requested SNR,
+Doppler|doppler	crates/z30-channel/src/lib.rs:184	// impairment when the Doppler spread is small against 1/24 s: the "good" preset measured
+Doppler|doppler	crates/z30-channel/src/lib.rs:186	let h2: f64 = (0..n).map(|i| doppler_power_response(bin_freq(i, n, fs), w.doppler_hz)).sum();
+\bsnr\b|SNR	crates/z30-channel/src/lib.rs:257	for &(f, snr) in &band.cw {
+\bsnr\b|SNR	crates/z30-channel/src/lib.rs:258	let a = (2.0 * 10f64.powf(snr / 10.0) * noise_var_2500).sqrt();
+unwrap_or\(0	crates/z30-gui/src/app.rs:504	Some(d) => format!("{:.6}", (d.value + r.tx_audio_hz.unwrap_or(0.0)) / 1e6),
+unwrap_or_default	crates/z30-gui/src/app.rs:604	let classes: Vec<LicenseClass> = c.station.region.map(|r| r.license_classes().to_vec()).unwrap_or_default();
+unwrap_or\(0	crates/z30-gui/src/app.rs:615	c.station.configured_tx_power_w = set.then_some(c.station.configured_tx_power_w.unwrap_or(0.0));
+14[._]?076	crates/z30-gui/src/app.rs:633	c.operating.dial_hz = if set { Some(c.operating.dial_hz.unwrap_or(14_076_000)) } else { None };
+unwrap_or_default	crates/z30-gui/src/app.rs:707	3 => PttConfig::Serial { port: ports.first().cloned().unwrap_or_default(), line: SerialLine::Rts, active_high: true },
+benchmark	crates/z30-dsp/src/demod.rs:9	//! is the receiver's constant (AGENTS.md section 4), not a benchmark's.
+\bsnr\b|SNR	crates/z30-dsp/src/demod.rs:145	/// SNR in the 2500 Hz reference bandwidth (SPEC.md section 10), measured on the decoded
+expected	crates/z30-dsp/src/demod.rs:153	///   carries one complex dimension of noise, whose expected energy is `n_bin`),
+\bsnr\b|SNR	crates/z30-dsp/src/demod.rs:156	/// - `SNR = 10 log10(S / n_bin) - 10 log10(2500 / 3.125)`.
+accuracy	crates/z30-dsp/src/demod.rs:162	/// derived from it. The accuracy is measured, not assumed:
+accuracy	crates/z30-dsp/src/demod.rs:163	/// `tests/snr_accuracy.rs` asserts it over `SNR_VALIDATED_MIN_DB..=SNR_VALIDATED_MAX_DB`.
+\bsnr\b|SNR	crates/z30-dsp/src/demod.rs:163	/// `tests/snr_accuracy.rs` asserts it over `SNR_VALIDATED_MIN_DB..=SNR_VALIDATED_MAX_DB`.
+\bsnr\b|SNR	crates/z30-dsp/src/demod.rs:234	/// residual, which caps the measurable SNR near +15 dB.
+accuracy	crates/z30-dsp/src/demod.rs:276	/// truth (tests/snr_accuracy.rs: bias within +-0.6 dB, spread within 0.8 dB). Below it frames
+\bsnr\b|SNR	crates/z30-dsp/src/demod.rs:278	pub const SNR_VALIDATED_MIN_DB: f64 = -22.0;
+\bsnr\b|SNR	crates/z30-dsp/src/demod.rs:280	pub const SNR_VALIDATED_MAX_DB: f64 = 30.0;
+golden	crates/z30-dsp/src/ldpc.rs:5	//! iteration count as `Z30LdpcCodec.decode_min_sum` on every vector of the golden corpus. The
+-16\b	crates/z30-dsp/src/math.rs:19	-2.431_279_846_547_954_693_59E-16,
+-16\b	crates/z30-dsp/src/math.rs:54	-2.827_623_980_516_583_484_94E-16,
+-16\b	crates/z30-dsp/src/math.rs:55	-3.425_485_619_677_219_134_62E-16,
+unwrap_or\(0	crates/z30-dsp/src/resample.rs:44	let pass = passband_hz.unwrap_or(0.95 * nyq).min(0.99 * nyq);
+benchmark	crates/z30-dsp/src/slot.rs:3	//! benchmarked is the receiver that ships by construction rather than by policy.
+benchmark	crates/z30-dsp/src/slot.rs:19	/// Receiver configuration. Defaults are the benchmark-validated ones.
+\bsnr\b|SNR	crates/z30-dsp/src/slot.rs:77	/// SNR in 2500 Hz, measured on the decoded frame against the noise left when its own
+unwrap_or_default	crates/z30-dsp/src/slot.rs:208	let hyps = cfg.ap.as_ref().map(|ctx| build_ladder(ctx, Some(f0_abs))).unwrap_or_default();
+benchmark	crates/z30-dsp/src/sync.rs:8	//! the whole passband with this metric loses nothing against the benchmark's +-12 Hz window

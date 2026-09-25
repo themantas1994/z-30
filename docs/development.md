@@ -3,9 +3,11 @@
 ## Toolchain
 
 - **Rust 1.95 or newer.** The workspace's `rust-version` is 1.95 (egui/eframe 0.36 needs it),
-  and CI's `msrv` job builds and tests the whole workspace on exactly the version `Cargo.toml`
-  declares, as well as on current stable. It used to declare 1.82, which could not build the GUI
-  (2026-09-24 audit, H-08).
+  and CI's `msrv` job builds, runs clippy with warnings as errors, and tests the whole workspace
+  on exactly the version `Cargo.toml` declares, as well as on current stable. It used to declare
+  1.82, which could not build the GUI (2026-09-24 audit, H-08); and until the corrective
+  remediation, clippy (deny-by-default `overly_complex_bool_expr`) failed on 1.95 while CI ran
+  it on stable only (post-remediation audit N-02).
 - **Linux system libraries** (the GUI and audio): `libasound2-dev libudev-dev libxkbcommon-dev
   libwayland-dev libx11-dev libxcursor-dev libxrandr-dev libxi-dev libgl1-mesa-dev`.
 - **Python 3.10+** with `legacy/python-oracle/requirements.txt`, only for the frozen oracle, the
@@ -100,7 +102,7 @@ tied to source. See [benchmarking.md](benchmarking.md).
 clippy with warnings as errors, debug and release tests, release binaries with CM108, a check
 that each binary reports the commit it was built from (not a dirty tree) and its CM108 feature,
 a scan of the release binaries for the old W1AW default, a CLI encode → decode round trip and a
-refusal check. Then: the whole workspace on the declared MSRV; the benchmark suite at
+refusal check. Then: the whole workspace on the declared MSRV (build, clippy, tests); the benchmark suite at
 exploratory size with a provenance check on every result file; the golden vectors regenerated
 from both oracles and compared byte for byte; and a paired oracle-vs-vNext run through the
 bindings.

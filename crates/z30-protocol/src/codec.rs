@@ -256,7 +256,11 @@ pub fn unpack_call_value(v: u32) -> CallField {
     // nowhere else. Anything else decodes to a string that re-encodes to a different value.
     let (pa, pb) = (p / 37, p % 37);
     let (sa, sb, sc) = (s / 729, (s % 729) / 27, s % 27);
-    let canonical_prefix = pb != 0 && !(pa != 0 && pb == 0);
+    // A one-character prefix is padded on the left (pa = 0), never on the right, so the second
+    // prefix position must hold a character. This read `pb != 0 && !(pa != 0 && pb == 0)`, the
+    // same predicate, which Rust 1.95's deny-by-default `overly_complex_bool_expr` rejects:
+    // clippy failed on the declared MSRV (2026-09-24 post-remediation audit, N-02).
+    let canonical_prefix = pb != 0;
     let canonical_suffix = sa != 0 && !(sb == 0 && sc != 0);
     if !canonical_prefix || !canonical_suffix {
         return CallField::Unrepresentable(v);
@@ -470,8 +474,13 @@ pub struct Message {
     pub extra: Extra,
 }
 
-/// A fully encoded message, ready for the modulator.
-#[derive(Debug, Clone)]
+/// A message encoded into its bits and channel symbols, NOT yet proven to read back as itself.
+///
+/// This is a candidate, not something that can be transmitted: nothing in the transmit path
+/// accepts it. `verify` turns it into a [`VerifiedFrame`], which is the only thing the
+/// transmitter modulates. The fields are public so that a test (or an auditor) can build a
+/// corrupted candidate and watch the verification refuse it.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EncodedMessage {
     /// The message.
     pub message: Message,
@@ -547,17 +556,25 @@ impl Message {
         out
     }
 
-    /// Payload, CRC, LDPC codeword and channel symbols - after proving the payload decodes back
-    /// to this exact message.
+    /// Payload, CRC, LDPC codeword and channel symbols, for a message that passes `validate`.
+    /// The result is an unverified candidate; [`Message::frame`] is encode-then-verify, and is
+    /// what anything that emits a waveform calls.
+    ///
+    /// This used to re-decode its own payload here as well. That comparison is now made by
+    /// `EncodedMessage::verify_round_trip`, from the channel symbols rather than from the
+    /// payload, on every frame that can reach a transmitter - so a second, weaker copy of it
+    /// here could be deleted without any test noticing (2026-09-24 post-remediation audit,
+    /// mutation C06-c), which is what an unprotected safety check looks like.
     pub fn encode(&self) -> Result<EncodedMessage, CodecError> {
         self.validate()?;
-        let payload = self.payload();
-        if unpack_payload(&payload).to_message().as_ref() != Some(self) {
-            return Err(CodecError::RoundTripFailed(self.to_string()));
-        }
-        let info = info_from_payload(&payload);
+        let info = info_from_payload(&self.payload());
         let codeword = encode_info(&info);
         Ok(EncodedMessage { message: self.clone(), info, codeword, symbols: codeword_to_symbols(&codeword) })
+    }
+
+    /// Encodes and verifies: the frame a transmitter may modulate, or the reason there is none.
+    pub fn frame(&self) -> Result<VerifiedFrame, CodecError> {
+        self.encode()?.verify()
     }
 }
 
@@ -569,6 +586,11 @@ impl EncodedMessage {
     /// transmit gate runs this on every frame (2026-09-24 audit, C-06: the legacy packer
     /// transmitted FN42 as RE78 and replied to ZY2ABC as 24BWE, and its gate checked only the
     /// station's own callsign).
+    ///
+    /// Finally the frame is rebuilt from the message alone and must be identical, symbol for
+    /// symbol, to the one being checked: a frame that decodes correctly but is not the one v1
+    /// defines for this message (a stale or foreign codeword that happens to share its fields)
+    /// is refused too.
     pub fn verify_round_trip(&self) -> Result<(), CodecError> {
         let fail = || CodecError::RoundTripFailed(self.message.to_string());
         if crate::SYNC_POSITIONS.iter().zip(crate::SYNC_TONES.iter()).any(|(&p, &t)| self.symbols[p] != t) {
@@ -578,7 +600,7 @@ impl EncodedMessage {
             return Err(fail());
         }
         let cw = crate::symbols::symbols_to_codeword(&self.symbols);
-        if cw != self.codeword || crate::ldpc::syndrome_weight(&cw) != 0 {
+        if cw != self.codeword || cw[..K] != self.info || crate::ldpc::syndrome_weight(&cw) != 0 {
             return Err(fail());
         }
         let decoded = unpack_info(&cw[..K]).ok_or_else(fail)?;
@@ -588,7 +610,55 @@ impl EncodedMessage {
         if Message::parse(&self.message.to_string()).as_ref() != Ok(&self.message) {
             return Err(fail());
         }
+        let canonical = codeword_to_symbols(&encode_info(&info_from_payload(&self.message.payload())));
+        if canonical != self.symbols {
+            return Err(fail());
+        }
         Ok(())
+    }
+
+    /// Proves the round trip and returns the frame as transmittable. Consumes the candidate, so
+    /// what was checked is what is sent: the verified frame cannot be changed afterwards.
+    pub fn verify(self) -> Result<VerifiedFrame, CodecError> {
+        self.verify_round_trip()?;
+        Ok(VerifiedFrame(self))
+    }
+}
+
+/// A frame that has passed [`EncodedMessage::verify_round_trip`]: its 75 symbols carry the
+/// Costas pattern, demap to a codeword with a zero syndrome whose CRC passes and whose fields
+/// unpack to exactly `message()`, and are the symbols v1 defines for that message.
+///
+/// The transmit path accepts only this type (`z30_engine::txgate::Permission::frame`,
+/// `z30_engine::engine::TxKind::Frame`), and the only way to make one is `verify`. So a
+/// transmission of an unverified frame is not a missing `if`, it does not compile - and a
+/// `verify_round_trip` that stopped checking is caught by the corrupted-frame tests
+/// (`tests/round_trip.rs`, and z30-engine's `tests/safety.rs` through the transmit gate).
+/// Before this type existed, three mutations that switched the round trip off survived the
+/// whole test suite (2026-09-24 post-remediation audit, C06-a/b/c).
+///
+/// ```compile_fail
+/// // There is no way to build a VerifiedFrame outside this module without verifying.
+/// let m = z30_protocol::codec::Message::parse("CQ K1ABC FN31").unwrap();
+/// let f = z30_protocol::codec::VerifiedFrame(m.encode().unwrap());
+/// ```
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VerifiedFrame(EncodedMessage);
+
+impl VerifiedFrame {
+    /// The message the frame carries.
+    pub fn message(&self) -> &Message {
+        &self.0.message
+    }
+
+    /// The 75 channel symbols, Costas included, in transmission order.
+    pub fn symbols(&self) -> &[u8; TOTAL_SYMBOLS] {
+        &self.0.symbols
+    }
+
+    /// The whole verified encoding (read-only).
+    pub fn encoded(&self) -> &EncodedMessage {
+        &self.0
     }
 }
 

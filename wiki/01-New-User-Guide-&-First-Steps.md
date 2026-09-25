@@ -8,7 +8,7 @@ both native programs built from the Rust workspace in `crates/`.
 >
 > | State | Status |
 > | :--- | :--- |
-> | Protocol validated | **Yes** — an independent re-implementation from `SPEC.md` reproduces the encoder bit for bit |
+> | Protocol validated | **Yes, against the reference** — the Rust implementation reproduces the frozen oracle's golden vectors bit for bit (an independent re-implementation from `SPEC.md` was reported by the original audit, E007, whose evidence is not in this repository) |
 > | Software simulation validated | **Yes** — the receiver's performance is measured through its production entry point in seeded simulation ([16](16-Benchmarking-Testing-&-CI.md)) |
 > | Hardware validated | **No** — no radio, audio interface or PTT interface has been used with z-30 |
 > | On-air validated | **No** — no z-30 frame has been decoded over a real radio path |

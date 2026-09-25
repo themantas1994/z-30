@@ -1,0 +1,600 @@
+### test_release: cargo +1.95.0 test --workspace --exclude z30-py --release --locked
+   Compiling proc-macro2 v1.0.107
+   Compiling quote v1.0.47
+   Compiling unicode-ident v1.0.26
+   Compiling cfg-if v1.0.5
+   Compiling libc v0.2.189
+   Compiling serde_core v1.0.229
+   Compiling autocfg v1.5.1
+   Compiling bitflags v2.13.2
+   Compiling libm v0.2.16
+   Compiling syn v3.0.6
+   Compiling num-traits v0.2.19
+   Compiling crossbeam-utils v0.8.23
+   Compiling zerocopy v0.8.57
+   Compiling once_cell v1.21.4
+   Compiling serde v1.0.229
+   Compiling rustix v1.1.5
+   Compiling linux-raw-sys v0.12.1
+   Compiling pkg-config v0.3.34
+   Compiling syn v2.0.119
+   Compiling serde_derive v1.0.229
+   Compiling ppv-lite86 v0.2.21
+   Compiling smallvec v1.16.1
+   Compiling log v0.4.34
+   Compiling num-integer v0.1.47
+   Compiling z30-protocol v0.9.0 (/home/user/z-30/crates/z30-protocol)
+   Compiling strength_reduce v0.2.4
+   Compiling either v1.18.0
+   Compiling zmij v1.0.23
+   Compiling transpose v0.2.3
+   Compiling primal-check v0.3.4
+   Compiling num-complex v0.4.6
+   Compiling serde_json v1.0.151
+   Compiling crossbeam-epoch v0.9.21
+   Compiling find-msvc-tools v0.1.13
+   Compiling rustfft v6.4.1
+   Compiling memchr v2.8.3
+   Compiling itoa v1.0.18
+   Compiling crossbeam-deque v0.8.8
+   Compiling shlex v2.0.1
+   Compiling cc v1.4.7
+   Compiling getrandom v0.2.17
+   Compiling rayon-core v1.13.0
+   Compiling rand_core v0.6.4
+   Compiling foldhash v0.2.0
+   Compiling rand_chacha v0.3.1
+   Compiling pin-project-lite v0.2.17
+   Compiling rayon v1.12.0
+   Compiling rand v0.8.8
+   Compiling libloading v0.8.9
+   Compiling rand_distr v0.4.3
+   Compiling hashbrown v0.17.1
+   Compiling realfft v3.5.0
+   Compiling z30-channel v0.9.0 (/home/user/z-30/crates/z30-channel)
+   Compiling winnow v1.0.4
+   Compiling z30-dsp v0.9.0 (/home/user/z-30/crates/z30-dsp)
+   Compiling fastrand v2.5.0
+   Compiling equivalent v1.0.2
+   Compiling slab v0.4.12
+   Compiling toml_parser v1.1.3+spec-1.1.0
+   Compiling indexmap v2.14.2
+   Compiling dlib v0.5.3
+   Compiling wayland-sys v0.31.11
+   Compiling toml_datetime v1.1.1+spec-1.1.0
+   Compiling polling v3.11.0
+   Compiling toml_edit v0.25.15+spec-1.1.0
+   Compiling enumflags2_derive v0.7.12
+   Compiling bytemuck_derive v1.12.1
+   Compiling getrandom v0.3.4
+   Compiling proc-macro-crate v3.5.0
+   Compiling bytemuck v1.25.2
+   Compiling zvariant_utils v4.2.0
+   Compiling wayland-backend v0.3.17
+   Compiling parking v2.2.1
+   Compiling downcast-rs v1.2.1
+   Compiling scoped-tls v1.0.1
+   Compiling zvariant_derive v5.15.0
+   Compiling thiserror v2.0.21
+   Compiling futures-core v0.3.34
+   Compiling quick-xml v0.41.0
+   Compiling thiserror-impl v2.0.21
+   Compiling wayland-client v0.31.15
+   Compiling wayland-scanner v0.31.11
+   Compiling rustversion v1.0.23
+   Compiling cfg_aliases v0.2.2
+   Compiling tracing-attributes v0.1.31
+   Compiling tracing-core v0.1.36
+   Compiling futures-io v0.3.34
+   Compiling tracing v0.1.44
+   Compiling event-listener v5.4.2
+   Compiling enumflags2 v0.7.12
+   Compiling zcheapstr v1.1.0
+   Compiling serde_spanned v0.6.9
+   Compiling toml_datetime v0.6.11
+   Compiling concurrent-queue v2.5.0
+   Compiling toml_write v0.1.2
+   Compiling endi v1.1.1
+   Compiling scopeguard v1.2.0
+   Compiling winnow v0.7.15
+   Compiling zvariant v5.15.0
+   Compiling toml_edit v0.22.27
+   Compiling arc-swap v1.9.2
+   Compiling event-listener-strategy v0.5.4
+   Compiling futures-lite v2.6.1
+   Compiling crossbeam-channel v0.5.17
+   Compiling toml v0.8.23
+   Compiling zbus_names v4.3.4
+   Compiling uuid v1.26.1
+   Compiling async-io v2.6.0
+   Compiling z30-engine v0.9.0 (/home/user/z-30/crates/z30-engine)
+   Compiling wayland-protocols v0.32.13
+   Compiling errno v0.3.14
+   Compiling async-task v4.7.1
+   Compiling khronos_api v3.1.0
+   Compiling signal-hook-registry v1.4.8
+   Compiling async-channel v2.5.0
+   Compiling version_check v0.9.5
+   Compiling atomic-waker v1.1.2
+   Compiling piper v0.2.5
+   Compiling ahash v0.8.12
+   Compiling async-signal v0.2.14
+   Compiling zbus_xml v5.2.1
+   Compiling async-lock v3.4.2
+   Compiling alsa-sys v0.4.0
+   Compiling vcpkg v0.2.15
+   Compiling xml-rs v0.8.29
+   Compiling thiserror v1.0.69
+   Compiling rustix v0.38.44
+   Compiling arrayvec v0.7.8
+   Compiling gl_generator v0.14.0
+   Compiling polycool v0.4.0
+   Compiling libsqlite3-sys v0.38.2
+   Compiling zbus-lockstep v0.5.2
+   Compiling async-process v2.5.0
+   Compiling blocking v1.7.0
+   Compiling async-executor v1.14.0
+   Compiling zbus_macros v5.19.0
+   Compiling async-broadcast v0.7.2
+   Compiling ordered-stream v0.2.0
+   Compiling thiserror-impl v1.0.69
+   Compiling async-recursion v1.1.1
+   Compiling serde_repr v0.1.21
+   Compiling async-trait v0.1.92
+   Compiling x11-dl v2.21.0
+   Compiling xkeysym v0.2.1
+   Compiling siphasher v1.0.3
+   Compiling parking_lot_core v0.9.12
+   Compiling cursor-icon v1.2.0
+   Compiling xcursor v0.3.11
+   Compiling getrandom v0.4.3
+   Compiling linux-raw-sys v0.4.15
+   Compiling simd-adler32 v0.3.10
+   Compiling hex v0.4.3
+   Compiling zbus v5.19.0
+   Compiling wayland-cursor v0.31.14
+   Compiling wayland-csd-frame v0.3.0
+   Compiling phf_shared v0.13.1
+   Compiling zbus-lockstep-macros v0.5.2
+   Compiling kurbo v0.13.1
+   Compiling wayland-protocols-wlr v0.3.12
+   Compiling accesskit v0.24.1
+   Compiling rand_core v0.9.5
+   Compiling color v0.3.3
+   Compiling font-types v0.12.5
+   Compiling euclid v0.22.14
+   Compiling memmap2 v0.9.11
+   Compiling bitflags v1.3.2
+   Compiling cpal v0.18.2
+   Compiling linebender_resource_handle v0.1.1
+   Compiling adler2 v2.0.1
+   Compiling static_assertions v1.1.0
+   Compiling crc32fast v1.5.2
+   Compiling atspi-common v0.13.0
+   Compiling peniko v0.6.1
+   Compiling phf_generator v0.13.1
+   Compiling nix v0.26.4
+   Compiling guillotiere v0.7.0
+   Compiling read-fonts v0.41.0
+   Compiling alsa v0.11.0
+   Compiling calloop v0.13.0
+   Compiling lock_api v0.4.14
+   Compiling unescaper v0.1.10
+   Compiling hashlink v0.12.2
+   Compiling gethostname v1.1.0
+   Compiling unicode-general-category v1.1.0
+   Compiling smithay-client-toolkit v0.19.2
+   Compiling fearless_simd v0.4.1
+   Compiling x11rb-protocol v0.13.2
+   Compiling fallible-streaming-iterator v0.1.9
+   Compiling as-raw-xcb-connection v1.0.1
+   Compiling dasp_sample v0.11.0
+   Compiling fallible-iterator v0.3.0
+   Compiling vello_common v0.1.0
+   Compiling serialport v4.10.1
+   Compiling parking_lot v0.12.5
+   Compiling tempfile v3.27.0
+   Compiling calloop-wayland-source v0.3.0
+   Compiling phf_macros v0.13.1
+   Compiling miniz_oxide v0.9.1
+   Compiling winit v0.30.13
+   Compiling emath v0.36.2
+   Compiling hashbrown v0.16.1
+   Compiling wait-timeout v0.2.1
+   Compiling fnv v1.0.7
+   Compiling bit-vec v0.8.0
+   Compiling hound v3.5.1
+   Compiling raw-window-handle v0.6.2
+   Compiling percent-encoding v2.3.2
+   Compiling rtrb v0.4.0
+   Compiling quick-error v1.2.3
+   Compiling rusty-fork v0.3.1
+   Compiling bit-set v0.8.0
+   Compiling accesskit_consumer v0.36.0
+   Compiling ecolor v0.36.2
+   Compiling flate2 v1.1.10
+   Compiling x11rb v0.13.2
+   Compiling phf v0.13.1
+   Compiling vello_cpu v0.1.0
+   Compiling harfrust v0.12.0
+   Compiling skrifa v0.44.0
+   Compiling atspi-proxies v0.13.0
+   Compiling miniz_oxide v0.8.9
+   Compiling rand_chacha v0.9.0
+   Compiling rand v0.9.5
+   Compiling rand_xorshift v0.4.0
+   Compiling fdeflate v0.3.7
+   Compiling xkbcommon-dl v0.4.2
+   Compiling glutin_glx_sys v0.6.1
+   Compiling glutin_egl_sys v0.7.1
+   Compiling wayland-protocols-plasma v0.3.12
+   Compiling calloop v0.14.4
+   Compiling futures-macro v0.3.34
+   Compiling dpi v0.1.2
+   Compiling smithay-client-toolkit v0.20.0
+   Compiling self_cell v1.3.0
+   Compiling smol_str v0.2.2
+   Compiling profiling v1.0.18
+   Compiling pxfm v0.1.30
+   Compiling nohash-hasher v0.2.0
+   Compiling futures-task v0.3.34
+   Compiling regex-syntax v0.8.11
+   Compiling epaint_default_fonts v0.36.2
+   Compiling unicode-segmentation v1.13.3
+   Compiling unarray v0.1.4
+   Compiling proptest v1.11.0
+   Compiling epaint v0.36.2
+   Compiling rusqlite v0.40.2
+   Compiling z30-io v0.9.0 (/home/user/z-30/crates/z30-io)
+   Compiling moxcms v0.8.1
+   Compiling futures-util v0.3.34
+   Compiling calloop-wayland-source v0.4.1
+   Compiling png v0.18.1
+   Compiling atspi v0.29.0
+   Compiling accesskit_atspi_common v0.18.1
+   Compiling wayland-protocols-misc v0.3.12
+   Compiling wayland-protocols-experimental v20250721.0.1
+   Compiling glutin v0.32.3
+   Compiling nix v0.31.3
+   Compiling itertools v0.15.0
+   Compiling utf8parse v0.2.2
+   Compiling byteorder-lite v0.1.0
+   Compiling image v0.25.10
+   Compiling egui v0.36.2
+   Compiling anstyle-parse v1.0.0
+   Compiling accesskit_unix v0.21.1
+   Compiling glutin-winit v0.5.0
+   Compiling colorchoice v1.0.5
+   Compiling anstyle-query v1.1.5
+   Compiling anstyle v1.0.14
+   Compiling is_terminal_polyfill v1.70.2
+   Compiling anstream v1.0.0
+   Compiling accesskit_winit v0.32.2
+   Compiling smithay-clipboard v0.7.3
+   Compiling arboard v3.6.1
+   Compiling litrs v1.0.0
+   Compiling heck v0.5.0
+   Compiling web-time v1.1.0
+   Compiling glow v0.17.0
+   Compiling clap_lex v1.1.1
+   Compiling strsim v0.11.1
+   Compiling clap_builder v4.6.7
+   Compiling egui_glow v0.36.2
+   Compiling egui-winit v0.36.2
+   Compiling clap_derive v4.6.7
+   Compiling document-features v0.2.12
+   Compiling ctrlc v3.5.2
+   Compiling z30-cli v0.9.0 (/home/user/z-30/crates/z30-cli)
+   Compiling z30-gui v0.9.0 (/home/user/z-30/crates/z30-gui)
+   Compiling eframe v0.36.2
+   Compiling clap v4.6.7
+    Finished `release` profile [optimized + debuginfo] target(s) in 5m 25s
+     Running unittests src/lib.rs (/home/user/tgt-195/release/deps/z30_channel-aed045e03551e3b0)
+
+running 4 tests
+test tests::stretch_scales_frequency ... ok
+test tests::snr_is_calibrated ... ok
+test tests::deterministic ... ok
+test tests::watterson_preserves_power_over_the_ensemble_and_not_per_frame ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 29.83s
+
+     Running unittests src/main.rs (/home/user/tgt-195/release/deps/z30-a76e7d9788b27997)
+
+running 8 tests
+test bench::tests::upper_bound_matches_the_rule_of_three ... ok
+test loopback::tests::it_will_not_play_audio_without_the_confirmation ... ok
+test suite::tests::crossing_interpolates_and_brackets ... ok
+test suite::tests::mcnemar_matches_the_audit ... ok
+test suite::tests::wilson_matches_a_known_value ... ok
+test suite::tests::frame_seeds_do_not_collide_across_points_and_benchmarks ... ok
+test loopback::tests::a_recording_without_the_frame_fails ... ok
+test loopback::tests::a_clean_loopback_recording_passes_and_measures_the_waveforms_bandwidth ... ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.40s
+
+     Running unittests src/lib.rs (/home/user/tgt-195/release/deps/z30_dsp-48e9992f02abf91b)
+
+running 13 tests
+test ap::tests::deep_types_are_frequency_gated ... ok
+test demod::tests::coherence_weight_is_the_shipped_zero ... ok
+test ap::tests::crc_bits_are_never_asserted ... ok
+test ldpc::tests::clean_codeword_decodes_from_the_hard_decision ... ok
+test ldpc::tests::corrects_errors_by_belief_propagation ... ok
+test math::tests::asymptote_switch_matches_the_reference_step ... ok
+test math::tests::i0_known_values ... ok
+test baseband::tests::a_tone_lands_on_the_expected_baseband_frequency_and_amplitude ... ok
+test resample::tests::streaming_equals_one_shot ... ok
+test sic::tests::incremental_interpolation_matches_direct ... ok
+test resample::tests::passes_the_band_and_rejects_aliases ... ok
+test resample::tests::input_delay_locates_an_impulse ... ok
+test ldpc::tests::noise_does_not_decode_and_is_deterministic ... ok
+
+test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.08s
+
+     Running tests/channel_scenarios.rs (/home/user/tgt-195/release/deps/channel_scenarios-f1ab6949bfce8250)
+
+running 11 tests
+test a_busy_band_decodes_every_station_once_with_no_false_decodes ... ok
+test decode_slot_is_deterministic ... ok
+test a_strong_cw_carrier_inside_the_signal_does_not_stop_the_decode ... ok
+test fading_is_reported_not_gated ... ok
+test noise_only_slots_produce_no_decodes ... ok
+test clean_plus_10_db_decodes_everything_everywhere ... ok
+test sic_suppresses_a_decoded_station_by_more_than_20_db_and_reveals_the_one_underneath ... ok
+test sound_card_clock_error_of_1000_ppm_costs_nothing_at_minus_18_db ... ok
+test moderate_minus_18_db_across_band_timing_and_phase ... ok
+test weak_minus_22_db_decodes_most_frames ... ok
+test frequency_drift_up_to_4_hz_is_tracked_h9 ... ok
+
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 24.77s
+
+     Running tests/golden_demod.rs (/home/user/tgt-195/release/deps/golden_demod-5f8e97bfc66aea4d)
+
+running 2 tests
+test the_fft_demodulator_is_the_reference_demodulator ... ok
+test both_demodulators_lead_to_the_same_decode ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests/golden_ldpc.rs (/home/user/tgt-195/release/deps/golden_ldpc-5d8c059cfbfc3da1)
+
+running 8 tests
+test dither_matches_the_oracle ... ok
+test ap_ladders_match_the_oracle ... ok
+test legacy_osd_path_is_bit_exact_and_the_fixed_rule_agrees_on_it ... ok
+test ap_decode_is_bit_exact_on_the_corpus ... ok
+test screen_osd_pool ... ignored
+test ldpc_cascade_is_bit_exact_on_the_corpus ... ok
+test production_decoder_never_accepts_a_crc_failure_and_agrees_with_bp ... ok
+test an_empty_ap_mask_decodes_bit_identically_to_no_mask ... ok
+
+test result: ok. 7 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 6.16s
+
+     Running tests/sensitivity_regression.rs (/home/user/tgt-195/release/deps/sensitivity_regression-de834fcfee7c3255)
+
+running 1 test
+test minus_22_db_blind_decodes_at_least_84_of_100_with_no_false_decodes ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 9.93s
+
+     Running tests/sic_regression.rs (/home/user/tgt-195/release/deps/sic_regression-1d38aebb15689577)
+
+running 4 tests
+test subtracting_a_frame_that_is_not_there_removes_only_the_noise_projection_and_creates_nothing ... ok
+test a_subtraction_never_adds_energy_and_removes_what_the_station_contributed ... ok
+test a_busy_band_decodes_identically_on_one_thread_and_on_many ... ok
+test random_overlapping_bands_sic_on_versus_off_paired ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 8.76s
+
+     Running tests/snr_accuracy.rs (/home/user/tgt-195/release/deps/snr_accuracy-0f4b4043e998745e)
+
+running 2 tests
+test an_estimate_is_never_reported_above_the_strongest_signal_measured ... ok
+test reported_snr_tracks_the_true_snr_from_threshold_to_plus_30_db ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 43.47s
+
+     Running unittests src/lib.rs (/home/user/tgt-195/release/deps/z30_engine-72efaf7ba298d956)
+
+running 6 tests
+test bandplan::tests::edges_not_centres ... ok
+test clock::tests::a_jump_starts_a_new_epoch ... ok
+test config::tests::a_new_installation_is_unconfigured_and_cannot_transmit ... ok
+test bandplan::tests::nearest_segment_reports_distance ... ok
+test api::snr_text_tests::unmeasured_and_out_of_range_values_are_not_shown_as_measurements ... ok
+test clock::tests::tracks_a_drifting_device_with_jittery_timestamps ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests/emergency.rs (/home/user/tgt-195/release/deps/emergency-448a7eec20fd6a53)
+
+running 1 test
+test p5_emergency_release_and_drop_release_a_keyed_line ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/live_runtime.rs (/home/user/tgt-195/release/deps/live_runtime-b5d4703de3792e50)
+
+running 1 test
+test c01_a_slot_is_decoded_only_from_its_complete_window_through_the_production_runtime ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.99s
+
+     Running tests/qso_logging.rs (/home/user/tgt-195/release/deps/qso_logging-c002247beccadcf3)
+
+running 4 tests
+test an_exchange_that_never_completes_logs_nothing ... ok
+test no_measured_snr_means_no_report_is_sent_and_none_is_logged ... ok
+test a_record_without_a_partner_or_a_real_utc_time_is_refused ... ok
+test a_contact_with_no_grid_received_logs_no_grid_and_real_utc ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/safety.rs (/home/user/tgt-195/release/deps/safety-705d4b8c5f31ff65)
+
+running 23 tests
+test callsign_syntax_matches_the_shared_vectors ... ok
+test g2_region_and_class_are_required_and_must_match ... ok
+test g1_unconfigured_placeholder_and_malformed_callsigns_are_refused_with_the_right_reason ... ok
+test g3_the_radiated_emission_not_the_dial_is_checked_at_its_edges ... ok
+test g4_fails_closed_and_reports_every_violation ... ok
+test c5_callsigns_v1_would_transmit_as_another_station_are_refused ... ok
+test g6_the_whole_frame_is_checked_partner_call_grid_and_report_not_just_our_call ... ok
+test h2_a_halt_between_plan_and_key_abandons_the_transmission ... ok
+test h1_no_ptt_method_or_unavailable_tx_hardware_refuses_before_keying ... ok
+test p4_the_watchdog_unkeys_at_the_hardware_after_max_tx_seconds ... ok
+test r1_a_settled_rig_that_disagrees_is_reported ... ok
+test g5_the_frame_must_encode_and_be_sent_from_this_station ... ok
+test p4c_the_limit_can_never_be_raised ... ok
+test r4_measured_tuning_resolution ... ok
+test r2_no_readback_is_unverified_not_wrong ... ok
+test r3_an_unsettled_qsy_is_not_a_refusal ... ok
+test z1_a_release_drives_what_the_key_drove ... ok
+test r5_ptt_settle_window ... ok
+test r6_the_gate_refuses_a_dial_the_radio_contradicts_and_only_that ... ok
+test z2b_vox_never_reports_verified_and_no_ptt_cannot_key ... ok
+test z1b_replacing_the_line_while_keyed_releases_the_old_line_first ... ok
+test z2_a_key_the_hardware_refused_leaves_nothing_keyed ... ok
+test p4b_the_watchdog_thread_works_without_the_engine ... ok
+
+test result: ok. 23 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.41s
+
+     Running tests/virtual_clock.rs (/home/user/tgt-195/release/deps/virtual_clock-5fb05c8c5e9f92b7)
+
+running 2 tests
+test closed_loop_qso_through_the_real_pipeline_decoder_gate_sequencer_and_logger ... ok
+test soak_24_hours_every_slot_once_aligned_to_utc_through_drift_jitter_and_a_dropout ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 15.99s
+
+     Running unittests src/main.rs (/home/user/tgt-195/release/deps/z30_gui-a64a860f05218ba0)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/lib.rs (/home/user/tgt-195/release/deps/z30_io-25ded3a1e53add50)
+
+running 11 tests
+test logbook::tests::adif_carries_only_what_exists ... ok
+test logbook::tests::sqlite_round_trip_keeps_absent_fields_absent_and_provenance ... ok
+test migrate::tests::running_the_migration_twice_changes_nothing_the_second_time ... ok
+test logbook::tests::utc_is_utc ... ok
+test migrate::tests::migrates_the_web_config_and_reports_every_decision ... ok
+test paths::tests::config_round_trips_through_toml ... ok
+test migrate::tests::the_legacy_auto_loggers_defaults_and_runtime_state_are_not_migrated ... ok
+test wallclock::tests::synchronised_is_claimed_only_when_the_os_says_so ... ok
+test wallclock::tests::utc_is_the_operating_systems_with_no_offset_applied ... ok
+test rigctld::tests::ptt_keys_and_releases_and_an_unreachable_daemon_fails ... ok
+test rigctld::tests::reads_sets_and_reports_refusals_as_failures ... ok
+
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+     Running tests/callback_alloc.rs (/home/user/tgt-195/release/deps/callback_alloc-8649f628977a3664)
+
+running 1 test
+test the_capture_callback_never_allocates_and_reports_overruns_as_gaps ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/logbook_integrity.rs (/home/user/tgt-195/release/deps/logbook_integrity-ad6263cbf2470d78)
+
+running 4 tests
+test adif_is_well_formed ... ok
+test utc_in_the_log_does_not_depend_on_the_local_time_zone ... ok
+test a_record_describing_no_contact_is_not_written ... ok
+test missing_fields_stay_missing_in_sqlite_and_adif ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/lib.rs (/home/user/tgt-195/release/deps/z30_protocol-14fc7f282dd5af87)
+
+running 18 tests
+test codec::tests::display_is_canonical ... ok
+test crc::tests::known_answers ... ok
+test codec::tests::audit_h2_h3_m6_are_refused_not_transformed ... ok
+test crc::tests::single_bit_errors_are_all_detected ... ok
+test codec::tests::audit_c5_callsigns_are_refused ... ok
+test codec::tests::exhaustive_canonical_decode_round_trip ... ok
+test gfsk::tests::pulses_sum_to_one_in_the_interior ... ok
+test gfsk::tests::refuses_what_would_be_a_malformed_emission ... ok
+test ldpc::tests::check_edges_total ... ok
+test ldpc::tests::every_codeword_has_zero_syndrome ... ok
+test gfsk::tests::constant_envelope_between_the_ramps ... ok
+test symbols::tests::round_trip ... ok
+test tests::costas_pattern_is_the_frozen_one ... ok
+test tests::frame_arithmetic ... ok
+test tests::nsps_matches_reference_truncation ... ok
+test ldpc::tests::table_is_degree_five_without_repeats_and_in_range ... ok
+test ldpc::tests::girth_six_no_four_cycles ... ok
+test gfsk::tests::the_analytic_replica_is_the_transmitted_waveform ... ok
+
+test result: ok. 18 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+
+     Running tests/golden.rs (/home/user/tgt-195/release/deps/golden-abc06d8539ff1d58)
+
+running 5 tests
+test callsign_field_matches_the_oracle_where_it_round_trips_and_refuses_where_it_does_not ... ok
+test grid_table_matches_the_shipped_decoder ... ok
+test crc_ldpc_and_symbols_are_bit_exact ... ok
+test whole_messages_match_the_shipped_packer_or_are_refused ... ok
+test gfsk_pulse_and_waveforms_match_within_tolerance ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.09s
+
+     Running tests/properties.rs (/home/user/tgt-195/release/deps/properties-176a8c170fc70843)
+
+running 5 tests
+test standard_calls_round_trip_or_are_refused_for_the_documented_reason ... ok
+test grids_outside_the_table_are_refused ... ok
+test any_payload_decodes_without_panicking_and_canonical_messages_re_encode ... ok
+test unusual_calls_are_refused_never_transformed ... ok
+test accepted_messages_round_trip_through_bits ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+     Running tests/round_trip.rs (/home/user/tgt-195/release/deps/round_trip-ffe76b732d7c89d6)
+
+running 6 tests
+test cq_forms_and_qrz ... ok
+test hand_built_out_of_range_fields_are_refused_not_panicked_on ... ok
+test every_report_and_acknowledgement ... ok
+test the_audit_substitutions_are_all_refused ... ok
+test every_maidenhead_square_is_sent_exactly_or_refused ... ok
+test sampled_callsign_space_partner_and_own_calls ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.25s
+
+   Doc-tests z30_channel
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests z30_dsp
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests z30_engine
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests z30_io
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests z30_protocol
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+EXIT 0 (468 s)

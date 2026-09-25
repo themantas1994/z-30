@@ -87,7 +87,7 @@ jobs:
         run: ./target/release/z30 --benchmark perf --frames 2
 
   msrv:
-    name: Declared minimum Rust version builds and passes
+    name: Declared minimum Rust version builds, lints clean and passes
     # Cargo.toml declares rust-version = "1.95". It used to declare 1.82 while the GUI needed
     # 1.95, so the declared version could not build the workspace (2026-09-24 audit, H-08). This
     # job reads the version from Cargo.toml, so the declaration and the check cannot drift.
@@ -100,10 +100,16 @@ jobs:
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: ${{ steps.msrv.outputs.version }}
+          components: clippy
       - run: sudo apt-get update && sudo apt-get install -y libasound2-dev libudev-dev libxkbcommon-dev libwayland-dev libx11-dev libxcursor-dev libxrandr-dev libxi-dev libgl1-mesa-dev
       - uses: Swatinem/rust-cache@v2
       - name: Build everything on ${{ steps.msrv.outputs.version }}
         run: cargo build --workspace --exclude z30-py --all-targets --locked --features z30-cli/cm108,z30-gui/cm108
+      - name: Clippy on ${{ steps.msrv.outputs.version }} (warnings are errors)
+        # A supported toolchain passes every quality gate a contributor runs, not only the build:
+        # 1.95's deny-by-default overly_complex_bool_expr failed here while CI ran clippy on
+        # stable only (2026-09-24 post-remediation audit, N-02).
+        run: cargo clippy --workspace --all-targets --exclude z30-py --locked --features z30-cli/cm108,z30-gui/cm108 -- -D warnings
       - name: Test on ${{ steps.msrv.outputs.version }}
         run: cargo test --workspace --exclude z30-py --release --locked
 

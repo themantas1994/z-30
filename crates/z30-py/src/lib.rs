@@ -147,8 +147,8 @@ fn ldpc_decode(llrs: &Bound<'_, PyBytes>) -> PyResult<(bool, String, usize, Stri
 #[pyfunction]
 fn encode_message(text: &str) -> PyResult<(String, String, Vec<u8>)> {
     let m = Message::parse(text).map_err(|e| PyValueError::new_err(e.to_string()))?;
-    let enc = m.encode().map_err(|e| PyValueError::new_err(e.to_string()))?;
-    Ok((m.to_string(), bits(&enc.info), enc.symbols.to_vec()))
+    let frame = m.frame().map_err(|e| PyValueError::new_err(e.to_string()))?;
+    Ok((m.to_string(), bits(&frame.encoded().info), frame.symbols().to_vec()))
 }
 
 /// The crate version (for the provenance line every published figure carries).

@@ -1,0 +1,6 @@
+### build_release_cm108: cargo +1.95.0 build --release --locked -p z30-cli -p z30-gui --features z30-cli/cm108,z30-gui/cm108
+   Compiling z30-io v0.9.0 (/home/user/z-30/crates/z30-io)
+   Compiling z30-gui v0.9.0 (/home/user/z-30/crates/z30-gui)
+   Compiling z30-cli v0.9.0 (/home/user/z-30/crates/z30-cli)
+    Finished `release` profile [optimized + debuginfo] target(s) in 1m 57s
+EXIT 0 (118 s)
