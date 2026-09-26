@@ -143,3 +143,28 @@ transmit paths, dependency updates that leave the benchmark suite bit-identical 
 but not sections 3–5: they are still code-reviewed and still merge only with board acceptance.
 Where the suite is claimed to be unchanged, the pull request shows it
 (`audit/2026-09-24-corrective-remediation/evidence/scripts/compare_results.py`).
+
+For a **dependency update** there is a cheaper proof that is still a proof, and it is the one to
+reach for first:
+
+```bash
+git show <base>:Cargo.lock > /tmp/base.lock
+git show <head>:Cargo.lock > /tmp/head.lock
+python3 research/lock_closure.py /tmp/base.lock /tmp/head.lock     # exit 0 = unchanged
+```
+
+`lock_closure.py` compares the resolved dependency closure of `z30-cli` (the binary that runs the
+suite) and `z30-dsp` (the receiver) between the two lock files. If no crate in either closure
+changes name, version or source, the suite is built from an identical set of inputs and no
+measured figure can move — that is sufficient, and the update is a section 7 change. It needs no
+toolchain and no hour of compute, so a reviewer can always produce it.
+
+It proves one direction only. When a closure **does** change, section 7 does not apply on this
+evidence: the update reaches the measurement and needs section 2 in full, with
+`research/results/<commit>/` for baseline and candidate compared by `compare_results.py`. A bump
+to `rand`, `rand_chacha` or `rand_distr` is always in this class — they generate every seeded
+channel realisation (`crates/z30-channel/src/lib.rs`), so those figures are re-baselined
+deliberately, never absorbed quietly into a routine bump.
+
+Section 3 still applies either way. A section 7 change whose CI is red does not land, however
+sound its bit-identical proof is.
