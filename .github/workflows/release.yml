@@ -4,19 +4,41 @@ name: Release
 # `z30-gui` desktop application, built from the tagged commit, with CM108 GPIO PTT included.
 #
 # Each archive contains exactly: the two binaries, README.md, LICENSE, INSTALL.md and
-# BUILDINFO.txt (the binaries' own `--version` output). No Python, no Node, no browser bundle,
-# no other runtime - checked below, so a release cannot quietly carry the retired runtime the way
-# the Python wheel carried a 63-commit-stale web bundle (2026-09-24 audit, C-04).
+# BUILDINFO.txt (the binaries' own `--version` output); the Linux archive additionally carries
+# the desktop entry and icon, because a reader of INSTALL.md who downloaded an archive has no
+# source tree to install them from. No Python, no Node, no browser bundle, no other runtime -
+# checked below, so a release cannot quietly carry the retired runtime the way the Python wheel
+# carried a 63-commit-stale web bundle (2026-09-24 audit, C-04).
 #
-# Nothing here claims hardware validation: see docs/hardware.md.
+# The build and packaging jobs also run on a pull request that touches the release path, and on
+# `workflow_dispatch`. That is a DRY RUN: it produces the archives as workflow artefacts and the
+# `publish` job is skipped, because it is gated on a `v*` tag. Cutting the tag is the only
+# outward-facing step, and this workflow was never once exercised before that trigger existed.
+#
+# Nothing here claims hardware validation: see docs/hardware.md. The published notes come from
+# docs/release-notes/<tag>.md, and `publish` refuses a notes file that does not state the
+# validation status.
 
 on:
   push:
     tags: ['v*']
+  pull_request:
+    paths:
+      - '.github/workflows/release.yml'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'packaging/**'
+      - 'docs/install.md'
+      - 'docs/release-notes/**'
   workflow_dispatch:
 
 permissions:
   contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  # Never cancel the run that builds what a tag publishes; a superseded dry run is fine to drop.
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/v') }}
 
 env:
   CARGO_TERM_COLOR: always
@@ -29,10 +51,15 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # Ubuntu 22.04 is the oldest image GitHub still hosts: it sets the glibc floor the
+          # Linux archive claims in docs/install.md (2.35).
           - { os: ubuntu-22.04, target: x86_64-unknown-linux-gnu, archive: tar.gz }
           - { os: windows-latest, target: x86_64-pc-windows-msvc, archive: zip }
-          - { os: macos-14, target: aarch64-apple-darwin, archive: tar.gz }
-          - { os: macos-13, target: x86_64-apple-darwin, archive: tar.gz }
+          # macos-15 is arm64 and macos-15-intel is x86-64. The previous macos-14/macos-13 pair
+          # could not have produced a release: macos-13 has been removed from the hosted images
+          # and macos-14 is deprecated, so the Intel job would have failed to find a runner.
+          - { os: macos-15, target: aarch64-apple-darwin, archive: tar.gz }
+          - { os: macos-15-intel, target: x86_64-apple-darwin, archive: tar.gz }
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
@@ -46,6 +73,18 @@ jobs:
         run: echo "SOURCE_DATE_EPOCH=$(git log -1 --format=%ct)" >> "$GITHUB_ENV"
       - name: Test on this platform first
         run: cargo test --workspace --exclude z30-py --release --locked
+      - name: A new installation cannot transmit (named, so a release run shows the evidence)
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Named on purpose: "no default callsign, region, class, PTT, dial or transmit level"
+          # is the invariant a release can break silently. `1 passed` is checked because a filter
+          # that matches nothing also exits 0, and a green step that ran no test is not evidence.
+          cargo test -p z30-engine --release --locked --lib \
+            config::tests::a_new_installation_is_unconfigured_and_cannot_transmit \
+            -- --exact --nocapture | tee fresh-install.txt
+          grep -q "1 passed" fresh-install.txt
+          rm -f fresh-install.txt
       - name: Build the release binaries
         run: cargo build --release --locked --target ${{ matrix.target }} -p z30-cli -p z30-gui --features z30-cli/cm108,z30-gui/cm108
       - name: Package
@@ -54,7 +93,13 @@ jobs:
           set -euo pipefail
           ext=""; [ "$RUNNER_OS" = "Windows" ] && ext=".exe"
           bin=target/${{ matrix.target }}/release
-          version=$(grep -m1 '^version' Cargo.toml | sed -E 's/.*"(.*)".*/\1/')
+          version=$(sed -n '/^\[workspace.package\]/,/^\[/p' Cargo.toml | sed -nE 's/^version *= *"(.*)".*/\1/p' | head -1)
+          [ -n "$version" ] || { echo "no version in [workspace.package]"; exit 1; }
+          # An artefact may not claim a version the tag does not carry, and a tag may not publish
+          # a version the workspace does not declare.
+          if [ "${GITHUB_REF_TYPE:-}" = "tag" ] && [ "$GITHUB_REF_NAME" != "v$version" ]; then
+            echo "tag $GITHUB_REF_NAME does not match the workspace version $version (expected v$version)"; exit 1
+          fi
           name="z30-${version}-${{ matrix.target }}"
           mkdir -p "dist/$name"
           cp "$bin/z30$ext" "$bin/z30-gui$ext" README.md LICENSE "dist/$name/"
@@ -66,13 +111,41 @@ jobs:
           grep -q "$short" "dist/$name/BUILDINFO.txt"
           ! grep -q dirty "dist/$name/BUILDINFO.txt"
           grep -q "features:     cm108" "dist/$name/BUILDINFO.txt"
-          # Exactly these files and nothing else.
+          # Exactly these files and nothing else. The Linux archive also carries what
+          # INSTALL.md's "Linux desktop entry" section installs.
           expected="BUILDINFO.txt INSTALL.md LICENSE README.md z30$ext z30-gui$ext"
+          if [ "$RUNNER_OS" = "Linux" ]; then
+            cp packaging/linux/z30-gui.desktop packaging/linux/z30.svg "dist/$name/"
+            expected="$expected z30-gui.desktop z30.svg"
+          fi
           actual=$(ls "dist/$name" | sort | tr '\n' ' ' | sed 's/ $//')
           [ "$actual" = "$(echo $expected | tr ' ' '\n' | sort | tr '\n' ' ' | sed 's/ $//')" ] || { echo "unexpected contents: $actual"; exit 1; }
           cd dist
           if [ "${{ matrix.archive }}" = "zip" ]; then 7z a "$name.zip" "$name" > /dev/null; else tar czf "$name.tar.gz" "$name"; fi
           echo "ARCHIVE=dist/$name.${{ matrix.archive }}" >> "$GITHUB_ENV"
+          echo "PKGDIR=dist/$name" >> "$GITHUB_ENV"
+      - name: No real callsign ships in the PACKAGED binaries (audit C-04, the W1AW default)
+        shell: bash
+        run: |
+          set -euo pipefail
+          ext=""; [ "$RUNNER_OS" = "Windows" ] && ext=".exe"
+          # rust.yml scans the binaries it built itself, on Linux only; this scans the ones the
+          # archive carries, on every platform, because those are the only ones an operator runs.
+          # `tr` stands in for `strings`, which the Windows and macOS runners do not both have.
+          for b in "$PKGDIR/z30$ext" "$PKGDIR/z30-gui$ext"; do
+            if tr -c '[:print:]' '\n' < "$b" | LC_ALL=C grep -qw W1AW; then echo "W1AW is in $b"; exit 1; fi
+          done
+          echo "no W1AW in either packaged binary"
+      - name: The packaged binary decodes its own frame on this platform (software loopback)
+        shell: bash
+        run: |
+          set -euo pipefail
+          ext=""; [ "$RUNNER_OS" = "Windows" ] && ext=".exe"
+          # --loopback-test reads no configuration and has no audio output, PTT or rig control
+          # (crates/z30-cli/tests/loopback_isolation.rs). It exits non-zero if the frame the
+          # production transmit synthesis produced does not come back out of decode_slot, so this
+          # is the archive's own smoke test - and it is NOT hardware validation.
+          "./$PKGDIR/z30$ext" --loopback-test
       - uses: actions/upload-artifact@v7
         with:
           name: ${{ matrix.target }}
@@ -92,6 +165,27 @@ jobs:
         with:
           path: artefacts
           merge-multiple: true
+      - name: Every platform's archive is here, named for this tag
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#v}"
+          for a in x86_64-unknown-linux-gnu.tar.gz x86_64-pc-windows-msvc.zip \
+                   aarch64-apple-darwin.tar.gz x86_64-apple-darwin.tar.gz; do
+            test -f "artefacts/z30-$version-$a" || { echo "missing artefact z30-$version-$a"; exit 1; }
+          done
+          ls -l artefacts
+      - name: The notes state the validation status, or there is no release
+        run: |
+          set -euo pipefail
+          notes="docs/release-notes/$GITHUB_REF_NAME.md"
+          test -f "$notes" || { echo "no release notes at $notes"; exit 1; }
+          # A release note that leaves the status out is how "not validated on hardware" quietly
+          # becomes "validated". These three phrases are required, in the notes, in the repository,
+          # reviewed with the code - not typed into a release form.
+          for phrase in "protocol validated" "hardware not validated" "on-air not validated"; do
+            grep -qi "$phrase" "$notes" || { echo "$notes does not state: $phrase"; exit 1; }
+          done
+          echo "NOTES=$notes" >> "$GITHUB_ENV"
       - name: Checksums
         run: cd artefacts && sha256sum * > SHA256SUMS && cat SHA256SUMS
       - name: Create the release
@@ -99,6 +193,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh release create "$GITHUB_REF_NAME" artefacts/* \
-            --title "z-30 $GITHUB_REF_NAME (vNext)" \
-            --notes "z-30 vNext release built from $(git rev-parse HEAD). Protocol and software validated in simulation; NOT yet validated on real radio hardware or on the air - see docs/hardware.md before transmitting." \
+            --title "z-30 $GITHUB_REF_NAME" \
+            --notes-file "$NOTES" \
+            --verify-tag \
             --prerelease
