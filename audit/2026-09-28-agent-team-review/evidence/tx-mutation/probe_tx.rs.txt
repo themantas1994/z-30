@@ -1,0 +1,65 @@
+//! Audit probe (not part of the repository): demonstrates behaviours reported as findings.
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::Arc;
+use z30_engine::bandplan::{LicenseClass, Region};
+use z30_engine::config::StationConfig;
+use z30_engine::ptt::*;
+use z30_engine::rig::RigStateTracker;
+use z30_engine::txgate::{can_transmit, TxRequest};
+
+#[derive(Clone, Default)]
+struct Clock(Arc<AtomicU64>);
+impl MonotonicClock for Clock {
+    fn now_ms(&self) -> u64 { self.0.load(Ordering::SeqCst) }
+}
+
+/// A line whose release fails (e.g. rigctld `T 0` timing out); records the hardware state.
+struct FlakyRelease { hw_keyed: Arc<AtomicBool>, fail_release: Arc<AtomicBool> }
+impl PttLine for FlakyRelease {
+    fn set(&mut self, keyed: bool) -> Result<PttAck, PttError> {
+        if !keyed && self.fail_release.load(Ordering::SeqCst) { return Err(PttError("rigctld: timed out".into())); }
+        self.hw_keyed.store(keyed, Ordering::SeqCst);
+        Ok(PttAck::Confirmed)
+    }
+    fn describe(&self) -> String { "flaky".into() }
+}
+
+#[test]
+fn probe_band_plan_us() {
+    let st = StationConfig { callsign: "K1ABC".into(), grid: "FN31".into(), region: Some(Region::Us),
+        license_class: Some(LicenseClass::UsGeneral), configured_tx_power_w: None };
+    let rig = RigStateTracker::new();
+    for dial in [50_050_000.0, 144_050_000.0, 5_366_000.0, 5_338_000.0] {
+        let p = can_transmit(&TxRequest { station: &st, dial_hz: dial, tx_audio_hz: 1500.0, message: None }, &rig, 0);
+        println!("PROBE US General dial {dial} + 1500 Hz: allowed={} segment={:?} centre={:?}", p.allowed, p.segment, p.tx_centre_hz);
+    }
+}
+
+#[test]
+fn probe_failed_release_is_never_retried() {
+    let hw = Arc::new(AtomicBool::new(false));
+    let fail = Arc::new(AtomicBool::new(false));
+    let clock = Clock::default();
+    let ptt = PttController::new(Box::new(FlakyRelease { hw_keyed: hw.clone(), fail_release: fail.clone() }), Arc::new(clock.clone()));
+    ptt.key().unwrap();
+    fail.store(true, Ordering::SeqCst);
+    let r = ptt.unkey();
+    fail.store(false, Ordering::SeqCst); // the transport recovers
+    clock.0.store(10 * 60 * 1000, Ordering::SeqCst);
+    let fired = ptt.watchdog_tick();
+    println!("PROBE unkey={r:?} controller_keyed={} watchdog_fired_now={fired} hardware_keyed_after_10_min={}", ptt.is_keyed(), hw.load(Ordering::SeqCst));
+    drop(ptt);
+    println!("PROBE hardware_keyed_after_drop={}", hw.load(Ordering::SeqCst));
+}
+
+#[test]
+fn probe_rekey_extends_watchdog() {
+    let hw = Arc::new(AtomicBool::new(false));
+    let clock = Clock::default();
+    let ptt = PttController::new(Box::new(FlakyRelease { hw_keyed: hw.clone(), fail_release: Arc::new(AtomicBool::new(false)) }), Arc::new(clock.clone()));
+    ptt.key().unwrap();
+    clock.0.store(35_000, Ordering::SeqCst);
+    ptt.key().unwrap();
+    clock.0.store(70_000, Ordering::SeqCst);
+    println!("PROBE keyed continuously 70 s with a second key() at 35 s: watchdog fired={} hw_keyed={}", ptt.watchdog_tick(), hw.load(Ordering::SeqCst));
+}
