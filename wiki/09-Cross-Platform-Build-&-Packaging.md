@@ -10,7 +10,7 @@ support actually rests on.
 | :--- | :--- | :--- |
 | Linux x86-64 (Debian/Ubuntu, Arch) | CI builds and runs the full test suite on `ubuntu-latest`, on stable and on the declared minimum Rust (1.95); release archive built on Ubuntu 22.04 | **Builds and passes tests in CI. Not operated with a sound card or radio.** |
 | Windows 10/11 x86-64 | CI builds and tests on `windows-latest`; release archive | **Builds and passes tests in CI. Not operated with a sound card or radio.** |
-| macOS (Apple Silicon, Intel) | CI builds and tests on `macos-latest`; release archives for both architectures | **Builds and passes tests in CI. Not operated with a sound card or radio.** |
+| macOS (Apple Silicon, Intel) | CI builds and tests on `macos-latest`; release archives built on `macos-15` (arm64) and `macos-15-intel` (x86-64) | **Builds and passes tests in CI. Not operated with a sound card or radio.** |
 | Wayland / X11 / PipeWire / ALSA / PulseAudio | egui/winit support both display servers; cpal uses ALSA (PipeWire and PulseAudio through their ALSA plugins) | **Not tested** |
 | Raspberry Pi / ARM Linux | nothing | **Not tested.** Earlier versions of this page said "Tested on Raspberry Pi 3B+, 4B, 5, Zero 2W"; there was no evidence of any such test (audit §20). A source build may work on 64-bit Raspberry Pi OS; nobody has tried |
 | Android | nothing | **Not supported.** The retired PWA was the only Android path, and its receiver did not work |
@@ -20,10 +20,22 @@ support actually rests on.
 `.github/workflows/release.yml` builds, from a `v*` tag, one archive per platform
 (x86-64 Linux, x86-64 Windows, Apple Silicon and Intel macOS). Each is tested on its platform
 before packaging, built with `SOURCE_DATE_EPOCH` set to the commit time and with CM108 PTT, and
-contains exactly `z30`, `z30-gui`, `README.md`, `LICENSE`, `INSTALL.md` and `BUILDINFO.txt`.
+contains exactly `z30`, `z30-gui`, `README.md`, `LICENSE`, `INSTALL.md` and `BUILDINFO.txt` —
+plus, on Linux, `z30-gui.desktop` and `z30.svg`, because someone who downloaded an archive has no
+`packaging/linux/` to install them from.
+
 The workflow fails if anything else is in the archive, if `--version` does not name the tagged
-commit, or if the tree was dirty. Releases are marked pre-release. No release has been
-published yet.
+commit, if the tree was dirty, if the tag is not `v` + the version in `[workspace.package]`, if
+the retired `W1AW` default callsign is in either **packaged** binary, if the packaged `z30` cannot
+decode its own frame through `--loopback-test` on that platform, or — in the publish job — if
+`docs/release-notes/<tag>.md` is missing or does not state the validation status (protocol
+validated, hardware not validated, on-air not validated). Releases are marked pre-release.
+
+The same build and packaging jobs also run on `workflow_dispatch` and on a pull request that
+touches the release path (`release.yml`, `Cargo.toml`, `Cargo.lock`, `packaging/**`,
+`docs/install.md`, `docs/release-notes/**`). That is a **dry run**: it produces the archives as
+workflow artefacts, and the publish job is skipped because it is gated on a `v*` tag. It exists so
+the release path can be exercised without the one irreversible step — pushing the tag.
 
 Binaries are not code-signed or notarised.
 

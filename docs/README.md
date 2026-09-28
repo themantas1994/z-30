@@ -29,3 +29,4 @@ contradiction is a bug. The retired browser/Python runtime is documented only in
 | [research-process.md](research-process.md) | How a change reaches `main`: proposal, paired experiment against the baseline, review, board acceptance |
 | [development.md](development.md) | Building, testing, golden vectors, CI, house rules for this workspace |
 | [troubleshooting.md](troubleshooting.md) | Symptoms, what they usually mean, and what to check |
+| [release-notes/](release-notes/) | One file per release tag; the publish job refuses a tag whose notes do not state the validation status |

@@ -5,7 +5,11 @@ members = ["crates/*"]
 exclude = ["audit"]
 
 [workspace.package]
-version = "0.9.0"
+# The first release is `v0.1.0-experimental`. Nothing was ever published under the development
+# 0.9.0 the workspace carried - there is no tag and no release - and a binary must not report a
+# version no release ever carried, so the series starts here. The release workflow refuses a tag
+# that is not `v` + this string, so the archive names, `--version` and the tag cannot disagree.
+version = "0.1.0-experimental"
 edition = "2021"
 license = "MIT"
 repository = "https://github.com/themantas1994/z-30"

@@ -27,12 +27,15 @@ Each release (GitHub → Releases) has one archive per platform:
 | `z30-<version>-x86_64-apple-darwin.tar.gz` | macOS, Intel |
 
 Each contains `z30`, `z30-gui`, `README.md`, `LICENSE`, this file as `INSTALL.md`, and
-`BUILDINFO.txt`, and nothing else. All are built with CM108 GPIO PTT support. Verify the
-download against `SHA256SUMS`, then check what you have:
+`BUILDINFO.txt`; the Linux archive also contains `z30-gui.desktop` and `z30.svg` (below). Nothing
+else — no Python, no Node, no browser bundle; the release workflow fails if anything else is in
+the archive. All are built with CM108 GPIO PTT support. Verify the download against
+`SHA256SUMS`, then check what you have:
 
 ```bash
 sha256sum -c SHA256SUMS --ignore-missing
 ./z30 --version
+./z30 --loopback-test    # software only: no audio device, no PTT, no rig control
 ```
 
 `--version` prints the version, the exact commit, the build date and compiler, the target
@@ -42,7 +45,10 @@ match `BUILDINFO.txt` and the release's commit.
 Release binaries are not code-signed. On macOS the first launch needs right-click → Open (or
 `xattr -d com.apple.quarantine z30 z30-gui`); on Windows, SmartScreen asks once.
 
-No release has been published at the time of writing; until one is, build from source.
+Every release is marked **pre-release** on GitHub, and each carries its own notes under
+[`docs/release-notes/`](release-notes/) — the first is
+[`v0.1.0-experimental`](release-notes/v0.1.0-experimental.md). If the Releases page is empty,
+build from source (below).
 
 ## From source
 
@@ -71,10 +77,22 @@ No release has been published at the time of writing; until one is, build from s
 
 ## Linux desktop entry
 
+From the release archive (the two files are in it, beside the binaries):
+
+```bash
+install -Dm644 z30-gui.desktop ~/.local/share/applications/z30-gui.desktop
+install -Dm644 z30.svg ~/.local/share/icons/hicolor/scalable/apps/z30.svg
+```
+
+From a source tree, the same two files live in `packaging/linux/`:
+
 ```bash
 install -Dm644 packaging/linux/z30-gui.desktop ~/.local/share/applications/z30-gui.desktop
 install -Dm644 packaging/linux/z30.svg ~/.local/share/icons/hicolor/scalable/apps/z30.svg
 ```
+
+The entry runs `z30-gui` from `PATH`, so put the binaries somewhere on it (`~/.local/bin`, say)
+before you install it.
 
 Serial PTT needs membership of the port's group (`dialout` on Debian/Ubuntu, `uucp` on Arch);
 CM108 PTT needs access to the hidraw device, usually through a udev rule

@@ -29,7 +29,7 @@ launch (audit M-04); neither exists any more. The only network connection z-30 m
 
 ```text
 $ z30 --version
-z30 0.9.0 (z-30 vNext, Rust)
+z30 0.1.0-experimental (z-30 vNext, Rust)
 commit:       <12-character commit>
 built:        <UTC date> with <rustc version>
 target:       x86_64-unknown-linux-gnu

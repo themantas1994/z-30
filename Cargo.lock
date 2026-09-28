@@ -4405,7 +4405,7 @@ checksum = "e450f9b2ed1dff33c94c12589a87338689467b9c4f5d8a5710bd09a847d2c8a7"
 
 [[package]]
 name = "z30-channel"
-version = "0.9.0"
+version = "0.1.0-experimental"
 dependencies = [
  "rand 0.8.8",
  "rand_chacha 0.3.1",
@@ -4416,7 +4416,7 @@ dependencies = [
 
 [[package]]
 name = "z30-cli"
-version = "0.9.0"
+version = "0.1.0-experimental"
 dependencies = [
  "clap",
  "crossbeam-channel",
@@ -4434,7 +4434,7 @@ dependencies = [
 
 [[package]]
 name = "z30-dsp"
-version = "0.9.0"
+version = "0.1.0-experimental"
 dependencies = [
  "rand 0.8.8",
  "rayon",
@@ -4447,7 +4447,7 @@ dependencies = [
 
 [[package]]
 name = "z30-engine"
-version = "0.9.0"
+version = "0.1.0-experimental"
 dependencies = [
  "arc-swap",
  "crossbeam-channel",
@@ -4462,7 +4462,7 @@ dependencies = [
 
 [[package]]
 name = "z30-gui"
-version = "0.9.0"
+version = "0.1.0-experimental"
 dependencies = [
  "arc-swap",
  "crossbeam-channel",
@@ -4477,7 +4477,7 @@ dependencies = [
 
 [[package]]
 name = "z30-io"
-version = "0.9.0"
+version = "0.1.0-experimental"
 dependencies = [
  "cpal",
  "hidapi",
@@ -4496,7 +4496,7 @@ dependencies = [
 
 [[package]]
 name = "z30-protocol"
-version = "0.9.0"
+version = "0.1.0-experimental"
 dependencies = [
  "libm",
  "proptest",
@@ -4505,7 +4505,7 @@ dependencies = [
 
 [[package]]
 name = "z30-py"
-version = "0.9.0"
+version = "0.1.0-experimental"
 dependencies = [
  "pyo3",
  "z30-channel",

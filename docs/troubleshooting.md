@@ -5,7 +5,7 @@ synchronisation status, the transmit gate's verdict with every reason, the PTT m
 control and audio devices, without keying anything:
 
 ```
-z30 0.9.0 (<commit>) (protocol v1)
+z30 0.1.0-experimental (<commit>) (protocol v1)
 config:   ~/.z30/config.toml (not found: defaults, transmit refused)
 clock:    system clock (synchronisation status unavailable)
 transmit gate: would REFUSE:
