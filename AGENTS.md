@@ -73,6 +73,7 @@ legacy/python-oracle/        FROZEN Python oracle (sources pinned by FROZEN.sha2
 legacy/browser-runtime/      RETIRED browser transceiver. Reference only; not built or shipped.
 audit/                       audits and remediation evidence
 VNEXT_IMPLEMENTATION_PLAN.md the rebuild plan and the operator decisions it recorded
+.claude/agents/              Claude Code review agents for docs/research-process.md (section 9)
 ```
 
 ---
@@ -319,3 +320,23 @@ legacy reference tests, repository hygiene and the production/legacy separation)
 | Benchmarks | `crates/z30-cli/src/suite.rs`, `docs/benchmarking.md`, `research/` |
 | Packaging, releases | `.github/workflows/release.yml`, `docs/install.md` |
 | Hardware validation | `docs/hardware-validation.md`, `crates/z30-cli/src/{loopback,audio_loopback}.rs` |
+
+---
+
+## 9. Agent team (`.claude/agents/`)
+
+Claude Code subagents for the review roles in [`docs/research-process.md`](docs/research-process.md).
+Each one's prompt defers to this file and that one; where they disagree, fix the agent. They
+produce evidence for the board. **None of them is the board, and none merges, approves or keys a
+radio.**
+
+| Agent | Role | Use on |
+| :--- | :--- | :--- |
+| `research-engineer` | Proposal and paired experiment (§1–2) | a change meant to move a measured figure |
+| `cto-code-reviewer` | Code review (§3) | every pull request |
+| `rf-dsp-reviewer` | DSP review (§3) | receiver, modulator, codec, channel or benchmark changes; any figure |
+| `qa-reproducer` | QA reproduction (§3) | anything publishing benchmark counts |
+| `tx-safety-auditor` | Section 4 transmit invariants, mutation-tested | anything that can reach the transmitter, PTT, rig, logbook or audio callback |
+| `docs-honesty-auditor` | Doc agreement and section 5 | changes to `SPEC.md`, `docs/`, `wiki/`, `README.md`, or to behaviour they describe |
+| `ceo-board-liaison` | Board packet and blockers (§4) | a pull request believed ready for the board |
+
