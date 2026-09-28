@@ -77,7 +77,7 @@ oracle's, and statements that have gone stale.
 - **Other docs:** `docs/receiver.md:96-108` is correct; `AGENTS.md:139-144` forbids exactly the estimator and floor described here.
 - **Authority:** code.
 - **Proposed replacement for §SNR:**
-  > "After a successful decode, the decoded frame's noise-free replica is placed on the received symbol spectra and fitted per symbol by least squares (`FrameSpectra::snr_db`). S is the fitted replica's per-symbol energy less its noise projection. n_bin is the median energy per 3.125 Hz bin of the off-signal bins of the residual after the replica is removed. SNR = 10 log10(S/n_bin) − 10 log10(2500/3.125). A non-positive estimate is `None` (shown `--`, no report sent), never a floor. Validated range and caveats: [receiver.md](receiver.md#reported-snr-dt-and-frequency)."
+  > "After a successful decode, the decoded frame's noise-free replica is placed on the received symbol spectra and fitted per symbol by least squares (`FrameSpectra::snr_db`). S is the fitted replica's per-symbol energy less its noise projection. n_bin is the median energy per 3.125 Hz bin of the off-signal bins of the residual after the replica is removed. SNR = 10 log10(S/n_bin) − 10 log10(2500/3.125). A non-positive estimate is `None` (shown `--`, no report sent), never a floor. Validated range and caveats: `[receiver.md](receiver.md#reported-snr-dt-and-frequency)`."
 
 ### DOC-05 [Medium] The wiki says decodes are labelled "pass 2" / "pass 3". Neither the GUI nor the CLI shows the pass.
 
@@ -181,7 +181,7 @@ oracle's, and statements that have gone stale.
 
 ### DOC-13 [Low] docs/ldpc.md says the logbook does not record AP use. It does.
 
-- **docs/ldpc.md:95-97:** "(The logbook does not yet carry the tag … not stored per record. Listed in [benchmarking.md](benchmarking.md#not-measured).)"
+- **docs/ldpc.md:95-97:** "(The logbook does not yet carry the tag … not stored per record. Listed in `[benchmarking.md](benchmarking.md#not-measured)`.)"
 - **Code:**
   - `QsoRecord::ap_assisted` (`qso.rs:158`, set at 277/325/332/344);
   - the SQLite column `ap_assisted` (`logbook.rs:62`);

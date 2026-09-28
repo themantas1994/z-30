@@ -1,0 +1,12 @@
+# Output of run.sh at caf1a9a (rustc/cargo 1.95.0), 2026-09-28. The commit hash is the toy
+# repository's, not z-30's. "answer=4" is the edited code; the label never gains "-dirty".
+71e4215399f7 answer=3
+71e4215399f7 answer=3
+71e4215399f7 answer=3
+--- unstaged edit in dsp, no git command in between
+71e4215399f7 answer=4
+71e4215399f7 answer=4
+--- after running git status
+ M crates/dsp/src/lib.rs
+?? Cargo.lock
+71e4215399f7 answer=4

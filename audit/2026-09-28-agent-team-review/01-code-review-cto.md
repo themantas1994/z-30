@@ -215,6 +215,8 @@ The corrective-remediation audit (`audit/2026-09-24-corrective-remediation/FINAL
 - **No dependency on `legacy/`:** no crate references `legacy/` or includes files from it. The `z30-dsp` and `z30-engine` dependency trees are as documented. Tests read only `fixtures/golden` and `tests/vectors`.
 - **Frozen and golden files:** the oracle files match `FROZEN.sha256`. The only oracle change since `f180122` (`b75f773`) updated the manifest with a reason and left `fixtures/golden/` untouched.
 - **Build provenance:** `build.rs` embeds commit and dirty state. Checked in a replica that an unstaged edit after a clean build *is* marked `-dirty`: the build script's own `git status` rewrites `.git/index`, so the script reruns on every build.
+  > **Overturned (conflict C-1).** A tie-break with the real `build.rs` shows an unstaged edit in a
+  > dependency crate is *not* marked `-dirty`: see RES-03 and [README.md](README.md#conflict-c-1--buildrs-dirty-detection).
 - **CI against AGENTS §6:** `rust.yml` runs fmt, clippy, debug and release tests on three OSes (stable); the MSRV build, clippy and tests (read from `Cargo.toml`); a W1AW strings scan; the CLI round trip and refusals; suite provenance; golden vectors; and the paired harness. `ci.yml` covers the oracle, legacy tests and hygiene.
 - **MSRV:** everything builds, lints and tests on 1.95.0.
 
