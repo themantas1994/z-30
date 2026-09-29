@@ -340,3 +340,22 @@ radio.**
 | `docs-honesty-auditor` | Doc agreement and section 5 | changes to `SPEC.md`, `docs/`, `wiki/`, `README.md`, or to behaviour they describe |
 | `ceo-board-liaison` | Board packet and blockers (§4) | a pull request believed ready for the board |
 
+**Implementation roles** (added 2026-09-28 for the remediation backlog in
+[`audit/ACTIVE_DEFECT_LEDGER.md`](audit/ACTIVE_DEFECT_LEDGER.md)). They may change code, tests
+and the documentation of what they changed, on a branch; they may **not** approve or merge their
+own work, declare board acceptance, mark hardware or on-air validation complete, publish a figure,
+weaken a test or delete evidence. Every change they make goes through the review roles above and
+then the board. They set a ledger row to `FIXED_PENDING_REVIEW`; only a reviewer sets `VERIFIED`.
+
+| Agent | Owns | Reviewed by |
+| :--- | :--- | :--- |
+| `remediation-engineer` | ledger entries no specialist owns; reproduce → failing test → fix → regression test | the reviewer named in the row |
+| `systems-reliability-engineer` | runtime, audio I/O, threads, scheduling, clock, logging persistence (F-16, F-17, F-19, F-20, F-47, F-48) | `cto-code-reviewer`, `tx-safety-auditor` |
+| `transmit-safety-engineer` | gate, PTT, band plan, migration, device selection (F-01…F-09, F-21, F-22, F-43…F-46) | `tx-safety-auditor` |
+| `research-instrument-engineer` | benchmark suite, build provenance, results storage, `research/` tools (F-11…F-14, F-32, F-34…F-40, F-42) | `qa-reproducer`, `research-engineer` |
+| `documentation-remediation-engineer` | `SPEC.md`, `docs/`, `wiki/`, `README.md` corrections (F-10, F-27…F-31, F-33, F-51, F-58…F-74) | `docs-honesty-auditor` |
+
+The engineering history each of them must know before touching an area, including approaches
+that were tried and rejected, is in
+[`audit/ACTIVE_REMEDIATION_HISTORY.md`](audit/ACTIVE_REMEDIATION_HISTORY.md).
+
