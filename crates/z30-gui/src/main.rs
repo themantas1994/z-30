@@ -2,6 +2,8 @@
 //!
 //! Renders `EngineSnapshot`s and sends `Command`s. It owns no radio state and runs no DSP; the
 //! engine's threads keep running whatever the window does, and nothing here waits on them.
+// No unsafe code here; the compiler holds it to that (2026-09-28 audit F-77).
+#![forbid(unsafe_code)]
 
 mod app;
 mod waterfall;

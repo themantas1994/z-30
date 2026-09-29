@@ -1,4 +1,5 @@
 #![allow(clippy::needless_range_loop)]
+#![forbid(unsafe_code)]
 //! Seeded, deterministic channel models for testing and benchmarking the receiver.
 //!
 //! Test tooling only: nothing in the receive path depends on this crate. Every function takes

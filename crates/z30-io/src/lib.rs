@@ -2,6 +2,8 @@
 //! and CM108 PTT, the logbook, paths, configuration, legacy migration and the system clock.
 //! Everything platform-specific lives here, behind the traits in `z30_engine::runtime` and
 //! `z30_engine::ptt`.
+// No unsafe code here; the compiler holds it to that (2026-09-28 audit F-77).
+#![forbid(unsafe_code)]
 
 pub mod audio;
 #[cfg(feature = "cm108")]
