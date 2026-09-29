@@ -1,0 +1,8 @@
+G-plan crates/z30-engine/src/engine.rs:530 [plan_tx trusts only the violation list (a frame request with no frame passes)] SURVIVED (71 s) []
+P-rekey crates/z30-engine/src/ptt.rs:331 [a line whose release is unconfirmed can be keyed again] KILLED (47 s) ['-p z30-engine --test ptt_release: f01_a_line_that_cannot_confirm_a_release_cannot_be_keyed_again']
+P-wdblock crates/z30-engine/src/ptt.rs:406 [the watchdog blocks on the line instead of try_lock] KILLED (50 s) ['-p z30-engine --test ptt_release: f15_the_watchdog_never_blocks_on_a_line_another_thread_is_driving']
+RT-halt crates/z30-engine/src/runtime.rs:624 [runtime ignores the engine's halt while planned/keyed] KILLED (48 s) ['-p z30-engine --test tx_runtime: rt_a_configuration_change_or_queued_halt_while_keyed_ends_the_transmission']
+RT-haltptt crates/z30-engine/src/runtime.rs:357 [HALT does not release the PTT itself (waits for the control thread)] KILLED (48 s) ['-p z30-engine --test tx_runtime: rt_halt_releases_the_ptt_even_while_the_control_thread_is_stuck_in_the_output']
+RT-keyfail crates/z30-engine/src/runtime.rs:880 [a refused key still plays the audio] KILLED (40 s) ['-p z30-engine --test tx_runtime: rt_a_refused_key_plays_nothing_and_is_reported_failed']
+RT-relfault crates/z30-engine/src/runtime.rs:750 [an unconfirmed release is not reported or refused by the runtime] SURVIVED (90 s) []
+RT-midtx crates/z30-engine/src/runtime.rs:836 [a rig contradiction during a frame does not stop it] KILLED (47 s) ['-p z30-engine --test tx_runtime: rt_a_radio_that_moves_off_the_checked_dial_mid_frame_stops_the_transmission']
