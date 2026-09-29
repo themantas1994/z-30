@@ -45,10 +45,48 @@ uniform over ±1.4 s, carrier phase uniform, payload uniform over 63 bits, no dr
 
 **Provenance.** Each JSON records the commit, build profile, `rustc`, target, OS, CPU and
 logical CPUs, rayon threads, start time, elapsed time, the full `RxConfig`, the channel, the
-placement, the seed rule and the definitions. A binary built from a dirty tree warns that its
-results are not publishable, and fewer than 100 frames per point is marked exploratory.
-`research/summarize_suite.py <dir> --write` renders the directory as `SUMMARY.md`; the tables
-below are pasted from it.
+placement, the seed rule and the definitions. Results written since 2026-09-28 also record
+whether the tree was dirty and a sha256 of the difference, `RUSTFLAGS`, the compiled target
+features, the ISA features detected at run time (rustfft picks its SIMD kernels from them), the
+`Cargo.lock` sha256, and the **instrument identity**: a sha256 over `suite.rs`, `bench.rs`,
+`z30-channel` and `gfsk.rs` as compiled, and `z30-channel`'s resolved dependencies. The build
+script recomputes the commit label whenever any crate the binary is built from changes, so an
+unstaged edit gives `<commit>-dirty` (before 2026-09-28 it could keep the clean label: audit
+F-13). `research/summarize_suite.py <dir> --write` renders the directory as `SUMMARY.md`; the
+tables below are pasted from it.
+
+**Status and where results go.** Every result carries a `status`, and only a published one is
+written to `research/results/<commit>/`:
+
+| `status` | When | Default directory (without `--out`) |
+| :--- | :--- | :--- |
+| `published` | clean build, suite seed 20260830 (replicate 0), at least the benchmark's publishable size | `research/results/<commit>/` |
+| `replicate` | as published, but `--replicate r` with r ≥ 1 | `research/results/<commit>/replicates/r<r>/` |
+| `exploratory` | below the benchmark's publishable size | `research/results/exploratory/<commit>/` |
+| `dirty` | built from a tree that is not its commit | `research/results/unpublished/<commit>-dirty-<diff>/` |
+| `not_the_published_run` | would be `published`, but written elsewhere with `--out` | wherever `--out` says |
+
+The publishable size is each benchmark's default, recorded as `publishable_size`: **200 frames
+per point behind every crossing** (`awgn`, `fading`; also `drift`, `timing`, `clock`, `impair`),
+100 for `snr` and per `sic` cell (neither is a crossing), 50 slots per `busy` point and 400 per
+`false` kind. (Until 2026-09-28 only runs below 100 frames were marked, so a 150-frame crossing
+was written unmarked: F-32. No committed result changes status under the new rule.) The
+`exploratory/` and `unpublished/` trees are git-ignored. `--out` into a published commit
+directory is refused unless it is exactly what the default would write, every destination is
+checked before the first frame is decoded, an existing file is replaced only with
+`--overwrite`, and a published result, or anything inside a published directory, never.
+`summarize_suite.py` refuses a directory that lacks a benchmark (unless `--partial`) or mixes
+runs, and puts a **NOT THE PUBLISHED RUN** banner over anything that is not `published`.
+
+**Comparing two runs.** `research/compare_results.py <baseline> <candidate>` reports each
+benchmark IDENTICAL or DIFFERENT, and refuses (exit 2) a missing benchmark, a different seed,
+replicate, frame count, status, build profile or instrument (results older than the instrument
+field need `--legacy-provenance`, and are bannered). `z30 --benchmark <name> --per-frame` also
+writes `<name>.frames.jsonl` (per frame: point, index, generator seed, condition, decoded,
+correct); `research/paired_mcnemar.py <baseline.frames.jsonl> <candidate.frames.jsonl>` pairs
+two of them frame by frame, refuses differing frame sets, and gives the exact McNemar p-value
+per point (with Holm) and pooled, and optionally a seeded paired bootstrap of the crossing
+delta ([research-process.md §2a](research-process.md#2a-comparing-sensitivity-crossings-between-two-commits)).
 
 ## Current results: `research/results/672cef9b3cdb/`
 
@@ -166,17 +204,30 @@ scale 4× RMS), and 0.5 s and 2 s dropouts mid-frame. **36.5% [30.1, 43.4] with 
 
 `false.json`, 400 slots of each kind of content, no z-30 frame present.
 
-| Content | Slots | False | LDPC attempts |
-| :--- | ---: | ---: | ---: |
-| white noise only | 400 | 0 | 250 |
-| 20 CW carriers, −10…+20 dB | 400 | 0 | 2394 |
-| 8 random 16-FSK signals without the Costas pattern, 0 dB | 400 | 0 | 25 976 |
-| 8 FT8-like 8-FSK signals, 0 dB | 400 | 0 | 27 536 |
-| 500 impulses up to 40 σ | 400 | 0 | 331 |
-| **Pooled** | 2000 | **0** | — |
+| Content | Slots | False | LDPC attempts | 95% upper bound per slot |
+| :--- | ---: | ---: | ---: | ---: |
+| white noise only | 400 | 0 | 250 | 7.46 × 10⁻³ |
+| 20 CW carriers, −10…+20 dB | 400 | 0 | 2394 | 7.46 × 10⁻³ |
+| 8 random 16-FSK signals without the Costas pattern, **−3 dB** each ¹ | 400 | 0 | 25 976 | 7.46 × 10⁻³ |
+| 8 FT8-like 8-FSK signals, 0 dB | 400 | 0 | 27 536 | 7.46 × 10⁻³ |
+| 500 impulses up to 40 σ | 400 | 0 | 331 | 7.46 × 10⁻³ |
+| **Pooled** | 2000 | **0** | — | 1.50 × 10⁻³ |
 
-Pooled 95% upper bound: 1.5 × 10⁻³ false decodes per slot. Real recorded non-z-30 audio
-(speech, real FT8 or RTTY, real QRN) has not been tried: no recordings exist yet.
+¹ The result file labels this row "0 dB". The harness has always generated these signals at
+−3 dB (a 0 dB amplitude divided again by √2; audit DSP-07 / F-53). The suite now labels them
+−3 dB; the signal and seeds are unchanged, so the counts reproduce. Result files are not
+edited, so `672cef9b3cdb/false.json` and its `SUMMARY.md` keep the old label.
+
+Pooled 95% upper bound: 1.5 × 10⁻³ false decodes per slot (exact one-sided Clopper–Pearson; a
+zero count is always reported as its bound). **What this run can and cannot exclude** (F-36):
+1.5 × 10⁻³ per slot is about 4.3 false decodes per day of continuous monitoring (2880 slots).
+A receiver with a true rate of 5 × 10⁻⁴ per slot, a third of the bound, still shows zero in
+2000 slots about 37% of the time, so this benchmark cannot tell it from a perfect one. Bounding
+the rate at 10⁻⁴ per slot with zero observed needs 29 956 slots; at 10⁻⁵, 299 572. A change
+that can affect acceptance (OSD, AP, sync thresholds, candidate limits) therefore needs its own,
+pre-registered, larger false-decode run; the suite's `false.json` now records these figures in
+its `power` field. Real recorded non-z-30 audio (speech, real FT8 or RTTY, real QRN) has not
+been tried: no recordings exist yet.
 
 ### Collisions: SIC on versus off
 

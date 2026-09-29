@@ -24,6 +24,30 @@ The receiver (`z30-dsp`, and the protocol's modulator, LDPC, CRC and symbol map)
 from `d8983ee` to `672cef9`; `z30-channel`'s Watterson model changed at `b75f773` (N-01), which
 is why only `fading` differs between the two directories.
 
+### Status, destinations and notes on the committed results (2026-09-28)
+
+Results written from 2026-09-28 carry a `status` and the instrument identity, and `z30` writes
+only a `published` result (clean build, suite seed, at least the benchmark's publishable size)
+to `<commit>/`; replicates go to `<commit>/replicates/r<N>/`, exploratory runs to
+`exploratory/<commit>/` and dirty builds to `unpublished/<commit>-dirty-<diff>/` (the last two
+are ignored by version control). See [docs/benchmarking.md](../../docs/benchmarking.md). The
+committed files above predate this and are **not edited**; the research scripts classify them
+from the markers they carry:
+
+- **Frame policy (F-32).** The exploratory line moved from "below 100 frames" to "below the
+  benchmark's publishable size" (200 per point behind every crossing). Every committed suite
+  result was run at its benchmark's default size, which is its publishable size, so **none
+  changes status**: `672cef9b3cdb/` and `d8983eeef66e/` read as published (the latter's
+  `fading.json` stays withdrawn, as above), `18fbd78d8fb8/awgn.json` as published, its
+  `awgn_replicates/` as replicates.
+- **`false.json`'s 16-FSK row (DSP-07 / F-53).** In `672cef9b3cdb/false.json` and
+  `d8983eeef66e/false.json` (and their `SUMMARY.md`) the row "8 random 16-FSK signals without
+  the Costas pattern, 0 dB" ran at **−3 dB** per interferer; the harness has always generated
+  it that way. The suite now labels it −3 dB. Signal and seeds are unchanged, so the counts
+  reproduce; `research/compare_results.py` reports the relabel as a note, not a difference.
+- **Instrument identity.** These files carry none, so comparing against them needs
+  `compare_results.py --legacy-provenance`, whose output says the instrument was not checked.
+
 ## Earlier instruments (top level)
 
 Measured before the suite existed; each is kept with the commit it was measured at.

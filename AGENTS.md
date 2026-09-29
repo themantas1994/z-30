@@ -65,6 +65,7 @@ wiki/                        operator docs
 fixtures/golden/             golden vectors. Generated; NEVER edited by hand.
 reference/golden/            their generators (Python oracle; TS codec for messages.json)
 research/                    paired_receiver.py (oracle vs decode_slot), summarize_suite.py,
+                             compare_results.py, paired_mcnemar.py (all fail closed; tests/),
                              results/<commit>/ (machine-readable results; never hand-edited)
 tests/vectors/               shared known-answer vectors (CRC, callsigns, dither)
 hardware-validation/         records of hardware tests (none yet)
@@ -236,7 +237,13 @@ purpose. Every published figure follows these rules:
   reference receiver, never "z-30" or "the decoder that ships".
 - The legacy browser receiver never achieved any published figure (audit C-01/C-02).
 - Minimum 200 frames per point behind a published sensitivity crossing; fewer is exploratory and
-  the suite marks it so.
+  the suite marks it so (`status: exploratory`; each result records its `publishable_size`).
+- **Only the published run lands in `research/results/<commit>/`.** Every result carries a
+  `status` (`published`, `replicate`, `exploratory`, `dirty`, `not_the_published_run`) and its
+  instrument identity; `z30` routes the others to labelled directories, never overwrites a
+  published file, and a build with any uncommitted change in a crate it uses is `<commit>-dirty`.
+  `summarize_suite.py` banners anything not published; `compare_results.py` and
+  `paired_mcnemar.py` refuse results that differ in seed, frames, status or instrument.
 - **Comparing two decoders or two configurations? Pair them** on the same audio and report the
   exact McNemar p-value over the discordant frames (the `sic` benchmark does).
 - **The word "threshold"** is for blind-acquisition results through `decode_slot`. A
@@ -267,6 +274,7 @@ cargo test --workspace --exclude z30-py --release
 ./target/release/z30 --version
 ./target/release/z30 --benchmark suite                 # ~1 h on 4 cores; writes research/results/<commit>/
 python research/summarize_suite.py research/results/<commit> --write
+python -m pytest research/tests -q                     # research tools (stdlib + pytest)
 
 # Reference code (only when touching what it guards)
 pip install -r legacy/python-oracle/requirements.txt pytest
