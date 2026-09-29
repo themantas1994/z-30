@@ -129,11 +129,10 @@ through rayon, but results are collected in candidate order and every candidate'
 independent, so the report is identical at any thread count. Two tests pin this:
 
 - `sic_regression.rs::a_busy_band_decodes_identically_on_one_thread_and_on_many` decodes a
-  20-station busy band on a one-thread rayon pool and on the default pool, and requires the same
-  decodes: payload, pass, iteration count, and bit-identical DT, frequency and SNR. The
-  thread-count property is this test's. (At this commit the "many" arm is rayon's global pool,
-  which has one thread on a one-CPU machine, so there the test compares one thread with one;
-  2026-09-28 audit F-76.)
+  20-station busy band on an explicit one-thread and an explicit eight-thread rayon pool, and
+  requires the same decodes: payload, pass, iteration count, and bit-identical DT, frequency and
+  SNR. The thread-count property is this test's. It used to compare rayon's global pool with a
+  one-thread pool, which is one thread against one on a one-CPU runner (2026-09-28 audit F-76).
 - `channel_scenarios::decode_slot_is_deterministic` decodes one slot twice on the same pool and
   requires the same payload and iteration count and bit-identical DT and frequency: run-to-run
   repeatability, not thread count.

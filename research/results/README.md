@@ -53,7 +53,9 @@ from the markers they carry:
 Measured before the suite existed; each is kept with the commit it was measured at.
 
 Host for these runs: 4 vCPU Intel Xeon @ 2.80 GHz, 16 GB, Linux 6.18, Python 3.11.15,
-NumPy 2.2.6; Rust 1.94.1 (awgn_paired_200) and 1.98.1 (the rest). The oracle harness imported
+NumPy 2.2.6; Rust 1.94.1 (awgn_paired_200) and 1.98.1 (the rest). 1.94.1 is below the MSRV declared
+later (1.95); that run predates the declaration and its wheel's compiler cannot be checked from the
+file, which records no wheel provenance (QA-06 / F-79, and F-34). The oracle harness imported
 the Python oracle, now at `legacy/python-oracle/`.
 
 | File | What | Command |

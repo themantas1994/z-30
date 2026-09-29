@@ -102,7 +102,9 @@ the test to match. Full rationale: [`docs/safety.md`](docs/safety.md).
   bypasses it; never make it return `allowed: true` on a partial check.
 - It validates: a real, non-placeholder callsign v1 carries exactly; region and licence class;
   the **radiated** emission (dial + audio offset across the tone span, at the measured −40 dB
-  width) inside a permitted data segment; the radio's settled readback not contradicting the
+  width) inside a permitted segment (US: the Part 97 data segments, 60 m as channels; IARU
+  regions: whole-band allocations only, the data sub-band is the operator's; F-02, a board
+  decision pending); the radio's settled readback not contradicting the
   dial; **the whole encoded frame reading back as exactly the requested message** (symbols,
   parity, CRC, fields, text — partner call, grid and report included; audit C-06); the frame
   sent from this station; a PTT method configured and the transmit hardware open; a non-zero
@@ -118,7 +120,16 @@ the test to match. Full rationale: [`docs/safety.md`](docs/safety.md).
   `--audio-loopback-test` refuses any configuration with a PTT method (VOX included) or rig
   control (N-04).
 - **Readback only adds refusals.** No readback is "unverified", not "wrong"; an unsettled QSY
-  (three polls) and a difference inside the rig's tuning resolution are not refusals.
+  (three polls) and a difference inside the rig's tuning resolution are not refusals. Production
+  never measures a resolution, so in practice the tolerance is a strict 1 Hz (F-27). A radio that
+  refused a set-frequency, or contradicts the dial during a frame, is positive evidence (F-45).
+- **A release is confirmed or it is pending.** `PttController` is Keyed → ReleasePending →
+  Released, and only a confirmed `set(false)` releases; an unconfirmed release is retried by the
+  watchdog, refuses transmission and is reported (F-01; `ptt_release.rs`, `tx_runtime.rs`).
+- **HALT never waits.** `RuntimeHandle::halt` silences the output and requests the release from
+  the calling thread without blocking; nothing on the control thread may block it (F-16).
+- **Only a complete frame counts.** Every transmission ends `Complete`, `Partial`, `Aborted`,
+  `Failed` or `WatchdogAborted`; only `Complete` advances the QSO or logs a contact (F-17).
 - **One keying implementation** (`PttController`), which reports whether the hardware accepted
   the command; **a release drives what the key drove**; a halt between plan and key abandons the
   transmission.
@@ -210,7 +221,8 @@ purpose. Every published figure follows these rules:
 
 - **It comes from `z30 --benchmark suite`** (or another benchmark that calls `decode_slot`),
   built from a clean tree, and the result file under `research/results/<commit>/` is the
-  authority. Tables in docs are pasted from `research/summarize_suite.py` output, not retyped.
+  authority. Tables in docs are reformatted from `research/summarize_suite.py` output, never
+  retyped from memory; every value must match its result file (F-72).
 - **Quote the implementation, the measurement type, the channel, the SNR definition (2500 Hz,
   SPEC §10), the sample count, the seed, the success criterion, the interval, and that it is a
   simulation with no hardware involved.** A bare "−23 dB" is not a z-30 figure.

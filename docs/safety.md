@@ -160,7 +160,8 @@ Two things beyond the gate's own check:
   It used to be no refusal at all while the tracker waited out its settle count (F-45).
 - **The radio is still watched during a frame.** A settled dial contradiction or a fresh non-USB
   mode read while transmitting stops the frame: the outcome is `Aborted`, and a `TxFault` is
-  raised (`gate_contract.rs::f45_a_radio_that_contradicts_the_dial_mid_frame_is_reported`).
+  raised (`gate_contract.rs::f45_a_radio_that_contradicts_the_dial_mid_frame_is_reported`,
+  `tx_runtime.rs::rt_a_radio_that_moves_off_the_checked_dial_mid_frame_stops_the_transmission`).
 
 ## PTT: one keying implementation, and what releases it
 
@@ -197,10 +198,13 @@ Two things beyond the gate's own check:
   goes through the bounded command queue, which a control thread blocked in `timedatectl`, SQLite
   or a slow key could leave full, so a HALT could be dropped while the transmitter stayed keyed
   (F-16; `tx_runtime.rs::rt_halt_is_not_delayed_by_a_blocked_control_thread`,
+  `rt_halt_releases_the_ptt_even_while_the_control_thread_is_stuck_in_the_output`,
   `rt_halt_while_keyed_stops_the_audio_releases_the_line_at_once_and_disarms`,
   `ptt_release.rs::f16_a_halt_while_the_driver_is_busy_never_blocks_…`). For the same reason the
   OS clock-status query (`timedatectl`) runs on a thread of its own and the SQLite logbook on a
-  logbook thread, never on the control thread. A halt that arrives between the transmit decision
+  logbook thread, never on the control thread. The engine's own halts (`HaltTx`, `EnableTx(false)`,
+  a new configuration) still arrive through the command queue and end a keyed transmission there
+  (`rt_a_configuration_change_or_queued_halt_while_keyed_ends_the_transmission`). A halt that arrives between the transmit decision
   and the key abandons the transmission rather than keying it (`h2`,
   `tx_runtime.rs::rt_halt_between_plan_and_key_abandons_the_transmission_and_disarms`).
 
