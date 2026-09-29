@@ -172,6 +172,7 @@ Grid table (index 0 … 62):
 | :--- | :--- | :--- | :--- |
 | `CQ <call> <grid>` | 0 | call | grid |
 | `CQ DX <call> <grid>` | 1 | call | grid |
+| `CQ TEST <call> <grid>` | 2 | call | grid |
 | `<to> <from> <grid>` | call or `QRZ` | call | grid |
 | `<to> <from> <±NN>` | call | call | report |
 | `<to> <from> RRR` / `73` / `RR73` | call | call | 61 / 62 / 63 |
@@ -211,12 +212,17 @@ packer's behaviour on representable messages.
   has correlation > 0 with the channel LLRs and differs from the hard decision in ≤ 12 bits.
 - **Iterations** are counted cumulatively across schedules (maximum 150). A decode that
   succeeds from the raw hard decision reports 1.
-- **OSD (changed in vNext, §7.1).**
+- **OSD (changed in vNext, §7.1).** Invoked only when no schedule succeeded **and** the minimum
+  syndrome weight reached by any BP iteration, over all four schedules, is ≤ 14; it starts from
+  that iteration's hard decision. With a larger minimum syndrome weight the frame fails without
+  OSD. Both implementations apply this condition (`legacy/python-oracle/z30_dsp/ldpc.py`,
+  `if min_syndrome_weight <= 14`; `crates/z30-dsp/src/ldpc.rs`, `OSD_MAX_SYNDROME`), and it
+  bounds how often OSD's candidates are offered to the CRC.
 
 ### 7.1 OSD: the reference defect and the vNext rule
 
-The reference OSD flips up to two of the 14 least reliable *payload* bits of the best BP hard
-decision, **recomputes** the CRC from the flipped payload, re-encodes and accepts the candidate
+Both rules below run only under the condition in §7 (best BP syndrome weight ≤ 14). The reference
+OSD flips up to two of the 14 least reliable *payload* bits of the best BP hard decision, **recomputes** the CRC from the flipped payload, re-encodes and accepts the candidate
 with the highest correlation > 20 differing from the BP decision in ≤ 16 bits. Recomputing the
 CRC makes every candidate CRC-valid by construction, and its final "CRC check" compares a CRC
 with itself (audit M1). The documented 2⁻¹⁴-per-candidate false-accept bound is therefore not
