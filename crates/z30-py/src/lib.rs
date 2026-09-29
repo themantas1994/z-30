@@ -157,12 +157,28 @@ fn version() -> &'static str {
     env!("CARGO_PKG_VERSION")
 }
 
+/// The wheel's build provenance: what it was built from, as the binaries' `--version` reports it.
+#[pyfunction]
+fn build_info() -> std::collections::BTreeMap<&'static str, &'static str> {
+    std::collections::BTreeMap::from([
+        ("commit", env!("Z30_BUILD_COMMIT")),
+        ("dirty_diff_sha256", env!("Z30_BUILD_DIRTY_DIFF_SHA256")),
+        ("built", env!("Z30_BUILD_DATE")),
+        ("rustc", env!("Z30_BUILD_RUSTC")),
+        ("target", env!("Z30_BUILD_TARGET")),
+        ("profile", env!("Z30_BUILD_PROFILE")),
+        ("rustflags", env!("Z30_BUILD_RUSTFLAGS")),
+        ("cargo_lock_sha256", env!("Z30_BUILD_CARGO_LOCK_SHA256")),
+    ])
+}
+
 #[pymodule]
 fn z30(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyReceiver>()?;
     m.add_function(wrap_pyfunction!(ldpc_decode, m)?)?;
     m.add_function(wrap_pyfunction!(encode_message, m)?)?;
     m.add_function(wrap_pyfunction!(version, m)?)?;
+    m.add_function(wrap_pyfunction!(build_info, m)?)?;
     m.add("SLOT_SAMPLES", z30_dsp::baseband::SLOT_SAMPLES)?;
     m.add("SLOT_ZERO_INDEX", z30_dsp::baseband::SLOT_ZERO_INDEX)?;
     m.add("DSP_RATE_HZ", z30_dsp::DSP_RATE_HZ)?;

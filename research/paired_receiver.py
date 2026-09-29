@@ -96,10 +96,32 @@ def _decode(job):
 
 
 def _git():
+    """The checkout this script runs from: short commit, `-dirty` when uncommitted changes exist."""
     try:
-        return subprocess.check_output(["git", "-C", ROOT, "rev-parse", "--short", "HEAD"], text=True).strip()
+        head = subprocess.check_output(["git", "-C", ROOT, "rev-parse", "--short=12", "HEAD"], text=True).strip()
+        dirty = subprocess.check_output(["git", "-C", ROOT, "status", "--porcelain", "--untracked-files=no"], text=True).strip()
+        return head + ("-dirty" if dirty else "")
     except Exception:  # noqa: BLE001 - provenance is best effort, never fatal
         return "unknown"
+
+
+def _provenance():
+    """What produced the numbers: the checkout (Python harness, oracle) and the wheel (the Rust
+    receiver). They are separate builds; a result is only attributable to one commit when both
+    name it, clean. The files used to record the checkout twice and the wheel never (F-34)."""
+    import z30
+
+    checkout = _git()
+    wheel = z30.build_info() if hasattr(z30, "build_info") else {"commit": "unknown (wheel predates build_info)"}
+    reasons = []
+    if checkout.endswith("-dirty") or checkout == "unknown":
+        reasons.append(f"checkout {checkout}")
+    if wheel["commit"].endswith("-dirty") or wheel["commit"].startswith("unknown"):
+        reasons.append(f"wheel {wheel['commit']}")
+    if wheel["commit"].split("-")[0] != checkout.split("-")[0]:
+        reasons.append(f"wheel built from {wheel['commit']}, harness at {checkout}")
+    return {"checkout": checkout, "wheel": wheel, "python": platform.python_version(),
+            "status": "not_the_published_run" if reasons else "attributable", "status_reasons": reasons}
 
 
 def main():
@@ -133,7 +155,7 @@ def main():
     run_oracle = not args.vnext_only
 
     print(f"paired receiver comparison | seed {args.seed} | {args.frames} frames/point | fading {args.fading} | "
-          f"carrier +-{args.freq_offset} Hz | timing +-{args.time_offset} s | vNext {z30.version()} @ {_git()}")
+          f"carrier +-{args.freq_offset} Hz | timing +-{args.time_offset} s | vNext {z30.version()} | provenance {_provenance()}")
     if args.frames < PUBLISHABLE_FRAMES_PER_POINT:
         print(f"EXPLORATORY RUN: below the {PUBLISHABLE_FRAMES_PER_POINT} frames/point a published figure needs.")
     rows = []
@@ -174,7 +196,7 @@ def main():
         return [{"snr_db": r["snr_db"], "successes": r[key], "total_frames": r["frames"],
                  "decode_pct": 100.0 * r[key] / r["frames"]} for r in rows]
 
-    summary = {"seed": args.seed, "frames_per_point": args.frames, "fading": args.fading, "git": _git(),
+    summary = {"seed": args.seed, "frames_per_point": args.frames, "fading": args.fading, "provenance": _provenance(),
                "z30_version": z30.version(), "host": platform.processor() or platform.machine(),
                "elapsed_sec": time.time() - t_start, "rows": rows, "rx_overrides": rx_kwargs}
     keys = ["vnext"] + (["oracle"] if run_oracle else []) + (["b"] if arm_b is not None else [])
