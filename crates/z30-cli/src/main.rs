@@ -8,6 +8,11 @@ mod bench;
 mod loopback;
 mod suite;
 
+// The build script's provenance code, compiled here only so its unit tests run with the crate's.
+#[cfg(test)]
+#[path = "../build_support.rs"]
+mod build_support;
+
 use clap::Parser;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -76,7 +81,8 @@ struct Cli {
     #[arg(long, value_name = "WHAT", num_args = 0..=1, default_missing_value = "perf")]
     benchmark: Option<String>,
     /// Frames/slots per point for --benchmark (default: 20 for perf/false-decodes/sweep; each
-    /// suite benchmark's own publishable size otherwise).
+    /// suite benchmark's own publishable size otherwise). A suite run below its benchmark's
+    /// publishable size (200 frames per point for every crossing) is exploratory.
     #[arg(long)]
     frames: Option<usize>,
     /// Suite replicate number (default 0: the published seed 20260830). Replicate r >= 1 runs
@@ -84,10 +90,20 @@ struct Cli {
     /// variability; its results say they are not the published run.
     #[arg(long)]
     replicate: Option<u16>,
-    /// Output directory for suite results (default: research/results/<commit>), or the JSON
-    /// file for --loopback-test / --audio-loopback-test.
+    /// Output directory for suite results, or the JSON file for --loopback-test /
+    /// --audio-loopback-test. Suite default: research/results/<commit>/ for a clean,
+    /// full-size, published-seed run; <commit>/replicates/r<N>/, exploratory/<commit>/ or
+    /// unpublished/<commit>-dirty-<diff>/ under research/results/ otherwise.
     #[arg(long, value_name = "DIR")]
     out: Option<PathBuf>,
+    /// Suite: also write <benchmark>.frames.jsonl, one line per frame (point, frame index,
+    /// seed, condition, outcome), so two commits can be paired frame by frame.
+    #[arg(long)]
+    per_frame: bool,
+    /// Suite: replace existing result files that are not published results. A published
+    /// result is never overwritten.
+    #[arg(long)]
+    overwrite: bool,
     /// Report configuration, clock, audio, rig and transmit-gate status.
     #[arg(long)]
     diagnostics: bool,
@@ -136,7 +152,8 @@ struct Cli {
 /// What this binary is: every field a release artefact must carry (version, commit, build
 /// date, target platform and architecture, profile, optional features, protocol).
 pub(crate) fn version_text() -> String {
-    format!(
+    let diff = env!("Z30_BUILD_DIRTY_DIFF_SHA256");
+    let mut text = format!(
         "z30 {} (z-30 vNext, Rust)\ncommit:       {}\nbuilt:        {} with {}\ntarget:       {}\narchitecture: {} ({})\nprofile:      {}\nfeatures:     {}\nprotocol:     v{}\nruntime:      native; no Python, Node or browser component",
         env!("CARGO_PKG_VERSION"),
         env!("Z30_BUILD_COMMIT"),
@@ -148,7 +165,13 @@ pub(crate) fn version_text() -> String {
         env!("Z30_BUILD_PROFILE"),
         if cfg!(feature = "cm108") { "cm108 (CM108/CM119 GPIO PTT)" } else { "none (CM108 GPIO PTT not built in)" },
         z30_protocol::PROTOCOL_VERSION,
-    )
+    );
+    if !diff.is_empty() {
+        // Which uncommitted difference a -dirty binary was built from (sha256 of the tracked
+        // diff against HEAD plus untracked crate sources), so two dirty builds can be told apart.
+        text.push_str(&format!("\ndirty diff:   sha256 {diff}"));
+    }
+    text
 }
 
 fn main() {
@@ -209,7 +232,14 @@ fn run(cli: &Cli, config_path: &Path) -> Result<(), String> {
         return Ok(());
     }
     if let Some(what) = &cli.benchmark {
-        return bench::run(what, cli.frames, cli.out.as_deref(), cli.replicate);
+        let opts = suite::Options {
+            frames: cli.frames,
+            out: cli.out.clone(),
+            replicate: cli.replicate,
+            per_frame: cli.per_frame,
+            overwrite: cli.overwrite,
+        };
+        return bench::run(what, &opts);
     }
     if cli.loopback_test {
         // No configuration is read: nothing in it could matter to a test that touches no device.

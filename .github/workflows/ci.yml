@@ -143,3 +143,25 @@ jobs:
           test "$(git ls-files | grep -cE '(^|/)package-lock\.json$')" -eq 1
           git ls-files | grep -qx 'legacy/browser-runtime/package-lock.json'
           git ls-files | grep -qx 'Cargo.lock'
+
+      - name: No unpublished suite result is committed as if it were the record
+        # z30 writes exploratory and dirty-build results under these two trees by default
+        # (audit 2026-09-28 F-13 / F-14); they are git-ignored and must stay out of the history.
+        run: |
+          set -e
+          if git ls-files | grep -E '^research/results/(exploratory|unpublished)/'; then
+            echo "unpublished results are tracked"; exit 1
+          fi
+
+  research-tools:
+    name: Research tools fail closed (summarise, compare, pair)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+      - run: python -m pip install pytest
+      # Standard library + pytest only; includes the byte-for-byte regeneration of the
+      # published 672cef9b3cdb/SUMMARY.md.
+      - run: python -m pytest research/tests -q

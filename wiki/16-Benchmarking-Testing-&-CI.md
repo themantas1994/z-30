@@ -61,14 +61,19 @@ stations as a function of power difference; FT8 on the same channels.
 cargo build --release -p z30-cli
 ./target/release/z30 --benchmark suite                        # every benchmark, full size
 ./target/release/z30 --benchmark awgn --frames 200            # one benchmark
-./target/release/z30 --benchmark suite --frames 20 --out /tmp/x   # quick, marked exploratory
+./target/release/z30 --benchmark suite --frames 20 --out /tmp/x   # quick, status exploratory
 python3 research/summarize_suite.py research/results/<commit> --write
 ```
 
 A run on the same commit reproduces every decode count exactly (latency will differ: it is
 wall-clock time measured while other slots decode concurrently, and is indicative only; the
-controlled latency benchmark is `z30 --benchmark perf`). Fewer than 100 frames per point is
-marked exploratory in the JSON. The full suite takes a few hours on 4 cores.
+controlled latency benchmark is `z30 --benchmark perf`). A run below a benchmark's
+publishable size (200 frames per point behind every crossing) is marked exploratory, and every
+result carries a `status`: only a clean build at the published seed and full size is written to
+`research/results/<commit>/`. Replicates, exploratory runs and dirty builds go to labelled
+directories beside it, and nothing overwrites a published result
+([docs/benchmarking.md](../docs/benchmarking.md#the-instrument-is-the-receiver)). The full
+suite takes a few hours on 4 cores.
 
 ## Before you publish a number
 
