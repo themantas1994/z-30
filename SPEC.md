@@ -80,13 +80,14 @@ non-coherent (§8).
 
 Data symbol *s* (0 … 53) is the 4-bit natural-binary value of codeword bits `4s … 4s+3`, MSB
 first: `tone = c[4s]·8 + c[4s+1]·4 + c[4s+2]·2 + c[4s+3]`. **Not Gray-coded** (wiki/03 used to say
-Gray; the code never has been). On AWGN the labelling costs nothing by construction: the
-non-coherent orthogonal 16-FSK channel is invariant under any permutation of the tone indices, so
-every labelling has the same bit-LLR distribution and BICM capacity (2026-09-28 audit DSP-09,
-which also confirms it by Monte Carlo). A difference could only come from non-orthogonality
-(GFSK leakage, residual frequency error or drift, Doppler); on fading channels it has not been
-measured beyond an exploratory, genie-coarse paired run with no significant difference (audit
-L-05).
+Gray; the code never has been). For ideal orthogonal non-coherent 16-FSK on AWGN the labelling
+costs nothing by construction: the channel is invariant under any permutation of the tone
+indices, so every labelling has the same bit-LLR distribution and BICM capacity (2026-09-28 audit
+DSP-09, confirmed by Monte Carlo). z-30's GFSK is not exactly orthogonal (DSP-02: 0.51% of symbol
+energy in adjacent bins), and residual frequency error, drift and Doppler also break the
+symmetry, so a small difference is not excluded; the only paired run (DSP-09: exploratory,
+genie-coarse, 150 frames per condition, AWGN and fading) found none significant. The question
+(audit L-05) remains open for fading.
 
 ## 4. Information block
 

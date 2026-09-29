@@ -79,7 +79,7 @@ while breaking the constant-envelope test, so it was not kept.
 | `a_subtraction_never_adds_energy_and_removes_what_the_station_contributed` | residual energy falls at −15…+20 dB; from −8 dB up the energy removed is the station's own energy within 10% |
 | `subtracting_a_frame_that_is_not_there_removes_only_the_noise_projection_and_creates_nothing` | on noise alone a wrong subtraction removes < 0.5% of the slot's energy and the residual decodes nothing |
 | `random_overlapping_bands_sic_on_versus_off_paired` | 10 bands of 8 randomly overlapping stations: 0 false decodes and 0 duplicates with and without SIC; SIC never loses a single-pass decode |
-| `a_busy_band_decodes_identically_on_one_thread_and_on_many` | a 20-station band gives a bit-identical report on 1 thread and on the pool |
+| `a_busy_band_decodes_identically_on_one_thread_and_on_many` | a 20-station band gives the same decodes (payload, pass, iterations; bit-identical DT, frequency and SNR) on an explicit one-thread and an explicit eight-thread pool (F-76) |
 
 ## Collision measurements
 
@@ -91,7 +91,7 @@ every cell except exact co-location (same frequency and DT), where neither arm e
 because (read from the code, not separately measured) the two Costas patterns coincide and
 the strong station's fit absorbs the weak one's sync. By design, a candidate within 1.6 Hz and
 0.1 s of a decoded station is discarded in passes 2 and 3 as its residue, so a station that close
-is unreachable; the boundary between that and the measured 5 Hz / 0.4 s cells is unmapped
+is not retried after pass 1; the boundary between that and the measured 5 Hz / 0.4 s cells is unmapped
 ([benchmarking.md](benchmarking.md#collisions-sic-on-versus-off)). SIC never lost a single-pass decode; 0 false decodes, 0 duplicates.
 These are simulation results (AWGN, two stations); nothing about collisions on a real band has
 been measured.

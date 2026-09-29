@@ -231,7 +231,8 @@ purpose. Every published figure follows these rules:
   (tone 0 uniform 210–2740 Hz, DT uniform ±1.4 s, random phase and payload), AWGN, 200 frames
   per point, suite seed 20260830, Wilson 95%. **Simulation; not measured on real hardware.**
   Its run-to-run sd is 0.048 dB over 11 runs (the published run and ten disjoint replicates; 0.0496 dB over the ten replicates alone, F-66); pooled over 2200 frames per point,
-  −23.00 dB [−23.04, −22.96] (`research/results/18fbd78d8fb8/`). Quote replicates with
+  −23.00 dB [−23.04, −22.96] (the `research/results/18fbd78d8fb8/` replicates; computed in
+  `audit/2026-09-24-corrective-remediation/evidence/awgn_investigation/awgn_replicate_analysis.json`). Quote replicates with
   `--replicate`, never with another base seed (small seeds reused the published frames, §D of the
   corrective audit).
 - **Against FT8, quote all of it or none of it:** about 2 dB deeper than FT8's published −21 dB

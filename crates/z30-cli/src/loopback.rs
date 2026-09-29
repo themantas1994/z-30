@@ -124,7 +124,7 @@ pub fn analyse(window: &[f32], report: &SlotReport, expected: &Message, predicte
             "decoded": "the frame decodes and nothing else does",
             "timing": "|dt_minus_prediction_ms| <= 50",
             "frequency": "|freq_error_hz| <= 1.0",
-            "bandwidth": "p99 <= 55 Hz and minus_40_db <= 80 Hz (the waveform alone measures ~49 / ~66 Hz)",
+            "bandwidth": "p99 <= 55 Hz and minus_40_db <= 80 Hz (the waveform alone measures ~50.5 / ~66 Hz)",
         },
         "pass": hit.is_some() && others.is_empty()
             && hit.is_some_and(|d| ((d.dt_sec - predicted_dt_sec) * 1e3).abs() <= 50.0 && (d.freq_hz - TEST_F0_HZ).abs() <= 1.0)
@@ -206,7 +206,7 @@ pub fn software_loopback(rate: u32, snr_db: Option<f64>) -> Result<Value, String
                     };
                     v["criteria"] = json!(match snr_db {
                         Some(_) => "decodes, nothing else does, |DT| <= 20 ms, |f error| <= 0.5 Hz, |SNR error| <= 1 dB",
-                        None => "decodes; occupied bandwidth p99 <= 55 Hz and -40 dB <= 80 Hz (the waveform alone measures ~49 / ~66 Hz)",
+                        None => "decodes; occupied bandwidth p99 <= 55 Hz and -40 dB <= 80 Hz (the waveform alone measures ~50.5 / ~66 Hz)",
                     });
                     v["pass"] = json!(pass);
                     v["source"] = json!("software-loopback");

@@ -135,8 +135,8 @@ alone). Pooled over the 11 runs, 2200 frames per point: **50% at −23.00 dB [�
 90% at −22.09 dB [−22.12, −22.05]**. These run-to-run and pooled statistics are computed outside
 `summarize_suite.py`, by
 `audit/2026-09-24-corrective-remediation/evidence/awgn_investigation/analyse_awgn.py`
-(`awgn_replicate_analysis.json` beside it); `18fbd78d8fb8/` has no `SUMMARY.md` (audit F-67,
-open). The post-remediation audit's independent
+(`awgn_replicate_analysis.json` beside it); `18fbd78d8fb8/SUMMARY.md` (generated with
+`--partial`: awgn only, with the not-the-published-run banner) does not contain these statistics. The post-remediation audit's independent
 harness (its own noise generator and seeds) measured −22.94 dB; the corrective remediation found
 no methodological or implementation difference behind that 0.09 dB (the harness reproduces its
 own figure exactly at the corrected commit, the two SNR normalisations agree to 0.00001 dB, and
@@ -287,15 +287,18 @@ default 3 passes (SIC) and with 1 pass. 100 trials per cell.
 - **Why exact co-location fails** (read from the code, not separately measured): the two
   frames' Costas symbols coincide in tone and time. The least-squares gain fit for the strong
   station therefore absorbs the weak station's sync symbols, and subtracting it leaves no sync
-  pattern for the weak station to be acquired from. Separately, and by design, a candidate within
-  1.6 Hz and 0.1 s of a station already decoded is dropped in passes 2 and 3 as that station's
-  residue (`slot.rs`, the residue filter), and acquisition keeps only the strongest peak within
-  2 bins (1.6 Hz) and 2 hops (80 ms) (`sync.rs`, non-maximum suppression): **a second station
-  that close to a decoded one is unreachable.** The 2026-09-28 DSP review (DSP-05, exploratory,
-  20 trials per cell, weak at −18 dB, not a result file) decoded the residual afresh without the
-  residue filter and still never decoded the weak station at 0 Hz or 1 Hz separation, and did at
-  5 Hz (20/20) and partly at 0.08 s (12/20), which supports the fit-absorption explanation. The
-  boundary between 1 and 5 Hz, and between 0 and 0.4 s, has not been mapped at benchmark size.
+  pattern for the weak station to be acquired from. Separately, by design: in passes 2 and 3 a
+  candidate within 1.6 Hz and 0.1 s of a decoded station is dropped as its residue (`slot.rs`,
+  the residue filter), and in every pass acquisition keeps only the strongest peak within 2 bins
+  (1.6 Hz) and 2 hops (80 ms) (`sync.rs`, non-maximum suppression). A second station inside that
+  NMS neighbourhood of a stronger one is never a candidate, and one inside the residue window
+  that pass 1 missed is never retried. The 2026-09-28 DSP review (DSP-05: exploratory, 20 trials
+  per cell, weak at −18 dB; no seed, script or result file committed, the audit report is the
+  only record) never decoded the weak station at 0 Hz or 1 Hz separation, even decoding the
+  residual afresh without the residue filter, which supports the fit-absorption explanation; it
+  decoded it at 5 Hz in 20/20 and at 0.08 s in 12/20 trials, through `decode_slot` as well as
+  afresh (hop quantisation sometimes places it outside the NMS neighbourhood). The boundary
+  between 1 and 5 Hz, and between 0 and 0.4 s, has not been mapped at benchmark size.
 - `PassStats::suppression_db` is not reported: it is a receiver-internal fit ratio, which the
   2026-09-24 audits measured overstating the true suppression by 9–16 dB. Physical suppression measured
   against the true waveform is in [sic.md](sic.md).
@@ -412,6 +415,11 @@ frames: 0 discordant (measured during the 2026-09-23 rebuild; the fixed rule is 
 
 ### Performance (gate G2.7)
 
+**Historical, not current (F-35).** Measured at `83b1b70`, before the replica fit every decode
+now runs (`d8983ee`); 20 slots per row, so "p99" is the maximum; the 4-thread allocation column
+is not deterministic; the file has no provenance. No latency figure is current until
+`z30 --benchmark perf` is re-run on an idle host ([research/results/README.md](../research/results/README.md)).
+
 `z30 --benchmark perf --frames 20` (`perf_k.txt`): 20 seeded slots per K, stations at −20…0 dB
 spread over 200–2750 Hz (evenly spaced: this is a latency measurement, not a decode-rate one),
 idle 4-vCPU Xeon @ 2.80 GHz.
@@ -427,7 +435,7 @@ idle 4-vCPU Xeon @ 2.80 GHz.
 | 50 | 4 | 793 | 834 | 863 | 863 | 2.09 | 43 480 | 1000/1000 |
 | 50 | 1 | 2079 | 2324 | 2525 | 2525 | 2.06 | 10 440 | 1000/1000 |
 
-K = 50 on 4 threads: p99 863 ms, under the < 1 s target. On one thread: p99 2525 ms, **over**
+At that commit, K = 50 on 4 threads: p99 863 ms, under the < 1 s target. On one thread: p99 2525 ms, **over**
 the ≤ 2 s target, but inside the real-time budget of 4.5 s (the window closes at slot + 25.5 s;
 the next slot starts at + 30 s).
 
@@ -476,9 +484,10 @@ Stated so that nobody fills the gap with a plausible number:
 - **FT8 on the same channels.** Every FT8 figure in the documentation is published, not
   reproduced.
 - **Gray against natural-binary symbol mapping on fading channels** (audit L-05). On AWGN the
-  labelling is irrelevant by symmetry (SPEC §3); on fading only an exploratory genie-coarse run
-  exists (2026-09-28 DSP-09).
-- **Single-thread K = 50 latency** misses its target (above).
+  loss is zero for ideal orthogonal FSK by symmetry (SPEC §3); z-30's GFSK is not exactly
+  orthogonal, and on AWGN and fading only an exploratory genie-coarse run exists (2026-09-28 DSP-09).
+- **Latency at the current commit.** Single-thread K = 50 missed its target when last measured,
+  before the replica fit (historical, above); it has not been re-measured.
 - **Windows and macOS** are verified by CI build and test, not by operating a station.
 - **Protocol v2.** Its measured half needs a candidate v2 code, which is a protocol decision
   reserved for the operator.

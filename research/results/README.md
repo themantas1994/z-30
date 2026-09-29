@@ -89,7 +89,8 @@ not edited):
   `python3 research/summarize_suite.py research/results/18fbd78d8fb8 --partial --write`; it
   covers only `awgn.json` (the directory holds no other benchmark) and says so. The pooled
   figure over 2200 frames per point (AGENTS.md §5) is computed from the replicate files by
-  hand in the corrective audit; no script in `research/` produces it yet.
+  `audit/2026-09-24-corrective-remediation/evidence/awgn_investigation/analyse_awgn.py` (output
+  `awgn_replicate_analysis.json`, key `pooled`); no script in `research/` produces it yet.
 
 Provenance notes:
 

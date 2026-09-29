@@ -57,14 +57,15 @@ Pass 1 searches the whole band. After it, every new decode is subtracted from th
 Timing searches for all of them run in parallel against the same residual, then the fits and
 subtractions are applied in decode order, each on what the previous one left.
 
-Passes 2 and 3 search again, with two restrictions that change the cost without changing the
-result:
+Passes 2 and 3 search again, with two restrictions that reduce the cost. Their effect on
+decodes has not been measured (2026-09-28 audit DSP-04, ledger F-41):
 
 - only candidates within 60 Hz of something subtracted in the previous pass are tried.
   Everywhere else the residual is unchanged, and a deterministic decoder would fail there
   exactly as it did before;
-- a candidate sitting on a decoded station's own residue (±1.6 Hz, ±0.1 s) is skipped. It
-  could only decode as the station already decoded.
+- a candidate within ±1.6 Hz and ±0.1 s of a decoded station is skipped as that station's
+  residue. A different station that close is therefore not retried in passes 2 and 3
+  ([sic.md](sic.md)).
 
 A decode whose 77 information bits equal an earlier decode's is counted as a duplicate and
 dropped. `PassStats::duplicates` reports how many were dropped, and the channel-scenario tests
@@ -111,11 +112,13 @@ Every value is measured from the slot's own samples after the frame has decoded:
   with 5°/symbol random-walk phase noise it read 0.5 dB low at +20 dB and 2.9 dB low at +30 dB,
   and on Watterson "poor" 4.4 dB low at +20 dB (moderate: 0.4 dB low at +10 dB, 1.9 dB low at
   +20 dB), because the replica fit leaves the unmodelled part of the signal in the residual it
-  takes the noise from. Below about +10 dB it stayed within 0.5 dB. Those Watterson figures were
+  takes the noise from. Below about +10 dB it stayed within 0.5 dB on that (pre-N-01) model. Those Watterson figures were
   measured with the channel model before its Doppler correction (N-01) and **understate the
-  bias**: on the corrected model the 2026-09-28 DSP review (DSP-01; exploratory, 30 frames per
-  cell, error against each frame's realised SNR, not a result file) measured "poor" 1.7 dB low
-  at +10 dB and 6.3 dB low at +20 dB, and "moderate" 2.9 dB low at +20 dB. A station on a
+  bias**: on the corrected model the 2026-09-28 DSP review (DSP-01: exploratory, `decode_slot`
+  with `RxConfig::default()`, blind placement, 30 frames per cell, mean error against each
+  frame's realised SNR in 2500 Hz; no seed, script or result file committed, the audit report is
+  the only record) measured "poor" 1.7 dB low at +10 dB (sd 0.26) and 6.3 dB low at +20 dB
+  (sd 0.68), and "moderate" 2.9 dB low at +20 dB (sd 0.32); "poor" read 0.5 dB low even at 0 dB. A station on a
   fast-fading path at +10 dB is therefore sent a report about 2 dB low. No benchmark measures
   the estimate on fading channels yet. It has not been measured on real audio: **NOT HARDWARE
   VALIDATED**.

@@ -172,5 +172,9 @@ Region and licence class are migrated. A migrated configuration therefore cannot
 you set a transmit level yourself, and whatever else the gate lists (2026-09-28 audit
 F-21; `migrate::tests::f21_legacy_defaults_are_not_migrated_into_a_transmit_capable_station`).
 
+The retired browser app's AP setting (`apDecodeEnabled`) is carried over into
+`receiver.ap_enabled` and listed under **Imported** ("a priori decoding = …"): a station that had
+AP on stays on after migrating, although a new installation has it off ([wiki/17](../wiki/17-A-Priori-(AP)-Decoding.md)).
+
 Imported log fields carry `legacy_import` provenance on purpose (see
 [safety.md](safety.md#logged-data)).

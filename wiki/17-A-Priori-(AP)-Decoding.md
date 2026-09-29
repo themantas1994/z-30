@@ -202,9 +202,11 @@ That is the same trade WSJT-X makes, and it is why:
   that pinning made that impossible — a guard that can only fire when something else is already
   wrong is exactly the guard worth keeping.
 
-It is also why **AP is off by default**: `ap_enabled = false` in `[receiver]` of `config.toml`
-(GUI: Settings → Receiver → "A priori decoding"). An operator should take that trade knowingly.
-(The retired browser app's equivalent was `apDecodeEnabled` in Station Settings → Automation.)
+It is also why **AP is off in a new installation**: `ap_enabled = false` in `[receiver]` of
+`config.toml` (GUI: Settings → Receiver → "A priori decoding"). An operator should take that
+trade knowingly. (The retired browser app's equivalent was `apDecodeEnabled` in Station
+Settings → Automation.) `z30 --migrate` carries that setting over and lists it under
+**Imported** as "a priori decoding = true/false", so check Settings → Receiver after migrating.
 
 AP-recovered decodes are tagged **a1**…**a6** in the activity log, for the same reason WSJT-X
 prints its `iaptype`: a frame that only closed because the receiver assumed your callsign was in

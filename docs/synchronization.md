@@ -100,9 +100,9 @@ with a reason (`BeforeEpoch`, `Overwritten`, `ClockUnlocked`, `DecoderBusy`, `De
 It is never dropped silently.
 
 **System-clock steps.** A small correction (a slew, or a step of a second or two, as NTP makes)
-is absorbed: at most a new clock epoch and the one slot straddling it missed. A step large enough
-that the clock no longer reads the slot the scheduler is waiting for, or the one before it,
-re-seats the scheduler on the slot the clock now reports and says so: `SlotEvent::ClockStepped
+is absorbed: at most a new clock epoch and the one slot straddling it missed. A step that puts
+the clock more than one slot before or after the slot the scheduler is waiting for re-seats the
+scheduler on the slot the clock now reports and says so: `SlotEvent::ClockStepped
 { from, to }`, shown by the GUI and by `z30 --receive` as `Event::ClockStepped`. After a backward
 step the slots that come round again are decoded again under the new clock; after a forward step
 the skipped slots were never heard and are not decoded (and not listed one by one). Before this
