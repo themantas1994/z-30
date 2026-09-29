@@ -109,6 +109,25 @@ jobs:
           python -m pip install --upgrade pip pip-audit
           pip-audit --requirement legacy/python-oracle/requirements.txt --strict
 
+  rust-advisories:
+    # The shipped binaries bundle SQLite, hidapi, cpal and eframe; only the oracle's Python
+    # dependencies were scanned (2026-09-28 audit F-50 / CTO-13). This scans Cargo.lock against
+    # the RustSec database and fails on any vulnerability not listed below with its reason.
+    name: Dependency audit (Rust, Cargo.lock)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo install cargo-audit --locked
+      - name: cargo audit
+        # RUSTSEC-2026-0176 / -0177: pyo3 0.25.1, reached only through crates/z30-py, the
+        # research bindings that are never shipped (`cargo tree -i pyo3`: z30-py alone). The
+        # bindings use neither PyList/PyTuple iterator nth nor PyCFunction::new_closure. The
+        # upgrade to pyo3 >= 0.29 needs a code migration (#40) and is tracked in
+        # audit/ACTIVE_DEFECT_LEDGER.md (F-50). Any other vulnerability fails this job.
+        # Vulnerabilities fail the job; informational warnings (unmaintained, yanked) are printed.
+        run: cargo audit --ignore RUSTSEC-2026-0176 --ignore RUSTSEC-2026-0177
+
   hygiene:
     name: Repository hygiene and production separation
     runs-on: ubuntu-latest
