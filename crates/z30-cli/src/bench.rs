@@ -110,16 +110,40 @@ fn perf(frames: usize) -> Result<(), String> {
 
 /// Exact one-sided upper 95% bound on a binomial rate with `k` events in `n` trials (Clopper-
 /// Pearson), by bisection on the binomial tail.
+///
+/// The tail used to be summed from `(1 - p)^n` upwards in linear space. For k > 0 and large
+/// n·p that first term underflows to 0.0, every later term is built from it, and the tail reads
+/// 0: the bisection then settled far below the true bound - k = 2000 of n = 10 000 gave 0.072
+/// against a true 0.207, below the point estimate 0.2 (audit RES-08 / F-42). The terms are now
+/// summed in the log domain. k = 0 keeps the closed form it always had (it cannot underflow into
+/// a wrong answer: a vanishing tail is the right one), so every published bound, all of which
+/// have k = 0, is reproduced to the last bit.
 pub(crate) fn upper95(k: u64, n: u64) -> f64 {
+    if k >= n {
+        return 1.0;
+    }
     let tail = |p: f64| -> f64 {
         // P(X <= k | n, p)
-        let mut term = (1.0 - p).powf(n as f64);
-        let mut sum = term;
-        for i in 0..k {
-            term *= (n - i) as f64 / (i + 1) as f64 * p / (1.0 - p);
-            sum += term;
+        if k == 0 {
+            return (1.0 - p).powf(n as f64);
         }
-        sum
+        if p <= 0.0 {
+            return 1.0;
+        }
+        let (ln_p, ln_q) = (p.ln(), (-p).ln_1p());
+        // ln of term i = ln C(n, i) + i ln p + (n - i) ln(1 - p), accumulated term to term.
+        let mut ln_term = n as f64 * ln_q;
+        let mut terms = Vec::with_capacity(k as usize + 1);
+        terms.push(ln_term);
+        for i in 0..k {
+            ln_term += ((n - i) as f64).ln() - ((i + 1) as f64).ln() + ln_p - ln_q;
+            terms.push(ln_term);
+        }
+        let max = terms.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+        if !max.is_finite() {
+            return 0.0;
+        }
+        (max + terms.iter().map(|t| (t - max).exp()).sum::<f64>().ln()).exp().min(1.0)
     };
     let (mut lo, mut hi) = (0.0f64, 1.0f64);
     for _ in 0..200 {
@@ -182,20 +206,65 @@ fn sweep(frames: usize) -> Result<(), String> {
 }
 
 /// Entry point.
-pub fn run(what: &str, frames: Option<usize>, out: Option<&std::path::Path>, replicate: Option<u16>) -> Result<(), String> {
+pub fn run(what: &str, opts: &crate::suite::Options) -> Result<(), String> {
+    if matches!(what, "perf" | "false-decodes" | "sweep") {
+        // These print to the terminal and write no result file; accepting the suite's options
+        // and silently ignoring them made a run look like something it was not (RES-06).
+        if opts.out.is_some() || opts.replicate.is_some() || opts.per_frame || opts.overwrite {
+            return Err(format!("--out, --replicate, --per-frame and --overwrite apply to suite benchmarks, not to \"{what}\""));
+        }
+    }
     match what {
-        "perf" => perf(frames.unwrap_or(20)),
-        "false-decodes" => false_decodes(frames.unwrap_or(20)),
-        "sweep" => sweep(frames.unwrap_or(20)),
-        other => crate::suite::run(other, frames, out, replicate),
+        "perf" => perf(opts.frames.unwrap_or(20)),
+        "false-decodes" => false_decodes(opts.frames.unwrap_or(20)),
+        "sweep" => sweep(opts.frames.unwrap_or(20)),
+        other => crate::suite::run(other, opts),
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use super::upper95;
+
     #[test]
     fn upper_bound_matches_the_rule_of_three() {
-        let u = super::upper95(0, 100_000);
+        let u = upper95(0, 100_000);
         assert!((u - 3.0 / 100_000.0).abs() < 1e-6, "{u}");
+    }
+
+    /// k = 0 has the closed form 1 - 0.05^(1/n), for any n. The k = 0 path keeps `(1 - p)^n`
+    /// so published bounds reproduce bit for bit; rounding 1 - p costs it about n·ε relative
+    /// (1.4e-9 at n = 1e9), far below the three figures any bound is quoted to.
+    #[test]
+    fn upper_bound_with_no_events_matches_the_closed_form_at_large_n() {
+        for n in [10u64, 400, 2000, 133_911, 10_000_000, 1_000_000_000] {
+            let exact = -((0.05f64).ln() / n as f64).exp_m1();
+            let u = upper95(0, n);
+            let tol = if n <= 200_000 { 1e-10 } else { 1e-7 };
+            assert!((u / exact - 1.0).abs() < tol, "n = {n}: {u:e} vs {exact:e}");
+        }
+        // The published values (672cef9b3cdb/false.json and busy.json), to the last bit.
+        assert_eq!(upper95(0, 400), 7.461355528799618e-3);
+        assert_eq!(upper95(0, 2000), 1.4967448951883067e-3);
+        assert_eq!(upper95(0, 50), 5.8155079116972326e-2);
+        assert_eq!(upper95(0, 133_911), 2.2370819162953474e-5);
+    }
+
+    /// k > 0 against exact Clopper-Pearson bounds computed independently (mpmath, 30 digits,
+    /// exact binomial tail). The linear-space sum returned 7.42e-3 and 0.072 for the middle two
+    /// (audit RES-08): the second is below its own point estimate.
+    #[test]
+    fn upper_bound_with_events_matches_clopper_pearson_where_the_tail_used_to_underflow() {
+        for (k, n, exact) in [
+            (1u64, 10u64, 0.394_163_302_436_505),
+            (800, 100_000, 8.479_096_956_109_85e-3),
+            (2000, 10_000, 0.206_693_706_934_26),
+            (5, 1_000_000, 1.051_300_592_939_87e-5),
+        ] {
+            let u = upper95(k, n);
+            assert!((u / exact - 1.0).abs() < 1e-9, "k = {k}, n = {n}: {u:e} vs {exact:e}");
+            assert!(u > k as f64 / n as f64, "the bound lies above the point estimate");
+        }
+        assert_eq!(upper95(7, 7), 1.0);
     }
 }

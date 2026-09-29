@@ -12,12 +12,18 @@
 //! - Every result file carries its provenance: the binary's commit and build, the machine, the
 //!   channel, the SNR definition, the placement distributions, the seed, the frame count, the
 //!   success and false-decode criteria, and Wilson 95% intervals. Results are written by this
-//!   code only; nothing here reads a previous result.
+//!   code only; nothing here reads a previous result (it only checks, before writing, whether
+//!   the file it would replace is a published one).
+//! - Every result says what it is (`status`): `published`, `replicate`, `exploratory`, `dirty`
+//!   or `not_the_published_run`, and only a clean, full-size, published-seed run goes to
+//!   `research/results/<commit>/`. Nothing overwrites a published result (audit F-13, F-14).
 
 use crate::bench::upper95;
 use rayon::prelude::*;
 use serde_json::{json, Value};
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Mutex;
 use std::time::Instant;
 use z30_channel::{rng, synthesize, Band, ChannelRng, Station, Watterson, FS, SLOT_ZERO_INDEX};
 use z30_dsp::slot::{Receiver, RxConfig, SlotReport};
@@ -52,6 +58,233 @@ fn run_seed() -> u64 {
 }
 
 const BENCHMARKS: [&str; 10] = ["awgn", "snr", "drift", "timing", "clock", "impair", "busy", "false", "sic", "fading"];
+
+/// Frames per point behind any sensitivity crossing (`AGENTS.md` section 5, research-process
+/// section 2). The suite used to mark a run exploratory only below 100, so a 150-frame AWGN
+/// crossing was written unmarked (audit DOC-08 / RES-05 / F-32).
+pub const CROSSING_MIN_FRAMES: usize = 200;
+
+/// The size each benchmark is published at (frames per point; slots per point for `busy` and
+/// `false`; trials per cell for `sic`), which is also its default. Below it a run is
+/// exploratory. `awgn` and `fading` carry the crossings, so they are held to
+/// `CROSSING_MIN_FRAMES`; `snr` (error statistics) and `sic` (paired McNemar per cell) are not
+/// crossings and were published at 100.
+pub fn publishable_size(name: &str) -> usize {
+    match name {
+        "awgn" | "fading" => CROSSING_MIN_FRAMES,
+        "drift" | "timing" | "clock" | "impair" => 200,
+        "snr" | "sic" => 100,
+        "busy" => 50,
+        "false" => 400,
+        _ => usize::MAX,
+    }
+}
+
+/// How `--benchmark` was asked to run.
+#[derive(Clone, Debug, Default)]
+pub struct Options {
+    pub frames: Option<usize>,
+    pub out: Option<PathBuf>,
+    pub replicate: Option<u16>,
+    pub per_frame: bool,
+    pub overwrite: bool,
+}
+
+/// What a result file is. Only `Published` may live at `research/results/<commit>/<name>.json`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Status {
+    /// Clean build, published seed (replicate 0), at least the publishable size, written to
+    /// `research/results/<commit>/`. Publication itself still needs the board (research-process
+    /// section 4).
+    Published,
+    /// Clean, full size, replicate r >= 1: a different set of frames, for sampling variability.
+    Replicate,
+    /// Below the benchmark's publishable size.
+    Exploratory,
+    /// Built from a tree that is not its commit (or from no known commit).
+    Dirty,
+    /// Would be `Published`, but was written somewhere else (`--out`): a reproduction, not the
+    /// record.
+    NotThePublishedRun,
+}
+
+impl Status {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Status::Published => "published",
+            Status::Replicate => "replicate",
+            Status::Exploratory => "exploratory",
+            Status::Dirty => "dirty",
+            Status::NotThePublishedRun => "not_the_published_run",
+        }
+    }
+}
+
+/// A binary whose label is `<commit>` (not `-dirty`, not `unknown`).
+fn build_is_clean(label: &str) -> bool {
+    !label.ends_with("-dirty") && label != "unknown"
+}
+
+/// The status a run has before its destination is considered. Dirty outranks everything: a
+/// modified instrument or receiver makes the size and seed irrelevant.
+pub fn intrinsic_status(clean: bool, frames: usize, publishable: usize, replicate: u16) -> Status {
+    if !clean {
+        Status::Dirty
+    } else if frames < publishable {
+        Status::Exploratory
+    } else if replicate != 0 {
+        Status::Replicate
+    } else {
+        Status::Published
+    }
+}
+
+/// Where a run goes when `--out` is not given. Only a published run lands in
+/// `research/results/<commit>/`; the others go to labelled places beside it, and the
+/// `exploratory/` and `unpublished/` trees are git-ignored so they cannot be committed as if
+/// they were the record.
+pub fn default_dir(status: Status, label: &str, diff: &str, replicate: u16) -> PathBuf {
+    let base = PathBuf::from("research").join("results");
+    let rep = |p: PathBuf| if replicate == 0 { p } else { p.join("replicates").join(format!("r{replicate}")) };
+    match status {
+        Status::Published | Status::NotThePublishedRun => base.join(label),
+        Status::Replicate => base.join(label).join("replicates").join(format!("r{replicate}")),
+        Status::Exploratory => rep(base.join("exploratory").join(label)),
+        Status::Dirty => rep(base.join("unpublished").join(format!("{label}-{}", if diff.is_empty() { "nodiff" } else { diff }))),
+    }
+}
+
+/// A commit directory name as the suite writes it: 7-40 lowercase hex, optionally `-dirty`.
+fn is_commit_dir(s: &str) -> bool {
+    let h = s.strip_suffix("-dirty").unwrap_or(s);
+    (7..=40).contains(&h.len()) && h.chars().all(|c| c.is_ascii_digit() || ('a'..='f').contains(&c))
+}
+
+/// `dir` made absolute against the working directory and normalised lexically (`..` removed),
+/// so `./research/../research/results/x` is recognised as what it is.
+fn lexical_absolute(dir: &Path) -> PathBuf {
+    let joined = if dir.is_absolute() { dir.to_path_buf() } else { std::env::current_dir().unwrap_or_default().join(dir) };
+    let mut out = PathBuf::new();
+    for c in joined.components() {
+        match c {
+            Component::ParentDir => {
+                out.pop();
+            }
+            Component::CurDir => {}
+            other => out.push(other.as_os_str()),
+        }
+    }
+    out
+}
+
+/// If `dir` is inside a published commit directory (`research/results/<commit>/...`): that
+/// directory's name and the components below it.
+pub fn published_tree(dir: &Path) -> Option<(String, Vec<String>)> {
+    let abs = lexical_absolute(dir);
+    let parts: Vec<String> = abs
+        .components()
+        .filter_map(|c| match c {
+            Component::Normal(s) => Some(s.to_string_lossy().into_owned()),
+            _ => None,
+        })
+        .collect();
+    (0..parts.len().saturating_sub(2))
+        .find(|&i| parts[i] == "research" && parts[i + 1] == "results" && is_commit_dir(&parts[i + 2]))
+        .map(|i| (parts[i + 2].clone(), parts[i + 3..].to_vec()))
+}
+
+/// Status and directory of one benchmark's result. `Err` when the destination is one this run
+/// may not write to: a published commit directory accepts only that commit's own published
+/// run at its top and its own replicate r in `replicates/r<r>/`.
+pub fn destination(name: &str, frames: usize, opts: &Options, label: &str, diff: &str) -> Result<(Status, PathBuf), String> {
+    let replicate = opts.replicate.unwrap_or(0);
+    let intrinsic = intrinsic_status(build_is_clean(label), frames, publishable_size(name), replicate);
+    let Some(dir) = &opts.out else {
+        return Ok((intrinsic, default_dir(intrinsic, label, diff, replicate)));
+    };
+    if let Some((commit, below)) = published_tree(dir) {
+        let allowed = match intrinsic {
+            Status::Published => commit == label && below.is_empty(),
+            Status::Replicate => commit == label && below == ["replicates".to_string(), format!("r{replicate}")],
+            _ => false,
+        };
+        if !allowed {
+            return Err(format!(
+                "refusing to write a {} {name} result into {}: research/results/<commit>/ holds only that commit's published run and its replicates/r<N>/ (write elsewhere with --out, or omit --out for the labelled default)",
+                intrinsic.as_str(),
+                dir.display()
+            ));
+        }
+        return Ok((intrinsic, dir.clone()));
+    }
+    let status = if intrinsic == Status::Published { Status::NotThePublishedRun } else { intrinsic };
+    Ok((status, dir.clone()))
+}
+
+/// Whether an existing result file must be kept whatever the flags say: a published result
+/// (by its `status`, or for files written before `status` existed, by having none of the
+/// markers a non-published run carried), or anything that cannot be read as a result.
+pub fn is_published_file(path: &Path) -> bool {
+    let Ok(text) = std::fs::read_to_string(path) else { return true };
+    let Ok(v) = serde_json::from_str::<Value>(&text) else { return true };
+    match v.get("status").and_then(Value::as_str) {
+        Some(s) => s == "published",
+        None => {
+            v.get("exploratory").is_none()
+                && v.get("not_the_published_run").is_none()
+                && v["provenance"]["git_commit"].as_str().is_some_and(build_is_clean)
+        }
+    }
+}
+
+/// Refuses to replace a file that exists, unless `overwrite` is given and the file is neither a
+/// published result nor anywhere inside a published commit directory. The first `--replicate`
+/// wrote over the published `awgn.json` and nothing said so (audit RES-04 / F-14).
+pub fn check_writable(path: &Path, overwrite: bool) -> Result<(), String> {
+    if !path.exists() {
+        return Ok(());
+    }
+    let json = path.extension().is_some_and(|e| e == "json");
+    if published_tree(path.parent().unwrap_or(Path::new("."))).is_some() || (json && is_published_file(path)) {
+        return Err(format!("refusing to overwrite {}: it is a published result or part of a published results directory", path.display()));
+    }
+    if !overwrite {
+        return Err(format!("{} exists; pass --overwrite to replace it (it is not a published result)", path.display()));
+    }
+    Ok(())
+}
+
+// ------------------------------------------------------------------------------ per-frame log
+
+/// Per-frame outcomes, collected only with `--per-frame`. Aggregates alone cannot be paired
+/// between two commits: the discordant frames are lost (audit RES-01 / F-11). Each benchmark's
+/// records are in point and frame order (rayon's `collect` keeps index order), so the file is
+/// identical at any thread count.
+static PER_FRAME: AtomicBool = AtomicBool::new(false);
+static FRAMES: Mutex<Vec<Value>> = Mutex::new(Vec::new());
+
+fn log_frame(record: Value) {
+    if PER_FRAME.load(Ordering::Relaxed) {
+        FRAMES.lock().unwrap_or_else(|e| e.into_inner()).push(record);
+    }
+}
+
+fn take_frames() -> Vec<Value> {
+    std::mem::take(&mut *FRAMES.lock().unwrap_or_else(|e| e.into_inner()))
+}
+
+/// Records every single-station frame of point `p`. `x` is the value along the benchmark's rate
+/// curve (SNR in dB) where the benchmark has one; `curve` names the curve (fading preset).
+fn log_point(bench: &str, id: u64, p: usize, condition: &str, x: Option<f64>, curve: Option<&str>, v: &[Outcome]) {
+    if !PER_FRAME.load(Ordering::Relaxed) {
+        return;
+    }
+    for (i, o) in v.iter().enumerate() {
+        log_frame(json!({ "kind": "frame", "benchmark": bench, "point": p, "frame": i, "seed": frame_seed(id, p, i),
+            "condition": condition, "x": x, "curve": curve,
+            "decoded": o.decoded_any, "correct": o.ok, "false_decodes": o.false_decodes }));
+    }
+}
 
 // ------------------------------------------------------------------------------ statistics
 
@@ -146,7 +379,53 @@ fn provenance(started: &str) -> Value {
         "decoder_config": format!("{:?}", RxConfig::default()),
         "hardware_involved": false,
         "note": "Software simulation only. No radio, sound card or RF path was involved.",
+        "git_dirty": !build_is_clean(env!("Z30_BUILD_COMMIT")),
+        "git_diff_sha256": Some(env!("Z30_BUILD_DIRTY_DIFF_SHA256")).filter(|s| !s.is_empty()),
+        "rustflags": env!("Z30_BUILD_RUSTFLAGS"),
+        "target_features_compiled": env!("Z30_BUILD_TARGET_FEATURES").split(',').filter(|s| !s.is_empty()).collect::<Vec<_>>(),
+        "isa_features_detected": isa_features(),
+        "cargo_lock_sha256": env!("Z30_BUILD_CARGO_LOCK_SHA256"),
+        "instrument": instrument(),
     })
+}
+
+/// The identity of the measuring instrument, as built: a candidate branch compiles its own
+/// harness, channel and modulator, and without this nothing in its result names which one it
+/// used (audit RES-02 / F-12). Two results are comparable only if these agree.
+pub fn instrument() -> Value {
+    let files: serde_json::Map<String, Value> =
+        env!("Z30_BUILD_INSTRUMENT_FILES").split(';').filter_map(|kv| kv.split_once('=')).map(|(k, v)| (k.to_string(), json!(v))).collect();
+    json!({
+        "sha256": env!("Z30_BUILD_INSTRUMENT_SHA256"),
+        "definition": "sha256 over the LF-normalised sha256 of each file below (path=hash, one per line) and the resolved external dependencies of z30-channel from Cargo.lock; computed by the build script from the tree the binary was compiled from",
+        "files": files,
+        "channel_dependencies": env!("Z30_BUILD_INSTRUMENT_LOCK").split(',').filter(|s| !s.is_empty()).collect::<Vec<_>>(),
+    })
+}
+
+/// The instruction-set features this machine offers, detected at run time. rustfft chooses
+/// its SIMD kernels from these, which can change floating-point rounding and so, near a
+/// threshold, which frames decode (audit RES-09 / F-37); exact reproduction is claimed only
+/// between machines that agree here.
+fn isa_features() -> Value {
+    #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+    {
+        macro_rules! detect {
+            ($($f:tt),*) => { json!({ $($f: std::arch::is_x86_feature_detected!($f)),* }) };
+        }
+        detect!("sse2", "sse3", "ssse3", "sse4.1", "sse4.2", "popcnt", "avx", "avx2", "fma", "bmi2", "avx512f")
+    }
+    #[cfg(target_arch = "aarch64")]
+    {
+        macro_rules! detect {
+            ($($f:tt),*) => { json!({ $($f: std::arch::is_aarch64_feature_detected!($f)),* }) };
+        }
+        detect!("neon", "fp16", "sve")
+    }
+    #[cfg(not(any(target_arch = "x86", target_arch = "x86_64", target_arch = "aarch64")))]
+    {
+        json!("not detected on this architecture")
+    }
 }
 
 fn definitions() -> Value {
@@ -163,11 +442,6 @@ fn definitions() -> Value {
     })
 }
 
-/// Default output directory: research/results/<commit>.
-fn default_out() -> PathBuf {
-    PathBuf::from("research").join("results").join(env!("Z30_BUILD_COMMIT"))
-}
-
 fn now_utc() -> String {
     let t = z30_io::wallclock::system_utc();
     let (d, tm) = z30_io::logbook::utc_parts(t);
@@ -180,6 +454,8 @@ fn now_utc() -> String {
 #[derive(Clone, Debug, Default)]
 struct Outcome {
     ok: bool,
+    /// The receiver emitted at least one decode (right or wrong).
+    decoded_any: bool,
     false_decodes: usize,
     dups_dropped: usize,
     dups_emitted: usize,
@@ -235,6 +511,7 @@ where
             let d = rep.decodes.iter().find(|d| d.info[..63] == payload);
             Outcome {
                 ok: found == 1,
+                decoded_any: !rep.decodes.is_empty(),
                 false_decodes,
                 dups_dropped,
                 dups_emitted,
@@ -294,6 +571,7 @@ fn awgn(frames: usize) -> Value {
             (pl, st, None)
         });
         let pj = point_json(&format!("AWGN {snr:+.1} dB"), json!(snr), &v);
+        log_point("awgn", 1, p, pj["label"].as_str().unwrap_or(""), Some(snr), None, &v);
         eprintln!("{}", line(&pj));
         curve.push((snr, pj["decoded"].as_u64().unwrap() as usize, v.len()));
         points.push(pj);
@@ -326,6 +604,7 @@ fn snr_accuracy(frames: usize) -> Value {
         let (db, dsd) = mean_sd(&dts);
         let (fb, fsd) = mean_sd(&fs);
         let mut pj = point_json(&format!("true {snr:+.0} dB"), json!(snr), &v);
+        log_point("snr", 2, p, pj["label"].as_str().unwrap_or(""), Some(snr), None, &v);
         pj["snr_measured"] = json!({ "n": errs.len(), "not_measured": unmeasured, "bias_db": b, "sd_db": sd,
             "min_error_db": percentile(&errs, 0.0), "max_error_db": percentile(&errs, 1.0) });
         pj["dt_error_ms"] = json!({ "n": dts.len(), "bias": db, "sd": dsd, "max_abs": dts.iter().fold(0.0f64, |m, v| m.max(v.abs())) });
@@ -354,6 +633,7 @@ fn drift(frames: usize) -> Value {
                 (pl, st, None)
             });
             let pj = point_json(&format!("drift {d:+.0} Hz @ {snr:+.0} dB"), json!({"drift_hz": d, "snr_db": snr}), &v);
+            log_point("drift", 3, p, pj["label"].as_str().unwrap_or(""), None, None, &v);
             eprintln!("{}", line(&pj));
             points.push(pj);
             p += 1;
@@ -372,6 +652,7 @@ fn timing(frames: usize) -> Value {
             (pl, st, None)
         });
         let pj = point_json(&format!("DT {dt:+.1} s @ -20 dB"), json!(dt), &v);
+        log_point("timing", 4, p, pj["label"].as_str().unwrap_or(""), None, None, &v);
         eprintln!("{}", line(&pj));
         points.push(pj);
     }
@@ -393,6 +674,7 @@ fn clock(frames: usize) -> Value {
                 let (found, false_decodes, dups_dropped, dups_emitted) = score(&rep, &[payload]);
                 Outcome {
                     ok: found == 1,
+                    decoded_any: !rep.decodes.is_empty(),
                     false_decodes,
                     dups_dropped,
                     dups_emitted,
@@ -402,6 +684,7 @@ fn clock(frames: usize) -> Value {
             })
             .collect();
         let pj = point_json(&format!("clock {ppm:+.0} ppm @ -20 dB"), json!(ppm), &v);
+        log_point("clock", 5, p, pj["label"].as_str().unwrap_or(""), None, None, &v);
         eprintln!("{}", line(&pj));
         points.push(pj);
     }
@@ -487,6 +770,7 @@ fn impair(frames: usize) -> Value {
             (pl, st, post.map(|f| f()))
         });
         let pj = point_json(&format!("{name} @ -20 dB"), json!(name), &v);
+        log_point("impair", 6, p, pj["label"].as_str().unwrap_or(""), None, None, &v);
         eprintln!("{}", line(&pj));
         points.push(pj);
     }
@@ -494,12 +778,16 @@ fn impair(frames: usize) -> Value {
         "channel": "AWGN, -20 dB", "placement": "as awgn", "frames_per_point": frames, "points": points })
 }
 
+/// One busy-band slot: stations found, stations sent, false decodes, duplicates dropped and
+/// emitted, decode ms, and which stations were found (for the per-frame record).
+type BusySlot = (usize, usize, usize, usize, usize, f64, Vec<bool>);
+
 fn busy(slots: usize) -> Value {
     use rand::Rng;
     let mut points = Vec::new();
     let configs: [(usize, f64, f64); 5] = [(5, -20.0, 0.0), (10, -20.0, 0.0), (20, -20.0, 0.0), (40, -20.0, 0.0), (20, -22.0, -16.0)];
     for (p, &(k, lo, hi)) in configs.iter().enumerate() {
-        let per_slot: Vec<(usize, usize, usize, usize, usize, f64)> = (0..slots)
+        let per_slot: Vec<BusySlot> = (0..slots)
             .into_par_iter()
             .map_init(Receiver::new, |rx, i| {
                 let mut r = rng(frame_seed(7, p, i));
@@ -516,15 +804,25 @@ fn busy(slots: usize) -> Value {
                 let rep = rx.decode_slot(&x, &RxConfig::default());
                 let ms = t.elapsed().as_secs_f64() * 1e3;
                 let (found, f, dd, de) = score(&rep, &payloads);
-                (found, k, f, dd, de, ms)
+                let hits = payloads.iter().map(|pl| rep.decodes.iter().any(|d| d.info[..63] == *pl)).collect();
+                (found, k, f, dd, de, ms, hits)
             })
             .collect();
+        let label = format!("K = {k}, {lo:+.0}..{hi:+.0} dB");
+        for (i, s) in per_slot.iter().enumerate() {
+            // One record per station: the pairing unit is (slot, station).
+            for (j, hit) in s.6.iter().enumerate() {
+                log_frame(json!({ "kind": "frame", "benchmark": "busy", "point": p, "frame": i, "station": j,
+                    "seed": frame_seed(7, p, i), "condition": label, "x": null, "curve": null,
+                    "decoded": *hit, "correct": *hit, "slot_false_decodes": s.2 }));
+            }
+        }
         let found: usize = per_slot.iter().map(|s| s.0).sum();
         let total: usize = per_slot.iter().map(|s| s.1).sum();
         let (wl, wh) = wilson(found, total);
         let ms: Vec<f64> = per_slot.iter().map(|s| s.5).collect();
         let pj = json!({
-            "label": format!("K = {k}, {lo:+.0}..{hi:+.0} dB"),
+            "label": label,
             "param": {"stations": k, "snr_db": [lo, hi]},
             "decoded": found, "frames": total, "slots": slots,
             "percent": 100.0 * found as f64 / total.max(1) as f64, "wilson95": [wl, wh],
@@ -548,7 +846,11 @@ fn interference(kind: usize, r: &mut ChannelRng, x: &mut [f32]) {
     let n = x.len();
     let amp_for = |snr_db: f64| (2.0 * 10f64.powf(snr_db / 10.0) * 5000.0 / FS).sqrt();
     match kind {
-        // 8 random 16-FSK signals, 3.125 Hz spacing, 0.32 s symbols, NO Costas pattern, 0 dB.
+        // 8 random 16-FSK signals, 3.125 Hz spacing, 0.32 s symbols, NO Costas pattern, each at
+        // -3 dB: `amp_for(0.0)` is the amplitude of a 0 dB real sinusoid, and the extra 1/sqrt 2
+        // on the unit-amplitude real part halves the power. It was labelled 0 dB until the
+        // 2026-09-28 audit (DSP-07 / F-53); the signal is unchanged, so the published counts stay
+        // reproducible, and the label now says what was run.
         1 => {
             let m = Modulator::new(FS).unwrap();
             for _ in 0..8 {
@@ -594,11 +896,31 @@ fn interference(kind: usize, r: &mut ChannelRng, x: &mut [f32]) {
     }
 }
 
+/// What a false-decode count can and cannot exclude (audit RES-07 / F-36). A zero count is
+/// reported as its one-sided 95% upper bound, never as "none".
+pub fn power_note(false_decodes: u64, slots: u64) -> Value {
+    let bound = upper95(false_decodes, slots);
+    // Slots needed to bound a rate r with zero events: n >= ln(0.05) / ln(1 - r).
+    let needed = |r: f64| ((0.05f64).ln() / (-r).ln_1p()).ceil() as u64;
+    json!({
+        "upper95_per_slot": bound,
+        "per_day_at_upper95": bound * 2880.0,
+        "p_zero_if_true_rate_is_upper95_over_3": (-(slots as f64) * bound / 3.0).exp(),
+        "slots_for_zero_to_bound_1e-4_per_slot": needed(1e-4),
+        "slots_for_zero_to_bound_1e-5_per_slot": needed(1e-5),
+        "note": format!(
+            "{false_decodes} false decodes in {slots} slots bounds the per-slot rate below {bound:.2e} (95%, one-sided), i.e. {:.1} per day of continuous monitoring (2880 slots). A true rate a third of that bound still gives zero in {slots} slots with probability {:.0}%, so this run cannot tell such a receiver from a perfect one; a change that affects acceptance needs its own, larger, pre-registered false-decode run",
+            bound * 2880.0,
+            100.0 * (-(slots as f64) * bound / 3.0).exp()
+        ),
+    })
+}
+
 fn false_decodes(slots: usize) -> Value {
     let kinds: [(&str, usize); 5] = [
         ("white noise only", 0),
         ("20 CW carriers, -10..+20 dB", 4),
-        ("8 random 16-FSK signals without the Costas pattern, 0 dB", 1),
+        ("8 random 16-FSK signals without the Costas pattern, -3 dB each", 1),
         ("8 FT8-like 8-FSK signals, 0 dB", 2),
         ("500 impulses up to 40 sigma", 3),
     ];
@@ -617,6 +939,11 @@ fn false_decodes(slots: usize) -> Value {
                 (rep.decodes.len(), rep.passes.iter().map(|p| p.ldpc_attempts).sum())
             })
             .collect();
+        for (i, v) in per.iter().enumerate() {
+            // Every decode is false here, so "correct" means the slot stayed silent.
+            log_frame(json!({ "kind": "frame", "benchmark": "false", "point": p, "frame": i, "seed": frame_seed(8, p, i),
+                "condition": name, "x": null, "curve": null, "decoded": v.0 > 0, "correct": v.0 == 0, "false_decodes": v.0 }));
+        }
         let f: usize = per.iter().map(|v| v.0).sum();
         let attempts: usize = per.iter().map(|v| v.1).sum();
         all_slots += slots as u64;
@@ -634,6 +961,8 @@ fn false_decodes(slots: usize) -> Value {
         "slots_per_point": slots, "points": points,
         "pooled": { "slots": all_slots, "false_decodes": all_false, "upper95_per_slot": upper95(all_false, all_slots),
             "bound": "exact one-sided Clopper-Pearson 95%" },
+        "interferer_levels": "SNR per interferer in 2500 Hz as for a z-30 frame: CW carriers uniform -10..+20 dB; random 16-FSK -3 dB each (labelled 0 dB before 2026-09-28, audit DSP-07: the signal was always -3 dB); FT8-like 0 dB each; impulses up to 40 sigma",
+        "power": power_note(all_false, all_slots),
         "not_tested": "real recorded non-z-30 audio (speech, music, real FT8/RTTY, real QRN): no recordings exist yet" })
 }
 
@@ -662,12 +991,20 @@ fn sic(trials: usize) -> Value {
                         (has(&on, &ps), has(&on, &pw), has(&off, &pw), f_on + f_off, de_on)
                     })
                     .collect();
+                let label = format!("dP {dpow:+.0} dB, df {df:.0} Hz, dDT {ddt:.1} s");
+                for (i, v) in res.iter().enumerate() {
+                    // "correct" is the weak station with SIC (the production configuration); the
+                    // single-pass arm and the strong station ride along for pairing.
+                    log_frame(json!({ "kind": "frame", "benchmark": "sic", "point": p, "frame": i, "seed": frame_seed(9, p, i),
+                        "condition": label, "x": null, "curve": null, "decoded": v.0 || v.1, "correct": v.1,
+                        "weak_without_sic": v.2, "strong_with_sic": v.0, "false_decodes": v.3 }));
+                }
                 let weak_on = res.iter().filter(|v| v.1).count();
                 let weak_off = res.iter().filter(|v| v.2).count();
                 let b = res.iter().filter(|v| v.1 && !v.2).count();
                 let c = res.iter().filter(|v| !v.1 && v.2).count();
                 let pj = json!({
-                    "label": format!("dP {dpow:+.0} dB, df {df:.0} Hz, dDT {ddt:.1} s"),
+                    "label": label,
                     "param": { "power_difference_db": dpow, "frequency_separation_hz": df, "timing_separation_s": ddt, "weak_snr_db": weak_snr },
                     "trials": trials,
                     "strong_decoded_with_sic": res.iter().filter(|v| v.0).count(),
@@ -711,6 +1048,7 @@ fn fading(frames: usize) -> Value {
                 (pl, st, None)
             });
             let pj = point_json(&format!("{preset} {snr:+.0} dB"), json!({"preset": preset, "snr_db": snr}), &v);
+            log_point("fading", 10, p, pj["label"].as_str().unwrap_or(""), Some(snr), Some(preset), &v);
             eprintln!("{}", line(&pj));
             curve.push((snr, pj["decoded"].as_u64().unwrap() as usize, v.len()));
             points.push(pj);
@@ -729,8 +1067,10 @@ fn fading(frames: usize) -> Value {
 }
 
 /// Entry point for suite benchmarks.
-pub fn run(what: &str, frames: Option<usize>, out: Option<&Path>, replicate: Option<u16>) -> Result<(), String> {
-    RUN_SEED.store(replicate_seed(replicate.unwrap_or(0)), std::sync::atomic::Ordering::Relaxed);
+pub fn run(what: &str, opts: &Options) -> Result<(), String> {
+    let replicate = opts.replicate.unwrap_or(0);
+    RUN_SEED.store(replicate_seed(replicate), std::sync::atomic::Ordering::Relaxed);
+    PER_FRAME.store(opts.per_frame, Ordering::Relaxed);
     let names: Vec<&str> = if what == "suite" {
         BENCHMARKS.to_vec()
     } else if BENCHMARKS.contains(&what) {
@@ -738,50 +1078,120 @@ pub fn run(what: &str, frames: Option<usize>, out: Option<&Path>, replicate: Opt
     } else {
         return Err(format!("unknown benchmark \"{what}\" (perf, false-decodes, sweep, suite, {})", BENCHMARKS.join(", ")));
     };
-    if env!("Z30_BUILD_COMMIT").ends_with("-dirty") {
-        eprintln!("WARNING: this binary was built from a dirty tree; its results cannot be tied to a commit and are not publishable.");
+    // frame_seed keeps the frame index in bits 0-19: past 2^20 frames, frame 2^20 + i of point
+    // p would reuse frame i of point p ^ 1 (audit RES-14).
+    if opts.frames.is_some_and(|f| f >= 1 << 20) {
+        return Err("--frames must be below 1048576 (the frame index has 20 bits in the seed)".into());
     }
-    let dir = out.map(Path::to_path_buf).unwrap_or_else(default_out);
-    std::fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
-    for name in names {
+    let label = env!("Z30_BUILD_COMMIT");
+    let diff = env!("Z30_BUILD_DIRTY_DIFF_SHA256");
+    if !build_is_clean(label) {
+        eprintln!(
+            "WARNING: this binary was built from a dirty tree ({label}); its results cannot be tied to a commit and are not publishable."
+        );
+    }
+    // Every destination is decided and checked before the first frame is decoded: an hour of
+    // compute must not end in a refusal, and a refusal must not come after a partial write.
+    let mut plan = Vec::new();
+    for &name in &names {
+        let frames = opts.frames.unwrap_or(publishable_size(name));
+        let (status, dir) = destination(name, frames, opts, label, diff)?;
+        check_writable(&dir.join(format!("{name}.json")), opts.overwrite)?;
+        if opts.per_frame {
+            check_writable(&dir.join(format!("{name}.frames.jsonl")), opts.overwrite)?;
+        }
+        plan.push((name, frames, status, dir));
+    }
+    for (name, frames, status, dir) in plan {
+        std::fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
         let started = now_utc();
         let t = Instant::now();
-        eprintln!("== {name} ==");
+        eprintln!("== {name} ({}) ==", status.as_str());
+        take_frames();
         let mut v = match name {
-            "awgn" => awgn(frames.unwrap_or(200)),
-            "snr" => snr_accuracy(frames.unwrap_or(100)),
-            "drift" => drift(frames.unwrap_or(200)),
-            "timing" => timing(frames.unwrap_or(200)),
-            "clock" => clock(frames.unwrap_or(200)),
-            "impair" => impair(frames.unwrap_or(200)),
-            "busy" => busy(frames.unwrap_or(50)),
-            "false" => false_decodes(frames.unwrap_or(400)),
-            "sic" => sic(frames.unwrap_or(100)),
-            "fading" => fading(frames.unwrap_or(200)),
+            "awgn" => awgn(frames),
+            "snr" => snr_accuracy(frames),
+            "drift" => drift(frames),
+            "timing" => timing(frames),
+            "clock" => clock(frames),
+            "impair" => impair(frames),
+            "busy" => busy(frames),
+            "false" => false_decodes(frames),
+            "sic" => sic(frames),
+            "fading" => fading(frames),
             _ => unreachable!(),
         };
         v["provenance"] = provenance(&started);
         v["provenance"]["elapsed_s"] = json!(t.elapsed().as_secs_f64());
         v["definitions"] = definitions();
         v["seed"] = json!({ "suite_seed": run_seed(), "published_seed": run_seed() == SUITE_SEED,
-            "replicate": replicate.unwrap_or(0),
+            "replicate": replicate,
             "per_frame": "suite_seed ^ (benchmark << 40) ^ (point << 20) ^ frame, ChaCha8 (z30_channel::rng); replicate r: suite_seed = 20260830 ^ (r << 48)" });
+        let reasons = status_reasons(status, frames, publishable_size(name), replicate);
+        v["status"] = json!(status.as_str());
+        v["status_reasons"] = json!(reasons);
+        v["publishable_size"] = json!(publishable_size(name));
+        v["frames_policy"] = json!(format!(
+            "a sensitivity crossing needs at least {CROSSING_MIN_FRAMES} frames per point (AGENTS.md section 5); a benchmark below its publishable size is exploratory"
+        ));
         if run_seed() != SUITE_SEED {
             v["not_the_published_run"] = json!(format!(
-                "replicate {} (suite seed {}), not the published seed {SUITE_SEED}: for measuring sampling variability",
-                replicate.unwrap_or(0),
+                "replicate {replicate} (suite seed {}), not the published seed {SUITE_SEED}: for measuring sampling variability",
                 run_seed()
             ));
+        } else if status != Status::Published {
+            v["not_the_published_run"] = json!(format!("status {}: {}", status.as_str(), reasons.join("; ")));
         }
-        if frames.is_some_and(|f| f < 100) {
-            v["exploratory"] = json!("fewer than 100 frames per point: exploratory, not publishable");
+        if status == Status::Exploratory {
+            v["exploratory"] = json!(format!(
+                "fewer than {} per point (this benchmark's publishable size): exploratory, not publishable",
+                publishable_size(name)
+            ));
         }
         let path = dir.join(format!("{name}.json"));
+        if opts.per_frame {
+            let fpath = dir.join(format!("{name}.frames.jsonl"));
+            let header = json!({ "kind": "header", "benchmark": name, "status": status.as_str(),
+                "git_commit": label, "instrument_sha256": env!("Z30_BUILD_INSTRUMENT_SHA256"),
+                "suite_seed": run_seed(), "replicate": replicate, "frames_per_point": frames,
+                "result_file": format!("{name}.json"),
+                "fields": "point, frame (index within the point), station (busy only), seed (the frame's generator seed), condition (the point's label), x (value along the rate curve, where there is one), curve (fading preset), decoded (any decode), correct (the benchmark's success criterion; for false: no decode)" });
+            let mut text = serde_json::to_string(&header).map_err(|e| e.to_string())?;
+            text.push('\n');
+            for r in take_frames() {
+                text.push_str(&serde_json::to_string(&r).map_err(|e| e.to_string())?);
+                text.push('\n');
+            }
+            std::fs::write(&fpath, text).map_err(|e| format!("{}: {e}", fpath.display()))?;
+            v["per_frame_file"] = json!(format!("{name}.frames.jsonl"));
+            eprintln!("-> {}", fpath.display());
+        }
         std::fs::write(&path, serde_json::to_string_pretty(&v).map_err(|e| e.to_string())?)
             .map_err(|e| format!("{}: {e}", path.display()))?;
-        eprintln!("-> {} ({:.0} s)", path.display(), t.elapsed().as_secs_f64());
+        eprintln!("-> {} ({}, {:.0} s)", path.display(), status.as_str(), t.elapsed().as_secs_f64());
     }
     Ok(())
+}
+
+/// Why a result has the status it has, in words a reader of the JSON can check.
+fn status_reasons(status: Status, frames: usize, publishable: usize, replicate: u16) -> Vec<String> {
+    let mut r = Vec::new();
+    if !build_is_clean(env!("Z30_BUILD_COMMIT")) {
+        r.push(format!("built from a tree that is not its commit ({})", env!("Z30_BUILD_COMMIT")));
+    }
+    if frames < publishable {
+        r.push(format!("{frames} per point, below the publishable {publishable}"));
+    }
+    if replicate != 0 {
+        r.push(format!("replicate {replicate}, not the published seed"));
+    }
+    if status == Status::NotThePublishedRun {
+        r.push("written outside research/results/<commit>/ (--out)".into());
+    }
+    if r.is_empty() {
+        r.push("clean build, published seed, publishable size, research/results/<commit>/".into());
+    }
+    r
 }
 
 #[cfg(test)]
@@ -833,6 +1243,137 @@ mod tests {
             }
         }
         assert_eq!(replicate_seed(0), SUITE_SEED, "replicate 0 is the published run");
+    }
+
+    fn opts(out: Option<&str>, replicate: u16) -> Options {
+        Options { out: out.map(PathBuf::from), replicate: Some(replicate), ..Default::default() }
+    }
+
+    #[test]
+    fn a_crossing_below_200_frames_per_point_is_exploratory() {
+        // F-32: the suite used to mark only runs below 100 frames; 150 wrote an unmarked crossing.
+        assert_eq!(publishable_size("awgn"), 200);
+        assert_eq!(publishable_size("fading"), 200);
+        assert_eq!(intrinsic_status(true, 150, publishable_size("awgn"), 0), Status::Exploratory);
+        assert_eq!(intrinsic_status(true, 199, publishable_size("fading"), 0), Status::Exploratory);
+        assert_eq!(intrinsic_status(true, 200, publishable_size("awgn"), 0), Status::Published);
+        // Every benchmark's default is its publishable size, so a default run is never exploratory.
+        for b in BENCHMARKS {
+            assert!(publishable_size(b) < usize::MAX, "{b}");
+            assert_eq!(intrinsic_status(true, publishable_size(b), publishable_size(b), 0), Status::Published, "{b}");
+        }
+    }
+
+    #[test]
+    fn a_dirty_build_never_gets_the_published_directory() {
+        // F-13: a dirty build is `dirty` whatever its size or seed, and its default destination is
+        // outside research/results/<commit>/.
+        let (s, dir) = destination("awgn", 200, &opts(None, 0), "0123456789ab-dirty", "abcdef012345").unwrap();
+        assert_eq!(s, Status::Dirty);
+        assert_eq!(dir, PathBuf::from("research/results/unpublished/0123456789ab-dirty-abcdef012345"));
+        assert!(published_tree(&dir).is_none());
+        let (s, _) = destination("awgn", 200, &opts(None, 0), "unknown", "").unwrap();
+        assert_eq!(s, Status::Dirty, "a binary that cannot name its commit is not publishable");
+        // Pointing --out at the published directory, of this commit or the clean one, is refused.
+        for out in ["research/results/0123456789ab", "research/results/0123456789ab-dirty", "x/research/results/0123456789ab/replicates/r1"]
+        {
+            assert!(destination("awgn", 200, &opts(Some(out), 0), "0123456789ab-dirty", "d").is_err(), "{out}");
+        }
+    }
+
+    #[test]
+    fn replicates_and_exploratory_runs_are_routed_away_from_the_published_file() {
+        // F-14: `--replicate 1` used to write research/results/<commit>/awgn.json.
+        let c = "0123456789ab";
+        let (s, dir) = destination("awgn", 200, &opts(None, 3), c, "").unwrap();
+        assert_eq!((s, dir), (Status::Replicate, PathBuf::from("research/results/0123456789ab/replicates/r3")));
+        let (s, dir) = destination("awgn", 20, &opts(None, 0), c, "").unwrap();
+        assert_eq!((s, dir), (Status::Exploratory, PathBuf::from("research/results/exploratory/0123456789ab")));
+        let (s, dir) = destination("awgn", 20, &opts(None, 2), c, "").unwrap();
+        assert_eq!((s, dir), (Status::Exploratory, PathBuf::from("research/results/exploratory/0123456789ab/replicates/r2")));
+        let (s, dir) = destination("awgn", 200, &opts(None, 0), c, "").unwrap();
+        assert_eq!((s, dir), (Status::Published, PathBuf::from("research/results/0123456789ab")));
+        // Explicit --out: the published directory takes only what the default would put there.
+        assert!(destination("awgn", 200, &opts(Some("research/results/0123456789ab"), 1), c, "").is_err());
+        assert!(destination("awgn", 20, &opts(Some("research/results/0123456789ab"), 0), c, "").is_err());
+        assert!(destination("awgn", 200, &opts(Some("research/results/fedcba987654"), 0), c, "").is_err(), "another commit's directory");
+        assert!(destination("awgn", 200, &opts(Some("research/results/0123456789ab/replicates/r2"), 1), c, "").is_err());
+        assert_eq!(
+            destination("awgn", 200, &opts(Some("research/results/0123456789ab/replicates/r1"), 1), c, "").unwrap().0,
+            Status::Replicate
+        );
+        assert_eq!(destination("awgn", 200, &opts(Some("./research/x/../results/0123456789ab"), 0), c, "").unwrap().0, Status::Published);
+        // Elsewhere, a would-be published run says it is not the published run.
+        assert_eq!(destination("awgn", 200, &opts(Some("/tmp/qa"), 0), c, "").unwrap().0, Status::NotThePublishedRun);
+    }
+
+    #[test]
+    fn nothing_overwrites_a_published_result() {
+        let root = std::env::temp_dir().join(format!("z30-suite-overwrite-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let scratch = root.join("scratch");
+        let published = root.join("research/results/0123456789ab");
+        std::fs::create_dir_all(&scratch).unwrap();
+        std::fs::create_dir_all(&published).unwrap();
+        let write = |p: &Path, v: Value| std::fs::write(p, serde_json::to_string(&v).unwrap()).unwrap();
+        let clean = json!({ "provenance": { "git_commit": "0123456789ab" } });
+
+        // A missing file is always writable.
+        assert!(check_writable(&scratch.join("awgn.json"), false).is_ok());
+        // An existing non-published file needs --overwrite.
+        write(&scratch.join("awgn.json"), json!({ "status": "exploratory", "provenance": { "git_commit": "0123456789ab" } }));
+        assert!(check_writable(&scratch.join("awgn.json"), false).is_err());
+        assert!(check_writable(&scratch.join("awgn.json"), true).is_ok());
+        // A published file - by status, or by the old schema's lack of markers - never.
+        write(&scratch.join("snr.json"), json!({ "status": "published" }));
+        write(&scratch.join("drift.json"), clean.clone());
+        std::fs::write(scratch.join("junk.json"), "not json").unwrap();
+        for f in ["snr.json", "drift.json", "junk.json"] {
+            assert!(check_writable(&scratch.join(f), true).is_err(), "{f}");
+        }
+        // Old-schema non-published files are recognised by their markers.
+        write(
+            &scratch.join("timing.json"),
+            json!({ "not_the_published_run": "replicate 1", "provenance": { "git_commit": "0123456789ab" } }),
+        );
+        write(&scratch.join("clock.json"), json!({ "provenance": { "git_commit": "0123456789ab-dirty" } }));
+        assert!(check_writable(&scratch.join("timing.json"), true).is_ok());
+        assert!(check_writable(&scratch.join("clock.json"), true).is_ok());
+        // Nothing inside a published commit directory is replaced, whatever it says it is.
+        write(&published.join("awgn.json"), json!({ "status": "exploratory" }));
+        std::fs::write(published.join("awgn.frames.jsonl"), "{}\n").unwrap();
+        assert!(check_writable(&published.join("awgn.json"), true).is_err());
+        assert!(check_writable(&published.join("awgn.frames.jsonl"), true).is_err());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn the_false_decode_labels_state_the_levels_that_were_run() {
+        // DSP-07 / F-53: the random 16-FSK interferers are -3 dB (amp_for(0) / sqrt 2 on a unit
+        // cosine). Check the arithmetic the label now states, not only the label.
+        let m = Modulator::new(FS).unwrap();
+        let sym = [5u8; 75];
+        let (re, _) = m.analytic(&sym, 1000.0, 0.0, 0.0);
+        let amp = (2.0 * 5000.0 / FS).sqrt() / 2f64.sqrt();
+        let mid = &re[re.len() / 4..3 * re.len() / 4];
+        let power = mid.iter().map(|v| (amp * *v).powi(2)).sum::<f64>() / mid.len() as f64;
+        let snr_db = 10.0 * (power / (5000.0 / FS)).log10();
+        assert!((snr_db + 3.01).abs() < 0.05, "{snr_db}");
+        let v = false_decodes(0);
+        let labels: Vec<&str> = v["points"].as_array().unwrap().iter().map(|p| p["label"].as_str().unwrap()).collect();
+        assert!(labels.iter().any(|l| l.contains("16-FSK") && l.contains("-3 dB")), "{labels:?}");
+        assert!(!labels.iter().any(|l| l.contains("16-FSK") && l.contains(" 0 dB")), "{labels:?}");
+    }
+
+    #[test]
+    fn a_zero_false_decode_count_reports_its_bound_and_what_it_cannot_exclude() {
+        let n = power_note(0, 2000);
+        let b = n["upper95_per_slot"].as_f64().unwrap();
+        assert!((b - 1.4967e-3).abs() < 1e-6, "{b}");
+        // A receiver three times better than the bound still shows zero in 2000 slots ~37% of the time.
+        assert!((n["p_zero_if_true_rate_is_upper95_over_3"].as_f64().unwrap() - 0.368).abs() < 0.01);
+        assert_eq!(n["slots_for_zero_to_bound_1e-4_per_slot"].as_u64().unwrap(), 29_956);
+        assert!(!n["note"].as_str().unwrap().contains("none"));
     }
 
     #[test]
