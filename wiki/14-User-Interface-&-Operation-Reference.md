@@ -33,10 +33,33 @@ the frame. CQs are green, messages addressed to you red. Double-click a CQ to an
 - Every row is a reception by this receiver. There is no self-test or synthetic-signal mode.
 
 **QSO panel.** The sequencer state, the next message to be sent, **Call CQ**, **Enable TX**,
-**Tune** (one unmodulated carrier at the centre of the tone span, at most one frame long),
-**HALT TX** (stops audio and unkeys immediately, and abandons a transmission that was about to
+**Tune** (one frame, 24 s, from the same modulator as every frame: a constant symbol at the
+centre of the tone span, i.e. an unmodulated carrier with the frame's 20 ms raised-cosine ramps),
+**HALT TX** (stops the audio and asks for the PTT release at once, from the window's own thread
+without waiting for the engine, then disarms and abandons a transmission that was about to
 start), **Reset QSO**, and the transmit gate's verdict: "clear", or every reason it would refuse.
-Messages from the engine (refusals, faults, rig and audio events, logged contacts) scroll below.
+
+Messages from the engine scroll below: refusals, faults (red), rig and audio events, and
+logged contacts. Among them:
+
+- **"TX ended incomplete, not counted as sent"** (yellow): the transmission was cut short,
+  started too late, failed or was stopped by the watchdog. It does not advance the QSO and is
+  never logged.
+- **"PTT release NOT confirmed"** (a red TX fault): the hardware did not confirm an unkey, so the
+  radio may still be transmitting. Transmission is refused and the release retried; **"PTT release
+  confirmed by the hardware after N refused attempt(s)"** follows when it succeeds. Check the
+  radio.
+- **"PTT watchdog released the transmitter"** (red).
+- **"The system clock stepped ±N s; the receiver moved from slot A to slot B"** (yellow): the
+  operating system's clock jumped by more than about a slot and the receiver re-seated itself on
+  the new time ([07](07-RF-Time-Synchronization-Engine.md)).
+- **"Logged …"** appears only after the logbook has actually written the contact.
+  **"NOT LOGGED: <call> - <reason>"** (red) means it was not written.
+
+If the logbook cannot be opened at start, a red banner, **"CONTACTS ARE NOT BEING LOGGED"**, with
+the reason, stays at the top of the window until the station is restarted with a working
+logbook. There is no in-memory stand-in: before the 2026-09-28 audit's remediation the GUI fell
+back to a logbook in memory, still said "Logged", and lost the contacts at exit.
 
 **Status bar.** Audio input running or stopped, input level (dBFS), overruns, the sound card's
 clock error as the sample-clock model estimates it ("measuring" until it has enough data), the
@@ -55,9 +78,13 @@ B: A B -08  (a report in reply to a report is the roger, by sequence: v1 has no 
 A: B A RR73        B: A B 73
 ```
 
-The report is your receiver's measurement of the other station. With no signal estimate, no
-report message is sent. After `watchdog_cycles` transmissions without progress (default 6)
-transmission stops.
+The report is your receiver's measurement of the other station, rounded and limited to v1's
+−30…+30 dB. With no signal estimate, no report message is sent. The limits do not show on the
+air: a report of `+30` means "+30 dB or stronger", `-30` means "−30 dB or weaker", and anything
+below −22 dB is outside the range the estimate has been validated over
+([13](13-Operating-Safety-Compliance-&-Security.md#reports-you-send)). Only a transmission that
+went out complete advances the sequence. After `watchdog_cycles` transmissions without progress
+(default 6) transmission stops.
 
 ## Settings
 
@@ -70,7 +97,9 @@ transmission stops.
 | Receiver | a priori decoding (off by default), drift search range, SIC passes |
 
 **Apply and save** writes `config.toml`. Changing the configuration while transmitting ends the
-transmission: the gate approved the old configuration, not the new one.
+transmission: the gate approved the old configuration, not the new one. Changing the audio,
+PTT or rig settings restarts the station (PTT is released first); with serial RTS/DTR PTT,
+reopening the port may briefly key the radio ([06](06-Transceiver-CAT-Control-&-PTT-Wiring.md#ptt-methods)).
 
 ## Logbook
 

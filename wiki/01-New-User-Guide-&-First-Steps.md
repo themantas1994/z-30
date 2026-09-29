@@ -8,7 +8,7 @@ both native programs built from the Rust workspace in `crates/`.
 >
 > | State | Status |
 > | :--- | :--- |
-> | Protocol validated | **Yes, against the reference** — the Rust implementation reproduces the frozen oracle's golden vectors bit for bit (an independent re-implementation from `SPEC.md` was reported by the original audit, E007, whose evidence is not in this repository) |
+> | Protocol validated | **Yes, against the reference** — the Rust implementation reproduces the frozen oracle's golden vectors: codec, CRC, LDPC encoder and symbol map bit for bit, the waveform within 1e-6 per sample (an independent re-implementation from `SPEC.md` was reported by the original audit, E007, whose evidence is not in this repository) |
 > | Software simulation validated | **Yes** — the receiver's performance is measured through its production entry point in seeded simulation ([16](16-Benchmarking-Testing-&-CI.md)) |
 > | Hardware validated | **No** — no radio, audio interface or PTT interface has been used with z-30 |
 > | On-air validated | **No** — no z-30 frame has been decoded over a real radio path |
@@ -64,13 +64,18 @@ means there was no signal estimate.
 
 In **Settings**: your callsign, grid, regulatory region and licence class, the audio devices,
 rigctld (optional but recommended — see [06](06-Transceiver-CAT-Control-&-PTT-Wiring.md)) and a
-PTT method. There is **no default callsign**, region, licence class or PTT method, and the gate
-refuses to transmit until all are set. It also refuses:
+PTT method, plus the dial frequency and the TX level. There is **no default callsign**, region,
+licence class, PTT method, dial or TX level, and the gate refuses to transmit until all are set.
+It also refuses:
 
 - a callsign z-30 v1 cannot carry exactly (portable `/P`, compound calls, prefixes ZV–ZZ, 3-character prefixes);
 - a grid square outside the 63-square v1 table (for CQ and grid replies);
-- any emission that would fall outside a permitted data segment for your region and class;
-- any frequency the radio contradicts, when rigctld can read it back.
+- any emission that would fall outside a permitted segment for your region and class (US: data
+  segments, and on 60 m the five channels, centred within 50 Hz; IARU regions: whole amateur
+  bands only — the data sub-band is yours to respect);
+- any frequency the radio contradicts or refused, when rigctld can read it back (the tolerance
+  is a strict 1 Hz);
+- any transmission while a PTT release is unconfirmed or the audio output has failed.
 
 ## 5. Transmit — into a dummy load first
 
@@ -93,6 +98,10 @@ after the computer crashes.
 
 ## 7. Coming from the old browser/Python z-30
 
-Run `z30 --migrate` once. It imports your callsign, grid, licence data, rig and PTT settings and
-your logbook, and tells you exactly what it did not import and why. The old program is retired;
+Run `z30 --migrate` once (the GUI also runs it on its first start). It imports your callsign,
+grid, licence data, rig and PTT settings and your logbook, and tells you exactly what it did not
+import and why. It sets **no TX level**, and it skips any value equal to the old apps' own
+default (the default callsign, PTT method, dial and power), because the old apps saved those
+whether or not you chose them; so after migrating, set the TX level and whatever else the gate
+lists before transmitting. The old program is retired;
 see [08](08-Web-&-PWA-Architecture.md).
