@@ -562,6 +562,10 @@ fn rt_an_unconfirmed_release_is_reported_blocks_transmission_and_is_retried_unti
     st.wait("the retried release", |s| !s.line.keyed());
     st.wait("the confirmation", |s| s.events.iter().any(|e| matches!(e, Event::PttReleaseConfirmed { .. })));
     st.settle();
+    // Reported once: the watchdog's refused retries are not reported again after the release
+    // was confirmed.
+    assert_eq!(st.events.iter().filter(|e| matches!(e, Event::PttReleaseConfirmed { .. })).count(), 1, "{:?}", st.events);
+    assert_eq!(st.faults().iter().filter(|f| f.contains("confirmed on a retry")).count(), 0, "{:?}", st.faults());
     assert!(!st.blockers().iter().any(|b| b.contains("not confirmed")), "{:?}", st.blockers());
     // The frame was played whole before the release was attempted.
     assert_eq!(st.outcome(SLOT), Some(TxOutcome::Complete));

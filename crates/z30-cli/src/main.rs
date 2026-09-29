@@ -292,7 +292,11 @@ fn diagnostics(cfg: &z30_engine::config::Config, config_path: &Path) -> Result<(
     let engine = z30_engine::engine::Engine::new(cfg.clone());
     let snap = engine.snapshot(0);
     if snap.tx_blockers.is_empty() {
-        println!("transmit gate: would allow (callsign, licence, band plan)");
+        // The gate checks the hardware too; diagnostics open no audio device or keying line, so
+        // a device that cannot be opened shows up only when the station starts.
+        println!(
+            "transmit gate: would allow (callsign, licence, band plan, PTT method, level; devices are checked when the station opens them)"
+        );
     } else {
         println!("transmit gate: would REFUSE:");
         snap.tx_blockers.iter().for_each(|b| println!("  - {b}"));

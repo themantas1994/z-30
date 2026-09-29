@@ -603,6 +603,7 @@ pub fn start(config: Config, parts: RuntimeParts) -> RuntimeHandle {
             halt: halt.clone(),
             ptt_changed_ms,
             release_unconfirmed: false,
+            release_failures_reported: 0,
             output_failed: false,
             last_recovery_ms: 0,
         };
@@ -692,6 +693,8 @@ struct Control {
     ptt_changed_ms: Arc<AtomicU64>,
     /// Whether the engine has been told a release is unconfirmed.
     release_unconfirmed: bool,
+    /// `PttController::release_failures` already reported to the operator.
+    release_failures_reported: u64,
     output_failed: bool,
     last_recovery_ms: u64,
 }
@@ -753,6 +756,7 @@ impl Control {
 
     fn release_failed(&mut self, why: &str) {
         self.release_unconfirmed = true;
+        self.release_failures_reported = self.ptt.release_failures();
         self.engine.set_ptt_release_unconfirmed(Some(why.to_string()));
         self.engine.tx_fault(format!(
             "PTT release NOT confirmed by the hardware ({why}): the transmitter may still be keyed. z-30 keeps retrying the release and refuses to transmit until it is confirmed; check the radio."
@@ -769,8 +773,19 @@ impl Control {
                 self.release_failed(&why);
                 dirty = true;
             }
+            // Refused releases the watchdog already confirmed on a retry before this loop saw the
+            // pending state: still reported, once, never lost to the timing.
+            PttState::Released if !self.release_unconfirmed && self.ptt.release_failures() > self.release_failures_reported => {
+                let failures = self.ptt.release_failures();
+                self.release_failures_reported = failures;
+                let why = self.ptt.last_release_error().unwrap_or_default();
+                self.engine.tx_fault(format!("a PTT release was refused by the hardware ({why}) and confirmed on a retry"));
+                self.engine.push_event(Event::PttReleaseConfirmed { failures });
+                dirty = true;
+            }
             PttState::Released if self.release_unconfirmed => {
                 self.release_unconfirmed = false;
+                self.release_failures_reported = self.ptt.release_failures();
                 self.engine.set_ptt_release_unconfirmed(None);
                 self.note_ptt(false);
                 self.engine.push_event(Event::PttReleaseConfirmed { failures: self.ptt.release_failures() });
