@@ -12,10 +12,10 @@ lacks. The developer description of the code is [`docs/sic.md`](../docs/sic.md).
  slot audio ──► pass 1: search 200–2800 Hz, ±1.5 s ──► decodes
                    │
                    ▼  for each decode: rebuild its exact waveform, fit its gain, subtract
- residual  ──► pass 2: search again ──► decodes (shown as "pass 2")
+ residual  ──► pass 2: search again ──► decodes (pass 2)
                    │
                    ▼  subtract those
- residual  ──► pass 3 ──► decodes (shown as "pass 3")
+ residual  ──► pass 3 ──► decodes (pass 3)
 ```
 
 1. **Replica.** The decoded 77 bits are re-encoded to the 75 channel symbols and passed through
@@ -26,8 +26,9 @@ lacks. The developer description of the code is [`docs/sic.md`](../docs/sic.md).
    same construction as WSJT-X's `subtractft8`.
 3. **Timing.** The start sample is refined by a short descent on the residual energy (±16
    samples at 6 kHz, i.e. ±2.7 ms).
-4. **Subtract**, then search the residual. Stations decoded in a later pass are labelled
-   `pass 2` / `pass 3` in the decode list.
+4. **Subtract**, then search the residual. The pass that found each decode is recorded in the
+   `"pass"` field of the report JSON that `z30 --receive --capture-slots DIR` writes; the GUI's
+   decode list and the CLI's decode line do not show it.
 
 A decode that repeats a payload already found in the slot is dropped, so a station is never
 reported twice.

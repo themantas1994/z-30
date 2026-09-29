@@ -2,9 +2,11 @@
 
 z-30's application: the protocol, the receiver, the station engine, the hardware adapters, the
 command-line station and the desktop GUI, all in the Rust workspace in `crates/`. These pages
-describe that code as it is; every figure they quote names the file in `research/results/` it
-came from, and says whether it was measured in simulation or on hardware (so far: always
-simulation).
+describe that code as it is. Every figure they quote names its source (a file in
+`research/results/`, a named test, a named command's output, or audit evidence under `audit/`)
+and says whether it was measured in simulation or on hardware (so far: always simulation). Only
+figures from `research/results/` are published measurements; the others are labelled as test
+output, oracle-era or audit measurements where they appear.
 
 `SPEC.md` at the repository root is the normative protocol specification; `protocol-v1.md` here
 is its guided tour. `wiki/` is the operator documentation and must agree with these pages; a

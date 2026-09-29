@@ -83,7 +83,20 @@ differences is measured end to end, paired, in [benchmarking.md](benchmarking.md
 
 ## SNR
 
-After a successful decode the transmitted tones are known. The SNR is the mean energy in the
-transmitted tone's bin, less the noise, over the noise in one 3.125 Hz bin, rescaled to the
-2500 Hz reference: `10 log10(S/N_bin) − 10 log10(2500 / 3.125)`. A non-positive estimate reports
-−40 dB, which is a floor, not a measurement.
+After a successful decode the transmitted frame is known exactly. Its noise-free replica is
+placed on the received symbol spectra and fitted per symbol by least squares
+(`FrameSpectra::snr_db`):
+
+- `S`, the signal energy per symbol, is the fitted replica's energy less the one complex
+  dimension of noise the fit itself absorbs;
+- `n_bin`, the noise energy per 3.125 Hz bin, comes from the off-signal bins of the **residual
+  after the fitted replica is removed** (a median, scaled to a mean, so another station there
+  does not inflate it);
+- `SNR = 10 log10(S / n_bin) − 10 log10(2500 / 3.125)`, the 2500 Hz reference of SPEC §10.
+
+A non-positive `S` gives **no estimate** (`None`, shown as `--`, and no report is sent), never a
+floor value. The estimator this replaced took the noise from the off-tone bins of the received
+spectrum itself, which for a strong signal hold the frame's own GFSK sidelobes: it saturated near
++6.6 dB (audit M-07). It also reported a non-positive estimate as −40 dB, a floor that read like a
+measurement; this page still described that estimator at the 2026-09-28 audit (DOC-04). The validated range (−22 to +30 dB), what "validated" covers and its
+known biases are in [receiver.md](receiver.md#reported-snr-dt-and-frequency).

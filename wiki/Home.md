@@ -8,7 +8,7 @@ radio, and for the software that operates it: **`z30-gui`** (desktop station) an
 >
 > | | |
 > | :--- | :--- |
-> | Protocol validated | **yes, against the reference** — the Rust implementation reproduces the frozen oracle's golden vectors bit for bit (an independent re-implementation from `SPEC.md` was reported by the original audit, E007, whose evidence is not in this repository) |
+> | Protocol validated | **yes, against the reference** — the Rust implementation reproduces the frozen oracle's golden vectors: codec, CRC, LDPC encoder and symbol map bit for bit, the waveform within 1e-6 per sample (an independent re-implementation from `SPEC.md` was reported by the original audit, E007, whose evidence is not in this repository) |
 > | Software simulation validated | **yes** — seeded measurements through the production receiver ([16](16-Benchmarking-Testing-&-CI.md)) |
 > | Hardware validated | **no** — no radio, audio interface or PTT interface has been used |
 > | On-air validated | **no** — no frame has been decoded over a real radio path; nobody else runs z-30 |
@@ -27,12 +27,18 @@ frame in a 30-second UTC slot. The receiver searches the whole 200–2800 Hz pas
 removes decoded stations (least-squares interference cancellation) to find weaker ones.
 
 **Sensitivity, with its conditions** (vNext `decode_slot`, AWGN simulation, 2500 Hz reference,
-blind acquisition over 210–2740 Hz and ±1.4 s, 200 frames per point, seed 20260830, no hardware
-involved): **50% decode at −23.03 dB [−23.13, −22.89]**, 90% at −22.06 dB. That is about 2 dB
-deeper than FT8's published (simulation) −21 dB, bought with 1.9× the airtime and 14 fewer
-message bits — per message bit z-30 needs about 1.6 dB **more** energy — and on a high-latitude
-path with 10 Hz Doppler spread z-30 does not decode at any SNR. Details and every other
-condition: [16](16-Benchmarking-Testing-&-CI.md), [11](11-Physics-&-Comparative-Analysis-z30-vs-FT8.md).
+blind acquisition over 210–2740 Hz and ±1.4 s, 200 frames per point, seed 20260830, success =
+the decoded 63 payload bits equal the transmitted ones, Wilson 95% intervals,
+`research/results/672cef9b3cdb/awgn.json`, no hardware involved): **50% decode at −23.03 dB
+[−23.13, −22.89]**, 90% at −22.06 dB [−22.15, −21.80].
+
+Against FT8, all of it or none of it: about 2 dB deeper than FT8's published −21 dB (a
+simulation figure from Franke, Somerville & Taylor, QEX 2020, conditions not identical), bought
+with 1.9× the airtime and 14 fewer message bits; **per message bit z-30 needs about 1.6 dB more
+Eb/N0 than FT8** (6.8 vs 5.1 dB); and on ITU-R F.1487 high-latitude moderate (10 Hz Doppler)
+z-30 does not decode at any SNR. FT8 **does** recover collisions (WSJT-X runs three passes with
+subtraction). Details and every other condition: [16](16-Benchmarking-Testing-&-CI.md),
+[11](11-Physics-&-Comparative-Analysis-z30-vs-FT8.md).
 
 ## Pages
 
@@ -64,8 +70,10 @@ condition: [16](16-Benchmarking-Testing-&-CI.md), [11](11-Physics-&-Comparative-
 ## Editing this wiki
 
 These pages are markdown files under `wiki/` in the repository, edited by pull request. Figures
-come from result files under `research/results/`, pasted from `research/summarize_suite.py`
-output, never retyped. The retired browser app's in-app copy of the wiki is frozen and no longer
+come from result files under `research/results/`, taken from `research/summarize_suite.py`
+output (tables are reformatted from it, and every value checked against the JSON), never retyped
+from memory. `_Sidebar.md` and `_Footer.md` use GitHub-Wiki page names without `.md`: they work
+only in a published GitHub Wiki, not when browsing the repository. The retired browser app's in-app copy of the wiki is frozen and no longer
 regenerated from these files.
 
 - **Repository:** <https://github.com/themantas1994/z-30>
