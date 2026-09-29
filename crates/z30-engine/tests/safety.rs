@@ -9,10 +9,20 @@ use z30_engine::bandplan::{is_valid_callsign, LicenseClass, Region};
 use z30_engine::config::StationConfig;
 use z30_engine::ptt::*;
 use z30_engine::rig::*;
-use z30_engine::txgate::{can_transmit, TxRequest, Violation};
+use z30_engine::txgate::{can_transmit, TxHardware, TxRequest, Violation};
 use z30_protocol::codec::{CallField, Callsign, CodecError, Extra, Grid4, Message};
 
 // ------------------------------------------------------------------------------------ helpers
+
+/// Transmit hardware that is present and healthy, so a gate test isolates the condition it is
+/// about. The hardware conditions have their own tests (h1, n9, f07, f22).
+const HW: TxHardware<'static> = TxHardware {
+    ptt: &z30_engine::config::PttConfig::Vox,
+    problems: &[],
+    tx_level: 0.5,
+    ptt_release_unconfirmed: None,
+    dial_refused: None,
+};
 
 fn station(call: &str) -> StationConfig {
     StationConfig {
@@ -25,7 +35,7 @@ fn station(call: &str) -> StationConfig {
 }
 
 fn gate(st: &StationConfig, dial: f64, audio: f64, rig: &RigStateTracker, now: u64) -> z30_engine::txgate::Permission {
-    can_transmit(&TxRequest { station: st, dial_hz: dial, tx_audio_hz: audio, message: None }, rig, now)
+    can_transmit(&TxRequest { station: st, dial_hz: dial, tx_audio_hz: audio, message: None, hardware: &HW }, rig, now)
 }
 
 #[derive(Clone, Default)]
@@ -136,10 +146,17 @@ fn g5_the_frame_must_encode_and_be_sent_from_this_station() {
     let rig = RigStateTracker::new();
     let st = station("K1ABC");
     let other = Message::directed(Callsign::new("W1AW").unwrap(), Callsign::new("G4XYZ").unwrap(), Extra::Rr73).unwrap();
-    let p = can_transmit(&TxRequest { station: &st, dial_hz: 14_076_000.0, tx_audio_hz: 1500.0, message: Some(&other) }, &rig, 0);
+    let p = can_transmit(
+        &TxRequest { station: &st, dial_hz: 14_076_000.0, tx_audio_hz: 1500.0, message: Some(&other), hardware: &HW },
+        &rig,
+        0,
+    );
     assert!(p.violations.iter().any(|v| matches!(v, Violation::MessageNotFromStation(_))));
     let mine = Message::directed(Callsign::new("W1AW").unwrap(), Callsign::new("K1ABC").unwrap(), Extra::Rr73).unwrap();
-    assert!(can_transmit(&TxRequest { station: &st, dial_hz: 14_076_000.0, tx_audio_hz: 1500.0, message: Some(&mine) }, &rig, 0).allowed);
+    assert!(
+        can_transmit(&TxRequest { station: &st, dial_hz: 14_076_000.0, tx_audio_hz: 1500.0, message: Some(&mine), hardware: &HW }, &rig, 0)
+            .allowed
+    );
 }
 
 #[test]
@@ -149,8 +166,9 @@ fn g6_the_whole_frame_is_checked_partner_call_grid_and_report_not_just_our_call(
     let rig = RigStateTracker::new();
     let st = station("K1ABC");
     let me = Callsign::new("K1ABC").unwrap();
-    let ask =
-        |m: &Message| can_transmit(&TxRequest { station: &st, dial_hz: 14_076_000.0, tx_audio_hz: 1500.0, message: Some(m) }, &rig, 0);
+    let ask = |m: &Message| {
+        can_transmit(&TxRequest { station: &st, dial_hz: 14_076_000.0, tx_audio_hz: 1500.0, message: Some(m), hardware: &HW }, &rig, 0)
+    };
     let not_encodable = |p: &z30_engine::txgate::Permission| p.violations.iter().any(|v| matches!(v, Violation::MessageNotEncodable(_)));
 
     // A partner field that is not the canonical encoding of any callsign.
@@ -391,7 +409,7 @@ fn h1_no_ptt_method_or_unavailable_tx_hardware_refuses_before_keying() {
     let mut e = Engine::new(cfg);
     e.apply(Command::CallCq, 0);
     let plan = e.plan_tx(slot, 0).expect("a configured station calls CQ");
-    assert_eq!(plan.text, "CQ K1ABC FN31");
+    assert_eq!(plan.text(), "CQ K1ABC FN31");
 }
 
 #[test]
@@ -470,7 +488,7 @@ fn n3_the_gate_refuses_every_corrupted_frame_and_hands_out_no_frame() {
     let st = station("K1ABC");
     for text in ["CQ K1ABC FN31", "G4XYZ K1ABC -10", "G4XYZ K1ABC RR73"] {
         let m = Message::parse(text).unwrap();
-        let req = TxRequest { station: &st, dial_hz: 14_076_000.0, tx_audio_hz: 1500.0, message: Some(&m) };
+        let req = TxRequest { station: &st, dial_hz: 14_076_000.0, tx_audio_hz: 1500.0, message: Some(&m), hardware: &HW };
         let ok = z30_engine::txgate::can_transmit_encoded(&req, Some(m.encode()), &rig, 0);
         assert!(ok.allowed, "{text}: {:?}", ok.violations);
         assert_eq!(ok.frame.as_ref().map(|f| f.message()), Some(&m));
@@ -493,12 +511,12 @@ fn n3_a_valid_frame_of_a_different_message_is_refused() {
     let st = station("K1ABC");
     let asked = Message::parse("G4XYZ K1ABC -10").unwrap();
     let other = Message::parse("G4XYZ K1ABC RR73").unwrap();
-    let req = TxRequest { station: &st, dial_hz: 14_076_000.0, tx_audio_hz: 1500.0, message: Some(&asked) };
+    let req = TxRequest { station: &st, dial_hz: 14_076_000.0, tx_audio_hz: 1500.0, message: Some(&asked), hardware: &HW };
     let p = z30_engine::txgate::can_transmit_encoded(&req, Some(other.encode()), &rig, 0);
     assert!(!p.allowed && p.frame.is_none());
     assert!(p.violations.contains(&Violation::FrameNotForMessage), "{:?}", p.violations);
     // A tune request carries no frame; one offered with it is refused too.
-    let tune = TxRequest { station: &st, dial_hz: 14_076_000.0, tx_audio_hz: 1500.0, message: None };
+    let tune = TxRequest { station: &st, dial_hz: 14_076_000.0, tx_audio_hz: 1500.0, message: None, hardware: &HW };
     assert!(!z30_engine::txgate::can_transmit_encoded(&tune, Some(asked.encode()), &rig, 0).allowed);
 }
 
@@ -524,14 +542,19 @@ fn n3_the_transmitted_audio_is_the_verified_frame_and_decodes_as_the_message() {
     let mut e = Engine::new(configured("K1ABC"));
     e.apply(Command::CallCq, 0);
     let plan = e.plan_tx(2, 0).expect("planned");
-    let TxKind::Frame(frame) = &plan.kind else { panic!("a frame") };
+    let TxKind::Frame(frame) = plan.kind() else { panic!("a frame") };
     let m = Message::parse("CQ K1ABC FN31").unwrap();
     assert_eq!(frame.message(), &m);
     assert_eq!(frame.symbols(), &m.encode().unwrap().symbols);
     let rate = 6000;
-    let audio = z30_engine::runtime::tx_audio(&plan, rate, 0.5).unwrap();
+    let audio = z30_engine::runtime::tx_audio(&plan, rate).unwrap();
     let modem = z30_protocol::gfsk::Modulator::new(rate as f64).unwrap();
     assert_eq!(audio.len(), modem.frame_len(), "one frame, no more and no less");
+    // Sample for sample the verified frame's symbols at the gate's frequency and level: the
+    // decode below cannot see a flipped symbol the FEC corrects (2026-09-28 audit F-03, N3-sym).
+    assert_eq!((plan.tx_audio_hz(), plan.tx_level()), (1500.0, 0.5), "the plan carries what the gate checked");
+    let expected: Vec<f32> = modem.synthesize(frame.symbols(), 1500.0).unwrap().iter().map(|v| v * 0.5).collect();
+    assert!(audio == expected, "the transmitted audio is not the verified frame, sample for sample");
     let mut window = vec![0.0f32; z30_dsp::baseband::SLOT_SAMPLES];
     let at = z30_dsp::baseband::SLOT_ZERO_INDEX;
     window[at..at + audio.len()].copy_from_slice(&audio);
@@ -554,7 +577,7 @@ fn n3_tune_and_sequenced_frames_go_through_the_same_gate() {
     assert!(e.take_events().iter().any(|ev| matches!(ev, Event::TxRefused(v) if v.contains(&Violation::NoCallsign))));
     let mut e = Engine::new(configured("K1ABC"));
     e.apply(Command::Tune, 0);
-    assert!(matches!(e.plan_tx(2, 0).map(|p| p.kind), Some(z30_engine::engine::TxKind::Tune)));
+    assert!(matches!(e.plan_tx(2, 0).map(|p| p.kind().clone()), Some(z30_engine::engine::TxKind::Tune)));
 }
 
 #[test]

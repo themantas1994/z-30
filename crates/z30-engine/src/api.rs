@@ -171,21 +171,67 @@ pub enum Event {
     TxFinished {
         /// Slot.
         slot: i64,
+        /// What actually went out.
+        outcome: TxOutcome,
     },
-    /// Keying or audio failed; transmitter released.
+    /// Keying, release or audio failed. Says whether the release was confirmed.
     TxFault(String),
-    /// The PTT watchdog released a stuck transmitter.
+    /// The PTT watchdog released the transmitter at `MAX_TX_SECONDS`.
     WatchdogReleased,
+    /// A PTT release the hardware had refused was confirmed on a retry.
+    PttReleaseConfirmed {
+        /// Releases refused before this one was confirmed.
+        failures: u64,
+    },
+    /// The system clock stepped; the receive timeline moved from one slot to another.
+    ClockStepped {
+        /// The slot the receiver was waiting for.
+        from_slot: i64,
+        /// The slot the new clock says it is.
+        to_slot: i64,
+    },
     /// QSO state changed.
     Qso(QsoState),
     /// The sequencer's watchdog stopped TX.
     SequencerWatchdog(u32),
-    /// A contact to log.
+    /// A contact is complete and valid, and is to be logged. Not yet persisted: the runtime
+    /// hands it to the logbook, and only the logbook's answer says whether it was written.
+    ContactComplete(Box<QsoRecord>),
+    /// A contact was written to the logbook (persisted).
     Logged(Box<QsoRecord>),
+    /// A contact could NOT be written to the logbook; it is not logged.
+    LogFailed {
+        /// The partner's callsign.
+        call: String,
+        /// Why.
+        error: String,
+    },
     /// Rig status changed.
     Rig(String),
-    /// Audio status changed.
+    /// Audio status changed (an output device failure or its recovery).
     Audio(String),
+}
+
+/// What a transmission actually put on the air. Only `Complete` advances the QSO or is logged.
+#[derive(Clone, Debug, PartialEq)]
+pub enum TxOutcome {
+    /// The whole frame was played between a confirmed key and its release.
+    Complete,
+    /// Part of the frame was not played (the output had not drained when its time ran out).
+    Partial(String),
+    /// Abandoned by the station: halt, a late key, a rig contradiction, a configuration change.
+    Aborted(String),
+    /// Keying or audio failed.
+    Failed(String),
+    /// The PTT watchdog released the transmitter.
+    WatchdogAborted,
+}
+
+impl TxOutcome {
+    /// Whether the whole frame went out.
+    pub fn is_complete(&self) -> bool {
+        *self == TxOutcome::Complete
+    }
 }
 
 /// How a reported SNR is displayed: the value inside the range its accuracy has been measured

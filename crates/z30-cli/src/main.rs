@@ -253,6 +253,11 @@ fn diagnostics(cfg: &z30_engine::config::Config, config_path: &Path) -> Result<(
     println!("config:   {}{}", config_path.display(), if config_path.exists() { "" } else { " (not found: defaults, transmit refused)" });
     println!("data dir: {}", paths::data_dir().display());
     let wall = z30_io::wallclock::SystemWallClock::default();
+    // The status is queried on a thread of its own; give the OS a few seconds to answer.
+    let t = std::time::Instant::now();
+    while wall.status() == z30_io::wallclock::STATUS_NOT_YET_CHECKED && t.elapsed() < Duration::from_secs(5) {
+        std::thread::sleep(Duration::from_millis(20));
+    }
     println!("clock:    {}", wall.status());
     let engine = z30_engine::engine::Engine::new(cfg.clone());
     let snap = engine.snapshot(0);
@@ -277,6 +282,15 @@ fn diagnostics(cfg: &z30_engine::config::Config, config_path: &Path) -> Result<(
     }
     let (ins, outs) = z30_io::audio::list_devices();
     println!("audio:    {} inputs, {} outputs (see --devices)", ins.len(), outs.len());
+    // The device each direction would actually use; an ambiguous name is an error here too.
+    for (label, input, wanted) in
+        [("audio in: ", true, cfg.audio.input_device.as_deref()), ("audio out:", false, cfg.audio.output_device.as_deref())]
+    {
+        match z30_io::audio::resolve_device_name(input, wanted) {
+            Ok(name) => println!("{label} {name}{}", if wanted.is_none() { " (system default)" } else { "" }),
+            Err(e) => println!("{label} unavailable: {e}"),
+        }
+    }
     Ok(())
 }
 
@@ -450,6 +464,10 @@ fn receive(cfg: z30_engine::config::Config, capture: Option<PathBuf>) -> Result<
                 }
                 Event::SlotMissed(slot, why) => eprintln!("-- slot {slot} missed: {why:?}"),
                 Event::Audio(s) | Event::Rig(s) => eprintln!("-- {s}"),
+                Event::ClockStepped { from_slot, to_slot } => eprintln!(
+                    "-- the system clock stepped {:+} s: the receiver moved from slot {from_slot} to slot {to_slot}",
+                    (to_slot - from_slot) * 30
+                ),
                 _ => {}
             }
         }

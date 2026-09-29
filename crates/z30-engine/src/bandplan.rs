@@ -1,7 +1,24 @@
 //! Amateur band plan and transmit privileges: which frequencies this station may put a data
 //! emission on, given its regulatory region and licence class. A port of `src/dsp/bandPlan.ts`
-//! (the data behind the transmit gate), with the same scope limits: data segments only,
-//! national variations not modelled, and the operator remains responsible for their emissions.
+//! (the data behind the transmit gate). The operator remains responsible for their emissions.
+//!
+//! What the tables are, and are not:
+//!
+//! - **US (FCC Part 97):** the segments where 47 CFR 97.305(c) authorises RTTY/data emissions
+//!   for each class, not the whole band. 6 m and 2 m start at 50.1 and 144.1 MHz because
+//!   50.0-50.1 and 144.0-144.1 MHz are CW-only (97.305(a),(c)); the table used to clear data
+//!   there (2026-09-28 audit F-02 / TX-02). 60 m is five channels (97.303(h)), not a band: a
+//!   data emission must be centred on the channel centre, within
+//!   `US_60M_CENTRE_TOLERANCE_HZ`, and inside the channel's 2.8 kHz. This is the reading
+//!   implemented; whether the regulations require "centred on" or only "inside" the channel is
+//!   the licensed operator's (the board's) decision, recorded in `audit/ACTIVE_DEFECT_LEDGER.md`
+//!   (F-02). The stricter reading is implemented until then: it can only refuse more.
+//! - **IARU Regions 1-3:** whole-band amateur allocations. They are NOT data sub-bands: the IARU
+//!   band plans are recommendations that vary by country, and none is modelled. In those regions
+//!   the gate checks only that the emission is inside an amateur band available to the station;
+//!   the data segment is the operator's responsibility (`docs/safety.md`).
+//! - National variations (including the US 420-430 MHz restriction near the Canadian border,
+//!   97.303(m)) are not modelled.
 
 use serde::{Deserialize, Serialize};
 
@@ -96,7 +113,17 @@ pub struct Segment {
     pub end_hz: u64,
     /// Classes that may use it.
     pub classes: &'static [LicenseClass],
+    /// For a channelised allocation (US 60 m): the channel centre a data emission must sit on.
+    pub channel_centre_hz: Option<u64>,
 }
+
+/// How far a US 60 m data emission's centre may be from the channel centre, Hz. A board
+/// decision (F-02); set so that the operator can place it with an ordinary dial and audio
+/// offset while the emission stays on the channel centre in any reading of the rule.
+pub const US_60M_CENTRE_TOLERANCE_HZ: f64 = 50.0;
+
+/// The US 60 m channel centres, Hz (47 CFR 97.303(h)).
+pub const US_60M_CHANNEL_CENTRES_HZ: [u64; 5] = [5_332_000, 5_348_000, 5_358_500, 5_373_000, 5_405_000];
 
 use LicenseClass::*;
 const FULL: &[LicenseClass] = &[Full];
@@ -107,7 +134,14 @@ const US_AG: &[LicenseClass] = &[UsAdvanced, UsGeneral];
 
 macro_rules! seg {
     ($b:expr, $s:expr, $e:expr, $c:expr) => {
-        Segment { band: $b, start_hz: $s, end_hz: $e, classes: $c }
+        Segment { band: $b, start_hz: $s, end_hz: $e, classes: $c, channel_centre_hz: None }
+    };
+}
+
+/// A 2.8 kHz channel centred on `$c` (US 60 m).
+macro_rules! chan {
+    ($c:expr) => {
+        Segment { band: "60m", start_hz: $c - 1_400, end_hz: $c + 1_400, classes: US_HF, channel_centre_hz: Some($c) }
     };
 }
 
@@ -163,7 +197,11 @@ const US: &[Segment] = &[
     seg!("160m", 1_800_000, 2_000_000, US_HF),
     seg!("80m", 3_500_000, 3_600_000, US_EX),
     seg!("80m", 3_525_000, 3_600_000, US_AG),
-    seg!("60m", 5_332_000, 5_405_000, US_HF),
+    chan!(5_332_000),
+    chan!(5_348_000),
+    chan!(5_358_500),
+    chan!(5_373_000),
+    chan!(5_405_000),
     seg!("40m", 7_000_000, 7_125_000, US_EX),
     seg!("40m", 7_025_000, 7_125_000, US_AG),
     seg!("30m", 10_100_000, 10_150_000, US_HF),
@@ -174,8 +212,8 @@ const US: &[Segment] = &[
     seg!("15m", 21_025_000, 21_200_000, US_AG),
     seg!("12m", 24_890_000, 24_930_000, US_HF),
     seg!("10m", 28_000_000, 28_300_000, US_ALL),
-    seg!("6m", 50_000_000, 54_000_000, US_ALL),
-    seg!("2m", 144_000_000, 148_000_000, US_ALL),
+    seg!("6m", 50_100_000, 54_000_000, US_ALL),
+    seg!("2m", 144_100_000, 148_000_000, US_ALL),
     seg!("70cm", 420_000_000, 450_000_000, US_ALL),
 ];
 
@@ -195,7 +233,12 @@ pub fn segments(region: Region) -> &'static [Segment] {
 pub fn find_permitted_segment(region: Region, class: LicenseClass, freq_hz: f64, bandwidth_hz: f64) -> Option<Segment> {
     let half = bandwidth_hz.max(0.0) / 2.0;
     let (lo, hi) = (freq_hz - half, freq_hz + half);
-    segments(region).iter().copied().find(|s| lo >= s.start_hz as f64 && hi <= s.end_hz as f64 && s.classes.contains(&class))
+    segments(region).iter().copied().find(|s| {
+        lo >= s.start_hz as f64
+            && hi <= s.end_hz as f64
+            && s.classes.contains(&class)
+            && s.channel_centre_hz.is_none_or(|c| (freq_hz - c as f64).abs() <= US_60M_CENTRE_TOLERANCE_HZ)
+    })
 }
 
 /// The nearest permitted segment and the distance to it, so a refusal can say how far out the
@@ -285,6 +328,41 @@ mod tests {
         assert!(find_permitted_segment(Region::Us, LicenseClass::UsExtra, 14_010_000.0, 50.0).is_some());
         // US Technician has no 20 m data privileges.
         assert!(find_permitted_segment(Region::Us, LicenseClass::UsTechnician, 14_076_000.0, 50.0).is_none());
+    }
+
+    #[test]
+    fn f02_us_cw_only_sub_bands_and_off_channel_60m_are_refused() {
+        use LicenseClass::*;
+        let ok = |f: f64, c| find_permitted_segment(Region::Us, c, f, 66.0).is_some();
+        // 6 m and 2 m: 50.0-50.1 and 144.0-144.1 MHz are CW-only (TX-02's probe dials).
+        assert!(!ok(50_051_500.0, UsGeneral));
+        assert!(!ok(144_051_500.0, UsGeneral));
+        // Exact lower edges: an emission whose lower edge is on 50.1 / 144.1 MHz is inside...
+        assert!(ok(50_100_033.0, UsTechnician));
+        assert!(ok(144_100_033.0, UsTechnician));
+        // ...one straddling it by a hertz is not.
+        assert!(!ok(50_100_032.0, UsTechnician));
+        assert!(!ok(144_100_032.0, UsTechnician));
+        // Exact upper edges.
+        assert!(ok(53_999_967.0, UsGeneral));
+        assert!(!ok(53_999_968.0, UsGeneral));
+        assert!(ok(147_999_967.0, UsGeneral));
+        assert!(!ok(147_999_968.0, UsGeneral));
+        // 60 m: the channel centres, within the tolerance, and nothing between the channels.
+        for c in US_60M_CHANNEL_CENTRES_HZ {
+            assert!(ok(c as f64, UsGeneral), "{c}");
+            assert!(ok(c as f64 + US_60M_CENTRE_TOLERANCE_HZ, UsGeneral), "{c}");
+            assert!(!ok(c as f64 + US_60M_CENTRE_TOLERANCE_HZ + 1.0, UsGeneral), "{c}: off centre");
+            assert!(!ok(c as f64 - US_60M_CENTRE_TOLERANCE_HZ - 1.0, UsGeneral), "{c}: off centre");
+            // Inside the 2.8 kHz channel but not on its centre is still refused.
+            assert!(!ok(c as f64 + 1_000.0, UsGeneral), "{c}");
+            assert!(!ok(c as f64, UsTechnician), "no 60 m for Technicians");
+        }
+        // TX-02's off-channel probes: 5.3675 MHz (outside all channels) and 5.3395 MHz (between).
+        assert!(!ok(5_367_500.0, UsGeneral));
+        assert!(!ok(5_339_500.0, UsGeneral));
+        // A centre on a channel but an emission wider than the channel is refused.
+        assert!(find_permitted_segment(Region::Us, UsGeneral, 5_332_000.0, 2_801.0).is_none());
     }
 
     #[test]

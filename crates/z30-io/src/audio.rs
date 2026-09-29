@@ -6,13 +6,19 @@
 //! atomic counters. No allocation, no lock, no logging, no DSP (audit E; directive section 15).
 //! `InputCallbackState::on_data` is that body, separated so a test can run it under a counting
 //! allocator. The DSP thread drains the rings through `AudioInput::next_block`.
+//!
+//! The playback callback likewise only pops from a lock-free ring and writes the device buffer;
+//! its body is `OutputCallbackState::on_data`, under the same allocation test. A device error on
+//! the output is recorded and surfaced through `AudioOutput::failure`, so the runtime stops the
+//! transmission and refuses the next one; it used to be discarded (`|_err| {}`), and a dead
+//! output keyed the radio with no audio every slot (2026-09-28 audit F-19).
 
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use z30_engine::pipeline::AudioBlock;
-use z30_engine::runtime::{AudioInput, AudioOutput};
+use z30_engine::runtime::{AudioInput, AudioOutput, OutputStopper};
 
 /// Seconds of capture the ring holds before it overruns.
 pub const INPUT_RING_SECONDS: usize = 20;
@@ -131,6 +137,7 @@ pub struct CpalInput {
     failed: Arc<AtomicBool>,
     /// Counters.
     pub counters: InputCounters,
+    name: String,
 }
 
 /// Names of the input and output devices of the default host.
@@ -142,24 +149,58 @@ pub fn list_devices() -> (Vec<String>, Vec<String>) {
     (ins, outs)
 }
 
-fn find_device(input: bool, wanted: Option<&str>) -> Result<cpal::Device, String> {
+/// Which of `names` the configured `wanted` selects: an exact (case-insensitive) name match,
+/// else the one and only name containing it. Two or more candidates is an error naming them, not
+/// the first one found: with two interfaces attached (a radio and a headset, two radios) the
+/// first substring match fed the wrong one (2026-09-28 audit F-43).
+pub fn select_device(names: &[String], wanted: &str) -> Result<usize, String> {
+    let w = wanted.trim().to_lowercase();
+    let exact: Vec<usize> = (0..names.len()).filter(|&i| names[i].trim().to_lowercase() == w).collect();
+    if exact.len() == 1 {
+        return Ok(exact[0]);
+    }
+    let partial: Vec<usize> = (0..names.len()).filter(|&i| names[i].to_lowercase().contains(&w)).collect();
+    let candidates = if exact.len() > 1 { exact } else { partial };
+    match candidates.as_slice() {
+        [one] => Ok(*one),
+        [] => Err(format!("no audio device matching \"{wanted}\"")),
+        many => Err(format!(
+            "\"{wanted}\" matches {} audio devices ({}); set the full name of the one to use",
+            many.len(),
+            many.iter().map(|&i| format!("\"{}\"", names[i])).collect::<Vec<_>>().join(", ")
+        )),
+    }
+}
+
+fn device_name(d: &cpal::Device) -> String {
+    d.description().map(|x| x.to_string()).unwrap_or_else(|_| d.to_string())
+}
+
+fn find_device(input: bool, wanted: Option<&str>) -> Result<(cpal::Device, String), String> {
     let host = cpal::default_host();
     let Some(w) = wanted.filter(|w| !w.is_empty()) else {
-        return if input { host.default_input_device() } else { host.default_output_device() }
-            .ok_or_else(|| "no default audio device".to_string());
+        let d = if input { host.default_input_device() } else { host.default_output_device() }
+            .ok_or_else(|| "no default audio device".to_string())?;
+        let name = device_name(&d);
+        return Ok((d, name));
     };
     let devices: Vec<cpal::Device> = if input { host.input_devices() } else { host.output_devices() }.map_err(|e| e.to_string())?.collect();
-    let w = w.to_lowercase();
-    devices
-        .into_iter()
-        .find(|d| d.description().map(|x| x.to_string()).unwrap_or_else(|_| d.to_string()).to_lowercase().contains(&w))
-        .ok_or_else(|| format!("no audio device matching \"{w}\""))
+    let names: Vec<String> = devices.iter().map(device_name).collect();
+    let i = select_device(&names, w)?;
+    let name = names[i].clone();
+    Ok((devices.into_iter().nth(i).expect("index from the same list"), name))
+}
+
+/// The name of the device the configured `wanted` selects (the default device when None),
+/// without opening it: for diagnostics, so the operator sees which interface would be used.
+pub fn resolve_device_name(input: bool, wanted: Option<&str>) -> Result<String, String> {
+    find_device(input, wanted).map(|(_, name)| name)
 }
 
 impl CpalInput {
     /// Opens `device` (substring match; None = default) at its default rate, f32 samples.
     pub fn open(device: Option<&str>) -> Result<Self, String> {
-        let dev = find_device(true, device)?;
+        let (dev, name) = find_device(true, device)?;
         let supported = dev.default_input_config().map_err(|e| e.to_string())?;
         let rate = supported.sample_rate();
         let channels = supported.channels() as usize;
@@ -180,7 +221,12 @@ impl CpalInput {
             )
             .map_err(|e| format!("cannot open input (f32 at {rate} Hz): {e}"))?;
         stream.play().map_err(|e| e.to_string())?;
-        Ok(CpalInput { _stream: stream, rings, rate, failed, counters })
+        Ok(CpalInput { _stream: stream, rings, rate, failed, counters, name })
+    }
+
+    /// The device actually opened (for diagnostics).
+    pub fn device_name(&self) -> &str {
+        &self.name
     }
 }
 
@@ -206,10 +252,78 @@ impl AudioInput for CpalInput {
     }
 }
 
-/// Playback state shared with the output callback.
-struct OutputShared {
+/// Playback state shared with the output callback and with any thread that must stop it.
+pub struct OutputShared {
     flush: AtomicBool,
     latency_ns: AtomicU64,
+    failed: AtomicBool,
+    error: Mutex<Option<String>>,
+}
+
+impl OutputShared {
+    fn new() -> Self {
+        OutputShared {
+            flush: AtomicBool::new(false),
+            latency_ns: AtomicU64::new(0),
+            failed: AtomicBool::new(false),
+            error: Mutex::new(None),
+        }
+    }
+
+    /// Asks the callback to discard everything queued at its next run. Lock-free; any thread.
+    pub fn request_flush(&self) {
+        self.flush.store(true, Ordering::Release);
+    }
+
+    /// Records a device error (from cpal's error callback, not the data callback).
+    pub fn record_error(&self, e: String) {
+        self.failed.store(true, Ordering::SeqCst);
+        if let Ok(mut g) = self.error.try_lock() {
+            g.get_or_insert(e);
+        }
+    }
+
+    fn failure(&self) -> Option<String> {
+        self.failed
+            .load(Ordering::SeqCst)
+            .then(|| self.error.lock().ok().and_then(|g| g.clone()).unwrap_or_else(|| "the audio output device reported an error".into()))
+    }
+}
+
+/// The playback callback's state: a ring consumer and the shared flags. Everything is
+/// preallocated; `on_data` is the whole real-time body.
+pub struct OutputCallbackState {
+    consumer: rtrb::Consumer<f32>,
+    shared: Arc<OutputShared>,
+    channels: usize,
+}
+
+/// Builds the playback ring: the producer `play` pushes into, the callback state, and the flags.
+pub fn output_ring(capacity: usize, channels: usize) -> (rtrb::Producer<f32>, OutputCallbackState, Arc<OutputShared>) {
+    let (producer, consumer) = rtrb::RingBuffer::<f32>::new(capacity);
+    let shared = Arc::new(OutputShared::new());
+    (producer, OutputCallbackState { consumer, shared: shared.clone(), channels: channels.max(1) }, shared)
+}
+
+impl OutputCallbackState {
+    /// The real-time body: honour a flush, then fill `out` (interleaved) from the ring, the same
+    /// sample on every channel (the radio's input is mono), silence when the ring is empty.
+    #[inline]
+    pub fn on_data(&mut self, out: &mut [f32], latency_ns: u64) {
+        self.shared.latency_ns.store(latency_ns, Ordering::Relaxed);
+        if self.shared.flush.swap(false, Ordering::AcqRel) {
+            let n = self.consumer.slots();
+            if let Ok(c) = self.consumer.read_chunk(n) {
+                c.commit_all();
+            }
+        }
+        for frame in out.chunks_exact_mut(self.channels) {
+            let v = self.consumer.pop().unwrap_or(0.0);
+            for s in frame.iter_mut() {
+                *s = v;
+            }
+        }
+    }
 }
 
 /// A playback device.
@@ -218,46 +332,40 @@ pub struct CpalOutput {
     producer: rtrb::Producer<f32>,
     shared: Arc<OutputShared>,
     rate: u32,
+    /// The configured name (None = system default), for `recover`.
+    wanted: Option<String>,
+    name: String,
 }
 
 impl CpalOutput {
-    /// Opens `device` (substring; None = default).
+    /// Opens `device` (exact name, or a substring only one device matches; None = default).
     pub fn open(device: Option<&str>) -> Result<Self, String> {
-        let dev = find_device(false, device)?;
+        let (dev, name) = find_device(false, device)?;
         let supported = dev.default_output_config().map_err(|e| e.to_string())?;
         let rate = supported.sample_rate();
         let channels = supported.channels() as usize;
         let config: cpal::StreamConfig = supported.into();
         // A whole frame plus margin at the device rate: `play` never blocks.
-        let (producer, mut consumer) = rtrb::RingBuffer::<f32>::new(rate as usize * 30);
-        let shared = Arc::new(OutputShared { flush: AtomicBool::new(false), latency_ns: AtomicU64::new(0) });
+        let (producer, mut state, shared) = output_ring(rate as usize * 30, channels);
         let s2 = shared.clone();
         let stream = dev
             .build_output_stream::<f32, _, _>(
                 config,
                 move |out: &mut [f32], info: &cpal::OutputCallbackInfo| {
                     let ts = info.timestamp();
-                    s2.latency_ns.store(ts.playback.duration_since(ts.callback).as_nanos() as u64, Ordering::Relaxed);
-                    if s2.flush.swap(false, Ordering::AcqRel) {
-                        let n = consumer.slots();
-                        if let Ok(c) = consumer.read_chunk(n) {
-                            c.commit_all();
-                        }
-                    }
-                    for frame in out.chunks_exact_mut(channels) {
-                        // The same sample on every channel: the radio's input is mono.
-                        let v = consumer.pop().unwrap_or(0.0);
-                        for s in frame.iter_mut() {
-                            *s = v;
-                        }
-                    }
+                    state.on_data(out, ts.playback.duration_since(ts.callback).as_nanos() as u64);
                 },
-                |_err| {},
+                move |err| s2.record_error(err.to_string()),
                 None,
             )
             .map_err(|e| format!("cannot open output (f32 at {rate} Hz): {e}"))?;
         stream.play().map_err(|e| e.to_string())?;
-        Ok(CpalOutput { _stream: stream, producer, shared, rate })
+        Ok(CpalOutput { _stream: stream, producer, shared, rate, wanted: device.map(str::to_string), name })
+    }
+
+    /// The device actually opened (for diagnostics).
+    pub fn device_name(&self) -> &str {
+        &self.name
     }
 }
 
@@ -280,6 +388,61 @@ impl AudioOutput for CpalOutput {
     }
 
     fn stop(&mut self) {
-        self.shared.flush.store(true, Ordering::Release);
+        self.shared.request_flush();
+    }
+
+    fn queued_samples(&self) -> Option<usize> {
+        Some(self.producer.buffer().capacity() - self.producer.slots())
+    }
+
+    fn failure(&self) -> Option<String> {
+        self.shared.failure()
+    }
+
+    fn recover(&mut self) -> Result<(), String> {
+        let fresh = CpalOutput::open(self.wanted.as_deref())?;
+        if fresh.rate != self.rate {
+            // The runtime synthesised for the old rate; a different rate is a different device.
+            return Err(format!("the output reopened at {} Hz, not {} Hz; restart the station", fresh.rate, self.rate));
+        }
+        *self = fresh;
+        Ok(())
+    }
+
+    fn stopper(&self) -> Option<OutputStopper> {
+        let shared = self.shared.clone();
+        Some(Arc::new(move || shared.request_flush()))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn f43_an_ambiguous_device_name_is_refused_not_resolved_to_the_first_match() {
+        let names: Vec<String> =
+            ["USB Audio CODEC (radio 1)", "USB Audio CODEC (radio 2)", "Built-in Audio", "USB Audio"].map(String::from).to_vec();
+        let e = select_device(&names, "codec").unwrap_err();
+        assert!(e.contains("matches 2") && e.contains("radio 1") && e.contains("radio 2"), "{e}");
+        assert_eq!(select_device(&names, "radio 2"), Ok(1));
+        assert_eq!(select_device(&names, "built-in"), Ok(2));
+        // An exact name wins even when it is a substring of others.
+        assert_eq!(select_device(&names, "usb audio"), Ok(3));
+        assert!(select_device(&names, "nothing").unwrap_err().contains("no audio device"));
+    }
+
+    #[test]
+    fn f19_an_output_error_is_recorded_and_a_flush_empties_the_ring() {
+        let (mut prod, mut cb, shared) = output_ring(1000, 2);
+        assert_eq!(shared.failure(), None);
+        let _ = prod.push_partial_slice(&[0.5; 600]);
+        shared.request_flush();
+        let mut out = [1.0f32; 8];
+        cb.on_data(&mut out, 0);
+        assert!(out.iter().all(|v| *v == 0.0), "flushed: silence, not the queued frame");
+        assert_eq!(prod.slots(), 1000);
+        shared.record_error("device unplugged".into());
+        assert_eq!(shared.failure().as_deref(), Some("device unplugged"));
     }
 }
