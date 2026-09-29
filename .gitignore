@@ -18,3 +18,12 @@ config.json
 
 # Benchmark smoke output (published results live in research/results/<commit>/)
 /smoke/
+
+# Audit evidence logs are evidence, not build noise: `*.log` above silently dropped the 19 logs
+# the 2026-09-24 corrective audit cites (RES-13 / F-39). Policy: audit/EVIDENCE_POLICY.md.
+!audit/**/evidence/**/*.log
+
+# Suite results that are not the published run (exploratory size, dirty build) are written
+# here by default and must never be committed as if they were the record (F-13, F-14).
+/research/results/exploratory/
+/research/results/unpublished/
