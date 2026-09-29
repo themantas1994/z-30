@@ -95,7 +95,8 @@ fn f01_a_line_that_cannot_confirm_a_release_cannot_be_keyed_again() {
     line.fail_releases.store(1_000, Ordering::SeqCst);
     assert!(ptt.unkey().is_err());
     let keys_before = line.log.lock().unwrap().iter().filter(|k| **k).count();
-    assert!(ptt.key().is_err(), "keying on top of an unconfirmed release must be refused");
+    let e = ptt.key().expect_err("keying on top of an unconfirmed release must be refused");
+    assert!(e.0.contains("previous release was not confirmed"), "the operator is told why: {e}");
     let keys_after = line.log.lock().unwrap().iter().filter(|k| **k).count();
     assert_eq!(keys_before, keys_after, "the refused key never reached the line");
 }
@@ -219,5 +220,51 @@ fn f16_a_halt_while_the_driver_is_busy_never_blocks_and_the_line_held_by_a_slow_
     assert!(keyer.join().unwrap().is_err(), "a key that raced a halt is reported as not sent");
     // ...and the line it just keyed is released, by the keying thread or the watchdog.
     assert!(within(Duration::from_secs(2), || !slow_hw.load(Ordering::SeqCst)));
+    assert_eq!(ptt.state(), PttState::Released);
+}
+
+#[test]
+fn f15_the_watchdog_never_blocks_on_a_line_another_thread_is_driving() {
+    // The deadline passes while another thread is stuck inside the driver (a hung CAT write).
+    // The watchdog must return at once and leave the release pending, not wait on the line
+    // (mutation P-wdblock); the stuck thread releases the line when its driver returns.
+    struct Stuck {
+        hw: Arc<AtomicBool>,
+        gate: Arc<Mutex<()>>,
+    }
+    impl PttLine for Stuck {
+        fn set(&mut self, keyed: bool) -> Result<PttAck, PttError> {
+            if keyed {
+                let _g = self.gate.lock().unwrap();
+            }
+            self.hw.store(keyed, Ordering::SeqCst);
+            Ok(PttAck::Confirmed)
+        }
+        fn describe(&self) -> String {
+            "stuck".into()
+        }
+    }
+    let hw = Arc::new(AtomicBool::new(false));
+    let gate = Arc::new(Mutex::new(()));
+    let clock = VirtualClock::default();
+    let ptt = PttController::new(Box::new(Stuck { hw: hw.clone(), gate: gate.clone() }), Arc::new(clock.clone()));
+    ptt.key().unwrap();
+    let held = gate.lock().unwrap();
+    let p = ptt.clone();
+    let rekey = std::thread::spawn(move || p.key()); // blocks inside set(true), holding the line
+    std::thread::sleep(Duration::from_millis(50));
+    clock.advance(MAX_TX_SECONDS * 1000);
+    let t0 = Instant::now();
+    let (tx, rx) = std::sync::mpsc::channel();
+    let p = ptt.clone();
+    std::thread::spawn(move || {
+        let _ = tx.send(p.watchdog_tick());
+    });
+    let fired = rx.recv_timeout(Duration::from_secs(2)).expect("the watchdog blocked on a line another thread is driving");
+    assert!(fired && t0.elapsed() < Duration::from_millis(500));
+    assert_eq!(ptt.state(), PttState::ReleasePending);
+    drop(held);
+    assert!(rekey.join().unwrap().is_err(), "the key that raced the watchdog is reported as not sent");
+    assert!(within(Duration::from_secs(2), || !hw.load(Ordering::SeqCst)));
     assert_eq!(ptt.state(), PttState::Released);
 }

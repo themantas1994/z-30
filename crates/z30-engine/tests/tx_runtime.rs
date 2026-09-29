@@ -235,12 +235,13 @@ impl AudioOutput for Out {
 struct Rig {
     time: Time,
     reads: Arc<Mutex<Vec<u64>>>,
+    dial: Arc<AtomicU64>,
 }
 
 impl RigControl for Rig {
     fn read(&mut self) -> Result<Reading, String> {
         self.reads.lock().unwrap().push(self.time.ms());
-        Ok(Reading { dial_hz: Some(14_076_000.0), ptt: None, mode: Some("USB".into()) })
+        Ok(Reading { dial_hz: Some(self.dial.load(Ordering::SeqCst) as f64), ptt: None, mode: Some("USB".into()) })
     }
     fn set_dial(&mut self, _hz: u64) -> Result<(), String> {
         Ok(())
@@ -276,6 +277,7 @@ struct Station {
     line: Line,
     out: Out,
     rig_reads: Arc<Mutex<Vec<u64>>>,
+    rig_dial: Arc<AtomicU64>,
     rt: Option<RuntimeHandle>,
     events: Vec<Event>,
 }
@@ -286,8 +288,9 @@ impl Station {
         let line = Line { time: time.clone(), ..Default::default() };
         let out = Out::new(&time);
         let rig_reads = Arc::new(Mutex::new(Vec::new()));
+        let rig_dial = Arc::new(AtomicU64::new(14_076_000));
         let rig: Option<Box<dyn RigControl>> =
-            with_rig.then(|| Box::new(Rig { time: time.clone(), reads: rig_reads.clone() }) as Box<dyn RigControl>);
+            with_rig.then(|| Box::new(Rig { time: time.clone(), reads: rig_reads.clone(), dial: rig_dial.clone() }) as Box<dyn RigControl>);
         let rt = runtime::start(
             cfg,
             RuntimeParts {
@@ -302,7 +305,7 @@ impl Station {
                 tx_unavailable: None,
             },
         );
-        Station { time, line, out, rig_reads, rt: Some(rt), events: Vec::new() }
+        Station { time, line, out, rig_reads, rig_dial, rt: Some(rt), events: Vec::new() }
     }
 
     fn start() -> Station {
@@ -535,8 +538,13 @@ fn rt_a_refused_key_plays_nothing_and_is_reported_failed() {
     st.wait("the outcome", |s| s.outcome(SLOT).is_some());
     assert!(matches!(st.outcome(SLOT), Some(TxOutcome::Failed(_))), "{:?}", st.outcome(SLOT));
     assert!(st.faults().iter().any(|f| f.contains("PTT failed")));
-    st.time.set_utc(slot_start(SLOT) + 1.0);
-    st.settle();
+    // Exactly at the audio time, and then through the frame: a jump well past it would be
+    // abandoned as a late start anyway and hide audio started after a refused key (the
+    // mutation RT-keyfail survived an earlier version of this test that way).
+    for t in [slot_start(SLOT), slot_start(SLOT) + 0.2, slot_start(SLOT) + 12.0] {
+        st.time.set_utc(t);
+        st.settle();
+    }
     assert!(st.out.plays().is_empty(), "audio played after a refused key");
     assert!(!st.line.keyed());
 }
@@ -629,9 +637,10 @@ fn rt_a_slow_key_still_sends_the_whole_frame() {
     st.line.key_takes_ms.store(300, Ordering::SeqCst);
     st.send(Command::CallCq);
     st.key_slot(SLOT);
-    let n = st.out.plays().len();
+    // The key moved the clock past the audio time, so the control thread may already have
+    // started the audio by now: wait for the first play, not for one more than now.
     st.time.add_ms(5);
-    st.wait("play", |s| s.out.plays().len() > n);
+    st.wait("play", |s| !s.out.plays().is_empty());
     let (play_at, _) = st.out.plays()[0];
     st.time.set_utc(slot_start(SLOT) + 24.2);
     st.settle();
@@ -763,4 +772,70 @@ fn f18_no_poll_starts_inside_the_ptt_settle_window_during_a_transmission() {
         let inside: Vec<u64> = reads.iter().copied().filter(|&r| r > p + 10 && r < p + PTT_SETTLE_MS).collect();
         assert!(inside.is_empty(), "polls {inside:?} started inside the settle window after the PTT change at {p}");
     }
+}
+
+#[test]
+fn rt_a_configuration_change_or_queued_halt_while_keyed_ends_the_transmission() {
+    // The engine's own halts (HaltTx, EnableTx(false), a new configuration) arrive through the
+    // command queue; the runtime must end a keyed transmission on them (mutation RT-halt: the
+    // HALT button's direct path was tested, this one was not).
+    for cmd in [Command::HaltTx, Command::EnableTx(false), Command::UpdateConfig(Box::new(config()))] {
+        let mut st = Station::start();
+        st.send(Command::CallCq);
+        st.key_slot(SLOT);
+        st.start_audio(SLOT);
+        st.time.set_utc(slot_start(SLOT) + 3.0);
+        st.settle();
+        let name = format!("{cmd:?}").chars().take(20).collect::<String>();
+        st.send(cmd);
+        st.wait(&format!("the release after {name}"), |s| !s.line.keyed());
+        st.wait("the outcome", |s| s.outcome(SLOT).is_some());
+        assert!(matches!(st.outcome(SLOT), Some(TxOutcome::Aborted(_))), "{name}: {:?}", st.outcome(SLOT));
+    }
+}
+
+#[test]
+fn rt_halt_releases_the_ptt_even_while_the_control_thread_is_stuck_in_the_output() {
+    // F-16: the control thread is blocked inside the audio output while keyed. HALT must release
+    // the line itself, not wait for the control thread (mutation RT-haltptt).
+    let mut st = Station::start();
+    st.send(Command::CallCq);
+    st.key_slot(SLOT);
+    let gate = st.out.play_gate.clone();
+    let held = gate.lock().unwrap();
+    st.time.set_utc(slot_start(SLOT));
+    st.settle(); // the control thread is now inside play(), blocked
+    assert!(st.line.keyed());
+    st.rt().halt();
+    st.wait("the release while the control thread is blocked", |s| !s.line.keyed());
+    assert!(st.out.stopped_from_any_thread.load(Ordering::SeqCst) >= 1);
+    drop(held);
+    st.wait("the outcome", |s| s.outcome(SLOT).is_some());
+    assert!(matches!(st.outcome(SLOT), Some(TxOutcome::Aborted(_))), "{:?}", st.outcome(SLOT));
+    st.time.set_utc(slot_start(SLOT + 2) + 1.0);
+    st.settle();
+    assert_eq!(st.line.keys().len(), 1, "disarmed");
+}
+
+#[test]
+fn rt_a_radio_that_moves_off_the_checked_dial_mid_frame_stops_the_transmission() {
+    // F-45: the gate checks the dial at plan time; a VFO turned during the frame must end it
+    // (mutation RT-midtx).
+    let mut cfg = config();
+    cfg.rig.rigctld_host = "test".into();
+    cfg.rig.poll_interval_ms = MIN_POLL_INTERVAL_MS;
+    let mut st = Station::start_with(cfg, true);
+    st.send(Command::CallCq);
+    st.key_slot(SLOT);
+    st.start_audio(SLOT);
+    st.rig_dial.store(14_080_000, Ordering::SeqCst);
+    // Enough polls, outside the settle window, for the reading to settle as a contradiction.
+    for _ in 0..40 {
+        st.time.add_ms(100);
+        std::thread::sleep(Duration::from_millis(3));
+    }
+    st.wait("the release", |s| !s.line.keyed());
+    st.wait("the outcome", |s| s.outcome(SLOT).is_some());
+    assert!(matches!(st.outcome(SLOT), Some(TxOutcome::Aborted(ref w)) if w.contains("contradicted")), "{:?}", st.outcome(SLOT));
+    assert!(st.faults().iter().any(|f| f.contains("transmission stopped")), "{:?}", st.faults());
 }
