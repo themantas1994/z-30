@@ -199,6 +199,10 @@ quickly. Near threshold (−22 dB), ±4 Hz costs about 14 points against no drif
 scale 4× RMS), and 0.5 s and 2 s dropouts mid-frame. **36.5% [30.1, 43.4] with 200 impulses at
 50× RMS**: there is no impulse blanker.
 
+The impairments are applied to the 6 kHz noisy slot **after resampling, not at the device
+rate**. A real clipper or ADC acts before the anti-alias resampler, where its intermodulation
+products alias differently, so these figures do not describe a clipping sound card.
+
 ### Busy band
 
 `busy.json`, stations placed uniformly at random over the band and ±1.4 s, overlapping freely
@@ -283,10 +287,17 @@ default 3 passes (SIC) and with 1 pass. 100 trials per cell.
 - **Why exact co-location fails** (read from the code, not separately measured): the two
   frames' Costas symbols coincide in tone and time. The least-squares gain fit for the strong
   station therefore absorbs the weak station's sync symbols, and subtracting it leaves no sync
-  pattern for the weak station to be acquired from. The boundary between this case and 5 Hz or
-  0.4 s separation has not been mapped.
+  pattern for the weak station to be acquired from. Separately, and by design, a candidate within
+  1.6 Hz and 0.1 s of a station already decoded is dropped in passes 2 and 3 as that station's
+  residue (`slot.rs`, the residue filter), and acquisition keeps only the strongest peak within
+  2 bins (1.6 Hz) and 2 hops (80 ms) (`sync.rs`, non-maximum suppression): **a second station
+  that close to a decoded one is unreachable.** The 2026-09-28 DSP review (DSP-05, exploratory,
+  20 trials per cell, weak at −18 dB, not a result file) decoded the residual afresh without the
+  residue filter and still never decoded the weak station at 0 Hz or 1 Hz separation, and did at
+  5 Hz (20/20) and partly at 0.08 s (12/20), which supports the fit-absorption explanation. The
+  boundary between 1 and 5 Hz, and between 0 and 0.4 s, has not been mapped at benchmark size.
 - `PassStats::suppression_db` is not reported: it is a receiver-internal fit ratio, which the
-  audit measured overstating the true suppression by 9–12 dB. Physical suppression measured
+  2026-09-24 audits measured overstating the true suppression by 9–16 dB. Physical suppression measured
   against the true waveform is in [sic.md](sic.md).
 - Not measured: three or more colliding stations as a function of power (see the busy band),
   fading channels, real recordings.
@@ -464,7 +475,9 @@ Stated so that nobody fills the gap with a plausible number:
   random busy band covers many-station overlap.
 - **FT8 on the same channels.** Every FT8 figure in the documentation is published, not
   reproduced.
-- **Gray against natural-binary symbol mapping** (audit L-05).
+- **Gray against natural-binary symbol mapping on fading channels** (audit L-05). On AWGN the
+  labelling is irrelevant by symmetry (SPEC §3); on fading only an exploratory genie-coarse run
+  exists (2026-09-28 DSP-09).
 - **Single-thread K = 50 latency** misses its target (above).
 - **Windows and macOS** are verified by CI build and test, not by operating a station.
 - **Protocol v2.** Its measured half needs a candidate v2 code, which is a protocol decision

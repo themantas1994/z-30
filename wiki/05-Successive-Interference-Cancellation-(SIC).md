@@ -82,8 +82,9 @@ and SIC never loses a decode that a single pass found.
 ## What is not claimed
 
 - **The internal "suppression" figure is not physical suppression.** The receiver reports, per
-  subtraction, the ratio of its own fit before and after. The 2026-09-24 audit measured that
-  ratio overstating the true suppression by about 9–12 dB; it is a diagnostic and is not quoted
+  subtraction, the ratio of its own fit before and after. The 2026-09-24 audits measured that
+  ratio overstating the true suppression by 9–16 dB (9–12 dB, then 11–16 dB); the spread is not
+  a constant offset that could be subtracted. It is a diagnostic and is not quoted
   anywhere as how much of a station was removed.
 - **Withdrawn figures stay withdrawn.** An earlier version of this page carried collision
   decode rates (98.7 / 95.2 / 91.4 / 84.6 %), a "Pass 3 reaches −27.5 dB" claim and a

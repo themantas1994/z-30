@@ -7,7 +7,7 @@
 //! multi-station result does not depend on the thread count.
 //!
 //! `PassStats::suppression_db` is the receiver's own fit-residual ratio, not a physical
-//! measurement (it overstates true suppression by ~10 dB, audit E047); nothing here asserts on
+//! measurement (it overstates true suppression by 9–16 dB, audits E047 and H-01); nothing here asserts on
 //! it. Physical suppression is always measured against the known transmitted component.
 
 use z30_channel::*;

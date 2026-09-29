@@ -33,9 +33,14 @@ passes re-decoded the same station (audit C3).
    two fitted energies is `Subtraction::suppression_db`, reported per subtraction in
    `PassStats::suppression_db`. **It is a receiver-internal metric, not physical
    suppression**: it compares the receiver's fit with a second fit of its own, and the
-   2026-09-24 audit measured it overstating the true suppression (against the known
-   transmitted component) by about 9–12 dB at every SNR (E047). Never quote it as how much of a
-   station was removed; the figures below are measured against the truth.
+   2026-09-24 audits measured it overstating the true suppression (against the known
+   transmitted component) by 9–16 dB: 9–12 dB in the first audit (E047), 11–16 dB in the
+   post-remediation audit (`audit/2026-09-24-post-remediation/FINAL_AUDIT.md`, H-01 row). The
+   overstatement is not a constant because the "after" fit is the same block-interpolated
+   projector applied to its own residual, so it measures the projector's non-idempotence (20-sample
+   blocks, linear gain interpolation), not noise or model error (2026-09-28 audit DSP-10). Never
+   quote it as how much of a station was removed; the figures below are measured against the
+   truth.
 
 Within a pass, the timing searches (the expensive half, `sic::plan`) run in parallel against
 the same residual. The fits and subtractions (`sic::apply`) then run in decode order, each on
@@ -84,7 +89,10 @@ exact McNemar p-value per cell. Results: [benchmarking.md](benchmarking.md#colli
 In short: with SIC the weak station (−18 dB, 3–20 dB below) was decoded in 100 of 100 trials in
 every cell except exact co-location (same frequency and DT), where neither arm ever decoded it,
 because (read from the code, not separately measured) the two Costas patterns coincide and
-the strong station's fit absorbs the weak one's sync. SIC never lost a single-pass decode; 0 false decodes, 0 duplicates.
+the strong station's fit absorbs the weak one's sync. By design, a candidate within 1.6 Hz and
+0.1 s of a decoded station is discarded in passes 2 and 3 as its residue, so a station that close
+is unreachable; the boundary between that and the measured 5 Hz / 0.4 s cells is unmapped
+([benchmarking.md](benchmarking.md#collisions-sic-on-versus-off)). SIC never lost a single-pass decode; 0 false decodes, 0 duplicates.
 These are simulation results (AWGN, two stations); nothing about collisions on a real band has
 been measured.
 

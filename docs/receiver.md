@@ -112,8 +112,13 @@ Every value is measured from the slot's own samples after the frame has decoded:
   and on Watterson "poor" 4.4 dB low at +20 dB (moderate: 0.4 dB low at +10 dB, 1.9 dB low at
   +20 dB), because the replica fit leaves the unmodelled part of the signal in the residual it
   takes the noise from. Below about +10 dB it stayed within 0.5 dB. Those Watterson figures were
-  measured with the channel model before its Doppler correction (N-01). It has not been measured
-  on real audio: **NOT HARDWARE VALIDATED**.
+  measured with the channel model before its Doppler correction (N-01) and **understate the
+  bias**: on the corrected model the 2026-09-28 DSP review (DSP-01; exploratory, 30 frames per
+  cell, error against each frame's realised SNR, not a result file) measured "poor" 1.7 dB low
+  at +10 dB and 6.3 dB low at +20 dB, and "moderate" 2.9 dB low at +20 dB. A station on a
+  fast-fading path at +10 dB is therefore sent a report about 2 dB low. No benchmark measures
+  the estimate on fading channels yet. It has not been measured on real audio: **NOT HARDWARE
+  VALIDATED**.
 - **Reports below −22 dB** are sent as the rounded estimate (down to v1's −30 dB), although the
   display shows the bound `<-22`: v1 carries a number, and the estimate there is outside the
   validated range (the audit measured +0.4 dB bias at −24 dB, from the frames that happened to

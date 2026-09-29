@@ -156,7 +156,7 @@ the test to match. Full rationale: [`docs/safety.md`](docs/safety.md).
   +6.6 dB, audit M-07).
 - There is **no per-decode confidence**. Do not add one without a calibrated derivation.
 - `PassStats::suppression_db` is the receiver's own fit-residual ratio, **not** physical
-  suppression (it overstates by ~10 dB). Never quote it as how much of a station was removed.
+  suppression (it overstates by 9–16 dB, not a constant). Never quote it as how much of a station was removed.
 - Log records carry per-field provenance; absent fields stay absent; `QsoRecord::validate`
   refuses records with no partner or no plausible UTC time; times are UTC from slot numbers.
 - The logged dial claims only its evidence: `reported_by_rig` (fresh CAT reading), `commanded`
