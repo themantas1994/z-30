@@ -5,18 +5,42 @@
 //! status shown is the operating system's own, and "not checked" where there is no cheap,
 //! reliable way to ask.
 
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 use z30_engine::runtime::WallClock;
 
 /// UTC from `SystemTime`, with a cached OS synchronisation status.
+///
+/// The status is refreshed on a thread of its own and `status()` only reads the cache: it used
+/// to run `timedatectl` (a D-Bus call with no timeout) on the engine's control thread once a
+/// minute, which could stall the transmit timeline and HALT (2026-09-28 audit F-16).
 pub struct SystemWallClock {
-    cache: Mutex<(Option<Instant>, String)>,
+    cache: Arc<Mutex<Cache>>,
+    query: fn() -> String,
 }
+
+struct Cache {
+    checked: Option<Instant>,
+    text: String,
+    refreshing: bool,
+}
+
+/// What `status()` says before the first query has answered.
+pub const STATUS_NOT_YET_CHECKED: &str = "system clock (synchronisation status not yet checked)";
 
 impl Default for SystemWallClock {
     fn default() -> Self {
-        SystemWallClock { cache: Mutex::new((None, String::new())) }
+        Self::with_query(query_status)
+    }
+}
+
+impl SystemWallClock {
+    /// A clock whose status comes from `query` (tests inject a slow one).
+    pub fn with_query(query: fn() -> String) -> Self {
+        SystemWallClock {
+            cache: Arc::new(Mutex::new(Cache { checked: None, text: STATUS_NOT_YET_CHECKED.into(), refreshing: false })),
+            query,
+        }
     }
 }
 
@@ -65,10 +89,19 @@ impl WallClock for SystemWallClock {
 
     fn status(&self) -> String {
         let mut c = self.cache.lock().unwrap_or_else(|p| p.into_inner());
-        if c.0.is_none_or(|t| t.elapsed().as_secs() >= 60) {
-            *c = (Some(Instant::now()), query_status());
+        if !c.refreshing && c.checked.is_none_or(|t| t.elapsed().as_secs() >= 60) {
+            c.refreshing = true;
+            let (cache, query) = (self.cache.clone(), self.query);
+            let spawned = std::thread::Builder::new().name("z30-clock-status".into()).spawn(move || {
+                let text = query();
+                let mut c = cache.lock().unwrap_or_else(|p| p.into_inner());
+                *c = Cache { checked: Some(Instant::now()), text, refreshing: false };
+            });
+            if spawned.is_err() {
+                c.refreshing = false;
+            }
         }
-        c.1.clone()
+        c.text.clone()
     }
 }
 
@@ -83,6 +116,24 @@ mod tests {
             let s = status_from_timedatectl(other);
             assert!(!s.contains("NTP-synchronised"), "{other:?} -> {s}");
         }
+    }
+
+    #[test]
+    fn f16_the_status_never_blocks_on_the_os_query() {
+        fn slow() -> String {
+            std::thread::sleep(std::time::Duration::from_millis(500));
+            "system clock NTP-synchronised (timedatectl)".into()
+        }
+        let c = SystemWallClock::with_query(slow);
+        let t = Instant::now();
+        assert_eq!(c.status(), STATUS_NOT_YET_CHECKED, "nothing is claimed before the OS answered");
+        assert_eq!(c.status(), STATUS_NOT_YET_CHECKED);
+        assert!(t.elapsed().as_millis() < 100, "status() waited {:?} for the query", t.elapsed());
+        let t = Instant::now();
+        while c.status() == STATUS_NOT_YET_CHECKED && t.elapsed().as_secs() < 5 {
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        assert!(c.status().contains("NTP-synchronised"));
     }
 
     #[test]

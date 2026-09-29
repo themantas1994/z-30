@@ -43,6 +43,8 @@ impl AudioOutput for NoOutput {
 
 struct StartReport {
     notes: Vec<String>,
+    /// Why contacts cannot be logged, shown until the station is restarted with a logbook.
+    log_problem: Option<String>,
 }
 
 fn start_runtime(cfg: &Config) -> (RuntimeHandle, StartReport) {
@@ -71,11 +73,15 @@ fn start_runtime(cfg: &Config) -> (RuntimeHandle, StartReport) {
     let rig: Option<Box<dyn z30_engine::runtime::RigControl>> = (!cfg.rig.rigctld_host.is_empty())
         .then(|| Box::new(z30_io::rigctld::Rigctld::new(&cfg.rig.rigctld_host, cfg.rig.rigctld_port)) as _);
     let _ = std::fs::create_dir_all(paths::data_dir());
+    // No in-memory stand-in: a contact that cannot be written is reported as not logged, every
+    // time, rather than shown as "Logged" and lost at exit (2026-09-28 audit F-20).
+    let mut log_problem = None;
     let log: Box<dyn z30_engine::runtime::LogSink> = match z30_io::logbook::Logbook::open(&paths::logbook_path()) {
         Ok(l) => Box::new(l),
         Err(e) => {
-            notes.push(format!("Logbook unavailable: {e}"));
-            Box::new(z30_io::logbook::Logbook::in_memory().expect("in-memory sqlite"))
+            let why = format!("the logbook {} could not be opened: {e}", paths::logbook_path().display());
+            log_problem = Some(why.clone());
+            Box::new(UnavailableLog(why))
         }
     };
     let h = runtime::start(
@@ -92,7 +98,16 @@ fn start_runtime(cfg: &Config) -> (RuntimeHandle, StartReport) {
             tx_unavailable: (!tx_problems.is_empty()).then(|| tx_problems.join("; ")),
         },
     );
-    (h, StartReport { notes })
+    (h, StartReport { notes, log_problem })
+}
+
+/// The logbook when it could not be opened: every write fails, with the reason.
+struct UnavailableLog(String);
+
+impl z30_engine::runtime::LogSink for UnavailableLog {
+    fn log(&mut self, _rec: &z30_engine::qso::QsoRecord) -> Result<(), String> {
+        Err(self.0.clone())
+    }
 }
 
 /// The window's state. Nothing here is authoritative: the engine's snapshot is.
@@ -108,6 +123,8 @@ pub struct App {
     devices: (Vec<String>, Vec<String>),
     serial_ports: Vec<String>,
     log_rows: Vec<z30_engine::qso::QsoRecord>,
+    /// Persistent banner: contacts are not being logged.
+    log_problem: Option<String>,
     frame_ms: f64,
     worst_frame_ms: f64,
 }
@@ -142,6 +159,7 @@ impl App {
         });
         let (rt, rep) = start_runtime(&cfg);
         messages.extend(rep.notes.into_iter().map(|n| (n, Color32::YELLOW)));
+        let log_problem = rep.log_problem;
         App {
             rt: Some(rt),
             config_path,
@@ -154,6 +172,7 @@ impl App {
             devices: z30_io::audio::list_devices(),
             serial_ports: z30_io::serial_ptt::SerialPtt::list(),
             log_rows: Vec::new(),
+            log_problem,
             frame_ms: 0.0,
             worst_frame_ms: 0.0,
         }
@@ -189,6 +208,20 @@ impl App {
                 Event::TxStarted { text, .. } => (format!("TX: {text}"), Color32::from_rgb(255, 170, 60)),
                 Event::TxFault(s) => (format!("TX fault: {s}"), Color32::RED),
                 Event::WatchdogReleased => ("PTT watchdog released the transmitter".into(), Color32::RED),
+                Event::PttReleaseConfirmed { failures } => {
+                    (format!("PTT release confirmed by the hardware after {failures} refused attempt(s)"), Color32::LIGHT_GREEN)
+                }
+                Event::TxFinished { outcome, .. } if !outcome.is_complete() => {
+                    (format!("TX ended incomplete, not counted as sent: {outcome:?}"), Color32::YELLOW)
+                }
+                Event::ClockStepped { from_slot, to_slot } => (
+                    format!(
+                        "The system clock stepped {:+} s; the receiver moved from slot {from_slot} to slot {to_slot}.",
+                        (to_slot - from_slot) * 30
+                    ),
+                    Color32::YELLOW,
+                ),
+                Event::LogFailed { call, error } => (format!("NOT LOGGED: {call} - {error}"), Color32::RED),
                 Event::SequencerWatchdog(n) => (format!("Stopped after {n} transmissions without an answer"), Color32::YELLOW),
                 Event::Logged(r) => (
                     format!(
@@ -227,6 +260,7 @@ impl App {
             }
             let (rt, rep) = start_runtime(&self.draft);
             self.messages.extend(rep.notes.into_iter().map(|n| (n, Color32::YELLOW)));
+            self.log_problem = rep.log_problem;
             self.rt = Some(rt);
         } else {
             let c = Box::new(self.draft.clone());
@@ -320,6 +354,12 @@ impl eframe::App for App {
             });
         });
 
+        if let Some(p) = &self.log_problem {
+            egui::Panel::top("log-problem").show(ui, |ui| {
+                ui.label(RichText::new(format!("CONTACTS ARE NOT BEING LOGGED: {p}")).strong().color(Color32::RED));
+            });
+        }
+
         egui::Panel::bottom("status").show(ui, |ui| {
             ui.horizontal_wrapped(|ui| {
                 let a = &snap.audio;
@@ -380,7 +420,12 @@ impl eframe::App for App {
                 )
                 .clicked()
             {
-                self.send(Command::HaltTx);
+                // Directly: output stop and PTT release from this thread, a flag for the control
+                // thread. Never through the bounded command queue, which could be full or behind a
+                // blocked control thread ("Engine busy") while the transmitter stayed keyed (F-16).
+                if let Some(rt) = &self.rt {
+                    rt.halt();
+                }
             }
             if ui.button("Reset QSO").clicked() {
                 self.send(Command::ResetQso);

@@ -35,7 +35,8 @@ workspace (`crates/`):
 
 Both use the same receiver (`decode_slot`), the same engine and the same transmit gate. Neither
 needs Python, Node or a browser, and neither falls back to anything else: if the audio device,
-the PTT line or rig control cannot be opened, the program says so and stops.
+the PTT line or rig control cannot be opened, the program says so, and the station refuses to
+transmit rather than substitute something.
 
 The earlier browser/Python application is **retired**. Its Python protocol code survives as a
 frozen, non-production reference in [`legacy/`](legacy/README.md); nothing an operator installs
@@ -45,7 +46,7 @@ uses it.
 
 | | Status |
 | :--- | :--- |
-| **Protocol validated** | **Yes, against the reference.** The Rust implementation reproduces the frozen reference oracle's golden vectors - CRC, LDPC encoder, symbol map, codec and waveform - bit for bit ([`fixtures/golden/`](fixtures/golden/), checked in CI). An independent re-implementation from [`SPEC.md`](SPEC.md) alone was reported by the original 2026-09-24 audit (its evidence E007 is not in this repository, so it cannot be checked here). |
+| **Protocol validated** | **Yes, against the reference.** The Rust implementation reproduces the frozen reference oracle's golden vectors ([`fixtures/golden/`](fixtures/golden/), checked in CI): CRC, LDPC encoder, symbol map and codec bit for bit, and the GFSK waveform numerically equivalent within a tolerance of 1e-6 per stored sample (full scale 1.0). An independent re-implementation from [`SPEC.md`](SPEC.md) alone was reported by the original 2026-09-24 audit (its evidence E007 is not in this repository, so it cannot be checked here). |
 | **Software simulation validated** | **Yes.** The receiver is measured through its production entry point in seeded simulation (AWGN, drift, timing, clock error, impairments, busy bands, collisions, fading, false decodes) — [measurements](docs/benchmarking.md). |
 | **Hardware validated** | **No.** Real-radio validation: **not yet performed.** No radio, audio interface or PTT interface has been used with z-30. |
 | **On-air validated** | **No.** No z-30 frame has been decoded over a real radio path. No other software speaks z-30. |
@@ -77,7 +78,7 @@ Against FT8, all of it or none of it:
   (6.8 dB against 5.1 dB).
 - **Fading:** on ITU-R F.1487 high-latitude moderate (3 ms / 10 Hz Doppler) z-30 **does not
   decode at any SNR**: the Doppler spread is wider than the 3.125 Hz tone spacing. On slower
-  fading paths see the ensemble-normalised Watterson simulations in [docs/benchmarking.md](docs/benchmarking.md#fading): 50% at about −21 dB on the ITU-R F.1487 good, moderate and poor presets (−20.9 / −21.4 / −20.9 dB), with a slow-fading tail on the good channel (96% only at −14 dB). These are the corrected figures: the channel model used to run every preset at 1/√2 of its labelled Doppler spread, and the earlier fading figures are withdrawn.
+  fading paths see the ensemble-normalised Watterson simulations in [docs/benchmarking.md](docs/benchmarking.md#fading) (vNext `decode_slot`, average SNR in 2500 Hz, 200 frames per point, suite seed 20260830, Wilson 95%, [`research/results/672cef9b3cdb/fading.json`](research/results/672cef9b3cdb/fading.json); simulation, no hardware): 50% at −20.94 dB [−21.33, −20.55] on ITU-R F.1487 good, −21.37 dB [−21.63, −21.12] on moderate and −20.88 dB [−21.09, −20.68] on poor, with a slow-fading tail on the good channel (96% only at −14 dB). These are the corrected figures: the channel model used to run every preset at 1/√2 of its labelled Doppler spread, and the earlier fading figures (and the older per-realisation-model "mid-latitude −21.4 dB") are withdrawn.
 - **Collisions:** both modes subtract decoded signals and decode again; WSJT-X's FT8 decoder
   runs three passes with subtraction. z-30's measured collision behaviour (simulation, two
   stations, paired SIC on/off) is in [docs/benchmarking.md](docs/benchmarking.md#collisions-sic-on-versus-off).
@@ -89,7 +90,7 @@ Full comparison and sources: [wiki/11](wiki/11-Physics-&-Comparative-Analysis-z3
 | | |
 | :--- | :--- |
 | Modulation | 16-GFSK, continuous phase, BT 2.0, constant envelope, 3.125 Hz tone spacing, 320 ms symbols |
-| Occupied bandwidth (audio waveform) | ≈ 49–50 Hz (99%), ≈ 66 Hz (−40 dB); Welch, 0.73 Hz bins; transmitter and ALC effects not measured |
+| Occupied bandwidth (audio waveform) | ≈ 50.5 Hz (99%), 65.9–66.7 Hz (−40 dB): `z30 --loopback-test` at `8a98bbc` (software, ideal waveform, no noise; Welch, 0.73 Hz bins; not recorded under `research/results/`); transmitter and ALC effects not measured |
 | Frame | 75 symbols (54 data + 21 sync), 24.0 s, in a 30 s UTC slot |
 | Message | **63 bits**: two 28-bit call fields + a 7-bit grid/report/acknowledgement; + CRC-14 = 77 information bits |
 | FEC | IRA-LDPC (216, 77), rate 0.356; four BP schedules + corrected OSD |
@@ -119,23 +120,38 @@ not](docs/troubleshooting.md#migration)).
 
 ## Before you transmit
 
-- Set your callsign, grid, region, licence class and PTT method. There are **no defaults** for
-  any of them, and the transmit gate refuses until all are set.
-- The gate refuses any emission outside a permitted data segment for your licence (checked at
-  the radiated frequency, not the dial), any frequency your radio contradicts, and any message
-  that would not go out exactly as shown.
+- Set your callsign, grid, region, licence class, PTT method, dial and transmit level. There
+  are **no defaults** for any of them (and `z30 --migrate` does not import the old apps'
+  defaults), and the transmit gate refuses until all are set.
+- The gate refuses any emission outside a permitted segment for your licence (checked at the
+  radiated frequency, not the dial; US data segments and 60 m channels, whole amateur bands for
+  IARU regions), any frequency your radio contradicts, any message that would not go out exactly
+  as shown, and any transmission while a PTT release is unconfirmed or the audio output has
+  failed.
 - Key into a dummy load first, keep ALC at zero, check the signal on another receiver, and
-  enable your radio's transmit time-out if you key by CAT or CM108.
+  enable your radio's transmit time-out if you key by CAT or CM108. With serial RTS/DTR PTT,
+  watch for a brief key-up when the station starts: opening the port may assert the line before
+  z-30 releases it, and that has not been measured.
 - See [wiki/13](wiki/13-Operating-Safety-Compliance-&-Security.md).
 
 ## Limitations
 
-The full list is [audit/2026-09-24-vnext-remediation/KNOWN_LIMITATIONS.md](audit/2026-09-24-vnext-remediation/KNOWN_LIMITATIONS.md).
 The ones that matter first: no hardware or on-air validation; no interoperability with any other
 software; a ±1.5 s timing window with no built-in time source; no decoding on high-Doppler paths;
 rig control only through an external `rigctld`; no split operation; USB assumed; CAT/CM108 PTT
 not released if the computer loses power (the radio's time-out is the defence); a small message
 vocabulary (63 grids, no roger bit, no portable calls).
+
+Also: a radio on VOX wired to a sound card that a PTT-less configuration drives cannot be
+detected by software (post-remediation audit N-04); the reported SNR reads low on non-ideal
+signals such as phase noise and fading ([receiver.md](docs/receiver.md#reported-snr-dt-and-frequency),
+N-08); no published figure goes through the capture → resampler → scheduler chain (N-12;
+[what is not measured](docs/benchmarking.md#not-measured)); `cargo build --workspace` needs a
+Python interpreter because of the research bindings (N-15; build the application with
+`-p z30-cli -p z30-gui`); the rig-readback tolerance is a strict 1 Hz; a serial PTT port may key
+briefly when opened. An older list, dated before the post-remediation and corrective audits, is
+[audit/2026-09-24-vnext-remediation/KNOWN_LIMITATIONS.md](audit/2026-09-24-vnext-remediation/KNOWN_LIMITATIONS.md);
+it is not maintained.
 
 ## Documentation
 
@@ -151,7 +167,8 @@ vocabulary (63 grids, no roger bit, no portable calls).
 ## Contributing
 
 See [wiki/02](wiki/02-Developer-Setup-&-Contributing.md) and [`AGENTS.md`](AGENTS.md). In short:
-`cargo fmt`, `cargo clippy -- -D warnings`, `cargo test --workspace --exclude z30-py --release`;
+`cargo fmt --all --check`, `cargo clippy --workspace --all-targets --exclude z30-py -- -D warnings`,
+`cargo test --workspace --exclude z30-py --release`;
 safety tests are never weakened to pass; every number needs a result file.
 
 ## Licence

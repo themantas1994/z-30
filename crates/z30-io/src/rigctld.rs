@@ -84,6 +84,19 @@ impl RigControl for Rigctld {
 /// CAT PTT through rigctld (`T 1` / `T 0`), on its own connection.
 pub struct RigctldPtt(pub Rigctld);
 
+impl RigctldPtt {
+    /// Connects now, when the line is created, not at the first key: a first-use TCP connect
+    /// (and name resolution) inside `key()` consumed the 50 ms PTT lead and truncated the frame
+    /// (2026-09-28 audit F-17). A rigctld that is not running is reported at start-up, as a
+    /// transmit hardware problem, instead of as a failed key mid-slot. A connection lost later
+    /// is re-established on demand, as before.
+    pub fn connect(host: &str, port: u16) -> Result<Self, String> {
+        let mut r = Rigctld::new(host, port);
+        r.connect()?;
+        Ok(RigctldPtt(r))
+    }
+}
+
 impl PttLine for RigctldPtt {
     fn set(&mut self, keyed: bool) -> Result<PttAck, PttError> {
         self.0.command(if keyed { "T 1" } else { "T 0" }, 1).map(|_| PttAck::Confirmed).map_err(PttError)
@@ -160,5 +173,17 @@ mod tests {
         assert_eq!(h.join().unwrap(), vec!["T 1", "T 0"]);
         let mut dead = RigctldPtt(Rigctld::new("127.0.0.1", 1));
         assert!(dead.set(true).is_err());
+    }
+
+    #[test]
+    fn f17_the_cat_ptt_connection_is_open_before_the_first_key() {
+        let l = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = l.local_addr().unwrap().port();
+        let ptt = RigctldPtt::connect("127.0.0.1", port).unwrap();
+        assert!(ptt.0.conn.is_some(), "connected at creation");
+        // Accepted without a command being sent: the connection exists before any key.
+        l.set_nonblocking(true).unwrap();
+        assert!(l.accept().is_ok());
+        assert!(RigctldPtt::connect("127.0.0.1", 1).is_err(), "no rigctld: an error at start-up, not at the first key");
     }
 }

@@ -118,6 +118,19 @@ pub enum SlotEvent {
     Ready(SlotJob),
     /// This slot cannot be decoded.
     Missed(i64, MissReason),
+    /// The system clock stepped by more than a slot: the scheduler was waiting for slot `from`,
+    /// the clock now says it is slot `to`, and it has re-seated itself there. Backward
+    /// (`to < from`): slots `to..from` come round again and are decoded again under the new
+    /// clock. Forward (`to > from`): slots `from..to` were never heard and are not decoded.
+    /// Before this event existed a backward step left `next_slot` in the future and the receiver
+    /// fell silent - no `Ready`, no `Missed` - for as long as the step (2026-09-28 audit F-48:
+    /// 150 s after a -120 s step).
+    ClockStepped {
+        /// The slot the scheduler was waiting for.
+        from: i64,
+        /// The slot the clock now reports.
+        to: i64,
+    },
 }
 
 /// Emits each slot exactly once, when its window is complete.
@@ -140,7 +153,16 @@ impl SlotScheduler {
             return out;
         };
         let window_len = ((WINDOW_END_SEC - WINDOW_START_SEC) * self.rate).round() as usize;
-        let next = *self.next_slot.get_or_insert_with(|| slot_of(newest_utc));
+        let now_slot = slot_of(newest_utc);
+        let next = *self.next_slot.get_or_insert(now_slot);
+        // While waiting for `next`, the newest sample lies in slot next-1 or next (the window
+        // closes 25.5 s into it). Anything else is a clock step, not the passage of time.
+        let next = if now_slot + 1 < next || now_slot > next + 1 {
+            out.push(SlotEvent::ClockStepped { from: next, to: now_slot });
+            now_slot
+        } else {
+            next
+        };
         let mut slot = next;
         loop {
             let t0 = slot_start(slot) + WINDOW_START_SEC;

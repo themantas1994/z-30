@@ -1,5 +1,5 @@
 //! `z30 --loopback-test`: the SOFTWARE loopback. A known frame goes through the production
-//! transmit synthesis (`Message::frame` -> the gate's `VerifiedFrame` type -> `runtime::tx_audio`),
+//! transmit synthesis (`Message::frame` -> the gate's `VerifiedFrame` type -> `runtime::frame_audio`),
 //! is handed as device-rate samples (48 kHz and 44.1 kHz) to the production receive pipeline
 //! (`RxPipeline`: resampler, sample clock, slot scheduler) and decoded by `decode_slot`. The
 //! "cable" is a `Vec<f32>` in memory.
@@ -30,7 +30,6 @@ use rustfft::num_complex::Complex32;
 use rustfft::FftPlanner;
 use serde_json::{json, Value};
 use z30_dsp::slot::{Receiver, RxConfig, SlotReport};
-use z30_engine::engine::{TxKind, TxPlan};
 use z30_engine::pipeline::{AudioBlock, RxPipeline};
 use z30_engine::slots::{slot_start, SlotEvent};
 use z30_protocol::codec::Message;
@@ -125,7 +124,7 @@ pub fn analyse(window: &[f32], report: &SlotReport, expected: &Message, predicte
             "decoded": "the frame decodes and nothing else does",
             "timing": "|dt_minus_prediction_ms| <= 50",
             "frequency": "|freq_error_hz| <= 1.0",
-            "bandwidth": "p99 <= 55 Hz and minus_40_db <= 80 Hz (the waveform alone measures ~49 / ~66 Hz)",
+            "bandwidth": "p99 <= 55 Hz and minus_40_db <= 80 Hz (the waveform alone measures ~50.5 / ~66 Hz)",
         },
         "pass": hit.is_some() && others.is_empty()
             && hit.is_some_and(|d| ((d.dt_sec - predicted_dt_sec) * 1e3).abs() <= 50.0 && (d.freq_hz - TEST_F0_HZ).abs() <= 1.0)
@@ -154,9 +153,10 @@ pub const SOFTWARE_NOISE_SEED: u64 = 20_260_924;
 pub fn software_loopback(rate: u32, snr_db: Option<f64>) -> Result<Value, String> {
     let msg = Message::parse(TEST_MESSAGE).map_err(|e| e.to_string())?;
     let frame = msg.frame().map_err(|e| e.to_string())?;
-    let plan = TxPlan { slot: 0, kind: TxKind::Frame(Box::new(frame)), tx_audio_hz: TEST_F0_HZ, text: TEST_MESSAGE.into() };
     let level = 0.5f32;
-    let tx = z30_engine::runtime::tx_audio(&plan, rate, level)?;
+    // The transmit path's frame synthesis (`runtime::tx_audio` calls exactly this for a frame).
+    // A `TxPlan` can only come from the gate, and the loopback has no station to gate.
+    let tx = z30_engine::runtime::frame_audio(&frame, TEST_F0_HZ, rate, level)?;
     // A slot far from the epoch, the stream starting 10 s before it, the frame at DT = 0.
     let slot = 60_000_000i64;
     let t0 = slot_start(slot) - 10.0;
@@ -206,7 +206,7 @@ pub fn software_loopback(rate: u32, snr_db: Option<f64>) -> Result<Value, String
                     };
                     v["criteria"] = json!(match snr_db {
                         Some(_) => "decodes, nothing else does, |DT| <= 20 ms, |f error| <= 0.5 Hz, |SNR error| <= 1 dB",
-                        None => "decodes; occupied bandwidth p99 <= 55 Hz and -40 dB <= 80 Hz (the waveform alone measures ~49 / ~66 Hz)",
+                        None => "decodes; occupied bandwidth p99 <= 55 Hz and -40 dB <= 80 Hz (the waveform alone measures ~50.5 / ~66 Hz)",
                     });
                     v["pass"] = json!(pass);
                     v["source"] = json!("software-loopback");
@@ -218,7 +218,7 @@ pub fn software_loopback(rate: u32, snr_db: Option<f64>) -> Result<Value, String
                         None => json!("none"),
                     };
                     v["sample_clock_ppm"] = json!(pipe.clock().drift_ppm());
-                    v["path"] = json!("Message::frame -> VerifiedFrame -> runtime::tx_audio -> (memory) -> RxPipeline (resampler, sample clock, slot scheduler) -> decode_slot");
+                    v["path"] = json!("Message::frame -> VerifiedFrame -> runtime::frame_audio -> (memory) -> RxPipeline (resampler, sample clock, slot scheduler) -> decode_slot");
                     return Ok(v);
                 }
                 SlotEvent::Missed(s, why) if s == slot => return Err(format!("the test slot was not scheduled: {why:?}")),

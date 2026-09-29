@@ -109,6 +109,25 @@ jobs:
           python -m pip install --upgrade pip pip-audit
           pip-audit --requirement legacy/python-oracle/requirements.txt --strict
 
+  rust-advisories:
+    # The shipped binaries bundle SQLite, hidapi, cpal and eframe; only the oracle's Python
+    # dependencies were scanned (2026-09-28 audit F-50 / CTO-13). This scans Cargo.lock against
+    # the RustSec database and fails on any vulnerability not listed below with its reason.
+    name: Dependency audit (Rust, Cargo.lock)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo install cargo-audit --locked
+      - name: cargo audit
+        # RUSTSEC-2026-0176 / -0177: pyo3 0.25.1, reached only through crates/z30-py, the
+        # research bindings that are never shipped (`cargo tree -i pyo3`: z30-py alone). The
+        # bindings use neither PyList/PyTuple iterator nth nor PyCFunction::new_closure. The
+        # upgrade to pyo3 >= 0.29 needs a code migration (#40) and is tracked in
+        # audit/ACTIVE_DEFECT_LEDGER.md (F-50). Any other vulnerability fails this job.
+        # Vulnerabilities fail the job; informational warnings (unmaintained, yanked) are printed.
+        run: cargo audit --ignore RUSTSEC-2026-0176 --ignore RUSTSEC-2026-0177
+
   hygiene:
     name: Repository hygiene and production separation
     runs-on: ubuntu-latest
@@ -143,3 +162,25 @@ jobs:
           test "$(git ls-files | grep -cE '(^|/)package-lock\.json$')" -eq 1
           git ls-files | grep -qx 'legacy/browser-runtime/package-lock.json'
           git ls-files | grep -qx 'Cargo.lock'
+
+      - name: No unpublished suite result is committed as if it were the record
+        # z30 writes exploratory and dirty-build results under these two trees by default
+        # (audit 2026-09-28 F-13 / F-14); they are git-ignored and must stay out of the history.
+        run: |
+          set -e
+          if git ls-files | grep -E '^research/results/(exploratory|unpublished)/'; then
+            echo "unpublished results are tracked"; exit 1
+          fi
+
+  research-tools:
+    name: Research tools fail closed (summarise, compare, pair)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+      - run: python -m pip install pytest
+      # Standard library + pytest only; includes the byte-for-byte regeneration of the
+      # published 672cef9b3cdb/SUMMARY.md.
+      - run: python -m pytest research/tests -q

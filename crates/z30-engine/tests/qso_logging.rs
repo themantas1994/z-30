@@ -84,7 +84,7 @@ fn an_exchange_that_never_completes_logs_nothing() {
     e.on_slot_report(SLOT + 2, &report(decode("G4XYZ W1AW -05", Some(-3.0))), slot_start(SLOT + 2) + 26.0, 0);
     e.on_slot_report(SLOT + 4, &report(decode("K1AB G4XYZ 73", Some(-3.0))), slot_start(SLOT + 4) + 26.0, 0);
     e.on_slot_report(SLOT + 6, &report(decode("CQ K1ABC FN31", Some(-3.0))), slot_start(SLOT + 6) + 26.0, 0);
-    assert!(!e.take_events().iter().any(|ev| matches!(ev, Event::Logged(_))), "nothing completed, nothing logged");
+    assert!(!e.take_events().iter().any(|ev| matches!(ev, Event::ContactComplete(_))), "nothing completed, nothing logged");
 }
 
 #[test]

@@ -65,6 +65,7 @@ wiki/                        operator docs
 fixtures/golden/             golden vectors. Generated; NEVER edited by hand.
 reference/golden/            their generators (Python oracle; TS codec for messages.json)
 research/                    paired_receiver.py (oracle vs decode_slot), summarize_suite.py,
+                             compare_results.py, paired_mcnemar.py (all fail closed; tests/),
                              results/<commit>/ (machine-readable results; never hand-edited)
 tests/vectors/               shared known-answer vectors (CRC, callsigns, dither)
 hardware-validation/         records of hardware tests (none yet)
@@ -101,7 +102,9 @@ the test to match. Full rationale: [`docs/safety.md`](docs/safety.md).
   bypasses it; never make it return `allowed: true` on a partial check.
 - It validates: a real, non-placeholder callsign v1 carries exactly; region and licence class;
   the **radiated** emission (dial + audio offset across the tone span, at the measured −40 dB
-  width) inside a permitted data segment; the radio's settled readback not contradicting the
+  width) inside a permitted segment (US: the Part 97 data segments, 60 m as channels; IARU
+  regions: whole-band allocations only, the data sub-band is the operator's; F-02, a board
+  decision pending); the radio's settled readback not contradicting the
   dial; **the whole encoded frame reading back as exactly the requested message** (symbols,
   parity, CRC, fields, text — partner call, grid and report included; audit C-06); the frame
   sent from this station; a PTT method configured and the transmit hardware open; a non-zero
@@ -117,7 +120,16 @@ the test to match. Full rationale: [`docs/safety.md`](docs/safety.md).
   `--audio-loopback-test` refuses any configuration with a PTT method (VOX included) or rig
   control (N-04).
 - **Readback only adds refusals.** No readback is "unverified", not "wrong"; an unsettled QSY
-  (three polls) and a difference inside the rig's tuning resolution are not refusals.
+  (three polls) and a difference inside the rig's tuning resolution are not refusals. Production
+  never measures a resolution, so in practice the tolerance is a strict 1 Hz (F-27). A radio that
+  refused a set-frequency, or contradicts the dial during a frame, is positive evidence (F-45).
+- **A release is confirmed or it is pending.** `PttController` is Keyed → ReleasePending →
+  Released, and only a confirmed `set(false)` releases; an unconfirmed release is retried by the
+  watchdog, refuses transmission and is reported (F-01; `ptt_release.rs`, `tx_runtime.rs`).
+- **HALT never waits.** `RuntimeHandle::halt` silences the output and requests the release from
+  the calling thread without blocking; nothing on the control thread may block it (F-16).
+- **Only a complete frame counts.** Every transmission ends `Complete`, `Partial`, `Aborted`,
+  `Failed` or `WatchdogAborted`; only `Complete` advances the QSO or logs a contact (F-17).
 - **One keying implementation** (`PttController`), which reports whether the hardware accepted
   the command; **a release drives what the key drove**; a halt between plan and key abandons the
   transmission.
@@ -144,7 +156,7 @@ the test to match. Full rationale: [`docs/safety.md`](docs/safety.md).
   +6.6 dB, audit M-07).
 - There is **no per-decode confidence**. Do not add one without a calibrated derivation.
 - `PassStats::suppression_db` is the receiver's own fit-residual ratio, **not** physical
-  suppression (it overstates by ~10 dB). Never quote it as how much of a station was removed.
+  suppression (it overstates by 9–16 dB, not a constant). Never quote it as how much of a station was removed.
 - Log records carry per-field provenance; absent fields stay absent; `QsoRecord::validate`
   refuses records with no partner or no plausible UTC time; times are UTC from slot numbers.
 - The logged dial claims only its evidence: `reported_by_rig` (fresh CAT reading), `commanded`
@@ -209,7 +221,8 @@ purpose. Every published figure follows these rules:
 
 - **It comes from `z30 --benchmark suite`** (or another benchmark that calls `decode_slot`),
   built from a clean tree, and the result file under `research/results/<commit>/` is the
-  authority. Tables in docs are pasted from `research/summarize_suite.py` output, not retyped.
+  authority. Tables in docs are reformatted from `research/summarize_suite.py` output, never
+  retyped from memory; every value must match its result file (F-72).
 - **Quote the implementation, the measurement type, the channel, the SNR definition (2500 Hz,
   SPEC §10), the sample count, the seed, the success criterion, the interval, and that it is a
   simulation with no hardware involved.** A bare "−23 dB" is not a z-30 figure.
@@ -217,8 +230,9 @@ purpose. Every published figure follows these rules:
   decode at −23.03 dB [−23.13, −22.89], 90% at −22.06 dB [−22.15, −21.80]**, blind acquisition
   (tone 0 uniform 210–2740 Hz, DT uniform ±1.4 s, random phase and payload), AWGN, 200 frames
   per point, suite seed 20260830, Wilson 95%. **Simulation; not measured on real hardware.**
-  Its run-to-run sd over ten disjoint replicates is 0.048 dB; pooled over 2200 frames per point,
-  −23.00 dB [−23.04, −22.96] (`research/results/18fbd78d8fb8/`). Quote replicates with
+  Its run-to-run sd is 0.048 dB over 11 runs (the published run and ten disjoint replicates; 0.0496 dB over the ten replicates alone, F-66); pooled over 2200 frames per point,
+  −23.00 dB [−23.04, −22.96] (the `research/results/18fbd78d8fb8/` replicates; computed in
+  `audit/2026-09-24-corrective-remediation/evidence/awgn_investigation/awgn_replicate_analysis.json`). Quote replicates with
   `--replicate`, never with another base seed (small seeds reused the published frames, §D of the
   corrective audit).
 - **Against FT8, quote all of it or none of it:** about 2 dB deeper than FT8's published −21 dB
@@ -236,7 +250,13 @@ purpose. Every published figure follows these rules:
   reference receiver, never "z-30" or "the decoder that ships".
 - The legacy browser receiver never achieved any published figure (audit C-01/C-02).
 - Minimum 200 frames per point behind a published sensitivity crossing; fewer is exploratory and
-  the suite marks it so.
+  the suite marks it so (`status: exploratory`; each result records its `publishable_size`).
+- **Only the published run lands in `research/results/<commit>/`.** Every result carries a
+  `status` (`published`, `replicate`, `exploratory`, `dirty`, `not_the_published_run`) and its
+  instrument identity; `z30` routes the others to labelled directories, never overwrites a
+  published file, and a build with any uncommitted change in a crate it uses is `<commit>-dirty`.
+  `summarize_suite.py` banners anything not published; `compare_results.py` and
+  `paired_mcnemar.py` refuse results that differ in seed, frames, status or instrument.
 - **Comparing two decoders or two configurations? Pair them** on the same audio and report the
   exact McNemar p-value over the discordant frames (the `sic` benchmark does).
 - **The word "threshold"** is for blind-acquisition results through `decode_slot`. A
@@ -267,6 +287,7 @@ cargo test --workspace --exclude z30-py --release
 ./target/release/z30 --version
 ./target/release/z30 --benchmark suite                 # ~1 h on 4 cores; writes research/results/<commit>/
 python research/summarize_suite.py research/results/<commit> --write
+python -m pytest research/tests -q                     # research tools (stdlib + pytest)
 
 # Reference code (only when touching what it guards)
 pip install -r legacy/python-oracle/requirements.txt pytest
@@ -339,4 +360,23 @@ radio.**
 | `tx-safety-auditor` | Section 4 transmit invariants, mutation-tested | anything that can reach the transmitter, PTT, rig, logbook or audio callback |
 | `docs-honesty-auditor` | Doc agreement and section 5 | changes to `SPEC.md`, `docs/`, `wiki/`, `README.md`, or to behaviour they describe |
 | `ceo-board-liaison` | Board packet and blockers (§4) | a pull request believed ready for the board |
+
+**Implementation roles** (added 2026-09-28 for the remediation backlog in
+[`audit/ACTIVE_DEFECT_LEDGER.md`](audit/ACTIVE_DEFECT_LEDGER.md)). They may change code, tests
+and the documentation of what they changed, on a branch; they may **not** approve or merge their
+own work, declare board acceptance, mark hardware or on-air validation complete, publish a figure,
+weaken a test or delete evidence. Every change they make goes through the review roles above and
+then the board. They set a ledger row to `FIXED_PENDING_REVIEW`; only a reviewer sets `VERIFIED`.
+
+| Agent | Owns | Reviewed by |
+| :--- | :--- | :--- |
+| `remediation-engineer` | ledger entries no specialist owns; reproduce → failing test → fix → regression test | the reviewer named in the row |
+| `systems-reliability-engineer` | runtime, audio I/O, threads, scheduling, clock, logging persistence (F-16, F-17, F-19, F-20, F-47, F-48) | `cto-code-reviewer`, `tx-safety-auditor` |
+| `transmit-safety-engineer` | gate, PTT, band plan, migration, device selection (F-01…F-09, F-21, F-22, F-43…F-46) | `tx-safety-auditor` |
+| `research-instrument-engineer` | benchmark suite, build provenance, results storage, `research/` tools (F-11…F-14, F-32, F-34…F-40, F-42) | `qa-reproducer`, `research-engineer` |
+| `documentation-remediation-engineer` | `SPEC.md`, `docs/`, `wiki/`, `README.md` corrections (F-10, F-27…F-31, F-33, F-51, F-58…F-74) | `docs-honesty-auditor` |
+
+The engineering history each of them must know before touching an area, including approaches
+that were tried and rejected, is in
+[`audit/ACTIVE_REMEDIATION_HISTORY.md`](audit/ACTIVE_REMEDIATION_HISTORY.md).
 

@@ -1,0 +1,68 @@
+# Output of f13_f14_real_repo.sh, 2026-09-29, rustc/cargo 1.95.0, run on a scratch clone at 48f73bc
+# (whose crates/ and research/ tooling are identical to the head of remediation/research-instrument;
+# later commits add only docs, CI, .gitignore and evidence). Everything ran in a temporary
+# directory; nothing was written to the checkout's research/results/. Step 4 is exploratory by construction
+# (3 frames per point) and is a check that the remediation changed what is recorded, not what is measured:
+# all ten benchmarks IDENTICAL against 78db463, the false.json relabel reported as a note only.
+# Simulation only; no hardware involved.
+=== 1. clean build at 48f73bc1d9ea
+commit:       48f73bc1d9ea
+=== 2. unstaged comment planted in crates/z30-dsp/src/slot.rs (scratch clone only)
+ M crates/z30-dsp/src/slot.rs
+commit:       48f73bc1d9ea-dirty
+dirty diff:   sha256 a61c819b2192
+--- default destination of a dirty run (awgn, 1 frame per point):
+WARNING: this binary was built from a dirty tree (48f73bc1d9ea-dirty); its results cannot be tied to a commit and are not publishable.
+== awgn (dirty) ==
+-> research/results/unpublished/48f73bc1d9ea-dirty-a61c819b2192/awgn.json (dirty, 1 s)
+research/results/unpublished/48f73bc1d9ea-dirty-a61c819b2192/awgn.json | status dirty | ['built from a tree that is not its commit (48f73bc1d9ea-dirty)', '1 per point, below the publishable 200']
+--- --out research/results/48f73bc1d9ea with the dirty binary:
+z30: refusing to write a dirty awgn result into research/results/48f73bc1d9ea: research/results/<commit>/ holds only that commit's published run and its replicates/r<N>/ (write elsewhere with --out, or omit --out for the labelled default)
+(research/results/48f73bc1d9ea was not created)
+=== 3. edit reverted
+commit:       48f73bc1d9ea
+=== 4. identity smoke: suite at 3 frames, 78db463 vs 48f73bc1d9ea
+commit:       78db463b9460
+awgn: IDENTICAL (every count, rate, interval, error statistic)
+    note: awgn: INSTRUMENT NOT CHECKED (legacy provenance): the harness, channel and modulator may differ
+    note: .publishable_size: added in the candidate (not compared)
+    note: .status: added in the candidate (not compared)
+snr: IDENTICAL (every count, rate, interval, error statistic)
+    note: snr: INSTRUMENT NOT CHECKED (legacy provenance): the harness, channel and modulator may differ
+    note: .publishable_size: added in the candidate (not compared)
+    note: .status: added in the candidate (not compared)
+drift: IDENTICAL (every count, rate, interval, error statistic)
+    note: drift: INSTRUMENT NOT CHECKED (legacy provenance): the harness, channel and modulator may differ
+    note: .publishable_size: added in the candidate (not compared)
+    note: .status: added in the candidate (not compared)
+timing: IDENTICAL (every count, rate, interval, error statistic)
+    note: timing: INSTRUMENT NOT CHECKED (legacy provenance): the harness, channel and modulator may differ
+    note: .publishable_size: added in the candidate (not compared)
+    note: .status: added in the candidate (not compared)
+clock: IDENTICAL (every count, rate, interval, error statistic)
+    note: clock: INSTRUMENT NOT CHECKED (legacy provenance): the harness, channel and modulator may differ
+    note: .publishable_size: added in the candidate (not compared)
+    note: .status: added in the candidate (not compared)
+impair: IDENTICAL (every count, rate, interval, error statistic)
+    note: impair: INSTRUMENT NOT CHECKED (legacy provenance): the harness, channel and modulator may differ
+    note: .publishable_size: added in the candidate (not compared)
+    note: .status: added in the candidate (not compared)
+busy: IDENTICAL (every count, rate, interval, error statistic)
+    note: busy: INSTRUMENT NOT CHECKED (legacy provenance): the harness, channel and modulator may differ
+    note: .publishable_size: added in the candidate (not compared)
+    note: .status: added in the candidate (not compared)
+false: IDENTICAL (every count, rate, interval, error statistic)
+    note: false: INSTRUMENT NOT CHECKED (legacy provenance): the harness, channel and modulator may differ
+    note: .points[2].label: label '8 random 16-FSK signals without the Costas pattern, 0 dB' -> '8 random 16-FSK signals without the Costas pattern, -3 dB each'
+    note: .power: added in the candidate (not compared)
+    note: .publishable_size: added in the candidate (not compared)
+    note: .status: added in the candidate (not compared)
+sic: IDENTICAL (every count, rate, interval, error statistic)
+    note: sic: INSTRUMENT NOT CHECKED (legacy provenance): the harness, channel and modulator may differ
+    note: .publishable_size: added in the candidate (not compared)
+    note: .status: added in the candidate (not compared)
+fading: IDENTICAL (every count, rate, interval, error statistic)
+    note: fading: INSTRUMENT NOT CHECKED (legacy provenance): the harness, channel and modulator may differ
+    note: .publishable_size: added in the candidate (not compared)
+    note: .status: added in the candidate (not compared)
+compare_results.py exit status: 0

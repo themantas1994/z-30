@@ -4,13 +4,13 @@
 //!
 //! The engine owns every piece of authoritative state; user interfaces only send commands.
 
-use crate::api::{AudioHealth, Command, DecodeRow, DecodeStats, EngineSnapshot, Event, TxStatus};
+use crate::api::{AudioHealth, Command, DecodeRow, DecodeStats, EngineSnapshot, Event, TxOutcome, TxStatus};
 use crate::bandplan::find_permitted_segment;
 use crate::config::{Config, TxSlot};
 use crate::qso::{Provenance, QsoNote, Sequencer, Sourced};
-use crate::rig::{Reading, RigStateTracker};
+use crate::rig::{dial_agrees, Reading, RigStateTracker};
 use crate::slots::{slot_start, MissReason};
-use crate::txgate::{can_transmit, TxRequest, OCCUPIED_40DB_HZ};
+use crate::txgate::{can_transmit, TxHardware, TxRequest, Violation, OCCUPIED_40DB_HZ, USB_MODES};
 use std::collections::VecDeque;
 use std::sync::Arc;
 use z30_dsp::ap::ApContext;
@@ -30,17 +30,57 @@ pub enum TxKind {
     Tune,
 }
 
-/// A transmission the gate has approved.
+/// A transmission the gate has approved: the single object that carries everything the gate
+/// checked - the verified frame, the audio frequency, the level, the dial and the emission -
+/// from `plan_tx` to the transmitter. Only `Engine::plan_tx` can build one (its fields are
+/// private and it has no public constructor), and the runtime reads the level and frequency
+/// from it rather than from the configuration, so nothing critical is recomputed between the
+/// gate and the air (2026-09-28 audit F-03/F-22, TX-21).
 #[derive(Clone, Debug)]
 pub struct TxPlan {
+    slot: i64,
+    kind: TxKind,
+    tx_audio_hz: f64,
+    tx_level: f32,
+    dial_hz: u64,
+    emission_centre_hz: f64,
+    segment: &'static str,
+    text: String,
+}
+
+impl TxPlan {
     /// Slot.
-    pub slot: i64,
+    pub fn slot(&self) -> i64 {
+        self.slot
+    }
     /// What.
-    pub kind: TxKind,
-    /// Tone-0 audio frequency, Hz.
-    pub tx_audio_hz: f64,
+    pub fn kind(&self) -> &TxKind {
+        &self.kind
+    }
+    /// Tone-0 audio frequency the gate checked, Hz.
+    pub fn tx_audio_hz(&self) -> f64 {
+        self.tx_audio_hz
+    }
+    /// Transmit level the gate checked, (0, 1].
+    pub fn tx_level(&self) -> f32 {
+        self.tx_level
+    }
+    /// Dial the gate checked the emission at, Hz.
+    pub fn dial_hz(&self) -> u64 {
+        self.dial_hz
+    }
+    /// Centre of the radiated emission the gate checked, Hz.
+    pub fn emission_centre_hz(&self) -> f64 {
+        self.emission_centre_hz
+    }
+    /// Band-plan segment the gate found the emission in.
+    pub fn segment(&self) -> &'static str {
+        self.segment
+    }
     /// Display text.
-    pub text: String,
+    pub fn text(&self) -> &str {
+        &self.text
+    }
 }
 
 /// The engine.
@@ -66,6 +106,12 @@ pub struct Engine {
     events: Vec<Event>,
     clock_status: String,
     tx_hardware_problem: Option<String>,
+    /// The audio output reported a failure and has not recovered.
+    output_fault: Option<String>,
+    /// A PTT release the hardware has not confirmed.
+    ptt_release_unconfirmed: Option<String>,
+    /// The radio refused a set-frequency for the current dial and nothing has confirmed it.
+    dial_refused: Option<u64>,
 }
 
 impl Engine {
@@ -89,6 +135,9 @@ impl Engine {
             events: Vec::new(),
             clock_status: "unknown".into(),
             tx_hardware_problem: None,
+            output_fault: None,
+            ptt_release_unconfirmed: None,
+            dial_refused: None,
         };
         e.rebuild_sequencer();
         if let Some(d) = e.dial {
@@ -144,6 +193,10 @@ impl Engine {
             Err(e) => {
                 if self.dial == Some(hz) {
                     self.dial_commanded = false;
+                    // Positive evidence that the radio is not where the gate would check: refuse
+                    // until a reading confirms the dial (F-45; it used to be no refusal at all
+                    // while the tracker waited out the settle count).
+                    self.dial_refused = Some(hz);
                 }
                 self.events.push(Event::Rig(format!("the radio did not accept the dial {:.6} MHz: {e}", hz as f64 / 1e6)));
             }
@@ -154,6 +207,7 @@ impl Engine {
         if dial != self.dial {
             self.dial = dial;
             self.dial_commanded = false;
+            self.dial_refused = None;
             self.dial_to_command = dial;
             if let Some(d) = dial {
                 self.rig.note_requested_dial(d as f64);
@@ -196,7 +250,7 @@ impl Engine {
             }
             Command::CallCq => match self.seq.as_mut().map(|s| s.call_cq()) {
                 Some(Ok(())) => self.tx_enabled = true,
-                Some(Err(e)) => self.events.push(Event::TxRefused(vec![crate::txgate::Violation::MessageNotEncodable(e)])),
+                Some(Err(e)) => self.events.push(Event::TxRefused(vec![Violation::MessageNotEncodable(e)])),
                 None => self.events.push(Event::TxRefused(self.blockers_now(now_ms))),
             },
             Command::Answer(id) => {
@@ -211,7 +265,7 @@ impl Engine {
                                 self.config = Arc::new(c);
                                 self.tx_enabled = true;
                             }
-                            Err(e) => self.events.push(Event::TxRefused(vec![crate::txgate::Violation::MessageNotEncodable(e)])),
+                            Err(e) => self.events.push(Event::TxRefused(vec![Violation::MessageNotEncodable(e)])),
                         }
                     }
                 }
@@ -259,6 +313,12 @@ impl Engine {
             }
         }
         rx
+    }
+
+    /// The system clock stepped: the receive timeline was re-seated from slot `from` to `to`
+    /// (F-48: a backward step used to suspend decoding silently for the length of the step).
+    pub fn on_clock_stepped(&mut self, from: i64, to: i64) {
+        self.events.push(Event::ClockStepped { from_slot: from, to_slot: to });
     }
 
     /// A decoded slot.
@@ -334,7 +394,7 @@ impl Engine {
                     rec.tx_power_w = self.config.station.configured_tx_power_w.map(|p| Sourced::new(p, Provenance::Configured));
                     if self.config.operating.auto_log {
                         match rec.validate() {
-                            Ok(()) => self.events.push(Event::Logged(rec)),
+                            Ok(()) => self.events.push(Event::ContactComplete(rec)),
                             Err(why) => self.events.push(Event::TxFault(format!("contact not logged: {why}"))),
                         }
                     }
@@ -347,6 +407,11 @@ impl Engine {
     pub fn on_rig_reading(&mut self, r: &Reading, now_ms: u64) {
         let was = self.rig.is_online();
         self.rig.observe(r, now_ms);
+        if let (Some(refused), Some(reported)) = (self.dial_refused, self.rig.verified_dial_hz(now_ms)) {
+            if dial_agrees(refused as f64, reported, self.rig.resolution()) {
+                self.dial_refused = None;
+            }
+        }
         if !was {
             self.events.push(Event::Rig("rig control established".into()));
         }
@@ -382,36 +447,64 @@ impl Engine {
         self.tx_hardware_problem = problem;
     }
 
-    fn hardware_violations(&self) -> Vec<crate::txgate::Violation> {
-        let mut v = Vec::new();
-        if self.config.ptt == crate::config::PttConfig::None {
-            v.push(crate::txgate::Violation::PttNotConfigured);
-        }
-        if let Some(p) = &self.tx_hardware_problem {
-            v.push(crate::txgate::Violation::HardwareUnavailable(p.clone()));
-        }
-        // A new installation's level is 0.0: keying with it puts a silent carrier-less TX on the
-        // air under the operator's name (2026-09-24 post-remediation audit, N-09).
-        if self.config.audio.tx_level.is_nan() || self.config.audio.tx_level <= 0.0 {
-            v.push(crate::txgate::Violation::TxAudioLevelZero);
-        }
-        v
+    /// The audio output failed (Some) or recovered (None). While set, transmission is refused.
+    pub fn set_output_fault(&mut self, fault: Option<String>) {
+        self.output_fault = fault;
     }
 
-    fn blockers_now(&self, now_ms: u64) -> Vec<crate::txgate::Violation> {
-        let msg = self.seq.as_ref().and_then(|s| s.next_message());
-        let mut v = can_transmit(
+    /// A PTT release the hardware has not confirmed (Some), or confirmed (None). While set,
+    /// transmission is refused: the transmitter may still be keyed.
+    pub fn set_ptt_release_unconfirmed(&mut self, why: Option<String>) {
+        self.ptt_release_unconfirmed = why;
+    }
+
+    fn hardware_problems(&self) -> Vec<String> {
+        self.tx_hardware_problem.iter().chain(self.output_fault.iter()).cloned().collect()
+    }
+
+    /// The gate's verdict on sending `msg` (None = tune) now.
+    fn gate(&self, msg: Option<&z30_protocol::codec::Message>, now_ms: u64) -> crate::txgate::Permission {
+        let problems = self.hardware_problems();
+        let hardware = TxHardware {
+            ptt: &self.config.ptt,
+            problems: &problems,
+            tx_level: self.config.audio.tx_level,
+            ptt_release_unconfirmed: self.ptt_release_unconfirmed.as_deref(),
+            dial_refused: self.dial_refused,
+        };
+        can_transmit(
             &TxRequest {
                 station: &self.config.station,
+                // No dial set: NaN, which the gate refuses as an undetermined frequency.
                 dial_hz: self.dial.map_or(f64::NAN, |d| d as f64),
                 tx_audio_hz: self.config.operating.tx_audio_hz,
-                message: msg.as_ref(),
+                message: msg,
+                hardware: &hardware,
             },
             &self.rig,
             now_ms,
         )
-        .violations;
-        v.extend(self.hardware_violations());
+    }
+
+    fn blockers_now(&self, now_ms: u64) -> Vec<Violation> {
+        let msg = self.seq.as_ref().and_then(|s| s.next_message());
+        self.gate(msg.as_ref(), now_ms).violations
+    }
+
+    /// Re-checks, while a transmission is under way, what the radio can contradict: a settled
+    /// dial disagreement or a fresh non-USB mode in the latest reading. The gate checked these at
+    /// plan time only, so a VFO turned during a frame went unnoticed for 24 s (F-45). Only
+    /// positive evidence refuses, as at plan time.
+    pub fn tx_still_permitted(&self, plan: &TxPlan, now_ms: u64) -> Vec<Violation> {
+        let mut v = Vec::new();
+        if let Some(d) = self.rig.dial_disagreement(plan.dial_hz as f64, now_ms) {
+            v.push(Violation::RigDialDisagrees(d));
+        }
+        if let Some(mode) = self.rig.fresh_reported_mode(now_ms) {
+            if !USB_MODES.contains(&mode.trim().to_ascii_uppercase().as_str()) {
+                v.push(Violation::RigModeNotUsb(mode.to_string()));
+            }
+        }
         v
     }
 
@@ -429,39 +522,39 @@ impl Engine {
         if !tune && msg.is_none() {
             return None;
         }
-        let mut perm = can_transmit(
-            &TxRequest {
-                station: &self.config.station,
-                // No dial set: NaN, which the gate refuses as an undetermined frequency.
-                dial_hz: self.dial.map_or(f64::NAN, |d| d as f64),
-                tx_audio_hz: self.config.operating.tx_audio_hz,
-                message: msg.as_ref(),
-            },
-            &self.rig,
-            now_ms,
-        );
-        perm.violations.extend(self.hardware_violations());
+        let mut perm = self.gate(msg.as_ref(), now_ms);
         if !perm.allowed && perm.violations.is_empty() {
             // Refused with nothing to say is still refused: a frame request with no verified frame.
-            perm.violations.push(crate::txgate::Violation::FrameNotForMessage);
+            perm.violations.push(Violation::FrameNotForMessage);
         }
-        if !perm.violations.is_empty() {
+        if !perm.allowed {
             self.tx_enabled = false;
             self.tune_pending = false;
             self.events.push(Event::TxRefused(perm.violations));
             return None;
         }
-        let tx_audio_hz = self.config.operating.tx_audio_hz;
+        // Everything below is what the gate just checked, carried in the plan as checked.
+        let (Some(dial_hz), Some(centre), Some(segment)) = (self.dial, perm.tx_centre_hz, perm.segment) else {
+            self.tx_enabled = false;
+            self.tune_pending = false;
+            self.events.push(Event::TxRefused(vec![Violation::FrequencyUndetermined]));
+            return None;
+        };
+        let (tx_audio_hz, tx_level) = (self.config.operating.tx_audio_hz, self.config.audio.tx_level);
+        let plan = |kind, text| TxPlan { slot, kind, tx_audio_hz, tx_level, dial_hz, emission_centre_hz: centre, segment, text };
         if tune {
             self.tune_pending = false;
-            return Some(TxPlan { slot, kind: TxKind::Tune, tx_audio_hz, text: "TUNE".into() });
+            return Some(plan(TxKind::Tune, "TUNE".into()));
         }
         // The frame the gate verified, not a fresh encoding: what was checked is what is sent.
         match perm.frame.take() {
-            Some(frame) => Some(TxPlan { slot, text: frame.message().to_string(), kind: TxKind::Frame(Box::new(frame)), tx_audio_hz }),
+            Some(frame) => {
+                let text = frame.message().to_string();
+                Some(plan(TxKind::Frame(Box::new(frame)), text))
+            }
             None => {
                 self.tx_enabled = false;
-                self.events.push(Event::TxRefused(vec![crate::txgate::Violation::FrameNotForMessage]));
+                self.events.push(Event::TxRefused(vec![Violation::FrameNotForMessage]));
                 None
             }
         }
@@ -476,17 +569,25 @@ impl Engine {
         self.events.push(Event::TxStarted { slot: plan.slot, text: plan.text.clone() });
     }
 
-    /// The transmission ended. `completed` = the whole frame went out.
-    pub fn tx_finished(&mut self, slot: i64, completed: bool, now_ms: u64) {
+    /// The transmission ended, with this outcome. Only a `Complete` frame advances the QSO (and
+    /// so can be logged): a frame that was cut short, halted, failed or ended by the watchdog did
+    /// not put the whole message on the air (F-17: a late key used to truncate the frame and still
+    /// report it completed, logging a 73/RR73 that was not fully sent).
+    pub fn tx_finished(&mut self, slot: i64, outcome: &TxOutcome, now_ms: u64) {
         let was_frame = self.active_tx.as_ref().is_some_and(|(_, t)| t != "TUNE");
         self.active_tx = None;
-        self.events.push(Event::TxFinished { slot });
-        if completed && was_frame {
+        self.events.push(Event::TxFinished { slot, outcome: outcome.clone() });
+        if *outcome == TxOutcome::Complete && was_frame {
             if let Some(seq) = self.seq.as_mut() {
                 let notes = seq.on_transmitted(slot);
                 self.handle_notes(notes, now_ms);
             }
         }
+    }
+
+    /// Queues an event from the runtime (hardware state the engine does not observe itself).
+    pub fn push_event(&mut self, e: Event) {
+        self.events.push(e);
     }
 
     /// A keying or audio fault during TX.

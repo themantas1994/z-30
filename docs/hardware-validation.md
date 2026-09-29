@@ -14,7 +14,7 @@ Rules:
   with the record fields below. A failure is information; deleting it is falsifying the record.
 - **Name the exact equipment**: radio model and firmware, interface, cable, sound card, OS,
   `z30 --version` output.
-- **Dummy load for every keyed test** until R1–R6 pass on that radio.
+- **Dummy load for every keyed test** until R1–R6 and R8 pass on that radio.
 
 ## Record fields (every test)
 
@@ -28,7 +28,7 @@ Rules:
   "radio": "model, firmware (or none)",
   "interface": "e.g. SignaLink USB, Digirig Mobile, rig's internal USB codec",
   "ptt": "cat | serial rts/dtr | cm108 | vox",
-  "load": "dummy load model / antenna (never antenna before R1-R6 pass)",
+  "load": "dummy load model / antenna (never antenna before R1-R6 and R8 pass)",
   "procedure_deviations": "anything done differently from this page",
   "result": "PASS | FAIL | INCONCLUSIVE",
   "measurements": { },
@@ -66,15 +66,16 @@ power meter in line.
 | :--- | :--- | :--- | :--- |
 | R1 | CAT frequency and readback | Set a dial in `z30-gui`; read the radio's display; turn the VFO by hand 1 kHz | display matches; the GUI shows the radio's reported dial; after the hand QSY the gate refuses with `RigDialDisagrees` within 3 polls |
 | R2 | PTT keys and releases, per method | For each configured method (CAT, RTS, DTR, CM108, VOX): Tune from the GUI | power meter shows RF only while the GUI shows TX; RF stops within 200 ms of the end of the tune |
-| R3 | Watchdog | Needs a transmission longer than `MAX_TX_SECONDS` = 40 s, which no release build can make (a frame and a tune are 24 s). Until a dedicated test build exists this is covered only by `safety.rs` p4/p4b/p4c with a simulated line: **not testable on hardware yet** | PTT released at 40 s by the watchdog, independent of the GUI |
+| R3 | Watchdog | Needs a transmission longer than `MAX_TX_SECONDS` = 40 s, which no release build can make (a frame and a tune are 24 s). Until a dedicated test build exists this is covered only by simulated lines (`safety.rs` p4/p4b/p4c, `ptt_release.rs`, `tx_runtime.rs`): **not testable on hardware yet** | PTT released at 40 s by the watchdog, independent of the GUI |
 | R4 | TX inhibit | Clear the licence class; try to transmit | refused before keying; no RF |
-| R5 | Unexpected disconnect | Unplug the CAT/PTT USB cable mid-transmission | record what the radio does; z-30 reports a fault and stops; note whether the radio stays keyed |
+| R5 | Unexpected disconnect | Unplug the CAT/PTT USB cable mid-transmission; separately, unplug the USB audio device mid-transmission | record what the radio does; note whether it stays keyed. Expected from the design ([safety.md](safety.md#ptt-one-keying-implementation-and-what-releases-it)): a PTT release the hardware refuses is shown as a TX fault ("PTT release NOT confirmed"), transmission is refused and the release is retried until confirmed, which is shown; an audio output failure while keyed stops the output, releases PTT, ends the transmission incomplete (`Failed`) with a TX fault, and transmission is refused until the output reopens |
 | R6 | Kill during TX | `kill -9` the GUI mid-transmission, per PTT method | record the outcome. Expected from the design ([hardware.md](hardware.md)): serial RTS/DTR released by the OS; VOX stops with the audio; **CAT and CM108 stay keyed until the radio's own time-out timer** — which must therefore be enabled |
 | R7 | Transmitted spectrum | Record the radio's output through an attenuator with an SDR, or monitor with a second receiver | 99% BW ≤ 55 Hz, no spurious products above −40 dBc beyond ±100 Hz; ALC not driven (set drive so ALC stays at zero) |
+| R8 | Serial port open (RTS/DTR PTT only) | With the power meter watched (or an oscilloscope on the PTT line), start `z30-gui`, apply a PTT or audio settings change (which restarts the station), and run `z30 --diagnostics`, each 10 times. Opening the port may assert DTR/RTS until `SerialPtt::open` drives the line released ([hardware.md](hardware.md#serial-ports-and-devices)); nothing has measured whether, or for how long | record every key-up seen, with its duration; PASS only if no RF is seen. A key-up is recorded as a finding for the board, not worked around |
 
 ## O — over the air
 
-Only after A1–A4 and R1–R7 pass on that radio.
+Only after A1–A4 and R1–R8 pass on that radio.
 
 | ID | Test | How | Pass criterion / what to report |
 | :--- | :--- | :--- | :--- |
@@ -84,7 +85,7 @@ Only after A1–A4 and R1–R7 pass on that radio.
 
 ## What a pass allows the documentation to say
 
-A pass of a test on a named radio and interface lets the documentation say exactly that: "A1–R7
+A pass of a test on a named radio and interface lets the documentation say exactly that: "A1–R8
 passed with <radio> via <interface>, <date>, record <path>". It does not extend to other radios,
 interfaces or operating systems. Until then the only permitted statement is the one at the top
 of this page.

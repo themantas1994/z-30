@@ -84,6 +84,7 @@ fn soak_24_hours_every_slot_once_aligned_to_utc_through_drift_jitter_and_a_dropo
                     ready.push(job.slot);
                 }
                 SlotEvent::Missed(s, r) => missed.push((s, r)),
+                SlotEvent::ClockStepped { from, to } => panic!("no clock step was simulated, yet {from} -> {to}"),
             }
         }
     }
@@ -211,6 +212,7 @@ fn closed_loop_qso_through_the_real_pipeline_decoder_gate_sequencer_and_logger()
                 SlotEvent::Missed(s, r) => {
                     assert!(s < first_slot, "slot {s} missed: {r:?}");
                 }
+                SlotEvent::ClockStepped { from, to } => panic!("no clock step was simulated, yet {from} -> {to}"),
             }
         }
         for action in txs.tick(now) {
@@ -218,25 +220,25 @@ fn closed_loop_qso_through_the_real_pipeline_decoder_gate_sequencer_and_logger()
                 TxAction::Plan(slot) => {
                     if let Some(plan) = engine.plan_tx(slot, mono(now)) {
                         assert!(!engine.config().operating.tx_slot.matches(first_slot), "we answer in the other slot");
-                        assert!(matches!(plan.kind, TxKind::Frame(_)));
+                        assert!(matches!(plan.kind(), TxKind::Frame(_)));
                         txs.accept(slot, 24.0);
                         engine.tx_started(&plan);
-                        transmitted.push((slot, plan.text.clone()));
-                        if let Some(reply) = partner_reply(&plan.text) {
+                        transmitted.push((slot, plan.text().to_string()));
+                        if let Some(reply) = partner_reply(plan.text()) {
                             add_frame(&mut audio, slot + 1, &reply);
                         }
                     }
                 }
-                TxAction::Unkey { completed } => {
+                TxAction::Unkey { outcome } => {
                     let slot = transmitted.last().unwrap().0;
-                    engine.tx_finished(slot, completed, mono(now));
+                    engine.tx_finished(slot, &outcome, mono(now));
                 }
                 _ => {}
             }
         }
         for e in engine.take_events() {
             match e {
-                Event::Logged(rec) => logged = Some(rec),
+                Event::ContactComplete(rec) => logged = Some(rec),
                 Event::TxRefused(v) => panic!("TX refused: {v:?}"),
                 _ => {}
             }

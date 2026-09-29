@@ -8,6 +8,11 @@ mod bench;
 mod loopback;
 mod suite;
 
+// The build script's provenance code, compiled here only so its unit tests run with the crate's.
+#[cfg(test)]
+#[path = "../build_support.rs"]
+mod build_support;
+
 use clap::Parser;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -76,7 +81,8 @@ struct Cli {
     #[arg(long, value_name = "WHAT", num_args = 0..=1, default_missing_value = "perf")]
     benchmark: Option<String>,
     /// Frames/slots per point for --benchmark (default: 20 for perf/false-decodes/sweep; each
-    /// suite benchmark's own publishable size otherwise).
+    /// suite benchmark's own publishable size otherwise). A suite run below its benchmark's
+    /// publishable size (200 frames per point for every crossing) is exploratory.
     #[arg(long)]
     frames: Option<usize>,
     /// Suite replicate number (default 0: the published seed 20260830). Replicate r >= 1 runs
@@ -84,10 +90,20 @@ struct Cli {
     /// variability; its results say they are not the published run.
     #[arg(long)]
     replicate: Option<u16>,
-    /// Output directory for suite results (default: research/results/<commit>), or the JSON
-    /// file for --loopback-test / --audio-loopback-test.
+    /// Output directory for suite results, or the JSON file for --loopback-test /
+    /// --audio-loopback-test. Suite default: research/results/<commit>/ for a clean,
+    /// full-size, published-seed run; <commit>/replicates/r<N>/, exploratory/<commit>/ or
+    /// unpublished/<commit>-dirty-<diff>/ under research/results/ otherwise.
     #[arg(long, value_name = "DIR")]
     out: Option<PathBuf>,
+    /// Suite: also write <benchmark>.frames.jsonl, one line per frame (point, frame index,
+    /// seed, condition, outcome), so two commits can be paired frame by frame.
+    #[arg(long)]
+    per_frame: bool,
+    /// Suite: replace existing result files that are not published results. A published
+    /// result is never overwritten.
+    #[arg(long)]
+    overwrite: bool,
     /// Report configuration, clock, audio, rig and transmit-gate status.
     #[arg(long)]
     diagnostics: bool,
@@ -136,7 +152,8 @@ struct Cli {
 /// What this binary is: every field a release artefact must carry (version, commit, build
 /// date, target platform and architecture, profile, optional features, protocol).
 pub(crate) fn version_text() -> String {
-    format!(
+    let diff = env!("Z30_BUILD_DIRTY_DIFF_SHA256");
+    let mut text = format!(
         "z30 {} (z-30 vNext, Rust)\ncommit:       {}\nbuilt:        {} with {}\ntarget:       {}\narchitecture: {} ({})\nprofile:      {}\nfeatures:     {}\nprotocol:     v{}\nruntime:      native; no Python, Node or browser component",
         env!("CARGO_PKG_VERSION"),
         env!("Z30_BUILD_COMMIT"),
@@ -148,7 +165,13 @@ pub(crate) fn version_text() -> String {
         env!("Z30_BUILD_PROFILE"),
         if cfg!(feature = "cm108") { "cm108 (CM108/CM119 GPIO PTT)" } else { "none (CM108 GPIO PTT not built in)" },
         z30_protocol::PROTOCOL_VERSION,
-    )
+    );
+    if !diff.is_empty() {
+        // Which uncommitted difference a -dirty binary was built from (sha256 of the tracked
+        // diff against HEAD plus untracked crate sources), so two dirty builds can be told apart.
+        text.push_str(&format!("\ndirty diff:   sha256 {diff}"));
+    }
+    text
 }
 
 fn main() {
@@ -209,7 +232,14 @@ fn run(cli: &Cli, config_path: &Path) -> Result<(), String> {
         return Ok(());
     }
     if let Some(what) = &cli.benchmark {
-        return bench::run(what, cli.frames, cli.out.as_deref(), cli.replicate);
+        let opts = suite::Options {
+            frames: cli.frames,
+            out: cli.out.clone(),
+            replicate: cli.replicate,
+            per_frame: cli.per_frame,
+            overwrite: cli.overwrite,
+        };
+        return bench::run(what, &opts);
     }
     if cli.loopback_test {
         // No configuration is read: nothing in it could matter to a test that touches no device.
@@ -253,11 +283,20 @@ fn diagnostics(cfg: &z30_engine::config::Config, config_path: &Path) -> Result<(
     println!("config:   {}{}", config_path.display(), if config_path.exists() { "" } else { " (not found: defaults, transmit refused)" });
     println!("data dir: {}", paths::data_dir().display());
     let wall = z30_io::wallclock::SystemWallClock::default();
+    // The status is queried on a thread of its own; give the OS a few seconds to answer.
+    let t = std::time::Instant::now();
+    while wall.status() == z30_io::wallclock::STATUS_NOT_YET_CHECKED && t.elapsed() < Duration::from_secs(5) {
+        std::thread::sleep(Duration::from_millis(20));
+    }
     println!("clock:    {}", wall.status());
     let engine = z30_engine::engine::Engine::new(cfg.clone());
     let snap = engine.snapshot(0);
     if snap.tx_blockers.is_empty() {
-        println!("transmit gate: would allow (callsign, licence, band plan)");
+        // The gate checks the hardware too; diagnostics open no audio device or keying line, so
+        // a device that cannot be opened shows up only when the station starts.
+        println!(
+            "transmit gate: would allow (callsign, licence, band plan, PTT method, level; devices are checked when the station opens them)"
+        );
     } else {
         println!("transmit gate: would REFUSE:");
         snap.tx_blockers.iter().for_each(|b| println!("  - {b}"));
@@ -277,6 +316,15 @@ fn diagnostics(cfg: &z30_engine::config::Config, config_path: &Path) -> Result<(
     }
     let (ins, outs) = z30_io::audio::list_devices();
     println!("audio:    {} inputs, {} outputs (see --devices)", ins.len(), outs.len());
+    // The device each direction would actually use; an ambiguous name is an error here too.
+    for (label, input, wanted) in
+        [("audio in: ", true, cfg.audio.input_device.as_deref()), ("audio out:", false, cfg.audio.output_device.as_deref())]
+    {
+        match z30_io::audio::resolve_device_name(input, wanted) {
+            Ok(name) => println!("{label} {name}{}", if wanted.is_none() { " (system default)" } else { "" }),
+            Err(e) => println!("{label} unavailable: {e}"),
+        }
+    }
     Ok(())
 }
 
@@ -375,6 +423,8 @@ fn capture_slot(dir: &Path, when: Result<i64, usize>, window: &[f32], rep: &z30_
         })).collect::<Vec<_>>(),
         "passes": rep.passes.iter().map(|p| serde_json::json!({"candidates": p.candidates, "decoded": p.decoded,
             "duplicates": p.duplicates, "suppression_db": p.suppression_db, "elapsed_ms": p.elapsed_ms})).collect::<Vec<_>>(),
+        // AGENTS.md §4: the per-pass figure is not physical suppression; the file says so itself.
+        "suppression_db_note": "receiver-internal fit ratio, not physical suppression (overstates it by 9-16 dB)",
     });
     std::fs::write(base.with_extension("json"), serde_json::to_string_pretty(&json).unwrap()).map_err(|e| e.to_string())
 }
@@ -450,6 +500,10 @@ fn receive(cfg: z30_engine::config::Config, capture: Option<PathBuf>) -> Result<
                 }
                 Event::SlotMissed(slot, why) => eprintln!("-- slot {slot} missed: {why:?}"),
                 Event::Audio(s) | Event::Rig(s) => eprintln!("-- {s}"),
+                Event::ClockStepped { from_slot, to_slot } => eprintln!(
+                    "-- the system clock stepped {:+} s: the receiver moved from slot {from_slot} to slot {to_slot}",
+                    (to_slot - from_slot) * 30
+                ),
                 _ => {}
             }
         }

@@ -13,7 +13,7 @@ code that exists; nothing here describes intended behaviour.
 | Tone spacing | 3.125 Hz | = 1 / symbol time |
 | Symbol time | 320 ms | 1920 samples at the receiver's 6 kHz |
 | Tone span | 46.9 Hz | tone 0 to tone 15 |
-| Occupied bandwidth (audio waveform) | 99%: ≈ 49–50 Hz; −40 dB: ≈ 66 Hz | Welch PSD, Hann, 8192 points at 6 kHz (0.73 Hz bins), 50% overlap (`z30 --loopback-test` uses the same method); ideal waveform only — transmitter and ALC effects not measured |
+| Occupied bandwidth (audio waveform) | 99%: ≈ 50.5 Hz; −40 dB: 65.9–66.7 Hz | `z30 --loopback-test` at `8a98bbc` (software, no noise; four runs at 48 and 44.1 kHz; not recorded under `research/results/`): Welch PSD, Hann, 8192 points at 6 kHz (0.73 Hz bins), 50% overlap; ideal waveform only — transmitter and ALC effects not measured |
 | Symbols per frame | 75 = 54 data + 21 sync | |
 | Frame | 24.00 s | starts on a 30 s UTC boundary (even or odd slot) |
 | Message | **63 bits** | two 28-bit call fields + 7-bit extra field |
@@ -37,8 +37,9 @@ message text -> v1 codec (refuses anything it cannot carry exactly) -> 63 bits
 ```
 
 The modulator is `z30_protocol::gfsk::Modulator`; the same one generates the SIC replica and
-the benchmark's test signals. It is bit-exact with the frozen Python oracle on the golden
-waveforms at 6, 12 and 48 kHz (checked in CI). The original 2026-09-24 audit reported that an
+the benchmark's test signals. It matches the frozen Python oracle's golden waveforms at 6, 12
+and 48 kHz within 1e-6 per stored sample (numerically equivalent within that tolerance, not
+bit-identical; `crates/z30-protocol/tests/golden.rs`, checked in CI). The original 2026-09-24 audit reported that an
 independent re-implementation from `SPEC.md` alone reproduced it exactly (E007); that evidence
 is not in this repository.
 
@@ -106,14 +107,19 @@ versions of this page described all four; none was ever implemented (audit E051)
 
 ## Measured tolerances (simulation)
 
-Measured through `decode_slot`, single stations, AWGN; full tables on
+Measured through `decode_slot` by `z30 --benchmark suite` at `672cef9`, single stations, AWGN,
+200 frames per point, suite seed 20260830, Wilson 95% intervals, software simulation with no
+hardware (`research/results/672cef9b3cdb/`); full tables on
 [16](16-Benchmarking-Testing-&-CI.md):
 
-- **Timing:** decodes at DT up to ±1.5 s; beyond it the frame leaves the window.
-- **Frequency:** tone 0 anywhere from 200 Hz to 2753 Hz (tone 15 ≤ 2800 Hz).
-- **Drift:** linear drift up to about ±4 Hz across the frame is tracked; beyond that decoding
-  degrades quickly.
-- **Sound-card clock error:** ±3000 ppm costs nothing measurable.
+- **Timing:** 200/200 at every DT up to ±1.5 s at −20 dB; 3.5% / 11.5% at +1.6 / −1.6 s
+  (`timing.json`): beyond ±1.5 s the frame leaves the window.
+- **Frequency:** the benchmarks place tone 0 uniformly over 210–2740 Hz; the search covers tone 0
+  from 200 Hz up to where tone 15 reaches 2800 Hz.
+- **Drift:** at −22 dB, 92.5% with no drift and 78.0–79.5% at ±4 Hz of linear drift across the
+  frame (`drift.json`); beyond that decoding degrades quickly.
+- **Sound-card clock error:** at −20 dB, 200/200 at every point to ±3000 ppm and ≥ 99.5% at
+  ±5000 ppm (`clock.json`).
 - **Fading:** decodes on slow and moderate Watterson paths; on ITU-R F.1487 high-latitude
   moderate (10 Hz Doppler spread) it **does not decode at any SNR** — the Doppler spread is
   wider than the 3.125 Hz tone spacing.

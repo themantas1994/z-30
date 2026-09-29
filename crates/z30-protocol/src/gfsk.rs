@@ -139,8 +139,9 @@ impl Modulator {
             .collect()
     }
 
-    /// The transmitted frame: float32, peak-normalised to 1.0. Bit-for-bit the reference's
-    /// algorithm (SPEC.md 1.3); equal to it within 1e-6.
+    /// The transmitted frame: float32, peak-normalised to 1.0. The reference's algorithm
+    /// (SPEC.md 1.3), step for step; its output equals the reference's within 1e-6 per sample
+    /// (numerically equivalent within tolerance, not bit-identical; tests/golden.rs).
     pub fn synthesize(&self, symbols: &[u8; TOTAL_SYMBOLS], f0: f64) -> Result<Vec<f32>, ModulatorError> {
         self.validate(symbols, f0)?;
         let phase = self.phase(symbols, f0);
