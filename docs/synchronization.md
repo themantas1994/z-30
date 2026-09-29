@@ -99,6 +99,19 @@ not exist yet, and never retried (C1). A window that cannot be complete is repor
 with a reason (`BeforeEpoch`, `Overwritten`, `ClockUnlocked`, `DecoderBusy`, `DecoderFault`).
 It is never dropped silently.
 
+**System-clock steps.** A small correction (a slew, or a step of a second or two, as NTP makes)
+is absorbed: at most a new clock epoch and the one slot straddling it missed. A step large enough
+that the clock no longer reads the slot the scheduler is waiting for, or the one before it,
+re-seats the scheduler on the slot the clock now reports and says so: `SlotEvent::ClockStepped
+{ from, to }`, shown by the GUI and by `z30 --receive` as `Event::ClockStepped`. After a backward
+step the slots that come round again are decoded again under the new clock; after a forward step
+the skipped slots were never heard and are not decoded (and not listed one by one). Before this
+existed a backward step left the scheduler waiting for a slot in the future and the receiver fell
+silent, with no decode and no miss, for as long as the step (150 s after a −120 s step; audit
+F-48). `crates/z30-engine/tests/clock_step.rs` asserts each case: ±120 s steps reported once and
+decoding resumed within a slot and a window, and a 0.1 s step, a 2 s step and a 500 ppm slew not
+reported as steps.
+
 **The 24-hour soak** (`crates/z30-engine/tests/virtual_clock.rs`) runs a virtual sound card at
 +150 ppm with ±3 ms callback jitter and a 2 s dropout through the real pipeline for 24 hours of
 audio. It asserts:
@@ -137,6 +150,9 @@ time sync reported success on pure noise and persisted a 27–30 s offset (audit
 the legacy network query called one HTTP round trip "sub-millisecond". UTC comes from the
 operating system. `z30 --diagnostics` and the GUI status bar report the operating system's own
 synchronisation status: "NTP-synchronised" only when `timedatectl` says so on Linux,
-"unavailable" when it cannot be asked, "not checked" on Windows and macOS - never "OK" by
-default (`wallclock::status_from_timedatectl`, tested). Keeping the host on NTP or GPS
+"unavailable" when it cannot be asked, "not checked" on Windows and macOS, "not yet checked"
+until the first query has answered - never "OK" by default (`wallclock::status_from_timedatectl`,
+tested). The query runs on a thread of its own and the status is read from a cache: it used to
+run on the engine's control thread, where a D-Bus call with no timeout could stall the transmit
+timeline and HALT (2026-09-28 audit F-16). Keeping the host on NTP or GPS
 (`chrony` + `gpsd`) is the operator's part; z-30 does not manage it.

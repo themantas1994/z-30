@@ -14,7 +14,9 @@ paired and quotes the exact McNemar p-value, and nothing unmeasured is reported 
 binary. For every frame it:
 
 1. draws a station — payload, tone-0 frequency, DT, carrier phase — from a generator seeded
-   with `SUITE_SEED (20260830) ^ (benchmark << 40) ^ (point << 20) ^ frame` (ChaCha8);
+   with `SUITE_SEED (20260830) ^ (benchmark << 40) ^ (point << 20) ^ frame` (ChaCha8). The
+   frame index has 20 bits, so `--frames` of 2²⁰ (1 048 576) or more is refused: past that,
+   frame 2²⁰ + i of point p would reuse frame i of point p ^ 1 (2026-09-28 audit RES-14 / F-74);
 2. synthesises the 27 s receive window with `z30_channel::synthesize` (the transmitter's own
    modulator, real white Gaussian noise with σ = 1 at 6 kHz, and the benchmark's impairment);
 3. calls **`Receiver::decode_slot(&audio, &RxConfig::default())`** — the station's receive
@@ -52,8 +54,12 @@ features, the ISA features detected at run time (rustfft picks its SIMD kernels 
 `z30-channel` and `gfsk.rs` as compiled, and `z30-channel`'s resolved dependencies. The build
 script recomputes the commit label whenever any crate the binary is built from changes, so an
 unstaged edit gives `<commit>-dirty` (before 2026-09-28 it could keep the clean label: audit
-F-13). `research/summarize_suite.py <dir> --write` renders the directory as `SUMMARY.md`; the
-tables below are pasted from it.
+F-13). `research/summarize_suite.py <dir> --write` renders the directory as `SUMMARY.md`. The
+tables below are **reformatted from** that output, not pasted verbatim: labels shortened,
+Unicode minus signs, the latency column dropped from the AWGN table, and the drift matrix and the
+fading crossings (with their "Withdrawn" column) arranged as views of their own. Every value in
+them was checked against the JSON by the 2026-09-28 documentation audit (DOC-33) and none is
+retyped from memory; a regenerated `SUMMARY.md` is the authority where the two differ.
 
 **Status and where results go.** Every result carries a `status`, and only a published one is
 written to `research/results/<commit>/`:
@@ -122,9 +128,15 @@ are withdrawn. `research/results/d8983eeef66e/` is kept as the record of that ru
 
 **How much this moves from run to run.** Ten further runs, each on 200 frames per point that no
 other run uses (`z30 --benchmark awgn --replicate 1…10`, `research/results/18fbd78d8fb8/`):
-the 50% point ranged from −23.07 to −22.93 dB, mean −23.00, **standard deviation 0.048 dB**
-(90%: sd 0.068 dB). Pooled over the 11 runs, 2200 frames per point: **50% at −23.00 dB
-[−23.04, −22.96], 90% at −22.09 dB [−22.12, −22.05]**. The post-remediation audit's independent
+the 50% point ranged from −23.07 to −22.93 dB, mean −23.00. Its **standard deviation is
+0.048 dB over 11 runs** (the published run and the ten disjoint replicates; 0.0496 dB over the
+ten replicates alone); for the 90% point, 0.068 dB over the 11 runs (0.072 dB over the ten
+alone). Pooled over the 11 runs, 2200 frames per point: **50% at −23.00 dB [−23.04, −22.96],
+90% at −22.09 dB [−22.12, −22.05]**. These run-to-run and pooled statistics are computed outside
+`summarize_suite.py`, by
+`audit/2026-09-24-corrective-remediation/evidence/awgn_investigation/analyse_awgn.py`
+(`awgn_replicate_analysis.json` beside it); `18fbd78d8fb8/` has no `SUMMARY.md` (audit F-67,
+open). The post-remediation audit's independent
 harness (its own noise generator and seeds) measured −22.94 dB; the corrective remediation found
 no methodological or implementation difference behind that 0.09 dB (the harness reproduces its
 own figure exactly at the corrected commit, the two SNR normalisations agree to 0.00001 dB, and
@@ -415,8 +427,8 @@ Monte Carlo engine measured the oracle receiver, not the one that ships. Three f
 that period shaped the current instrument:
 
 - **The coherence weight.** Both old benchmarks passed a pilot coherence weight of 0.0 while
-  both on-air decoders applied 0.35–0.85. The published threshold described a receiver nobody
-  ran; measured paired, the difference was 1.77 dB on AWGN (p = 2.9 × 10⁻³⁶).
+  both live-receive decoders applied 0.35–0.85. The published figure described a receiver
+  nobody ran; measured paired, the difference was 1.77 dB on AWGN (p = 2.9 × 10⁻³⁶).
 - **The browser engine's analytic receive path.** It drew per-tone Gaussians against an
   assumed signalling model instead of synthesising and demodulating a waveform, and read about
   2 dB optimistic.
@@ -436,6 +448,17 @@ Stated so that nobody fills the gap with a plausible number:
 - **Any hardware.** Real sound cards (timing, clock error, levels), every PTT adapter against a
   real radio, the GUI's frame rate on a real display, and any on-air path. See
   [hardware-validation.md](hardware-validation.md).
+- **The capture → resampler → sample clock → scheduler chain.** Suite audio is synthesised at
+  6 kHz and handed to `decode_slot` directly, so no published figure goes through the live
+  receive path in front of it (post-remediation audit N-12). Only the software loopback
+  (`z30 --loopback-test`, 48 and 44.1 kHz, in memory) and the pipeline tests exercise that chain,
+  and none of them produces a published figure.
+- **Input level.** Every benchmark feeds noise of unit variance at 6 kHz; no figure varies the
+  absolute input level a sound card would deliver, so scale invariance of the receiver is
+  expected (its sync metric is median-normalised) but not measured (2026-09-28 audit RES-15).
+- **What a serial port does to DTR/RTS when it is opened**, before z-30 drives the PTT line
+  released ([hardware.md](hardware.md#serial-ports-and-devices)), and **a real rig's tuning
+  resolution** (the probe is not wired in; the readback tolerance is a strict 1 Hz).
 - **Real recordings** of non-z-30 signals for false decodes.
 - **Collisions of three or more stations** as a function of power difference; only the
   random busy band covers many-station overlap.

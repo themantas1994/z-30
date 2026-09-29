@@ -48,7 +48,8 @@ runs six trials on `z30-channel` bands, each with a +10 dB station:
 
 - **Suppression against the true clean waveform** is measured on the actual signal removed,
   not the fitted estimate, so an estimate that fooled itself would not pass: 31.4, 38.9, 39.2,
-  38.3, 26.4 and 39.1 dB. The test asserts ≥ 20 dB in every trial.
+  38.3, 26.4 and 39.1 dB (the test's printed output when this page was written: test output in
+  simulation, not a published figure). The test asserts ≥ 20 dB in every trial.
 - **A weak station 20 Hz away and 22 dB down**, overlapping in time and frequency, is decoded
   in pass 2 or later in at least 5 of the 6 trials (asserted), and never in pass 1, which is
   what shows SIC revealed it.

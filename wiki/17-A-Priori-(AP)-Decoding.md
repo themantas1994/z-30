@@ -173,9 +173,10 @@ priori symbols unless `msg.eq.msgchk`. The z-30 equivalent is `callsign_round_tr
 packs to an integer that unpacks to something else. Asserting those 28 bits would assert a
 callsign nobody transmitted, and every hypothesis built on it is guaranteed wrong.
 
-The placeholder callsign is refused for a different reason: it round-trips perfectly, but it is
-what Station Settings holds before the operator has entered anything, so it is a default rather
-than knowledge.
+The placeholder callsign (`NOCAL`) is refused for a different reason: it round-trips perfectly,
+but it is a placeholder, not knowledge. (A new z-30 installation has an empty callsign, not the
+placeholder; the retired browser app's settings held the placeholder before the operator entered
+anything.)
 
 `tests/vectors/callsign_pack_vectors.json` pins the packing and the round-trip verdict for both
 languages.
@@ -201,8 +202,9 @@ That is the same trade WSJT-X makes, and it is why:
   that pinning made that impossible — a guard that can only fire when something else is already
   wrong is exactly the guard worth keeping.
 
-It is also why **AP is off by default**. `apDecodeEnabled` in Station Settings → Automation is
-unchecked on first launch. An operator should take that trade knowingly.
+It is also why **AP is off by default**: `ap_enabled = false` in `[receiver]` of `config.toml`
+(GUI: Settings → Receiver → "A priori decoding"). An operator should take that trade knowingly.
+(The retired browser app's equivalent was `apDecodeEnabled` in Station Settings → Automation.)
 
 AP-recovered decodes are tagged **a1**…**a6** in the activity log, for the same reason WSJT-X
 prints its `iaptype`: a frame that only closed because the receiver assumed your callsign was in
@@ -239,12 +241,18 @@ reweight the result instead of taking this one on trust.
 
 ### What was measured
 
-Three seeded paired sweeps, every frame decoded twice off one demodulation:
+Three seeded paired sweeps on the **frozen oracle's reference receiver**, measured 2026-09-02,
+every frame decoded twice off one demodulation. **Exploratory:** 60–80 frames per point (about
+35–40 in-QSO frames per point), below the 200 frames per point a published crossing needs, and
+no file under `research/results/` holds these sweeps. The `moderate` row used the oracle's
+Watterson model as it was then, with per-realisation normalisation and 1/√2 of the labelled
+Doppler spread; results from that model are withdrawn (`AGENTS.md` §5), so that row is kept only
+as history. None of this has been re-measured through `decode_slot`.
 
 | Channel | Seed | Frames / point | Total frames (in-QSO) | Discordant (AP : plain) | Exact McNemar *p* |
 | :--- | ---: | ---: | ---: | ---: | ---: |
 | AWGN | 20260830 | 80 | 880 (444) | **150 : 0** | 1.4 × 10⁻⁴⁵ |
-| Watterson `moderate` | 20260830 | 60 | 540 (280) | **132 : 0** | 3.7 × 10⁻⁴⁰ |
+| Watterson `moderate` (withdrawn channel model) | 20260830 | 60 | 540 (280) | **132 : 0** | 3.7 × 10⁻⁴⁰ |
 | AWGN | 7 | 60 | 420 (197) | **92 : 0** | 4.0 × 10⁻²⁸ |
 
 **Not one frame in 1,840 was decoded by the ordinary arm and lost by the AP arm.** That is the
@@ -261,10 +269,12 @@ the ladder makes a claim about:
 | :--- | ---: | ---: | ---: | ---: | :--- |
 | AWGN | 20260830 | −22.88 dB | −24.76 dB | **1.88 dB deeper** | 31.3% → 65.1% |
 | AWGN | 7 | −22.93 dB | −24.75 dB | **1.82 dB deeper** | 33.5% → 80.2% |
-| Watterson `moderate` | 20260830 | −20.90 dB | −23.83 dB | 2.93 dB deeper | 32.1% → 79.3% |
+| Watterson `moderate` (withdrawn channel model) | 20260830 | −20.90 dB | −23.83 dB | 2.93 dB deeper | 32.1% → 79.3% |
 
-Two independent seeds put the AWGN figure at **1.8–1.9 dB**, and that is the number to quote.
-The fading figure is directionally consistent and larger, but it is interpolated from a noisier
+Two independent seeds put the AWGN shift at **1.8–1.9 dB**, and that is the oracle's figure,
+exploratory (about 40 in-QSO frames per point); it has not been measured through `decode_slot`.
+The fading row came from a channel model that has since been withdrawn (above) and is not a
+current figure. Even then it was directionally consistent and larger, but interpolated from a noisier
 curve — under Watterson the per-point in-QSO decode counts are not monotone in SNR (the AP arm
 reads 100% at −21.5 dB and 87% at −21.0 dB on ~35 frames a point), so treat 2.93 dB as evidence
 that the effect survives fading, not as a figure of merit.
@@ -276,9 +286,11 @@ threshold ([16](16-Benchmarking-Testing-&-CI.md)) is measured over arbitrary tra
 priori information; this is measured over
 the frames of one QSO, with the receiver in that QSO, with AP switched on. A station hearing a
 band that is 10% its own QSO gets a tenth of the frames improved, not a 1.9 dB better receiver.
-The right sentence is *"AP recovers frames the ordinary decoder loses, and for the frames it
-describes it moves the 50% point by 1.8–1.9 dB on AWGN"* — the two halves together or neither,
-the same rule §5 of `AGENTS.md` applies to the FT8 comparison.
+The right sentence is *"On the frozen oracle's reference receiver, in simulation, AP recovered
+frames the ordinary decoder lost, and for the frames it describes moved the 50% point by
+1.8–1.9 dB on AWGN (exploratory: about 40 in-QSO frames per point; not re-measured through
+`decode_slot`)"* — the halves together or none, in the spirit of the rule `AGENTS.md` §5 applies
+to the FT8 comparison.
 
 The plain arm's own in-QSO crossing (−22.88 dB) is the oracle receiver's, estimated from ~40
 frames per point; it is not a revision of any published figure.
@@ -305,13 +317,15 @@ analysis, not a measured result, and a sweep large enough to test it has not bee
 
 ### Confidence
 
-`AGENTS.md` §5 sets the bar for a benchmark result at ≥99% confidence that it is comparable to
-real-world behaviour, stated as something checkable. For the primary sweep: the comparison is
-paired at the LLR vector, so both arms see identical channel evidence; it runs the real receive
-chain in `realistic` mode (blind acquisition, blind noise estimation, non-coherent
-demodulation); the operating points are ones the mode actually has to work at; and the exact
-two-sided McNemar test over 150 discordant pairs gives *p* = 1.4 × 10⁻⁴⁵, recomputable from
-`math.comb` in three lines. The replication at an independent seed lands within 0.06 dB.
+`AGENTS.md` §5 asks a result that challenges the documentation for a controlled, seeded, paired
+measurement at a realistic operating point with a stated confidence figure (an exact p-value or
+interval): ≥ 95% to challenge, ≥ 99% before it is treated as settled. For the primary sweep: the
+comparison is paired at the LLR vector, so both arms see identical channel evidence, and the
+exact two-sided McNemar test over 150 discordant pairs gives *p* = 1.4 × 10⁻⁴⁵, recomputable from
+`math.comb` in three lines. The replication at an independent seed lands within 0.06 dB. The
+instrument, though, is the oracle's `realistic` mode (blind acquisition and noise estimation in
+the **reference** receiver), not the shipped `decode_slot`; the sweep is below 200 frames per
+point; and no result file holds it. It is evidence about the oracle, not a published z-30 figure.
 
 The remaining threat to real-world comparability is the population model, not the statistics —
 whether half your traffic is really your own QSO. That is why the two halves are reported

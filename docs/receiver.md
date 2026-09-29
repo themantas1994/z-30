@@ -118,14 +118,28 @@ Every value is measured from the slot's own samples after the frame has decoded:
   display shows the bound `<-22`: v1 carries a number, and the estimate there is outside the
   validated range (the audit measured +0.4 dB bias at −24 dB, from the frames that happened to
   decode).
+- **The report is clamped to −30…+30 dB** (`qso::report_for`), and nothing on the air says so: a
+  sent `+30` means "+30 dB or stronger" and a sent `-30` means "−30 dB or weaker". The logbook
+  records the value sent, with provenance `sent` (2026-09-28 audit F-56).
 
 ## Determinism
 
 `decode_slot` is a pure function of its input and configuration. Candidates run in parallel
 through rayon, but results are collected in candidate order and every candidate's work is
-independent, so the report is identical at any thread count.
-`channel_scenarios::decode_slot_is_deterministic` asserts it. The LDPC dither is derived from
-the LLRs themselves, the pattern `AGENTS.md` section 4 prescribes.
+independent, so the report is identical at any thread count. Two tests pin this:
+
+- `sic_regression.rs::a_busy_band_decodes_identically_on_one_thread_and_on_many` decodes a
+  20-station busy band on a one-thread rayon pool and on the default pool, and requires the same
+  decodes: payload, pass, iteration count, and bit-identical DT, frequency and SNR. The
+  thread-count property is this test's. (At this commit the "many" arm is rayon's global pool,
+  which has one thread on a one-CPU machine, so there the test compares one thread with one;
+  2026-09-28 audit F-76.)
+- `channel_scenarios::decode_slot_is_deterministic` decodes one slot twice on the same pool and
+  requires the same payload and iteration count and bit-identical DT and frequency: run-to-run
+  repeatability, not thread count.
+
+The LDPC dither is derived from the LLRs themselves, the pattern `AGENTS.md` section 4
+prescribes.
 
 ## Scenario tests (`crates/z30-dsp/tests/channel_scenarios.rs`)
 
@@ -143,7 +157,7 @@ All of them go through `decode_slot` on `z30-channel` bands:
 | `sic_suppresses_a_decoded_station_by_more_than_20_db_and_reveals_the_one_underneath` | gate G2.5 |
 | `fading_is_reported_not_gated` | Watterson moderate, reported only |
 | `noise_only_slots_produce_no_decodes` | no false decodes |
-| `decode_slot_is_deterministic` | byte-identical reports |
+| `decode_slot_is_deterministic` | two decodes of one slot give the same payloads and iteration counts, and bit-identical DT and frequency |
 
 Beside them: `snr_accuracy.rs` (reported SNR/DT against the truth, −22 to +30 dB),
 `sensitivity_regression.rs` (100 blind frames at −22 dB must decode ≥ 84: sized so a 0.5 dB
