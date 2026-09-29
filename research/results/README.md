@@ -108,6 +108,12 @@ Provenance notes:
   harness consumes one generator across the sweep in order, so a sweep starting at -25 dB draws
   different frames from one starting at -28 dB. Compare arms within a file, never counts across
   files.
+- The `git` field inside `awgn_paired_200.json` (`73ce0f9`) and `whitening_ab_200.json`
+  (`0ab6cf0`) disagrees with the commit in each `.txt` header (`83b1b70`, `73ce0f9`) and with the
+  notes above: the harness read `HEAD` when it wrote the file, and `HEAD` had moved while the run
+  was in progress (post-remediation QA-C). The wheel's commit is the one in the `.txt` header.
+  The paired harness now records the wheel's own build provenance (F-34), so a new run cannot
+  disagree this way; these two files are left as they were written.
 - `perf_k`: measured after the SIC fit rewrite (block gains walked incrementally between block
   centres). The same bands decoded 1000/1000 at K = 50 before and after it, and the SIC
   suppression scenario in `crates/z30-dsp/tests/channel_scenarios.rs` reports identical figures.

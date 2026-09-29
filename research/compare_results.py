@@ -3,7 +3,7 @@
 Compares two suite result directories benchmark by benchmark: are the measurements identical?
 
     python research/compare_results.py <baseline dir> <candidate dir> [benchmark ...]
-        [--legacy-provenance]
+        [--legacy-provenance] [--reproduction]
 
 Latency (wall clock, machine-load dependent), provenance, the seed description, definitions and
 other descriptive text are not measurements and are not compared. Everything else - every
@@ -17,9 +17,17 @@ only the candidate's file list and ignored the seed):
 - a benchmark missing from either side (all ten are required unless benchmarks are named);
 - a different suite seed or replicate, frames per point, status (published, replicate,
   exploratory, dirty, not_the_published_run) or build profile;
-- a different instrument identity (the harness, channel models and modulator the binary was
-  built with). Results written before the instrument was recorded carry none, and are compared
+- a different instrument identity (the harness, channel models and frame encoder and modulator
+  the binary was built with). Results written before the instrument was recorded carry none, and are compared
   only with --legacy-provenance, under a banner saying the instrument could not be checked.
+
+--reproduction: the candidate is an independent rerun of the baseline's published run (QA,
+docs/research-process.md §3). Such a rerun is written with --out, so the suite labels it
+`not_the_published_run`; this flag accepts exactly that status pair (baseline `published`,
+candidate `not_the_published_run`) and nothing else. Seed, replicate, frames, build profile and
+instrument are still checked, a dirty or exploratory candidate is still refused, and every
+measurement must still match. Without it the tool could not certify a reproduction at all
+(post-remediation QA finding QA-A).
 
 A label that changed while the measurements did not (false.json's 16-FSK row is now labelled
 -3 dB, the level it always ran at: DSP-07) is reported as a note, not as a difference. A field
@@ -71,14 +79,28 @@ def diff(a, b, path="", notes=None):
     return out
 
 
-def comparable(name, a, b, legacy):
+REPRODUCTION_STATUSES = ("published", "not_the_published_run")
+
+
+def comparable(name, a, b, legacy, reproduction=False):
     """Raises ResultError unless the two results measured the same thing the same way. Returns
     notes to print."""
     notes = []
-    checks = [
-        ("suite seed", seed_of), ("replicate", replicate_of), ("frames per point", size_of),
-        ("status", status_of), ("build profile", lambda d: d["provenance"].get("build_profile")),
-    ]
+    # Seed, replicate and size first: a file written before `status` existed has its status
+    # derived from them, so a seed difference must be reported as one, not as a status.
+    for what, get in [("suite seed", seed_of), ("replicate", replicate_of), ("frames per point", size_of)]:
+        va, vb = get(a), get(b)
+        if va != vb:
+            raise ResultError(f"{name}: {what} differs ({va!r} vs {vb!r})")
+    sa, sb = status_of(a), status_of(b)
+    if reproduction:
+        if (sa, sb) != REPRODUCTION_STATUSES:
+            raise ResultError(f"{name}: --reproduction compares a published result with a rerun of it "
+                              f"(status {REPRODUCTION_STATUSES[0]!r} vs {REPRODUCTION_STATUSES[1]!r}), not {sa!r} vs {sb!r}")
+        notes.append(f"{name}: REPRODUCTION of the published run (status {sa!r} vs {sb!r} accepted)")
+    elif sa != sb:
+        raise ResultError(f"{name}: status differs ({sa!r} vs {sb!r})")
+    checks = [("build profile", lambda d: d["provenance"].get("build_profile"))]
     for what, get in checks:
         va, vb = get(a), get(b)
         if va != vb:
@@ -88,7 +110,7 @@ def comparable(name, a, b, legacy):
         if not legacy:
             raise ResultError(f"{name}: instrument identity not recorded in the "
                               f"{'baseline' if ia is None else 'candidate'} (pass --legacy-provenance to compare files written before it was)")
-        notes.append(f"{name}: INSTRUMENT NOT CHECKED (legacy provenance): the harness, channel and modulator may differ")
+        notes.append(f"{name}: INSTRUMENT NOT CHECKED (legacy provenance): the harness, channel models and frame encoder may differ")
     elif ia != ib:
         fa = a["provenance"]["instrument"].get("files", {})
         fb = b["provenance"]["instrument"].get("files", {})
@@ -101,6 +123,7 @@ def comparable(name, a, b, legacy):
 def main():
     args = [x for x in sys.argv[1:] if not x.startswith("--")]
     legacy = "--legacy-provenance" in sys.argv
+    reproduction = "--reproduction" in sys.argv
     if len(args) < 2:
         print(__doc__, file=sys.stderr)
         return 2
@@ -115,7 +138,7 @@ def main():
             missing = [d for d, doc in ((old, a), (new, b)) if doc is None]
             if missing:
                 raise ResultError(f"{n}: missing from {', '.join(missing)}")
-            pairs.append((n, a, b, comparable(n, a, b, legacy)))
+            pairs.append((n, a, b, comparable(n, a, b, legacy, reproduction)))
     except (ResultError, OSError, KeyError) as e:
         print(f"compare_results.py: refused: {e}", file=sys.stderr)
         return 2
@@ -124,7 +147,12 @@ def main():
     worst = 0
     for n, a, b, notes in pairs:
         extra = []
-        d = diff(strip(a), strip(b), notes=extra)
+        sa, sb = strip(a), strip(b)
+        if reproduction:
+            # The status pair was checked above; it is a label of the run, not a measurement.
+            sa.pop("status", None)
+            sb.pop("status", None)
+        d = diff(sa, sb, notes=extra)
         print(f"{n}: {'IDENTICAL (every count, rate, interval, error statistic)' if not d else 'DIFFERENT, ' + str(len(d)) + ' fields'}")
         for x in d[:8]:
             print("   ", x)

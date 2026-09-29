@@ -93,3 +93,30 @@ def test_a_wrong_benchmark_in_a_file_is_refused(tmp_path):
         json.dump(minimal("awgn"), h)
     code, _, err = run("compare_results.py", a, b)
     assert code == 2 and "not 'snr'" in err
+
+
+def test_a_reproduction_of_the_published_run_can_be_certified(tmp_path):
+    # QA reruns with --out, so its files say not_the_published_run; plain comparison refuses
+    # that status, --reproduction accepts exactly that pair and still compares everything.
+    a, b = pair(tmp_path, base=lambda d: d.update(status="published"), cand=lambda d: d.update(status="not_the_published_run"))
+    code, _, err = run("compare_results.py", a, b)
+    assert code == 2 and "status differs" in err
+    code, out, err = run("compare_results.py", a, b, "--reproduction")
+    assert code == 0, err
+    assert out.count("IDENTICAL") == 10 and "REPRODUCTION" in out
+
+
+def test_reproduction_mode_still_refuses_every_other_status_and_still_finds_differences(tmp_path):
+    for i, (sa, sb) in enumerate([("published", "exploratory"), ("published", "dirty"), ("replicate", "not_the_published_run"),
+                                  ("not_the_published_run", "published"), ("published", "published")]):
+        sub = tmp_path / str(i)
+        sub.mkdir()
+        a, b = pair(sub, base=lambda d, s=sa: d.update(status=s), cand=lambda d, s=sb: d.update(status=s))
+        code, _, err = run("compare_results.py", a, b, "--reproduction")
+        assert code == 2 and "--reproduction" in err, (sa, sb, err)
+    sub = tmp_path / "diff"
+    sub.mkdir()
+    a, b = pair(sub, base=lambda d: d.update(status="published"),
+                cand=lambda d: (d.update(status="not_the_published_run"), d["points"][0].update(decoded=6)))
+    code, out, err = run("compare_results.py", a, b, "--reproduction")
+    assert code == 1 and out.count("DIFFERENT") == 10, (out, err)

@@ -164,18 +164,24 @@ pub fn external_closure(lock: &str, package: &str) -> Vec<String> {
 }
 
 /// The files that make up the benchmark instrument, relative to the workspace root: the harness
-/// (`suite.rs`, `bench.rs`), the channel models and the modulator they synthesise frames with.
-/// A candidate that edits any of these measures itself with a different instrument (RES-02).
+/// (`suite.rs`, `bench.rs`), the channel models, and the whole of `z30-protocol`, which encodes
+/// the test frames (codec, CRC, LDPC, symbol map) and modulates them. A candidate that edits any
+/// of these measures itself with a different instrument (RES-02). Only the modulator was hashed
+/// at first, so an encoder edit changed the frames without changing the identity (post-remediation
+/// QA-B). `main.rs` is left out on purpose: it only parses options and dispatches, and what it
+/// passes on (benchmark, seed, replicate, frames, `RxConfig`) is recorded in every result and
+/// checked separately; hashing it would make every CLI edit refuse a comparison.
 pub fn instrument_files(root: &Path) -> Vec<String> {
     let mut files = vec!["crates/z30-cli/src/suite.rs".to_string(), "crates/z30-cli/src/bench.rs".to_string()];
-    files.push("crates/z30-channel/Cargo.toml".into());
-    let mut channel = Vec::new();
-    walk(&root.join("crates/z30-channel/src"), &mut channel);
-    let mut channel: Vec<String> =
-        channel.iter().filter_map(|p| p.strip_prefix(root).ok()).map(|p| p.to_string_lossy().replace('\\', "/")).collect();
-    channel.sort();
-    files.extend(channel);
-    files.push("crates/z30-protocol/src/gfsk.rs".into());
+    for krate in ["z30-channel", "z30-protocol"] {
+        files.push(format!("crates/{krate}/Cargo.toml"));
+        let mut src = Vec::new();
+        walk(&root.join("crates").join(krate).join("src"), &mut src);
+        let mut src: Vec<String> =
+            src.iter().filter_map(|p| p.strip_prefix(root).ok()).map(|p| p.to_string_lossy().replace('\\', "/")).collect();
+        src.sort();
+        files.extend(src);
+    }
     files
 }
 
@@ -407,6 +413,29 @@ mod tests {
         assert_eq!(p.len(), 4);
         assert_eq!(p[0].deps, vec![("b".to_string(), None), ("c".to_string(), Some("2.0.0".to_string()))]);
         assert_eq!(external_closure(lock, "a"), vec!["b 0.1.0".to_string(), "c 2.0.0".to_string()]);
+    }
+
+    #[test]
+    fn the_instrument_covers_the_frame_encoder_as_well_as_the_modulator() {
+        // QA-B: an edit to the codec, CRC, LDPC encoder or symbol map changes the test frames,
+        // so it must change the instrument identity, not only an edit to gfsk.rs.
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let root = root.canonicalize().unwrap();
+        let files = instrument_files(&root);
+        for f in [
+            "crates/z30-cli/src/suite.rs",
+            "crates/z30-cli/src/bench.rs",
+            "crates/z30-channel/src/lib.rs",
+            "crates/z30-protocol/src/codec.rs",
+            "crates/z30-protocol/src/crc.rs",
+            "crates/z30-protocol/src/ldpc.rs",
+            "crates/z30-protocol/src/symbols.rs",
+            "crates/z30-protocol/src/gfsk.rs",
+        ] {
+            assert!(files.iter().any(|x| x == f), "{f} not in the instrument: {files:?}");
+        }
+        assert!(files.iter().all(|f| file_sha256(&root.join(f)) != "missing"), "{files:?}");
+        assert!(!files.iter().any(|f| f.ends_with("main.rs") || f.contains("z30-dsp")), "{files:?}");
     }
 
     #[test]

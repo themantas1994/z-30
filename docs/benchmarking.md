@@ -51,7 +51,10 @@ placement, the seed rule and the definitions. Results written since 2026-09-28 a
 whether the tree was dirty and a sha256 of the difference, `RUSTFLAGS`, the compiled target
 features, the ISA features detected at run time (rustfft picks its SIMD kernels from them), the
 `Cargo.lock` sha256, and the **instrument identity**: a sha256 over `suite.rs`, `bench.rs`,
-`z30-channel` and `gfsk.rs` as compiled, and `z30-channel`'s resolved dependencies. The build
+`z30-channel` and all of `z30-protocol` (which encodes and modulates the test frames; results
+built before the post-remediation QA review hashed only its `gfsk.rs`), and `z30-channel`'s
+resolved dependencies, as `Cargo.lock` lists them (dev-dependencies included, which can only make
+a comparison refuse, never pass wrongly). The build
 script recomputes the commit label whenever any crate the binary is built from changes, so an
 unstaged edit gives `<commit>-dirty` (before 2026-09-28 it could keep the clean label: audit
 F-13). `research/summarize_suite.py <dir> --write` renders the directory as `SUMMARY.md`. The
