@@ -106,8 +106,9 @@ z30 --devices         # audio devices and serial ports
 z30-gui               # set callsign, grid, region, licence class, PTT, rig, audio in Settings
 ```
 
-A new installation has **no callsign, region, licence class or PTT method**, and the transmit
-gate refuses to transmit until all of them are set. There is no default callsign.
+A new installation has **no callsign, region, licence class, PTT method, dial frequency or
+transmit level**, and the transmit gate refuses to transmit until all of them are set. There is
+no default callsign.
 
 Keep the computer's clock on UTC with NTP or GPS (`chrony`/`gpsd`): z-30 reads the operating
 system clock, never sets it, and the receiver's timing window is ±1.5 s in total
@@ -124,7 +125,9 @@ data directory (`$Z30_HOME`, else `$XDG_CONFIG_HOME/z30`, else `~/.z30`), never 
 writes `config.toml` (only if none exists, unless `--force`) and imports the logbook into
 `logbook.sqlite`. It prints what was imported, what was imported with a change and what was
 skipped, and why. Running it again imports nothing twice. It never imports an RF time-sync
-offset, self-test state, browser UI settings, or the old auto-logger's default grid and report
+offset, self-test state, browser UI settings, or the old auto-logger's default grid and report;
+it writes no transmit level, and skips values equal to the old apps' own defaults (callsign, PTT
+method, dial, power), so a migrated station cannot transmit until you configure it
 ([troubleshooting.md](troubleshooting.md#migration)).
 
 The old program itself is retired and is not installed by anything; see
