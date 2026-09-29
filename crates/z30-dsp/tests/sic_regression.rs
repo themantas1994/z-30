@@ -125,8 +125,12 @@ fn a_busy_band_decodes_identically_on_one_thread_and_on_many() {
     let rx = Receiver::new();
     let (band, _) = random_band(3700, 20);
     let x = synthesize(&band, &mut rng(3701));
-    let many = rx.decode_slot(&x, &RxConfig::default());
-    let one = rayon::ThreadPoolBuilder::new().num_threads(1).build().unwrap().install(|| rx.decode_slot(&x, &RxConfig::default()));
+    // Explicit pools on both sides: the global pool is one thread on a one-CPU runner, where
+    // comparing it with a one-thread pool proved nothing (2026-09-28 audit F-76 / CTO-16).
+    let pool = |n| rayon::ThreadPoolBuilder::new().num_threads(n).build().unwrap();
+    let many = pool(8).install(|| rx.decode_slot(&x, &RxConfig::default()));
+    let one = pool(1).install(|| rx.decode_slot(&x, &RxConfig::default()));
+    assert_eq!(pool(8).install(rayon::current_num_threads), 8, "the many-thread side really has many threads");
     let key = |r: &SlotReport| -> Vec<_> {
         r.decodes
             .iter()
