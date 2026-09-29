@@ -1,0 +1,96 @@
+//! Reproduction probes for F-01, F-15, F-17, F-44 against the UNFIXED code (current public API
+//! only). Each prints what it observed; nothing here asserts, so every probe runs.
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
+use z30_engine::ptt::*;
+
+#[derive(Clone, Default)]
+struct VClock(Arc<AtomicU64>);
+impl MonotonicClock for VClock {
+    fn now_ms(&self) -> u64 { self.0.load(Ordering::SeqCst) }
+}
+
+#[derive(Clone, Default)]
+struct Flaky { hw: Arc<Mutex<bool>>, fail_releases: Arc<AtomicUsize> }
+impl PttLine for Flaky {
+    fn set(&mut self, k: bool) -> Result<PttAck, PttError> {
+        if !k && self.fail_releases.load(Ordering::SeqCst) > 0 {
+            self.fail_releases.fetch_sub(1, Ordering::SeqCst);
+            return Err(PttError("rigctld: timed out".into()));
+        }
+        *self.hw.lock().unwrap() = k;
+        Ok(PttAck::Confirmed)
+    }
+    fn describe(&self) -> String { "flaky".into() }
+}
+
+#[test]
+fn repro_f01_failed_release() {
+    let line = Flaky::default();
+    let clock = VClock::default();
+    let ptt = PttController::new(Box::new(line.clone()), Arc::new(clock.clone()));
+    ptt.key().unwrap();
+    line.fail_releases.store(1, Ordering::SeqCst);
+    let r = ptt.unkey();
+    println!("F-01 unkey={r:?} controller_is_keyed={} hardware_keyed={}", ptt.is_keyed(), *line.hw.lock().unwrap());
+    clock.0.store(3_600_000, Ordering::SeqCst);
+    let fired = ptt.watchdog_tick();
+    println!("F-01 after 1 h: watchdog_fired_now={fired} hardware_keyed={}", *line.hw.lock().unwrap());
+}
+
+#[test]
+fn repro_f44_rearm() {
+    let line = Flaky::default();
+    let clock = VClock::default();
+    let ptt = PttController::new(Box::new(line.clone()), Arc::new(clock.clone()));
+    ptt.key().unwrap();
+    clock.0.store(35_000, Ordering::SeqCst);
+    ptt.key().unwrap();
+    clock.0.store(70_000, Ordering::SeqCst);
+    println!("F-44 keyed 0 s and 35 s; at 70 s watchdog_tick={} hardware_keyed={}", ptt.watchdog_tick(), *line.hw.lock().unwrap());
+}
+
+struct PanicLine { hw: Arc<AtomicBool> }
+impl PttLine for PanicLine {
+    fn set(&mut self, k: bool) -> Result<PttAck, PttError> {
+        self.hw.store(k, Ordering::SeqCst);
+        if k { panic!("driver panic inside set(true)"); }
+        Ok(PttAck::Confirmed)
+    }
+    fn describe(&self) -> String { "panicking".into() }
+}
+
+#[test]
+fn repro_f15_panic_in_set() {
+    install_panic_release();
+    let hw = Arc::new(AtomicBool::new(false));
+    let ptt = PttController::with_limit(Box::new(PanicLine { hw: hw.clone() }), Arc::new(SystemMonotonic::default()), 200);
+    let _wd = ptt.spawn_watchdog(Duration::from_millis(10));
+    let p2 = ptt.clone();
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || { let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| p2.key())); let _ = tx.send(r.is_ok()); });
+    let returned = rx.recv_timeout(Duration::from_millis(1500)).is_ok();
+    let p3 = ptt.clone();
+    let (tx2, rx2) = std::sync::mpsc::channel();
+    std::thread::spawn(move || { p3.watchdog_tick(); let _ = tx2.send(()); });
+    let wd_returned = rx2.recv_timeout(Duration::from_millis(1500)).is_ok();
+    println!("F-15 keying thread returned={returned}; watchdog_tick from another thread returned={wd_returned}; hardware_keyed after 1.5 s={}", hw.load(Ordering::SeqCst));
+}
+
+#[test]
+fn repro_f17_late_key() {
+    use z30_engine::runtime::{TxAction, TxScheduler, PTT_LEAD_SEC};
+    let mut txs = TxScheduler::new(0.0);
+    let slot = 60_000_000i64;
+    let s = z30_engine::slots::slot_start(slot);
+    txs.accept(slot, 24.0);
+    let key_at = s - PTT_LEAD_SEC;
+    let a1 = txs.tick(key_at);
+    // The key took 300 ms (rigctld T 1 round trip / first connect).
+    let started = key_at + 0.3;
+    let a2 = txs.tick(started);
+    let end = s + 24.0 + 0.05;
+    let a3 = txs.tick(end);
+    println!("F-17 actions {a1:?} {a2:?} {a3:?}; audio played {:.2} of 24.00 s; completed={}", end - 0.05 - started, matches!(a3.as_slice(), [TxAction::Unkey { completed: true }]));
+}

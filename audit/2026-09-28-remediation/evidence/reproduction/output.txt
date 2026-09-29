@@ -1,0 +1,31 @@
+# Reproduction of F-01, F-15, F-17, F-44 on the unfixed code (78db463), rustc 1.95.0, --release
+# probe: repro_phase1.rs.txt copied into crates/z30-engine/tests/ for the run, then removed. Fake lines only; nothing keyed.
+== repro_f01_failed_release
+test repro_f01_failed_release ... F-01 unkey=Err(PttError("rigctld: timed out")) controller_is_keyed=false hardware_keyed=true
+F-01 after 1 h: watchdog_fired_now=false hardware_keyed=true
+ok
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 3 filtered out; finished in 0.00s
+exit=0
+== repro_f44_rearm
+test repro_f44_rearm ... F-44 keyed 0 s and 35 s; at 70 s watchdog_tick=false hardware_keyed=true
+ok
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 3 filtered out; finished in 0.00s
+exit=0
+== repro_f17_late_key
+test repro_f17_late_key ... F-17 actions [Key] [StartAudio] [Unkey { completed: true }]; audio played 23.75 of 24.00 s; completed=true
+ok
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 3 filtered out; finished in 0.00s
+exit=0
+== repro_f15_panic_in_set
+test repro_f15_panic_in_set ... F-15 keying thread returned=false; watchdog_tick from another thread returned=true; hardware_keyed after 1.5 s=true
+ok
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 3 filtered out; finished in 1.50s
+exit=0
+
+# Run all four in one process (cargo test --test repro_phase1 -- --test-threads=1): the process never finished;
+# killed by 'timeout 600' (exit 143). After repro_f15 the panic hook is blocked on the line mutex while holding the
+# PTT registry lock, so the next PttController::new (repro_f17 creates none; repro_f44 does) blocks for ever.
+# Reading of repro_f15: the watchdog_tick "returned" only because the panic hook's emergency release had already
+# stored keyed=false before blocking on the line mutex; the watchdog therefore believed the line released and did
+# nothing, while the (fake) hardware stayed keyed. The keying thread never returned.
+# repro_f17: 23.75 s of audio between the late StartAudio and the fixed end (24.00 s frame), reported completed=true.
