@@ -593,7 +593,7 @@ fn is_windows_device_path(s: &str) -> bool {
 
 #[cfg(test)]
 mod report_target_tests {
-    use super::{is_windows_device_path, write_report_file};
+    use super::is_windows_device_path;
 
     // The writer refuses a device itself, not only through the early checks in front of it: a
     // later caller that forgets them is still refused (transmit-safety 02d, mutant B4).
@@ -601,7 +601,7 @@ mod report_target_tests {
     #[cfg(unix)]
     #[test]
     fn the_report_writer_refuses_a_character_device_by_itself() {
-        let e = write_report_file(std::path::Path::new("/dev/null"), "report").unwrap_err();
+        let e = super::write_report_file(std::path::Path::new("/dev/null"), "report").unwrap_err();
         assert!(e.contains("not a regular file"), "{e}");
     }
 
