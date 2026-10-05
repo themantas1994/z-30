@@ -60,9 +60,12 @@ subtractions are applied in decode order, each on what the previous one left.
 Passes 2 and 3 search again, with two restrictions that reduce the cost. Their effect on
 decodes has not been measured (2026-09-28 audit DSP-04, ledger F-41):
 
-- only candidates within 60 Hz of something subtracted in the previous pass are tried.
-  Everywhere else the residual is unchanged, and a deterministic decoder would fail there
-  exactly as it did before;
+- only candidates within 60 Hz of something subtracted in the previous pass are tried, on the
+  heuristic that the residual changes most near a subtraction. It is not a guarantee that
+  nothing else could decode: a subtraction 60–130 Hz away still changes the noise bins a
+  candidate's whitening reads (f0 −84…−16 Hz), the spectrogram is renormalised by its global
+  median, and a candidate pass 1 ranked below the 50-candidate cut was never tried at all
+  (DSP-04);
 - a candidate within ±1.6 Hz and ±0.1 s of a decoded station is skipped as that station's
   residue. A different station that close is therefore not retried in passes 2 and 3
   ([sic.md](sic.md)).

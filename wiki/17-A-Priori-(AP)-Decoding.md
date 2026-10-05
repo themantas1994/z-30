@@ -146,7 +146,10 @@ Two consequences follow and both are enforced:
 ### 3. The CRC is the arbiter, so AP never runs first
 
 `decode_with_ap` attempts an ordinary decode before any hypothesis, and returns it untouched
-when it succeeds. **AP can add decodes; it cannot change or lose one.** That is WSJT-X's
+when it succeeds. **AP can add decodes; it cannot change or lose one.** Per candidate this holds by construction. Across SIC passes it is tested, not guaranteed: an
+AP-only decode is subtracted, which changes the residual and the pass-2/3 candidate set, so a
+plain pass-2/3 decode could in principle be displaced. `ap_production.rs::f26_in_a_busy_band_ap_never_loses_a_decode_the_plain_decoder_made`
+found none in 8 seeded six-station bands (44 plain decodes; exploratory, not a rate). That is WSJT-X's
 structure too, where AP occupies decoding passes 4 onwards and passes 1–3 are the ordinary ones.
 
 Every AP-recovered frame is therefore a frame that had already failed to decode on its own.
@@ -275,11 +278,10 @@ the ladder makes a claim about:
 
 Two independent seeds put the AWGN shift at **1.8–1.9 dB**, and that is the oracle's figure,
 exploratory (about 40 in-QSO frames per point); it has not been measured through `decode_slot`.
-The fading row came from a channel model that has since been withdrawn (above) and is not a
-current figure. Even then it was directionally consistent and larger, but interpolated from a noisier
-curve — under Watterson the per-point in-QSO decode counts are not monotone in SNR (the AP arm
-reads 100% at −21.5 dB and 87% at −21.0 dB on ~35 frames a point), so treat 2.93 dB as evidence
-that the effect survives fading, not as a figure of merit.
+The fading row came from a channel model that has since been withdrawn (above): both of that
+model's errors (no slow power variation, H-10; 0.71× the labelled Doppler spread, N-01) make
+fading milder, which is exactly what would flatter AP. It is withdrawn, not evidence of anything,
+and **no AP figure exists on the corrected fading model**.
 
 ### What this figure is not
 

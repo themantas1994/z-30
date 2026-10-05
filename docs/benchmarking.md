@@ -300,7 +300,9 @@ default 3 passes (SIC) and with 1 pass. 100 trials per cell.
   only record) never decoded the weak station at 0 Hz or 1 Hz separation, even decoding the
   residual afresh without the residue filter, which supports the fit-absorption explanation; it
   decoded it at 5 Hz in 20/20 and at 0.08 s in 12/20 trials, through `decode_slot` as well as
-  afresh (hop quantisation sometimes places it outside the NMS neighbourhood). The boundary
+  afresh (DSP-05 gives no mechanism for the 0.08 s cell; 0.08 s is exactly two 40 ms hops, the
+  edge of the NMS neighbourhood, and also inside the ±0.1 s residue window, so which gate decides
+  it is not known). The boundary
   between 1 and 5 Hz, and between 0 and 0.4 s, has not been mapped at benchmark size.
 - `PassStats::suppression_db` is not reported: it is a receiver-internal fit ratio, which the
   2026-09-24 audits measured overstating the true suppression by 9–16 dB. Physical suppression measured
@@ -486,7 +488,7 @@ Stated so that nobody fills the gap with a plausible number:
   random busy band covers many-station overlap.
 - **FT8 on the same channels.** Every FT8 figure in the documentation is published, not
   reproduced.
-- **Gray against natural-binary symbol mapping on fading channels** (audit L-05). On AWGN the
+- **Gray against natural-binary symbol mapping** (audit L-05). On AWGN the
   loss is zero for ideal orthogonal FSK by symmetry (SPEC §3); z-30's GFSK is not exactly
   orthogonal, and on AWGN and fading only an exploratory genie-coarse run exists (2026-09-28 DSP-09).
 - **Latency at the current commit.** Single-thread K = 50 missed its target when last measured,
