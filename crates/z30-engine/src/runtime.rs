@@ -408,15 +408,20 @@ impl RuntimeHandle {
     /// shown, and the new runtime started `Released` (post-remediation review M-2). Callers
     /// should not shut down while `ptt_state()` is not `Released` unless the operator insists.
     pub fn shutdown(mut self) -> ShutdownReport {
+        // Bounded by the window alone: the line is never driven on this thread. `halt` requests
+        // the release on a short-lived thread, and so does every retry below (each gives up at once
+        // if another thread holds the line); the watchdog retries too. A release driven here could
+        // sit in a wedged driver for as long as the driver liked, which hung the GUI's exit
+        // (transmit-safety audit D-4, re-review R-4).
         self.halt();
-        // Bounded: never waits longer than the window for a line another thread holds (a wedged
-        // driver used to hang the GUI's exit here; transmit-safety audit D-4). The bound is the
-        // window plus at most one driver call already in progress on this thread's attempt.
         let t0 = std::time::Instant::now();
-        let _ = self.ptt.release_within(SHUTDOWN_RELEASE_WAIT_MS);
+        let mut last_retry = t0;
         while self.ptt.state() != PttState::Released && t0.elapsed() < Duration::from_millis(SHUTDOWN_RELEASE_WAIT_MS) {
             std::thread::sleep(Duration::from_millis(20));
-            let _ = self.ptt.request_release_now();
+            if last_retry.elapsed() >= Duration::from_millis(200) {
+                last_retry = std::time::Instant::now();
+                self.ptt.request_release_in_background();
+            }
         }
         let report = ShutdownReport {
             ptt: self.ptt.state(),
@@ -424,6 +429,15 @@ impl RuntimeHandle {
             last_release_error: self.ptt.last_release_error(),
         };
         self.stop.store(true, Ordering::SeqCst);
+        if !report.release_confirmed() {
+            // A thread may be wedged in the line's driver (it holds the line, which is why the
+            // release could not be confirmed): joining it would hang the caller - the GUI's exit -
+            // and the report would never be shown (transmit-safety re-review R-4). The threads
+            // are left to end on their own once the driver returns; `stop` is already set.
+            self.threads.clear();
+            self.watchdog = None;
+            return report;
+        }
         for t in self.threads.drain(..) {
             let _ = t.join();
         }

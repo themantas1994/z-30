@@ -811,6 +811,26 @@ fn t2_a_clock_step_between_plan_and_key_abandons_the_plan() {
 }
 
 #[test]
+fn r4_shutdown_returns_within_its_window_even_behind_a_wedged_release_driver() {
+    // Transmit-safety re-review R-4: shutdown's release wait and its thread joins must both be
+    // bounded. A driver that takes 8 s to answer (a hung HID write, rigctld wedged) holds the
+    // line; shutdown must still return within its 2 s window, saying the release is unconfirmed,
+    // instead of hanging the GUI's exit with the report never shown.
+    let mut st = Station::start();
+    st.send(Command::CallCq);
+    st.key_slot(SLOT);
+    st.start_audio(SLOT);
+    st.time.set_utc(slot_start(SLOT) + 5.0);
+    st.settle();
+    st.line.release_takes_real_ms.store(8_000, Ordering::SeqCst);
+    let t = Instant::now();
+    let report = st.rt.take().unwrap().shutdown();
+    let took = t.elapsed();
+    assert!(took < Duration::from_millis(SHUTDOWN_RELEASE_WAIT_MS + 1_500), "shutdown took {took:?}");
+    assert!(!report.release_confirmed(), "{report:?}");
+}
+
+#[test]
 fn rt_a_failed_play_flushes_the_partial_frame_and_releases() {
     let mut st = Station::start();
     st.out.st.lock().unwrap().fail_play = true;

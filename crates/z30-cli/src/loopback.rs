@@ -237,8 +237,11 @@ fn gauss(r: &mut z30_channel::ChannelRng) -> f64 {
     (-2.0 * u1.ln()).sqrt() * (std::f64::consts::TAU * u2).cos()
 }
 
-/// `z30 --loopback-test`: the software loopback at every rate in `SOFTWARE_RATES_HZ`.
-pub fn run(out: Option<&std::path::Path>) -> Result<(), String> {
+/// `z30 --loopback-test`: the software loopback at every rate in `SOFTWARE_RATES_HZ`. Returns the
+/// report and whether every run passed; writing it anywhere is the caller's (`main.rs`), so this
+/// file needs no file-system access at all (transmit-safety re-review R-3: a write to a tty path
+/// from here would assert DTR/RTS on a serial PTT interface).
+pub fn run() -> Result<(String, bool), String> {
     let mut runs = Vec::new();
     for rate in SOFTWARE_RATES_HZ {
         runs.push(software_loopback(rate, Some(SOFTWARE_SNR_DB))?);
@@ -253,15 +256,7 @@ pub fn run(out: Option<&std::path::Path>) -> Result<(), String> {
         "pass": pass,
     });
     let text = serde_json::to_string_pretty(&v).map_err(|e| e.to_string())?;
-    println!("{text}");
-    if let Some(p) = out {
-        std::fs::write(p, &text).map_err(|e| format!("{}: {e}", p.display()))?;
-    }
-    if pass {
-        Ok(())
-    } else {
-        Err("software loopback FAILED (see the criteria above)".into())
-    }
+    Ok((text, pass))
 }
 
 #[cfg(test)]

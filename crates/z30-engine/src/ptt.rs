@@ -381,14 +381,6 @@ impl PttController {
         self.shared.release_bounded(ReleaseCause::Emergency, 0)
     }
 
-    /// A release that waits at most `wait_ms` for a line another thread holds (none at all for one
-    /// the current thread is driving); if it cannot get the line it leaves `ReleasePending` for the
-    /// watchdog. Returns whether the line was confirmed released. For shutdown, which must not
-    /// hang behind a wedged driver (transmit-safety audit D-4).
-    pub fn release_within(&self, wait_ms: u64) -> bool {
-        self.shared.release_bounded(ReleaseCause::Normal, wait_ms)
-    }
-
     /// HALT's release: `request_release_now` on a short-lived thread, so the caller never waits
     /// for the driver's I/O either. On the GUI thread a hung rigctld held the window, HALT button
     /// and all, for its timeouts (post-remediation review L-1). The state changes exactly as with

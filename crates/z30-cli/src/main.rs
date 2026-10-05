@@ -243,7 +243,12 @@ fn run(cli: &Cli, config_path: &Path) -> Result<(), String> {
     }
     if cli.loopback_test {
         // No configuration is read: nothing in it could matter to a test that touches no device.
-        return loopback::run(cli.out.as_deref());
+        let (text, pass) = loopback::run()?;
+        println!("{text}");
+        if let Some(p) = cli.out.as_deref() {
+            write_report_file(p, &text)?;
+        }
+        return if pass { Ok(()) } else { Err("software loopback FAILED (see the criteria above)".into()) };
     }
     let cfg = paths::load_config(config_path)?;
     if cli.diagnostics {
@@ -522,4 +527,22 @@ fn receive(cfg: z30_engine::config::Config, capture: Option<PathBuf>) -> Result<
         eprintln!("-- PTT release NOT confirmed at shutdown ({:?}): the radio may still be keyed", report.ptt);
     }
     Ok(())
+}
+
+/// Writes the `--loopback-test` report. A character device is refused, judged by `stat` before
+/// anything opens it: on Linux, opening a serial tty asserts DTR and RTS, so
+/// `--out /dev/ttyUSB0` would briefly key a serial-PTT radio from a test that must not be able to
+/// (transmit-safety re-review R-3).
+fn write_report_file(p: &Path, text: &str) -> Result<(), String> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::FileTypeExt;
+        if let Ok(m) = std::fs::metadata(p) {
+            let t = m.file_type();
+            if t.is_char_device() || t.is_block_device() || t.is_fifo() || t.is_socket() {
+                return Err(format!("{}: not a regular file; the loopback report is written only to a file", p.display()));
+            }
+        }
+    }
+    std::fs::write(p, text).map_err(|e| format!("{}: {e}", p.display()))
 }

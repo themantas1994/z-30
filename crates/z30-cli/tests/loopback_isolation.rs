@@ -154,13 +154,39 @@ fn the_software_loopback_reaches_only_an_allowlist_of_crates_and_items() {
     // guard is an allowlist instead: anything the loopback names outside it fails, whatever it
     // is called. Adding to the list is a change the transmit-safety review must see.
     let full = code_of("src/loopback.rs");
-    let code = full.split("#[cfg(test)]").next().unwrap();
+    // Exactly one test-only item, `mod tests`, running to the end of the file. Splitting at the
+    // first `#[cfg(test)]` let any test-only item placed earlier hide everything after it (`run()`
+    // included) from every check below (transmit-safety re-review R-2).
+    assert_eq!(full.matches("#[cfg(test)]").count(), 1, "src/loopback.rs: exactly one #[cfg(test)], the final `mod tests`");
+    let (code, tests) = full.split_once("#[cfg(test)]").unwrap();
+    let tests = tests.trim_start();
+    assert!(tests.starts_with("mod tests {"), "the only #[cfg(test)] item must be `mod tests`");
+    let mut depth = 0i32;
+    let mut closed_at = None;
+    for (i, ch) in tests.char_indices() {
+        match ch {
+            '{' => depth += 1,
+            '}' => {
+                depth -= 1;
+                if depth == 0 {
+                    closed_at = Some(i);
+                    break;
+                }
+            }
+            _ => {}
+        }
+    }
+    let closed_at = closed_at.expect("`mod tests` is closed");
+    assert!(
+        tests[closed_at + 1..].trim().is_empty(),
+        "`mod tests` must run to the end of src/loopback.rs: nothing may follow it unchecked"
+    );
     const ROOTS: [&str; 7] = ["rand", "rustfft", "serde_json", "z30_dsp", "z30_protocol", "z30_channel", "z30_engine"];
     // `std` by sub-path, not whole: all of `std` admitted `std::net` (a TCP `T 1` to rigctld),
     // `std::process` (`rigctl`, `aplay`) and `std::fs` on a tty, which asserts DTR/RTS when opened
-    // (transmit-safety audit T-1). `std::fs::write` is the report file `--loopback-test --out` writes.
-    const STD: [&str; 9] =
-        ["std::f64", "std::f32", "std::path", "std::fs::write", "std::collections", "std::time", "std::fmt", "std::iter", "std::cmp"];
+    // (transmit-safety audit T-1). No file-system access at all: main.rs writes the report
+    // (re-review R-3).
+    const STD: [&str; 7] = ["std::f64", "std::f32", "std::collections", "std::time", "std::fmt", "std::iter", "std::cmp"];
     const ENGINE: [&str; 3] = ["z30_engine::pipeline", "z30_engine::slots", "z30_engine::runtime::frame_audio"];
     const CRATE: [&str; 1] = ["crate::version_text"];
     for p in paths_in(code).into_iter().chain(use_paths(code)) {
@@ -191,7 +217,9 @@ fn the_software_loopback_reaches_only_an_allowlist_of_crates_and_items() {
 #[test]
 fn the_cli_runs_the_software_loopback_for_loopback_test_and_the_hardware_one_only_for_its_own_flag() {
     let main = code_of("src/main.rs");
-    assert!(main.contains("return loopback::run(cli.out.as_deref());"), "--loopback-test must run the software loopback");
+    // The report is written by main.rs (refusing devices), not by the loopback (re-review R-3).
+    assert!(main.contains("let (text, pass) = loopback::run()?;"), "--loopback-test must run the software loopback");
+    assert!(main.contains("write_report_file(p, &text)"), "the loopback report is written through the device-refusing writer");
     assert!(main.contains("audio_loopback::run(&cfg, cli.confirm_no_transmitter"), "--audio-loopback-test must pass through its refusals");
     assert_eq!(main.matches("audio_loopback::run(").count(), 1, "the hardware loopback has exactly one entry point");
 }

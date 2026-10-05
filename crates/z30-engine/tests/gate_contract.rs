@@ -281,6 +281,26 @@ fn f22_the_plan_carries_exactly_what_the_gate_checked() {
 }
 
 #[test]
+fn r1_exactly_the_commands_that_can_lead_to_a_transmission_are_dropped_after_halt() {
+    // Transmit-safety re-review R-1: the D-1 runtime test covers Tune, Call CQ and Enable TX;
+    // Answer (the GUI's double-click, its commonest arming action) was not pinned, and removing
+    // it from the list passed every test.
+    for c in [Command::CallCq, Command::Answer(7), Command::EnableTx(true), Command::Tune] {
+        assert!(c.arms_transmission(), "{c:?} arms a transmission and must not outlive a HALT");
+    }
+    for c in [
+        Command::EnableTx(false),
+        Command::HaltTx,
+        Command::ResetQso,
+        Command::SetDial(14_074_000),
+        Command::SetAudioFrequencies { rx_hz: 1500.0, tx_hz: 1500.0 },
+        Command::UpdateConfig(Box::new(config())),
+    ] {
+        assert!(!c.arms_transmission(), "{c:?} cannot arm and is always applied");
+    }
+}
+
+#[test]
 fn t3_a_completed_tune_in_place_of_the_rr73_does_not_complete_the_contact() {
     // Transmit-safety audit T-3: only a complete *frame* counts. A Tune sent in the slot where
     // the RR73 was due ends Complete, and must neither advance the QSO nor log the contact.

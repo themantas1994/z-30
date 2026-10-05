@@ -282,8 +282,11 @@ Each defends against a different failure. Do not merge them.
    the process; audit D-2, `ptt_exit_latch.rs`), then retries the release for about a second and
    prints "PTT release NOT confirmed before exit" if the line never confirmed (review M-2).
    Stopping the runtime (exit, or a new audio, PTT or rig setting) retries an unconfirmed release
-   for up to 2 s (`SHUTDOWN_RELEASE_WAIT_MS`), never waiting longer than that for a line another
-   thread holds (audit D-4), and reports the outcome (`ShutdownReport`). The GUI
+   for up to 2 s (`SHUTDOWN_RELEASE_WAIT_MS`) and reports the outcome (`ShutdownReport`). The
+   bound is real: shutdown never drives the line on the calling thread (the release and its
+   retries run on short-lived threads), and when the release is not confirmed it does not wait
+   for the runtime's threads, one of which may be wedged in the driver (audit D-4, re-review R-4;
+   `tx_runtime::r4_shutdown_returns_within_its_window_even_behind_a_wedged_release_driver`). The GUI
    does not apply hardware settings while the line is keyed or pending, does not start a new
    runtime after an unconfirmed shutdown, and refuses the first close of the window with a warning;
    CAT PTT, like serial and CM108, commands a release when it is opened, so a new runtime never
