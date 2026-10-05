@@ -144,10 +144,12 @@ fn f26_ap_does_not_manufacture_decodes_from_noise() {
 
 #[test]
 fn f26_in_a_busy_band_ap_never_loses_a_decode_the_plain_decoder_made() {
-    // Review DSP F-26: within a pass AP cannot touch another candidate's decode, but across passes
-    // it could: an AP-only decode is subtracted, which changes the residual and the pass-2/3
-    // candidate set. Several stations around the QSO frequency, AP off and on over the same audio:
-    // every plain decode must still be in the AP report (by payload; its pass may differ).
+    // A regression guard for busy bands: several stations around the QSO frequency, AP off and on
+    // over the same audio; every plain decode must still be in the AP report (by payload; its pass
+    // may differ). It does NOT exercise the cross-pass hazard (an AP-only decode in pass k,
+    // subtracted, displacing another station's plain decode in a later pass): here every AP decode
+    // lands in pass 2 and no plain decode is downstream of one (DSP re-review of F-26). That case
+    // is untested and not guaranteed; ap.rs says so.
     let rx = Receiver::new();
     let sent = "K1ABC W9XYZ -12";
     let others = [

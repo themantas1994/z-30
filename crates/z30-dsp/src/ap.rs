@@ -4,8 +4,10 @@
 //! Three rules, each guarded by a test:
 //! - **AP never runs first.** The ordinary decode is attempted and returned untouched when it
 //!   succeeds; AP may add decodes, never change or lose one. That holds per candidate by
-//!   construction; across SIC passes an AP-only decode is subtracted and changes the pass-2/3
-//!   candidate set, so there it is tested (`tests/ap_production.rs`, busy bands), not guaranteed.
+//!   construction. Across SIC passes it is NOT guaranteed and not yet exercised by any test: an
+//!   AP-only decode is subtracted and changes the pass-2/3 candidate set (both passes can hit the
+//!   50-candidate cut), so it could displace another station's later plain decode. The busy-band
+//!   test in `tests/ap_production.rs` never produces that case (its AP decodes all land in pass 2).
 //! - **A frame recovered by AP is labelled** (`ap_type`, shown as `a1`..`a6`).
 //! - **The gates only narrow.** Callsigns must round-trip (the `Callsign` type enforces it),
 //!   deep types (3+) are frequency-gated, and AP is off unless the caller supplies a context.
