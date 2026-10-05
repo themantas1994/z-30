@@ -74,6 +74,11 @@ pub fn run(cfg: &Config, confirmed: bool, out: Option<&Path>) -> Result<(), Stri
     if let Some(why) = refusal(cfg, confirmed) {
         return Err(why);
     }
+    // A device as the report target is refused before the test plays anything, not after it
+    // (CTO re-review N-11; the writer refuses it again at the end).
+    if let Some(p) = out {
+        crate::check_report_target(p)?;
+    }
     let mut input = z30_io::audio::CpalInput::open(cfg.audio.input_device.as_deref())?;
     let mut output = z30_io::audio::CpalOutput::open(cfg.audio.output_device.as_deref())?;
     let wall = z30_io::wallclock::SystemWallClock::default();

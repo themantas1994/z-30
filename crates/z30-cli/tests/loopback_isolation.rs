@@ -67,14 +67,16 @@ fn blank_non_code(src: &str) -> String {
                     i += 1;
                 }
             }
-        } else if (c[i] == 'r' || (c[i] == 'b' && at(1) == Some('r'))) && {
-            // Raw string: r"..", r#".."#, br#".."#. The `r` must start a token, not end a name.
-            let k = if c[i] == 'b' { 1 } else { 0 };
+        } else if (c[i] == 'r' || ((c[i] == 'b' || c[i] == 'c') && at(1) == Some('r'))) && {
+            // Raw string: r"..", r#".."#, br#".."#, cr#".."#. The prefix must start a token, not
+            // end a name. Without `cr`, `cr"\"` read as an ordinary string whose `\"` escaped
+            // its own end, hiding the rest of the line (CTO re-review N-6).
+            let k = if c[i] == 'r' { 0 } else { 1 };
             let hashes = c[i + k + 1..].iter().take_while(|&&h| h == '#').count();
             let ident_before = i > 0 && (c[i - 1].is_alphanumeric() || c[i - 1] == '_');
             !ident_before && c.get(i + k + 1 + hashes) == Some(&'"')
         } {
-            let k = if c[i] == 'b' { 1 } else { 0 };
+            let k = if c[i] == 'r' { 0 } else { 1 };
             let hashes = c[i + k + 1..].iter().take_while(|&&h| h == '#').count();
             let open = k + 1 + hashes + 1;
             out.extend(&c[i..i + open]);
@@ -136,6 +138,11 @@ fn literals_and_comments_cannot_hide_code_from_the_guard() {
     // Both of the confirmation re-review's surviving mutants, as source text.
     let url = blank_non_code("let _u = \"http://\"; let _ = std::net::TcpStream::connect(x);");
     assert!(paths_in(&url).iter().any(|p| p == "std::net::TcpStream::connect"), "{url}");
+    // Raw strings of every prefix end at their own closing quote, backslash or not (CTO N-6).
+    for prefix in ["r", "br", "cr"] {
+        let raw = blank_non_code(&format!("let _ = {prefix}\"\\\"; std::net::TcpStream::connect(x); let _ = \"\";"));
+        assert!(paths_in(&raw).iter().any(|p| p == "std::net::TcpStream::connect"), "{prefix}: {raw}");
+    }
     let braces = "fn run() { side() }\n#[cfg(test)]\nmod tests { fn a() { let _ = '{'; } }\nfn side() { let _ = '}'; std::net::x(); }\n";
     assert!(non_test_code(&blank_non_code(braces)).is_err(), "code after `mod tests` passed as part of it");
     // Comments go, code survives, lifetimes are code.

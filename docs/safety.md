@@ -126,6 +126,12 @@ configuration it runs with has no PTT method (VOX included) and no rig control
 (`audio_loopback::tests`). A radio on VOX wired to a sound card that a *PTT-less* configuration
 drives is outside what software can detect: that is what the confirmation states.
 
+Both tests write their report (`--out`) only to a file. A device is refused without being
+opened: on Linux, opening a serial tty asserts DTR and RTS, and on Windows opening a COM port
+usually raises DTR, so `--out /dev/ttyUSB0` or `--out COM3` would key a serial-PTT radio. On Unix
+the file type decides (`loopback_report_target.rs`); on Windows the name does (reserved device
+names and `\\.\` paths). Both tests check the target before they start (re-review R-3).
+
 ## Rig readback: refusing a contradiction, and only that
 
 The band-plan check reasons about the operator's dial (there is no default; with none set the
@@ -287,8 +293,9 @@ Each defends against a different failure. Do not merge them.
    retries run on short-lived threads), and when the release is not confirmed it does not wait
    for the runtime's threads, one of which may be wedged in the driver (audit D-4, re-review R-4;
    `tx_runtime::r4_shutdown_returns_within_its_window_even_behind_a_wedged_release_driver`). When
-   the release is confirmed, shutdown joins the threads with no time limit (the line is already
-   released; a rig or decode thread can still delay exit) and then reads the line again, with a
+   the release is confirmed, shutdown joins the threads with no time limit (a rig or decode thread
+   can delay exit; so, in the race below, can a control thread stuck in a key's driver, while the
+   HALT flag and the watchdog keep audio from starting) and then reads the line again, with a
    second 2 s window, because a key that raced HALT could have been followed by a refused unkey on
    the control thread's way out (CTO re-review N-2). The GUI
    does not apply hardware settings while the line is keyed or pending, does not start a new

@@ -318,10 +318,14 @@ impl eframe::App for App {
         {
             ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
             self.close_warned = true;
-            self.messages.push((
-                "PTT is keyed or its release is NOT confirmed: closing now stops z-30 retrying the release and the radio may stay keyed. Check the radio; close again to exit anyway.".into(),
-                Color32::RED,
-            ));
+            // With no runtime there may be nothing left retrying: saying closing "stops z-30
+            // retrying" would claim a protection that may not exist (CTO re-review N-7).
+            let text = if self.rt.is_some() {
+                "PTT is keyed or its release is NOT confirmed: closing now stops z-30 retrying the release and the radio may stay keyed. Check the radio; close again to exit anyway."
+            } else {
+                "z-30 has stopped and the PTT release was NOT confirmed: the radio may still be keyed. Check it; close again to exit."
+            };
+            self.messages.push((text.into(), Color32::RED));
         }
         let Some(snap) = self.snapshot() else {
             // No runtime: only after a shutdown that did not confirm the PTT release, when
@@ -650,6 +654,11 @@ impl eframe::App for App {
     }
 
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
+        if self.rt.is_none() {
+            // Only after a shutdown that did not confirm the release; the window said so, and
+            // stderr outlives it.
+            eprintln!("z-30: the PTT release was NOT confirmed when the station stopped: the radio may still be keyed. Check it.");
+        }
         if let Some(rt) = self.rt.take() {
             let report = rt.shutdown();
             if !report.release_confirmed() {

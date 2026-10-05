@@ -544,7 +544,7 @@ pub(crate) fn write_report_file(p: &Path, text: &str) -> Result<(), String> {
 
 /// Refuses a report target that is not, or could not become, a regular file. Called before the
 /// test runs as well, so a wrong `--out` fails at once rather than after the test.
-fn check_report_target(p: &Path) -> Result<(), String> {
+pub(crate) fn check_report_target(p: &Path) -> Result<(), String> {
     let refuse = || Err(format!("{}: not a regular file; the loopback report is written only to a file", p.display()));
     #[cfg(unix)]
     {
