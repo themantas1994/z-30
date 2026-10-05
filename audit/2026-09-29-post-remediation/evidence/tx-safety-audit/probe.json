@@ -1,0 +1,18 @@
+{
+  "commit": "ea6dd69cb8a317ac5ba58fe2a853dec0eb1d9c8b",
+  "toolchain": "rustc 1.95, cargo test --release --locked",
+  "mutations": [
+    {
+      "id": "PROBE-haltorder",
+      "mutation": "PROBE (unmutated code + one test): a Tune queued before HALT re-arms after it",
+      "file": "crates/z30-engine/tests/tx_runtime.rs:435",
+      "result": "DEFECT SHOWN (probe test fails)",
+      "failing": [
+        "-p z30-engine --test tx_runtime audit_probe: audit_probe_a_command_queued_before_halt_does_not_rearm_after_it"
+      ],
+      "tests_run": [
+        "-p z30-engine --test tx_runtime audit_probe"
+      ]
+    }
+  ]
+}

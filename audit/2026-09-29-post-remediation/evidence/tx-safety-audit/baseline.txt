@@ -1,0 +1,32 @@
+     Running unittests src/lib.rs (/tmp/claude-0/mut-v3-target/release/deps/z30_engine-d117921e6a7c897d)
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+     Running tests/clock_step.rs (/tmp/claude-0/mut-v3-target/release/deps/clock_step-eb73e55086c8ab19)
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.10s
+     Running tests/dial_provenance.rs (/tmp/claude-0/mut-v3-target/release/deps/dial_provenance-e84e579fc5fdda66)
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 11.24s
+     Running tests/emergency.rs (/tmp/claude-0/mut-v3-target/release/deps/emergency-c6c7f880ebd39ea5)
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running tests/gate_contract.rs (/tmp/claude-0/mut-v3-target/release/deps/gate_contract-5441f43ee1b60592)
+test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+     Running tests/ptt_panic.rs (/tmp/claude-0/mut-v3-target/release/deps/ptt_panic-5152e634485cc03b)
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.07s
+     Running tests/ptt_release.rs (/tmp/claude-0/mut-v3-target/release/deps/ptt_release-7b8996353602d255)
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s
+     Running tests/qso_logging.rs (/tmp/claude-0/mut-v3-target/release/deps/qso_logging-e34b3eb3422b3f61)
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running tests/safety.rs (/tmp/claude-0/mut-v3-target/release/deps/safety-3325a2053a33973e)
+test result: ok. 29 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.54s
+     Running tests/tx_runtime.rs (/tmp/claude-0/mut-v3-target/release/deps/tx_runtime-ff55e01371aea15f)
+test result: ok. 25 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.67s
+     Running tests/frame_integrity.rs (/tmp/claude-0/mut-v3-target/release/deps/frame_integrity-2e24c8f5dcc7dc72)
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running tests/round_trip.rs (/tmp/claude-0/mut-v3-target/release/deps/round_trip-705772a6800b6c91)
+test hand_built_out_of_range_fields_are_refused_not_panicked_on ... ok
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.25s
+     Running tests/loopback_isolation.rs (/tmp/claude-0/mut-v3-target/release/deps/loopback_isolation-756e63300128cbcc)
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running unittests src/lib.rs (/tmp/claude-0/mut-v3-target/release/deps/z30_io-32ea08cde2021319)
+test audio::tests::f19_an_output_error_is_recorded_and_a_flush_empties_the_ring ... ok
+test result: ok. 21 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.55s
+     Running tests/callback_alloc.rs (/tmp/claude-0/mut-v3-target/release/deps/callback_alloc-b0f3b2029dab22be)
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
