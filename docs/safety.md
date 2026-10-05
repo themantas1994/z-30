@@ -205,7 +205,12 @@ Two things beyond the gate's own check:
   flush the dead one (review M-1; `rt_halt_after_an_output_recovery_still_silences_the_live_output_from_the_calling_thread`).
   The release itself is driven on a short-lived thread, so a rigctld waiting out its timeouts no
   longer freezes the window during an emergency (review L-1;
-  `rt_halt_does_not_wait_for_a_slow_release_driver`). For the same reason the
+  `rt_halt_does_not_wait_for_a_slow_release_driver`). HALT is also the operator's last word:
+  commands are stamped with the HALT epoch they were sent in, and an arming command (Call CQ,
+  Answer, Enable TX, Tune) that was already queued behind a blocked control thread when HALT was
+  pressed is dropped and reported ("… ignored: it was sent before HALT") instead of re-arming the
+  station for the next slot (transmit-safety audit D-1;
+  `tx_runtime::d1_a_command_queued_before_halt_does_not_rearm_the_station_after_it`). For the same reason the
   OS clock-status query (`timedatectl`) runs on a thread of its own and the SQLite logbook on a
   logbook thread, never on the control thread. The engine's own halts (`HaltTx`, `EnableTx(false)`,
   a new configuration) still arrive through the command queue and end a keyed transmission there
@@ -272,11 +277,13 @@ Each defends against a different failure. Do not merge them.
    (`crates/z30-engine/tests/emergency.rs`, `p5`,
    `ptt_panic.rs::f06_the_panic_hook_releases_a_keyed_line_when_another_thread_panics`). In a
    running station a line it cannot reach is left `ReleasePending` for the watchdog. On a
-   termination signal the process exits next, so no watchdog will run: the GUI's handler retries
-   for about a second and prints "PTT release NOT confirmed before exit" if the line never
-   confirmed (review M-2).
+   termination signal the process exits next, so no watchdog will run: the GUI's handler first
+   latches the process against any further key (a key racing the release would otherwise outlive
+   the process; audit D-2, `ptt_exit_latch.rs`), then retries the release for about a second and
+   prints "PTT release NOT confirmed before exit" if the line never confirmed (review M-2).
    Stopping the runtime (exit, or a new audio, PTT or rig setting) retries an unconfirmed release
-   for up to 2 s (`SHUTDOWN_RELEASE_WAIT_MS`) and reports the outcome (`ShutdownReport`). The GUI
+   for up to 2 s (`SHUTDOWN_RELEASE_WAIT_MS`), never waiting longer than that for a line another
+   thread holds (audit D-4), and reports the outcome (`ShutdownReport`). The GUI
    does not apply hardware settings while the line is keyed or pending, does not start a new
    runtime after an unconfirmed shutdown, and refuses the first close of the window with a warning;
    CAT PTT, like serial and CM108, commands a release when it is opened, so a new runtime never

@@ -126,9 +126,11 @@ the test to match. Full rationale: [`docs/safety.md`](docs/safety.md).
 - **A release is confirmed or it is pending.** `PttController` is Keyed → ReleasePending →
   Released, and only a confirmed `set(false)` releases; an unconfirmed release is retried by the
   watchdog, refuses transmission and is reported (F-01; `ptt_release.rs`, `tx_runtime.rs`).
-- **HALT never waits.** `RuntimeHandle::halt` silences the current output (re-read after every
-  recovery) and requests the release without blocking, the driver's I/O running on a thread of
-  its own; nothing on the control thread may block it (F-16; review M-1, L-1).
+- **HALT never waits, and is the last word.** `RuntimeHandle::halt` silences the current output
+  (re-read after every recovery) and requests the release without blocking, the driver's I/O
+  running on a thread of its own; nothing on the control thread may block it. Commands carry the
+  HALT epoch they were sent in, and an arming command (Call CQ, Answer, Enable TX, Tune) sent before
+  the latest HALT is dropped, never applied after it (F-16; review M-1, L-1; audit D-1).
 - **A pending release is never dropped.** `RuntimeHandle::shutdown` retries an unconfirmed
   release for a bounded time and returns a `ShutdownReport` that says whether it was confirmed;
   the GUI refuses a hardware settings change while keyed or pending and warns before closing;

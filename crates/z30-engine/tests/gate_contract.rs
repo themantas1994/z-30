@@ -281,6 +281,27 @@ fn f22_the_plan_carries_exactly_what_the_gate_checked() {
 }
 
 #[test]
+fn t3_a_completed_tune_in_place_of_the_rr73_does_not_complete_the_contact() {
+    // Transmit-safety audit T-3: only a complete *frame* counts. A Tune sent in the slot where
+    // the RR73 was due ends Complete, and must neither advance the QSO nor log the contact.
+    let mut e = Engine::new(config());
+    e.apply(Command::CallCq, 0);
+    let rep = |t: &str| SlotReport { decodes: vec![decode(t)], ..Default::default() };
+    e.on_slot_report(SLOT, &rep("K1ABC G4XYZ IO91"), slot_start(SLOT) + 26.0, 0);
+    let p = e.plan_tx(SLOT + 1, 0).expect("report");
+    e.tx_started(&p);
+    e.tx_finished(SLOT + 1, &TxOutcome::Complete, 0);
+    e.on_slot_report(SLOT + 2, &rep("K1ABC G4XYZ -08"), slot_start(SLOT + 2) + 26.0, 0);
+    e.apply(Command::Tune, 0);
+    let p = e.plan_tx(SLOT + 3, 0).expect("tune");
+    assert!(matches!(p.kind(), TxKind::Tune));
+    e.tx_started(&p);
+    let _ = e.take_events();
+    e.tx_finished(SLOT + 3, &TxOutcome::Complete, 0);
+    assert!(!e.take_events().iter().any(|x| matches!(x, Event::ContactComplete(_))), "a TUNE completed the contact");
+}
+
+#[test]
 fn l5_a_clock_step_disarms_transmission_until_the_operator_arms_again() {
     // Review L-5: after a step the sequencer and the transmit timeline see slot numbers again
     // (or skip them); the step was only reported, so an armed station kept transmitting on it.

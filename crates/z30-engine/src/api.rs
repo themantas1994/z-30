@@ -37,6 +37,14 @@ pub enum Command {
     ResetQso,
 }
 
+impl Command {
+    /// Whether this command can lead to a transmission: the ones HALT must not let through if
+    /// they were sent before it (post-remediation transmit-safety audit D-1).
+    pub fn arms_transmission(&self) -> bool {
+        matches!(self, Command::CallCq | Command::Answer(_) | Command::EnableTx(true) | Command::Tune)
+    }
+}
+
 /// One decode as the UI shows it.
 #[derive(Clone, Debug)]
 pub struct DecodeRow {

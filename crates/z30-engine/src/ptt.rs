@@ -254,6 +254,19 @@ fn registry() -> &'static Mutex<Vec<Weak<Shared>>> {
     R.get_or_init(|| Mutex::new(Vec::new()))
 }
 
+/// Set by `refuse_further_keys`: from then on no line in the process may be keyed.
+static NO_MORE_KEYS: AtomicBool = AtomicBool::new(false);
+
+/// For the exit and signal paths, before they release everything: a `key()` racing them (the
+/// control thread's key for a slot that starts as SIGTERM arrives) would otherwise key the line
+/// after the release confirmed and just before the process exits, leaving a CAT or CM108 radio
+/// keyed until its own time-out (transmit-safety audit D-2). A key already in its driver when
+/// this is set releases again as soon as the driver returns. There is no way back: it is for a
+/// process that is about to end.
+pub fn refuse_further_keys() {
+    NO_MORE_KEYS.store(true, Ordering::SeqCst);
+}
+
 /// Releases every live PTT line in the process. For the panic hook and signal handlers.
 ///
 /// The registry lock is held only to copy the list, never across a line driver, and each line
@@ -341,8 +354,12 @@ impl PttController {
             // Released (watchdog, halt, emergency) while this thread waited for the line.
             return Err(PttError("the transmitter was released before the key was sent".into()));
         }
+        if NO_MORE_KEYS.load(Ordering::SeqCst) {
+            let _ = s.release_locked(&mut line, ReleaseCause::Emergency);
+            return Err(PttError("refusing to key: the process is exiting".into()));
+        }
         let r = Shared::drive(&mut line, true);
-        if r.is_err() || s.state.load(Ordering::SeqCst) != KEYED {
+        if r.is_err() || s.state.load(Ordering::SeqCst) != KEYED || NO_MORE_KEYS.load(Ordering::SeqCst) {
             // A key that never reached the hardware, or one that raced a halt: the release is
             // sent in case the line half-changed, and must itself be confirmed.
             let _ = s.release_locked(&mut line, ReleaseCause::Emergency);
@@ -362,6 +379,14 @@ impl PttController {
     /// the watchdog (50 ms). For HALT: it must not wait behind a hung control thread.
     pub fn request_release_now(&self) -> bool {
         self.shared.release_bounded(ReleaseCause::Emergency, 0)
+    }
+
+    /// A release that waits at most `wait_ms` for a line another thread holds (none at all for one
+    /// the current thread is driving); if it cannot get the line it leaves `ReleasePending` for the
+    /// watchdog. Returns whether the line was confirmed released. For shutdown, which must not
+    /// hang behind a wedged driver (transmit-safety audit D-4).
+    pub fn release_within(&self, wait_ms: u64) -> bool {
+        self.shared.release_bounded(ReleaseCause::Normal, wait_ms)
     }
 
     /// HALT's release: `request_release_now` on a short-lived thread, so the caller never waits

@@ -751,6 +751,66 @@ fn l5_a_clock_step_during_a_transmission_aborts_it_and_disarms() {
 }
 
 #[test]
+fn d1_a_command_queued_before_halt_does_not_rearm_the_station_after_it() {
+    // Transmit-safety audit D-1: HALT bypasses the command queue, so an arming command already
+    // waiting behind a blocked control thread was applied after the HALT flag and the station
+    // transmitted in the next slot. Every arming command sent before the HALT is now ignored.
+    for arm in [Command::Tune, Command::CallCq, Command::EnableTx(true)] {
+        let mut st = Station::start();
+        let gate = st.line.key_gate.clone();
+        let held = gate.lock().unwrap();
+        st.send(Command::CallCq);
+        st.time.set_utc(slot_start(SLOT) - 0.55);
+        st.wait("the plan", |s| s.out.st.lock().unwrap().latency_queries > 0);
+        st.time.set_utc(slot_start(SLOT) - PTT_LEAD_SEC);
+        st.wait("the control thread entering the key", |s| s.rt().ptt_state() == PttState::Keyed);
+        // While the control thread is stuck in the driver: the operator arms, then presses HALT.
+        st.rt().commands.send(arm.clone()).unwrap();
+        st.rt().halt();
+        drop(held);
+        st.wait("released", |s| s.rt().ptt_state() == PttState::Released && !s.line.keyed());
+        let keys = st.line.keys().len();
+        for slot in [SLOT + 1, SLOT + 2] {
+            for t in [slot_start(slot) - 0.55, slot_start(slot) - PTT_LEAD_SEC, slot_start(slot) + 0.1, slot_start(slot) + 1.0] {
+                st.time.set_utc(t);
+                st.settle();
+            }
+        }
+        assert_eq!(st.line.keys().len(), keys, "{arm:?} sent before HALT keyed the radio after it: {:?}", st.line.changes());
+        assert!(st.events.iter().any(|e| matches!(e, Event::Audio(m) if m.contains("sent before HALT"))), "{:?}", st.events);
+        // A command sent after the HALT is the operator's new decision and is applied.
+        st.send(Command::CallCq);
+        st.key_slot(SLOT + 4);
+        assert_eq!(st.line.keys().len(), keys + 1, "a CQ sent after HALT was not applied");
+    }
+}
+
+#[test]
+fn t2_a_clock_step_between_plan_and_key_abandons_the_plan() {
+    // Transmit-safety audit T-2: the L-5 abort was tested only for a keyed frame; a plan accepted
+    // before the step (0.6 s before the slot) and not yet keyed must not be keyed either.
+    let mut st = Station::start();
+    st.send(Command::CallCq);
+    st.time.set_utc(slot_start(SLOT) - 0.55);
+    st.wait("the plan", |s| s.out.st.lock().unwrap().latency_queries > 0);
+    let at = slot_start(SLOT) - 0.5;
+    let n = RATE as usize / 10;
+    let block = |first: u64, utc: f64| AudioBlock { first_index: first, samples: vec![0.0; n], capture_utc: utc };
+    {
+        let mut q = st.audio_in.0.lock().unwrap();
+        q.push_back(block(0, at));
+        q.push_back(block(n as u64, at + 0.1 - 120.0));
+    }
+    st.wait("the step", |s| s.events.iter().any(|e| matches!(e, Event::ClockStepped { .. })));
+    st.settle();
+    for t in [slot_start(SLOT) - PTT_LEAD_SEC, slot_start(SLOT) + 0.1, slot_start(SLOT) + 1.0] {
+        st.time.set_utc(t);
+        st.settle();
+    }
+    assert!(st.line.keys().is_empty(), "keyed a plan accepted before the clock step: {:?}", st.line.changes());
+}
+
+#[test]
 fn rt_a_failed_play_flushes_the_partial_frame_and_releases() {
     let mut st = Station::start();
     st.out.st.lock().unwrap().fail_play = true;

@@ -430,6 +430,11 @@ mod tests {
         // An exact name wins even when it is a substring of others.
         assert_eq!(select_device(&names, "usb audio"), Ok(3));
         assert!(select_device(&names, "nothing").unwrap_err().contains("no audio device"));
+        // Two identical interfaces (two of the same USB codec is common) share one exact name:
+        // that is ambiguous too, not "the first" (transmit-safety audit T-4).
+        let twins: Vec<String> = ["USB Audio CODEC", "USB Audio CODEC", "Built-in Audio"].map(String::from).to_vec();
+        let e = select_device(&twins, "usb audio codec").unwrap_err();
+        assert!(e.contains("matches 2"), "{e}");
     }
 
     #[test]

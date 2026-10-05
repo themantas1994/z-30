@@ -24,7 +24,7 @@ use crate::rig::Reading;
 use crate::rig::PTT_SETTLE_MS;
 use crate::slots::{slot_of, slot_start, SlotEvent, SlotJob};
 use arc_swap::ArcSwap;
-use crossbeam_channel::{bounded, select, tick, Receiver, Sender, TrySendError};
+use crossbeam_channel::{bounded, select, tick, Receiver, SendError, Sender, TrySendError};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
@@ -328,10 +328,37 @@ fn current_stopper(slot: &StopperSlot) -> Option<OutputStopper> {
     slot.lock().unwrap_or_else(|p| p.into_inner()).clone()
 }
 
+/// The command queue's sending end. Each command is stamped with the HALT epoch current when it
+/// was sent, so the control thread can tell a command the operator sent before a HALT from one
+/// sent after it. HALT bypasses the queue (F-16); without the stamp, a Tune or Call CQ already
+/// waiting in the queue behind a blocked control thread was applied after the HALT flag and armed
+/// the station again, which then transmitted in the next slot (post-remediation transmit-safety
+/// audit D-1).
+#[derive(Clone)]
+pub struct CommandSender {
+    tx: Sender<(u64, Command)>,
+    epoch: Arc<AtomicU64>,
+}
+
+impl CommandSender {
+    /// Queue a command, waiting for room.
+    pub fn send(&self, c: Command) -> Result<(), SendError<Command>> {
+        self.tx.send((self.epoch.load(Ordering::SeqCst), c)).map_err(|e| SendError(e.0 .1))
+    }
+
+    /// Queue a command if there is room.
+    pub fn try_send(&self, c: Command) -> Result<(), TrySendError<Command>> {
+        self.tx.try_send((self.epoch.load(Ordering::SeqCst), c)).map_err(|e| match e {
+            TrySendError::Full((_, c)) => TrySendError::Full(c),
+            TrySendError::Disconnected((_, c)) => TrySendError::Disconnected(c),
+        })
+    }
+}
+
 /// Handles for a user interface.
 pub struct RuntimeHandle {
     /// Send commands.
-    pub commands: Sender<Command>,
+    pub commands: CommandSender,
     /// Latest snapshot.
     pub snapshot: Arc<ArcSwap<EngineSnapshot>>,
     /// Events (bounded; the oldest are dropped if nobody reads).
@@ -340,6 +367,7 @@ pub struct RuntimeHandle {
     pub waterfall: Receiver<Vec<f32>>,
     stop: Arc<AtomicBool>,
     halt: Arc<AtomicBool>,
+    halt_epoch: Arc<AtomicU64>,
     stopper: StopperSlot,
     threads: Vec<JoinHandle<()>>,
     watchdog: Option<JoinHandle<()>>,
@@ -381,11 +409,14 @@ impl RuntimeHandle {
     /// should not shut down while `ptt_state()` is not `Released` unless the operator insists.
     pub fn shutdown(mut self) -> ShutdownReport {
         self.halt();
-        let _ = self.ptt.unkey();
+        // Bounded: never waits longer than the window for a line another thread holds (a wedged
+        // driver used to hang the GUI's exit here; transmit-safety audit D-4). The bound is the
+        // window plus at most one driver call already in progress on this thread's attempt.
         let t0 = std::time::Instant::now();
+        let _ = self.ptt.release_within(SHUTDOWN_RELEASE_WAIT_MS);
         while self.ptt.state() != PttState::Released && t0.elapsed() < Duration::from_millis(SHUTDOWN_RELEASE_WAIT_MS) {
             std::thread::sleep(Duration::from_millis(20));
-            let _ = self.ptt.unkey();
+            let _ = self.ptt.request_release_now();
         }
         let report = ShutdownReport {
             ptt: self.ptt.state(),
@@ -416,6 +447,8 @@ impl RuntimeHandle {
     /// SQLite or a slow key could leave it queued or dropped ("Engine busy") while the
     /// transmitter stayed keyed (2026-09-28 audit F-16).
     pub fn halt(&self) {
+        // First: every command stamped from now on was sent after this HALT.
+        self.halt_epoch.fetch_add(1, Ordering::SeqCst);
         self.halt.store(true, Ordering::SeqCst);
         if let Some(stop) = current_stopper(&self.stopper) {
             stop();
@@ -494,7 +527,8 @@ pub fn start(config: Config, parts: RuntimeParts) -> RuntimeHandle {
     engine.set_tx_hardware_problem(parts.tx_unavailable.clone());
     let snapshot = Arc::new(ArcSwap::from_pointee(engine.snapshot(mono.now_ms())));
     let rx_cfg = Arc::new(ArcSwap::from_pointee(engine.rx_config()));
-    let (cmd_tx, cmd_rx) = bounded::<Command>(64);
+    let (cmd_tx, cmd_rx) = bounded::<(u64, Command)>(64);
+    let halt_epoch = Arc::new(AtomicU64::new(0));
     let (ev_tx, ev_rx) = bounded::<Event>(256);
     let (wf_tx, wf_rx) = bounded::<Vec<f32>>(256);
     let (int_tx, int_rx) = bounded::<Internal>(64);
@@ -665,6 +699,7 @@ pub fn start(config: Config, parts: RuntimeParts) -> RuntimeHandle {
             ptt: ptt.clone(),
             mono: mono.clone(),
             halt: halt.clone(),
+            halt_epoch: halt_epoch.clone(),
             stopper: stopper.clone(),
             ptt_changed_ms,
             release_unconfirmed: false,
@@ -682,15 +717,20 @@ pub fn start(config: Config, parts: RuntimeParts) -> RuntimeHandle {
                     while !stop.load(Ordering::SeqCst) {
                         let mut dirty = control.check_halt();
                         select! {
-                            recv(cmd_rx) -> c => if let Ok(c) = c {
-                                let halt = control.engine.apply(c, control.now_ms());
-                                // A dial the operator set goes to the radio, if there is rig control
-                                // (without it the channel has no receiver and this does nothing).
-                                if let Some(hz) = control.engine.take_dial_command() { let _ = dial_tx.try_send(hz); }
-                                if halt {
-                                    control.abort("the transmission was halted, disarmed or its configuration changed");
+                            recv(cmd_rx) -> c => if let Ok((epoch, c)) = c {
+                                if epoch < control.halt_epoch.load(Ordering::SeqCst) && c.arms_transmission() {
+                                    // Sent before the operator's HALT: HALT is the later decision.
+                                    control.engine.push_event(Event::Audio(format!("{c:?} ignored: it was sent before HALT")));
+                                } else {
+                                    let halt = control.engine.apply(c, control.now_ms());
+                                    // A dial the operator set goes to the radio, if there is rig control
+                                    // (without it the channel has no receiver and this does nothing).
+                                    if let Some(hz) = control.engine.take_dial_command() { let _ = dial_tx.try_send(hz); }
+                                    if halt {
+                                        control.abort("the transmission was halted, disarmed or its configuration changed");
+                                    }
+                                    rx_cfg.store(Arc::new(control.engine.rx_config()));
                                 }
-                                rx_cfg.store(Arc::new(control.engine.rx_config()));
                                 dirty = true;
                             },
                             recv(int_rx) -> m => if let Ok(m) = m {
@@ -732,12 +772,13 @@ pub fn start(config: Config, parts: RuntimeParts) -> RuntimeHandle {
         );
     }
     RuntimeHandle {
-        commands: cmd_tx,
+        commands: CommandSender { tx: cmd_tx, epoch: halt_epoch.clone() },
         snapshot,
         events: ev_rx,
         waterfall: wf_rx,
         stop,
         halt,
+        halt_epoch,
         stopper,
         threads,
         watchdog: Some(watchdog),
@@ -755,6 +796,7 @@ struct Control {
     ptt: PttController,
     mono: Arc<dyn MonotonicClock>,
     halt: Arc<AtomicBool>,
+    halt_epoch: Arc<AtomicU64>,
     stopper: StopperSlot,
     ptt_changed_ms: Arc<AtomicU64>,
     /// Whether the engine has been told a release is unconfirmed.

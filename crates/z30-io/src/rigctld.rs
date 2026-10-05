@@ -104,7 +104,17 @@ impl RigctldPtt {
 
 impl PttLine for RigctldPtt {
     fn set(&mut self, keyed: bool) -> Result<PttAck, PttError> {
-        self.0.command(if keyed { "T 1" } else { "T 0" }, 1).map(|_| PttAck::Confirmed).map_err(PttError)
+        let cmd = if keyed { "T 1" } else { "T 0" };
+        let reply = self.0.command(cmd, 1).map_err(PttError)?;
+        // Only rigctld's success report confirms a key or release. Any other line (a frequency
+        // left over from a poll, noise, a different protocol on that port) used to count as
+        // confirmed (transmit-safety audit D-6).
+        if reply.first().map(String::as_str) == Some("RPRT 0") {
+            Ok(PttAck::Confirmed)
+        } else {
+            self.0.conn = None;
+            Err(PttError(format!("rigctld answered \"{cmd}\" with {:?}, not RPRT 0", reply.first().map(String::as_str).unwrap_or(""))))
+        }
     }
 
     fn describe(&self) -> String {
@@ -191,6 +201,27 @@ mod tests {
         drop(ptt);
         assert_eq!(h.join().unwrap(), vec!["T 0", "T 1"], "T 0 at start-up, before the first key");
         assert!(RigctldPtt::connect("127.0.0.1", 1).is_err(), "no rigctld: an error at start-up, not at the first key");
+    }
+
+    #[test]
+    fn d6_only_rprt_0_confirms_a_cat_key_or_release() {
+        let l = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = l.local_addr().unwrap().port();
+        let h = std::thread::spawn(move || {
+            let (s, _) = l.accept().unwrap();
+            let mut r = BufReader::new(s.try_clone().unwrap());
+            let mut w = s;
+            // T 0 at open: confirmed. T 1: answered with a stray frequency line, not RPRT 0.
+            for reply in ["RPRT 0\n", "14076000\n"] {
+                let mut line = String::new();
+                r.read_line(&mut line).unwrap();
+                w.write_all(reply.as_bytes()).unwrap();
+            }
+        });
+        let mut ptt = RigctldPtt::connect("127.0.0.1", port).unwrap();
+        let e = ptt.set(true).unwrap_err();
+        assert!(e.0.contains("not RPRT 0"), "{}", e.0);
+        h.join().unwrap();
     }
 
     #[test]

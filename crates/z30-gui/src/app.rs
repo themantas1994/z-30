@@ -306,6 +306,11 @@ impl eframe::App for App {
         // Closing the window stops the runtime and its PTT retries. While the line is keyed or a
         // release is unconfirmed, the first close is refused with a warning; a second one exits
         // (post-remediation review M-2).
+        // The warning is for this episode only: once the line is released again, a later close
+        // while keyed or pending is warned about again (transmit-safety audit D-5).
+        if self.close_warned && self.rt.as_ref().is_some_and(|rt| rt.ptt_state() == PttState::Released) {
+            self.close_warned = false;
+        }
         if ctx.input(|i| i.viewport().close_requested())
             && !self.close_warned
             && self.rt.as_ref().is_some_and(|rt| rt.ptt_state() != PttState::Released)

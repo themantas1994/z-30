@@ -33,6 +33,8 @@ fn main() -> eframe::Result {
     // serial RTS/DTR line is dropped by the OS; nothing else is). The handler runs on its own
     // thread, not in signal context, so taking the PTT registry's lock is safe.
     if let Err(e) = ctrlc::set_handler(|| {
+        // No key may follow this release (a key racing it would outlive the process; D-2).
+        z30_engine::ptt::refuse_further_keys();
         // A line that refuses or cannot be reached is retried for about a second: the process
         // is about to exit, so no watchdog will (post-remediation review M-2).
         let released = (0..10).any(|i| {

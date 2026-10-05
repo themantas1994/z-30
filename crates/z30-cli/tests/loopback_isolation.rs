@@ -155,13 +155,19 @@ fn the_software_loopback_reaches_only_an_allowlist_of_crates_and_items() {
     // is called. Adding to the list is a change the transmit-safety review must see.
     let full = code_of("src/loopback.rs");
     let code = full.split("#[cfg(test)]").next().unwrap();
-    const ROOTS: [&str; 8] = ["std", "rand", "rustfft", "serde_json", "z30_dsp", "z30_protocol", "z30_channel", "z30_engine"];
+    const ROOTS: [&str; 7] = ["rand", "rustfft", "serde_json", "z30_dsp", "z30_protocol", "z30_channel", "z30_engine"];
+    // `std` by sub-path, not whole: all of `std` admitted `std::net` (a TCP `T 1` to rigctld),
+    // `std::process` (`rigctl`, `aplay`) and `std::fs` on a tty, which asserts DTR/RTS when opened
+    // (transmit-safety audit T-1). `std::fs::write` is the report file `--loopback-test --out` writes.
+    const STD: [&str; 9] =
+        ["std::f64", "std::f32", "std::path", "std::fs::write", "std::collections", "std::time", "std::fmt", "std::iter", "std::cmp"];
     const ENGINE: [&str; 3] = ["z30_engine::pipeline", "z30_engine::slots", "z30_engine::runtime::frame_audio"];
     const CRATE: [&str; 1] = ["crate::version_text"];
     for p in paths_in(code).into_iter().chain(use_paths(code)) {
         let root = p.split("::").next().unwrap();
         let ok = match root {
             "crate" => CRATE.contains(&p.as_str()),
+            "std" => STD.iter().any(|a| p == *a || p.starts_with(&format!("{a}::"))),
             "super" | "self" => false,
             "z30_engine" => ENGINE.iter().any(|a| p == *a || p.starts_with(&format!("{a}::"))),
             r if ROOTS.contains(&r) => true,
@@ -172,6 +178,10 @@ fn the_software_loopback_reaches_only_an_allowlist_of_crates_and_items() {
             r => r.chars().next().is_some_and(|c| c.is_ascii_uppercase()),
         };
         assert!(ok, "src/loopback.rs names `{p}`, which is outside the allowlist of what the software loopback may reach");
+    }
+    // Source pulled in by macro is invisible to the path checks: refused outright.
+    for m in ["include!", "include_str!", "include_bytes!"] {
+        assert!(!code.contains(m), "src/loopback.rs uses `{m}`, which can bring in code the allowlist cannot see");
     }
     // The allowlist check itself must see the imports (it would pass vacuously on an empty file).
     assert!(paths_in(code).iter().any(|p| p == "z30_engine::runtime::frame_audio"));

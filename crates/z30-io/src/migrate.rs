@@ -687,6 +687,38 @@ mod tests {
     }
 
     #[test]
+    fn f21_a_tk_only_install_and_a_cm108_without_a_pin_bring_no_invented_settings() {
+        // Transmit-safety audit T-4: the Tk-only path (no web settings file) and a CM108 entry with
+        // no GPIO pin were untested; mutants importing the Tk defaults or inventing GPIO 3 survived.
+        let base = std::env::temp_dir().join(format!("z30-mig-t4-{}", std::process::id()));
+        let tk = base.join("tk");
+        std::fs::create_dir_all(&tk).unwrap();
+        std::fs::write(tk.join("config.json"), r#"{"ptt_method":"CAT Command","dial_freq_hz":14076000,"tx_power_watts":50}"#).unwrap();
+        let (cfg, rep) = migrate_config(&tk);
+        assert_eq!(cfg.ptt, PttConfig::None, "the Tk wizard's default keying method is not a choice");
+        assert_eq!(cfg.station.configured_tx_power_w, None, "the Tk wizard's default 50 W is not configured power");
+        assert_eq!(cfg.operating.dial_hz, None);
+        for f in ["PTT", "tx power", "dial"] {
+            assert!(rep.fields.iter().any(|o| matches!(o, Outcome::Skipped(n, _) if n == f)), "{f} not reported: {}", rep.text());
+        }
+        let cm = base.join("cm108");
+        std::fs::create_dir_all(&cm).unwrap();
+        std::fs::write(cm.join("station_config.json"), r#"{"myCall":"G4XYZ","pttMethod":"CM108_GPIO"}"#).unwrap();
+        let (cfg, rep) = migrate_config(&cm);
+        assert_eq!(cfg.ptt, PttConfig::None, "no pin recorded is an unknown pin, not GPIO 3");
+        assert!(
+            rep.fields.iter().any(|o| matches!(o, Outcome::Skipped(n, m) if n == "PTT" && m.contains("no GPIO pin"))),
+            "{}",
+            rep.text()
+        );
+        // A recorded pin is carried over (with no device path: chosen only if one C-Media device exists).
+        std::fs::write(cm.join("station_config.json"), r#"{"myCall":"G4XYZ","pttMethod":"CM108_GPIO","cm108GpioPin":4}"#).unwrap();
+        let (cfg, _) = migrate_config(&cm);
+        assert!(matches!(cfg.ptt, PttConfig::Cm108 { pin: 4, ref device, .. } if device.is_empty()), "{:?}", cfg.ptt);
+        std::fs::remove_dir_all(base).ok();
+    }
+
+    #[test]
     fn running_the_migration_twice_changes_nothing_the_second_time() {
         let dir = std::env::temp_dir().join(format!("z30-mig-twice-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
