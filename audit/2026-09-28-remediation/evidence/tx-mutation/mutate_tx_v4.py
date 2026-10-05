@@ -2,7 +2,8 @@
 """Transmit-safety mutation run, v4: v3 (below), plus the tx-safety auditor's 24 mutants
 (audit/2026-09-29-post-remediation/evidence/tx-safety-audit/mut_audit.py; A-SH-nohalt
 re-targeted at the D-4 shutdown) and one per fix for that audit (RV2-*). RT-halt is re-targeted
-at the D-1 indentation (same intent).
+at the D-1 indentation (same intent). A-LATE-start also runs the engine's lib tests, where its
+pin (runtime::tests::the_key_and_audio_start_lateness_limits_are_half_a_second) lives.
 
 v3: v2's mutants re-targeted at the post-review code, plus one
 mutant per fix made for the post-remediation code review (M-1, M-2, L-1, L-3, L-4, L-5).
@@ -302,7 +303,7 @@ M = [
  ('A-LATE-key', 'MAX_KEY_LATENESS_SEC 0.5 -> 1.0 (tx-safety audit)', 'crates/z30-engine/src/runtime.rs',
   'pub const MAX_KEY_LATENESS_SEC: f64 = 0.5;', 'pub const MAX_KEY_LATENESS_SEC: f64 = 1.0;', [['-p', 'z30-engine', '--test', 'tx_runtime'], ['-p', 'z30-engine', '--test', 'safety'], ['-p', 'z30-engine', '--test', 'dial_provenance'], ['-p', 'z30-engine', '--test', 'live_runtime'], ['-p', 'z30-engine', '--test', 'clock_step']]),
  ('A-LATE-start', 'MAX_START_LATENESS_SEC 0.5 -> 0.7 (tx-safety audit)', 'crates/z30-engine/src/runtime.rs',
-  'pub const MAX_START_LATENESS_SEC: f64 = 0.5;', 'pub const MAX_START_LATENESS_SEC: f64 = 0.7;', [['-p', 'z30-engine', '--test', 'tx_runtime'], ['-p', 'z30-engine', '--test', 'safety'], ['-p', 'z30-engine', '--test', 'dial_provenance'], ['-p', 'z30-engine', '--test', 'live_runtime'], ['-p', 'z30-engine', '--test', 'clock_step']]),
+  'pub const MAX_START_LATENESS_SEC: f64 = 0.5;', 'pub const MAX_START_LATENESS_SEC: f64 = 0.7;', [['-p', 'z30-engine', '--lib'], ['-p', 'z30-engine', '--test', 'tx_runtime'], ['-p', 'z30-engine', '--test', 'safety'], ['-p', 'z30-engine', '--test', 'dial_provenance'], ['-p', 'z30-engine', '--test', 'live_runtime'], ['-p', 'z30-engine', '--test', 'clock_step']]),
  ('A-B60-tol', 'US 60 m centre tolerance 50 -> 59 Hz (tx-safety audit)', 'crates/z30-engine/src/bandplan.rs',
   'pub const US_60M_CENTRE_TOLERANCE_HZ: f64 = 50.0;', 'pub const US_60M_CENTRE_TOLERANCE_HZ: f64 = 59.0;', [['-p', 'z30-engine', '--lib'], ['-p', 'z30-engine', '--test', 'gate_contract'], ['-p', 'z30-engine', '--test', 'safety']]),
  ('A-B60-table', 'US 60 m channel 5358.5 kHz moved to 5357.0 kHz in the table only (tx-safety audit)', 'crates/z30-engine/src/bandplan.rs',

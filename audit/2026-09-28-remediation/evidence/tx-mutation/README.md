@@ -10,6 +10,9 @@
 | `mutate_tx_v3.py` | Harness for run 3: v2's 82 (four patterns re-targeted at the post-review code, same intent) plus nine mutants for the post-remediation code-review fixes (RV-*). |
 | `run3_v3_at_ea6dd69.json`, `.log.txt` | **Run 3, all 91 at `ea6dd69`: 88 killed, 3 survived.** The run was stopped twice by the session's background time limit and resumed (the harness skips finished mutants and restores the tree before each); the log is the three parts concatenated. |
 
+| `mutate_tx_v4.py` | Harness for run 4: v3's 91, the tx-safety auditor's 24 (`audit/2026-09-29-post-remediation/evidence/tx-safety-audit/mut_audit.py`; A-SH-nohalt and RT-halt re-targeted, same intent) and four for that audit's fixes (RV2-*). |
+| `run4_v4_at_d159e6d.json`, `.log.txt` | **Run 4, all 119 at `d159e6d`: 111 killed, 8 survived** (resumed after the background time limit, as run 3). Five survivors are equivalent (below, plus A-BG-skippending: the watchdog retries a pending release every 50 ms; A-CHK-pending: the mirror of RT-relfault, killed together with it in the auditor's A-COMBO). Three were Low untested pins: A-B60-tol and A-LATE-start are pinned as numbers in `6433a48` (A-B60-tol re-run: KILLED by `bandplan::tests::f02_*`; A-LATE-start: KILLED by `runtime::tests::the_key_and_audio_start_lateness_limits_are_half_a_second`, which is in the engine's lib tests that run 4's list for that mutant did not include; the list now does). **A-SH-nohalt** remains a Low survivor: shutdown's own halt matters only when the control thread is stuck, and the control thread's exit stops the output and unkeys otherwise. |
+
 The three survivors of run 3, each judged equivalent (no test can observe the difference):
 
 - **G-plan** (`engine.rs`): `if !perm.allowed` → `if !perm.violations.is_empty()`. The lines above
