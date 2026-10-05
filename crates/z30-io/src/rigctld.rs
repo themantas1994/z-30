@@ -93,7 +93,12 @@ impl RigctldPtt {
     pub fn connect(host: &str, port: u16) -> Result<Self, String> {
         let mut r = Rigctld::new(host, port);
         r.connect()?;
-        Ok(RigctldPtt(r))
+        // Released at open, as the serial and CM108 lines are: a runtime restarted after an
+        // unconfirmed release would otherwise start `Released` without ever commanding T 0
+        // (post-remediation review M-2). A refusal here is an error, not a working PTT.
+        let mut ptt = RigctldPtt(r);
+        ptt.set(false).map_err(|e| format!("rigctld at {host}:{port} did not accept the release at start-up: {}", e.0))?;
+        Ok(ptt)
     }
 }
 
@@ -176,14 +181,33 @@ mod tests {
     }
 
     #[test]
-    fn f17_the_cat_ptt_connection_is_open_before_the_first_key() {
+    fn f17_the_cat_ptt_connection_is_open_and_released_before_the_first_key() {
+        // F-17: connected at creation, so the first key does not pay for the connection. M-2:
+        // and released there, so a restarted runtime never assumes a line it did not command.
+        let (port, h) = fake_rigctld();
+        let mut ptt = RigctldPtt::connect("127.0.0.1", port).unwrap();
+        assert!(ptt.0.conn.is_some(), "connected at creation");
+        assert_eq!(ptt.set(true).unwrap(), PttAck::Confirmed);
+        drop(ptt);
+        assert_eq!(h.join().unwrap(), vec!["T 0", "T 1"], "T 0 at start-up, before the first key");
+        assert!(RigctldPtt::connect("127.0.0.1", 1).is_err(), "no rigctld: an error at start-up, not at the first key");
+    }
+
+    #[test]
+    fn m2_a_rigctld_that_refuses_the_start_up_release_is_not_a_working_ptt() {
         let l = TcpListener::bind("127.0.0.1:0").unwrap();
         let port = l.local_addr().unwrap().port();
-        let ptt = RigctldPtt::connect("127.0.0.1", port).unwrap();
-        assert!(ptt.0.conn.is_some(), "connected at creation");
-        // Accepted without a command being sent: the connection exists before any key.
-        l.set_nonblocking(true).unwrap();
-        assert!(l.accept().is_ok());
-        assert!(RigctldPtt::connect("127.0.0.1", 1).is_err(), "no rigctld: an error at start-up, not at the first key");
+        let h = std::thread::spawn(move || {
+            let (s, _) = l.accept().unwrap();
+            let mut r = BufReader::new(s.try_clone().unwrap());
+            let mut w = s;
+            let mut line = String::new();
+            r.read_line(&mut line).unwrap();
+            w.write_all(b"RPRT -9\n").unwrap();
+            line
+        });
+        let e = RigctldPtt::connect("127.0.0.1", port).err().expect("a refused release at start-up is an error");
+        assert!(e.contains("did not accept the release"), "{e}");
+        assert_eq!(h.join().unwrap().trim(), "T 0");
     }
 }

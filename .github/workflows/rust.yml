@@ -112,6 +112,8 @@ jobs:
         run: cargo clippy --workspace --all-targets --exclude z30-py --locked --features z30-cli/cm108,z30-gui/cm108 -- -D warnings
       - name: Test on ${{ steps.msrv.outputs.version }}
         run: cargo test --workspace --exclude z30-py --release --locked
+      - name: CM108 unit tests (feature-gated, so the workspace test above never compiles them; F-43, review L-2)
+        run: cargo test -p z30-io --features cm108 --lib --release --locked cm108
 
   benchmark-suite:
     name: Benchmark suite runs through the shipped binary and records provenance

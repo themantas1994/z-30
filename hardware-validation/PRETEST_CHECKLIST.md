@@ -34,8 +34,8 @@ Proposed, not yet accepted procedure. Dummy load only.
 | ID | Test | How | Pass criterion |
 | :--- | :--- | :--- | :--- |
 | R9 | HALT | During a Tune or a frame, press HALT in `z30-gui` | RF stops within 200 ms; GUI shows the transmission `Aborted`; nothing is keyed in the next slot |
-| R10 | Output failure while keyed | Unplug the USB audio interface mid-frame (per PTT method except VOX) | PTT released; GUI shows `TX fault: audio output failed…` and the gate refuses until the device is back; after replugging it reopens (≤ 5 s idle) or asks for a restart |
-| R11 | Release not confirmed | With CAT PTT, stop `rigctld` mid-frame | GUI shows "PTT release NOT confirmed"; transmission refused; z-30 keeps retrying; when rigctld is restarted the release is confirmed and reported. Record whether the radio stayed keyed in between (its time-out timer is the only hardware layer) |
+| R10 | Output failure while keyed | Unplug the USB audio interface mid-frame (per PTT method except VOX) | PTT released; GUI shows `TX fault: audio output failed…` and the gate refuses until the device is back; after replugging it reopens (≤ 5 s idle) or asks for a restart. Also record whether the backend reports ordinary underruns through cpal's error callback: z-30 treats every output error as fatal (fail-safe), which would abort frames on a backend that does (review I-3). After the reopen, repeat R9: HALT must still silence the output at once (review M-1) |
+| R11 | Release not confirmed | With CAT PTT, stop `rigctld` mid-frame | GUI shows "PTT release NOT confirmed"; transmission refused; z-30 keeps retrying; when rigctld is restarted the release is confirmed and reported. Record whether the radio stayed keyed in between (its time-out timer is the only hardware layer). While it is unconfirmed, Apply with a changed PTT setting and closing the window are both refused with a warning (review M-2) |
 | R12 | Late key | With CAT PTT over a slow link, check the frame's audio duration on the SDR recording | 24.0 s of audio or the slot abandoned (`Aborted`), never a shortened frame reported complete |
 
 ## Sign-off

@@ -8,7 +8,7 @@ use z30_engine::api::{Command, EngineSnapshot, Event, TxStatus};
 use z30_engine::bandplan::{LicenseClass, Region};
 use z30_engine::config::{Config, PttConfig, SerialLine, TxSlot};
 use z30_engine::pipeline::AudioBlock;
-use z30_engine::ptt::{NoPtt, SystemMonotonic};
+use z30_engine::ptt::{NoPtt, PttState, SystemMonotonic};
 use z30_engine::runtime::{self, AudioInput, AudioOutput, RuntimeHandle, RuntimeParts};
 use z30_io::paths;
 
@@ -127,6 +127,8 @@ pub struct App {
     log_problem: Option<String>,
     frame_ms: f64,
     worst_frame_ms: f64,
+    /// The operator was warned that closing now abandons an unconfirmed PTT release.
+    close_warned: bool,
 }
 
 impl App {
@@ -175,6 +177,7 @@ impl App {
             log_problem,
             frame_ms: 0.0,
             worst_frame_ms: 0.0,
+            close_warned: false,
         }
     }
 
@@ -246,17 +249,38 @@ impl App {
     }
 
     fn apply_settings(&mut self) {
+        let Some(snap) = self.snapshot() else { return };
+        let old = snap.config.as_ref().clone();
+        let hardware_changed = old.audio != self.draft.audio || old.ptt != self.draft.ptt || old.rig != self.draft.rig;
+        // Restarting the runtime replaces the PTT controller. While the line is keyed or its
+        // release is unconfirmed, that would abandon the release: the new controller starts
+        // `Released` and nothing retries the old line (post-remediation review M-2).
+        if hardware_changed && self.rt.as_ref().is_some_and(|rt| rt.ptt_state() != PttState::Released) {
+            self.messages.push((
+                "Audio, PTT and rig settings are not applied while transmitting or while a PTT release is not confirmed: z-30 keeps retrying the release. Check the radio, then apply again.".into(),
+                Color32::RED,
+            ));
+            return;
+        }
         if let Err(e) = paths::save_config(&self.config_path, &self.draft) {
             self.messages.push((format!("Could not save settings: {e}"), Color32::RED));
             return;
         }
-        let Some(snap) = self.snapshot() else { return };
-        let old = snap.config.as_ref().clone();
-        let hardware_changed = old.audio != self.draft.audio || old.ptt != self.draft.ptt || old.rig != self.draft.rig;
         if hardware_changed {
             // New devices or keying line: restart the runtime. Shutdown unkeys first.
             if let Some(rt) = self.rt.take() {
-                rt.shutdown();
+                let report = rt.shutdown();
+                if !report.release_confirmed() {
+                    // Do not start a runtime that could key again over a line that may be stuck.
+                    self.messages.push((
+                        format!(
+                            "PTT release NOT confirmed when the station stopped ({}): the radio may still be keyed. Not restarted: check the radio, then restart z-30.",
+                            report.last_release_error.unwrap_or_else(|| "no answer".into())
+                        ),
+                        Color32::RED,
+                    ));
+                    return;
+                }
             }
             let (rt, rep) = start_runtime(&self.draft);
             self.messages.extend(rep.notes.into_iter().map(|n| (n, Color32::YELLOW)));
@@ -279,6 +303,20 @@ impl eframe::App for App {
         let t0 = Instant::now();
         let ctx = ui.ctx().clone();
         self.drain();
+        // Closing the window stops the runtime and its PTT retries. While the line is keyed or a
+        // release is unconfirmed, the first close is refused with a warning; a second one exits
+        // (post-remediation review M-2).
+        if ctx.input(|i| i.viewport().close_requested())
+            && !self.close_warned
+            && self.rt.as_ref().is_some_and(|rt| rt.ptt_state() != PttState::Released)
+        {
+            ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
+            self.close_warned = true;
+            self.messages.push((
+                "PTT is keyed or its release is NOT confirmed: closing now stops z-30 retrying the release and the radio may stay keyed. Check the radio; close again to exit anyway.".into(),
+                Color32::RED,
+            ));
+        }
         let Some(snap) = self.snapshot() else { return };
         let now = utc_now();
         let (date, time) = z30_io::logbook::utc_parts(now);
@@ -592,7 +630,16 @@ impl eframe::App for App {
 
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
         if let Some(rt) = self.rt.take() {
-            rt.shutdown();
+            let report = rt.shutdown();
+            if !report.release_confirmed() {
+                // The window is gone: stderr is all that is left.
+                eprintln!(
+                    "z-30: PTT release NOT confirmed at exit ({:?}, {} refused, last: {}): the radio may still be keyed. Check it.",
+                    report.ptt,
+                    report.release_failures,
+                    report.last_release_error.unwrap_or_else(|| "no answer".into())
+                );
+            }
         }
     }
 }

@@ -126,8 +126,13 @@ the test to match. Full rationale: [`docs/safety.md`](docs/safety.md).
 - **A release is confirmed or it is pending.** `PttController` is Keyed → ReleasePending →
   Released, and only a confirmed `set(false)` releases; an unconfirmed release is retried by the
   watchdog, refuses transmission and is reported (F-01; `ptt_release.rs`, `tx_runtime.rs`).
-- **HALT never waits.** `RuntimeHandle::halt` silences the output and requests the release from
-  the calling thread without blocking; nothing on the control thread may block it (F-16).
+- **HALT never waits.** `RuntimeHandle::halt` silences the current output (re-read after every
+  recovery) and requests the release without blocking, the driver's I/O running on a thread of
+  its own; nothing on the control thread may block it (F-16; review M-1, L-1).
+- **A pending release is never dropped.** `RuntimeHandle::shutdown` retries an unconfirmed
+  release for a bounded time and returns a `ShutdownReport` that says whether it was confirmed;
+  the GUI refuses a hardware settings change while keyed or pending and warns before closing;
+  every PTT line, CAT included, is released when it is opened (review M-2).
 - **Only a complete frame counts.** Every transmission ends `Complete`, `Partial`, `Aborted`,
   `Failed` or `WatchdogAborted`; only `Complete` advances the QSO or logs a contact (F-17).
 - **One keying implementation** (`PttController`), which reports whether the hardware accepted

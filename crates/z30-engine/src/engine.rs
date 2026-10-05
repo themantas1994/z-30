@@ -317,8 +317,19 @@ impl Engine {
 
     /// The system clock stepped: the receive timeline was re-seated from slot `from` to `to`
     /// (F-48: a backward step used to suspend decoding silently for the length of the step).
+    ///
+    /// Transmission is disarmed too: the sequencer and the transmit timeline count slots on
+    /// this clock, so after a step they would see slots again (or skip them) and could key in
+    /// the wrong slot. The operator re-arms once the clock is right (post-remediation review L-5).
     pub fn on_clock_stepped(&mut self, from: i64, to: i64) {
         self.events.push(Event::ClockStepped { from_slot: from, to_slot: to });
+        if self.tx_enabled || self.tune_pending {
+            self.tx_enabled = false;
+            self.tune_pending = false;
+            self.events.push(Event::TxFault(format!(
+                "transmission disarmed: the system clock stepped (slot {from} -> {to}); check the clock, then arm again"
+            )));
+        }
     }
 
     /// A decoded slot.

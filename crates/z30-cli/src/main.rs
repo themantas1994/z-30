@@ -517,6 +517,9 @@ fn receive(cfg: z30_engine::config::Config, capture: Option<PathBuf>) -> Result<
         }
         std::thread::sleep(Duration::from_millis(100));
     }
-    handle.shutdown();
+    let report = handle.shutdown();
+    if !report.release_confirmed() {
+        eprintln!("-- PTT release NOT confirmed at shutdown ({:?}): the radio may still be keyed", report.ptt);
+    }
     Ok(())
 }

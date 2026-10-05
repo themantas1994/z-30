@@ -192,15 +192,20 @@ Two things beyond the gate's own check:
 - **The watchdog deadline is armed once per transmission**, on the released → keyed transition;
   a second `key()` does not extend it (F-44; `ptt_release.rs::f44_a_second_key_does_not_re_arm_the_watchdog`).
 - **Halt means halt.** The GUI's HALT calls `RuntimeHandle::halt()` directly: it silences the
-  output and requests the PTT release from the calling thread without blocking (a line another
-  thread is driving is left `ReleasePending` for that thread and the watchdog), and raises a flag
+  output and requests the PTT release without blocking (a line another thread is driving is left
+  `ReleasePending` for that thread and the watchdog), and raises a flag
   the control loop acts on at its next tick to disarm and abandon the transmission. It no longer
   goes through the bounded command queue, which a control thread blocked in `timedatectl`, SQLite
   or a slow key could leave full, so a HALT could be dropped while the transmitter stayed keyed
   (F-16; `tx_runtime.rs::rt_halt_is_not_delayed_by_a_blocked_control_thread`,
   `rt_halt_releases_the_ptt_even_while_the_control_thread_is_stuck_in_the_output`,
   `rt_halt_while_keyed_stops_the_audio_releases_the_line_at_once_and_disarms`,
-  `ptt_release.rs::f16_a_halt_while_the_driver_is_busy_never_blocks_…`). For the same reason the
+  `ptt_release.rs::f16_a_halt_while_the_driver_is_busy_never_blocks_…`). The output it silences
+  is the current one: a recovered output is a new stream, and the stop taken at start-up used to
+  flush the dead one (review M-1; `rt_halt_after_an_output_recovery_still_silences_the_live_output_from_the_calling_thread`).
+  The release itself is driven on a short-lived thread, so a rigctld waiting out its timeouts no
+  longer freezes the window during an emergency (review L-1;
+  `rt_halt_does_not_wait_for_a_slow_release_driver`). For the same reason the
   OS clock-status query (`timedatectl`) runs on a thread of its own and the SQLite logbook on a
   logbook thread, never on the control thread. The engine's own halts (`HaltTx`, `EnableTx(false)`,
   a new configuration) still arrive through the command queue and end a keyed transmission there
@@ -265,8 +270,20 @@ Each defends against a different failure. Do not merge them.
    GUI, a SIGINT/SIGTERM/SIGHUP (and Windows console-close) handler all call
    `emergency_release_all`, which releases every live line in the process with a bounded wait
    (`crates/z30-engine/tests/emergency.rs`, `p5`,
-   `ptt_panic.rs::f06_the_panic_hook_releases_a_keyed_line_when_another_thread_panics`). A line it
-   cannot reach is left `ReleasePending` for the watchdog.
+   `ptt_panic.rs::f06_the_panic_hook_releases_a_keyed_line_when_another_thread_panics`). In a
+   running station a line it cannot reach is left `ReleasePending` for the watchdog. On a
+   termination signal the process exits next, so no watchdog will run: the GUI's handler retries
+   for about a second and prints "PTT release NOT confirmed before exit" if the line never
+   confirmed (review M-2).
+   Stopping the runtime (exit, or a new audio, PTT or rig setting) retries an unconfirmed release
+   for up to 2 s (`SHUTDOWN_RELEASE_WAIT_MS`) and reports the outcome (`ShutdownReport`). The GUI
+   does not apply hardware settings while the line is keyed or pending, does not start a new
+   runtime after an unconfirmed shutdown, and refuses the first close of the window with a warning;
+   CAT PTT, like serial and CM108, commands a release when it is opened, so a new runtime never
+   assumes a line it did not command (`tx_runtime.rs::m2_shutdown_retries_an_unconfirmed_release_and_says_so_when_it_stays_unconfirmed`,
+   `rigctld::tests::f17_the_cat_ptt_connection_is_open_and_released_before_the_first_key`,
+   `m2_a_rigctld_that_refuses_the_start_up_release_is_not_a_working_ptt`). The GUI behaviour is
+   checked by inspection only (there is no GUI test harness).
 4. **Hardware.** Serial RTS/DTR are dropped by the OS when the port closes, even after SIGKILL.
 
 What no software layer can cover is SIGKILL or a power cut to the computer while a **CAT- or

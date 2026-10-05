@@ -25,7 +25,7 @@ use z30_engine::qso::QsoRecord;
 use z30_engine::rig::{Reading, PTT_SETTLE_MS};
 use z30_engine::runtime::{
     self, AudioInput, AudioOutput, LogSink, OutputStopper, RigControl, RigPollSchedule, RuntimeHandle, RuntimeParts, WallClock,
-    MIN_POLL_INTERVAL_MS, PTT_LEAD_SEC,
+    MIN_POLL_INTERVAL_MS, PTT_LEAD_SEC, SHUTDOWN_RELEASE_WAIT_MS,
 };
 use z30_engine::slots::slot_start;
 
@@ -76,12 +76,17 @@ impl WallClock for Time {
 
 // ------------------------------------------------------------------------------------ fakes
 
-struct NoAudioIn;
-impl AudioInput for NoAudioIn {
+/// No audio, unless a test queues blocks (to make the receive timeline see a clock step).
+#[derive(Clone, Default)]
+struct AudioIn(Arc<Mutex<std::collections::VecDeque<AudioBlock>>>);
+impl AudioInput for AudioIn {
     fn sample_rate(&self) -> u32 {
         RATE
     }
     fn next_block(&mut self, _t: Duration) -> Result<Option<AudioBlock>, String> {
+        if let Some(b) = self.0.lock().unwrap().pop_front() {
+            return Ok(Some(b));
+        }
         std::thread::sleep(Duration::from_millis(5));
         Ok(None)
     }
@@ -99,6 +104,8 @@ struct Line {
     key_takes_ms: Arc<AtomicU64>,
     /// While held by the test, `set(true)` blocks (a hung driver on the control thread).
     key_gate: Arc<Mutex<()>>,
+    /// A release takes this long in real time (rigctld waiting out its timeouts).
+    release_takes_real_ms: Arc<AtomicU64>,
 }
 
 impl PttLine for Line {
@@ -110,7 +117,10 @@ impl PttLine for Line {
                 self.fail_keys.fetch_sub(1, Ordering::SeqCst);
                 return Err(PttError("the interface refused the key (test)".into()));
             }
-        } else if self.fail_releases.load(Ordering::SeqCst) > 0 {
+        } else if self.release_takes_real_ms.load(Ordering::SeqCst) > 0 {
+            std::thread::sleep(Duration::from_millis(self.release_takes_real_ms.load(Ordering::SeqCst)));
+        }
+        if !keyed && self.fail_releases.load(Ordering::SeqCst) > 0 {
             self.fail_releases.fetch_sub(1, Ordering::SeqCst);
             return Err(PttError("rigctld: timed out (test)".into()));
         }
@@ -157,11 +167,20 @@ struct Out {
     /// While held by the test, `play` blocks (the control thread stuck in the output driver).
     play_gate: Arc<Mutex<()>>,
     stopped_from_any_thread: Arc<AtomicUsize>,
+    /// Bumped by each successful `recover`: like a reopened cpal stream, a stop taken from an
+    /// earlier generation reaches a dead stream and silences nothing (review M-1).
+    generation: Arc<AtomicUsize>,
 }
 
 impl Out {
     fn new(time: &Time) -> Self {
-        Out { time: time.clone(), st: Arc::default(), play_gate: Arc::default(), stopped_from_any_thread: Arc::default() }
+        Out {
+            time: time.clone(),
+            st: Arc::default(),
+            play_gate: Arc::default(),
+            stopped_from_any_thread: Arc::default(),
+            generation: Arc::default(),
+        }
     }
     fn plays(&self) -> Vec<(u64, usize)> {
         self.st.lock().unwrap().plays.clone()
@@ -213,6 +232,7 @@ impl AudioOutput for Out {
         let mut st = self.st.lock().unwrap();
         if st.recover_ok {
             st.failure = None;
+            self.generation.fetch_add(1, Ordering::SeqCst);
             Ok(())
         } else {
             Err("still unplugged (test)".into())
@@ -220,7 +240,11 @@ impl AudioOutput for Out {
     }
     fn stopper(&self) -> Option<OutputStopper> {
         let (st, n, time) = (self.st.clone(), self.stopped_from_any_thread.clone(), self.time.clone());
+        let (generation, mine) = (self.generation.clone(), self.generation.load(Ordering::SeqCst));
         Some(Arc::new(move || {
+            if generation.load(Ordering::SeqCst) != mine {
+                return; // the stream this stop belonged to was replaced
+            }
             n.fetch_add(1, Ordering::SeqCst);
             // Never blocks on the output's own lock for long: the test's lock is only held briefly.
             let mut st = st.lock().unwrap();
@@ -280,6 +304,7 @@ struct Station {
     rig_dial: Arc<AtomicU64>,
     rt: Option<RuntimeHandle>,
     events: Vec<Event>,
+    audio_in: AudioIn,
 }
 
 impl Station {
@@ -291,10 +316,11 @@ impl Station {
         let rig_dial = Arc::new(AtomicU64::new(14_076_000));
         let rig: Option<Box<dyn RigControl>> =
             with_rig.then(|| Box::new(Rig { time: time.clone(), reads: rig_reads.clone(), dial: rig_dial.clone() }) as Box<dyn RigControl>);
+        let audio_in = AudioIn::default();
         let rt = runtime::start(
             cfg,
             RuntimeParts {
-                input: Box::new(NoAudioIn),
+                input: Box::new(audio_in.clone()),
                 output: Box::new(out.clone()),
                 rig,
                 ptt: Box::new(line.clone()),
@@ -305,7 +331,7 @@ impl Station {
                 tx_unavailable: None,
             },
         );
-        Station { time, line, out, rig_reads, rig_dial, rt: Some(rt), events: Vec::new() }
+        Station { time, line, out, rig_reads, rig_dial, rt: Some(rt), events: Vec::new(), audio_in }
     }
 
     fn start() -> Station {
@@ -400,7 +426,8 @@ impl Station {
 impl Drop for Station {
     fn drop(&mut self) {
         if let Some(rt) = self.rt.take() {
-            rt.shutdown();
+            // Not asserted here: a failing test is already unwinding through this.
+            let _ = rt.shutdown();
         }
     }
 }
@@ -468,6 +495,26 @@ fn rt_halt_while_keyed_stops_the_audio_releases_the_line_at_once_and_disarms() {
     st.time.set_utc(slot_start(SLOT + 2) + 1.0);
     st.settle();
     assert_eq!(st.line.keys().len(), 1, "{:?}", st.line.changes());
+}
+
+#[test]
+fn rt_halt_does_not_wait_for_a_slow_release_driver() {
+    // Review L-1: HALT drove the release on the calling (GUI) thread, so a rigctld waiting out
+    // its timeouts froze the window, HALT button included, during an emergency.
+    let mut st = Station::start();
+    st.send(Command::CallCq);
+    st.key_slot(SLOT);
+    st.start_audio(SLOT);
+    st.time.set_utc(slot_start(SLOT) + 5.0);
+    st.settle();
+    st.line.release_takes_real_ms.store(600, Ordering::SeqCst);
+    let t = Instant::now();
+    st.rt().halt();
+    assert!(t.elapsed() < Duration::from_millis(100), "halt() waited {:?} for the driver", t.elapsed());
+    assert!(st.out.stopped_from_any_thread.load(Ordering::SeqCst) >= 1, "the output is still silenced synchronously");
+    st.wait("the release, driven elsewhere", |s| !s.line.keyed());
+    st.wait("the outcome", |s| s.outcome(SLOT).is_some());
+    assert!(matches!(st.outcome(SLOT), Some(TxOutcome::Aborted(_))));
 }
 
 #[test]
@@ -618,6 +665,89 @@ fn rt_an_output_failure_while_keyed_stops_releases_refuses_and_recovers() {
     st.key_slot(SLOT + 4);
     st.start_audio(SLOT + 4);
     assert_eq!(st.out.plays().len(), 2);
+}
+
+#[test]
+fn rt_halt_after_an_output_recovery_still_silences_the_live_output_from_the_calling_thread() {
+    // Review M-1: a recovered output is a new stream. A stop taken once at start-up flushed the
+    // dead one, so after a single glitch HALT left the frame playing (and a VOX radio keyed)
+    // until the control thread got round to it.
+    let mut st = Station::start();
+    st.out.st.lock().unwrap().failure = Some("device unplugged (test)".into());
+    st.wait("the refusal", |s| s.blockers().iter().any(|b| b.contains("audio output failed")));
+    st.out.st.lock().unwrap().recover_ok = true;
+    st.time.add_ms(6_000);
+    st.wait("the recovery", |s| s.events.iter().any(|e| matches!(e, Event::Audio(m) if m.contains("reopened"))));
+    assert_eq!(st.out.generation.load(Ordering::SeqCst), 1);
+    st.settle();
+    st.send(Command::CallCq);
+    st.key_slot(SLOT + 2);
+    st.start_audio(SLOT + 2);
+    st.time.set_utc(slot_start(SLOT + 2) + 5.0);
+    st.settle();
+    let before = st.out.stopped_from_any_thread.load(Ordering::SeqCst);
+    st.rt().halt();
+    // Synchronously, inside halt(): not at the control thread's next tick.
+    assert!(
+        st.out.stopped_from_any_thread.load(Ordering::SeqCst) > before,
+        "HALT flushed the stream that was replaced, not the one playing"
+    );
+    st.wait("the outcome", |s| s.outcome(SLOT + 2).is_some());
+    assert!(matches!(st.outcome(SLOT + 2), Some(TxOutcome::Aborted(_))));
+}
+
+#[test]
+fn m2_shutdown_retries_an_unconfirmed_release_and_says_so_when_it_stays_unconfirmed() {
+    // Review M-2: shutdown used to try the release once, discard the result and drop the
+    // controller, so a settings change or closing the window abandoned a pending release.
+    let mut st = Station::start();
+    st.send(Command::CallCq);
+    st.key_slot(SLOT);
+    st.line.fail_releases.store(3, Ordering::SeqCst);
+    let report = st.rt.take().unwrap().shutdown();
+    assert!(report.release_confirmed(), "three refusals are retried within the shutdown window: {report:?}");
+    assert!(report.release_failures >= 3, "{report:?}");
+    assert!(!st.line.keyed());
+
+    let mut st = Station::start();
+    st.send(Command::CallCq);
+    st.key_slot(SLOT);
+    st.line.fail_releases.store(usize::MAX, Ordering::SeqCst);
+    let t = Instant::now();
+    let report = st.rt.take().unwrap().shutdown();
+    assert!(t.elapsed() < Duration::from_millis(SHUTDOWN_RELEASE_WAIT_MS + 2_000), "bounded: {:?}", t.elapsed());
+    assert_eq!(report.ptt, PttState::ReleasePending, "{report:?}");
+    assert!(!report.release_confirmed() && report.release_failures > 0 && report.last_release_error.is_some(), "{report:?}");
+    assert!(st.line.keyed(), "the fake hardware is still keyed, and the report says so");
+}
+
+#[test]
+fn l5_a_clock_step_during_a_transmission_aborts_it_and_disarms() {
+    // Review L-5: the frame's end is timed on the wall clock, so a backward step mid-frame held
+    // the line keyed with the audio finished until the 40 s watchdog, and the step was only a
+    // message. Now the transmission is aborted and the station disarmed.
+    let mut st = Station::start();
+    st.send(Command::CallCq);
+    st.key_slot(SLOT);
+    st.start_audio(SLOT);
+    st.time.set_utc(slot_start(SLOT) + 5.0);
+    st.settle();
+    let at = slot_start(SLOT) + 5.0;
+    let n = RATE as usize / 10;
+    let block = |first: u64, utc: f64| AudioBlock { first_index: first, samples: vec![0.0; n], capture_utc: utc };
+    {
+        let mut q = st.audio_in.0.lock().unwrap();
+        q.push_back(block(0, at));
+        q.push_back(block(n as u64, at + 0.1 - 120.0));
+    }
+    st.wait("the step", |s| s.events.iter().any(|e| matches!(e, Event::ClockStepped { .. })));
+    st.wait("the outcome", |s| s.outcome(SLOT).is_some());
+    assert!(matches!(st.outcome(SLOT), Some(TxOutcome::Aborted(ref r)) if r.contains("clock")), "{:?}", st.outcome(SLOT));
+    st.wait("the release", |s| !s.line.keyed());
+    assert!(st.faults().iter().any(|f| f.contains("clock stepped")), "{:?}", st.faults());
+    st.time.set_utc(slot_start(SLOT + 2) + 1.0);
+    st.settle();
+    assert_eq!(st.line.keys().len(), 1, "keyed again after the step: {:?}", st.line.changes());
 }
 
 #[test]

@@ -281,6 +281,28 @@ fn f22_the_plan_carries_exactly_what_the_gate_checked() {
 }
 
 #[test]
+fn l5_a_clock_step_disarms_transmission_until_the_operator_arms_again() {
+    // Review L-5: after a step the sequencer and the transmit timeline see slot numbers again
+    // (or skip them); the step was only reported, so an armed station kept transmitting on it.
+    for arm in [Command::CallCq, Command::Tune] {
+        let mut e = Engine::new(config());
+        e.apply(arm.clone(), 0);
+        e.on_clock_stepped(100, 96);
+        assert!(e.plan_tx(98, 0).is_none(), "{arm:?}: planned after the clock stepped");
+        let ev = e.take_events();
+        assert!(ev.iter().any(|x| matches!(x, Event::ClockStepped { from_slot: 100, to_slot: 96 })), "{ev:?}");
+        assert!(ev.iter().any(|x| matches!(x, Event::TxFault(m) if m.contains("clock stepped"))), "{ev:?}");
+        // Arming again is the operator's decision, and works.
+        e.apply(arm, 0);
+        assert!(e.plan_tx(98, 0).is_some());
+    }
+    // Not armed: the step is reported, nothing else.
+    let mut e = Engine::new(config());
+    e.on_clock_stepped(100, 104);
+    assert!(!e.take_events().iter().any(|x| matches!(x, Event::TxFault(_))));
+}
+
+#[test]
 fn f49_tune_is_the_one_modulators_unmodulated_carrier_at_the_span_centre() {
     let mut e = Engine::new(config());
     e.apply(Command::Tune, 0);

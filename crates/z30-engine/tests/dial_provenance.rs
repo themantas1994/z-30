@@ -274,7 +274,7 @@ mod runtime_path {
         std::thread::sleep(Duration::from_millis(300));
         let snap = handle.snapshot.load();
         let out = (snap.dial_commanded, snap.dial_hz);
-        handle.shutdown();
+        assert!(handle.shutdown().release_confirmed());
         out
     }
 

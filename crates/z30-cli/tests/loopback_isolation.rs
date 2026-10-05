@@ -89,6 +89,64 @@ fn paths_in(code: &str) -> Vec<String> {
     out
 }
 
+/// Every path a `use` declaration brings in, with grouped imports expanded:
+/// `use a::{b::{c}, d as e};` gives `a::b::c` and `a::d`. Without this, `paths_in` saw only
+/// `a::` before the brace, so `use z30_engine::{runtime::{start}};` and a bare `start(...)` passed
+/// the allowlist (post-remediation review I-2).
+fn use_paths(code: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    for chunk in code.split(';') {
+        let Some(start) = chunk.lines().position(|l| {
+            let t = l.trim_start();
+            t.starts_with("use ") || t.starts_with("pub use ") || t.starts_with("pub(crate) use ")
+        }) else {
+            continue;
+        };
+        let stmt: String = chunk.lines().skip(start).collect::<Vec<_>>().join(" ");
+        let tree = stmt.trim().trim_start_matches("pub(crate) ").trim_start_matches("pub ").trim_start_matches("use ");
+        expand_use("", &tree.split_whitespace().collect::<Vec<_>>().join(" "), &mut out);
+    }
+    out
+}
+
+fn expand_use(prefix: &str, tree: &str, out: &mut Vec<String>) {
+    let tree = tree.trim();
+    match tree.find('{') {
+        Some(open) => {
+            let close = tree.rfind('}').expect("unbalanced braces in a use declaration");
+            let head = format!("{prefix}{}", tree[..open].trim());
+            let (mut depth, mut from) = (0, open + 1);
+            for (i, c) in tree.char_indices().take(close).skip(open + 1) {
+                match c {
+                    '{' => depth += 1,
+                    '}' => depth -= 1,
+                    ',' if depth == 0 => {
+                        expand_use(&head, &tree[from..i], out);
+                        from = i + 1;
+                    }
+                    _ => {}
+                }
+            }
+            expand_use(&head, &tree[from..close], out);
+        }
+        None if !tree.is_empty() => {
+            let name = tree.split(" as ").next().unwrap().trim();
+            let full = format!("{prefix}{name}");
+            out.push(full.strip_suffix("::self").unwrap_or(&full).to_string());
+        }
+        None => {}
+    }
+}
+
+#[test]
+fn grouped_imports_are_expanded_before_the_allowlist_sees_them() {
+    let code = "use z30_engine::{runtime::{start}};\nuse a::b::{c, d::{e, f as g}, self};\nfn x() {\n    use std::fmt::Write;\n}";
+    let p = use_paths(code);
+    for want in ["z30_engine::runtime::start", "a::b::c", "a::b::d::e", "a::b::d::f", "a::b", "std::fmt::Write"] {
+        assert!(p.iter().any(|x| x == want), "{want} missing from {p:?}");
+    }
+}
+
 #[test]
 fn the_software_loopback_reaches_only_an_allowlist_of_crates_and_items() {
     // 2026-09-28 audit F-08 (TX-08): the deny-list above missed `crate::audio_loopback::run`, a
@@ -100,7 +158,7 @@ fn the_software_loopback_reaches_only_an_allowlist_of_crates_and_items() {
     const ROOTS: [&str; 8] = ["std", "rand", "rustfft", "serde_json", "z30_dsp", "z30_protocol", "z30_channel", "z30_engine"];
     const ENGINE: [&str; 3] = ["z30_engine::pipeline", "z30_engine::slots", "z30_engine::runtime::frame_audio"];
     const CRATE: [&str; 1] = ["crate::version_text"];
-    for p in paths_in(code) {
+    for p in paths_in(code).into_iter().chain(use_paths(code)) {
         let root = p.split("::").next().unwrap();
         let ok = match root {
             "crate" => CRATE.contains(&p.as_str()),
@@ -117,6 +175,7 @@ fn the_software_loopback_reaches_only_an_allowlist_of_crates_and_items() {
     }
     // The allowlist check itself must see the imports (it would pass vacuously on an empty file).
     assert!(paths_in(code).iter().any(|p| p == "z30_engine::runtime::frame_audio"));
+    assert!(use_paths(code).iter().any(|p| p == "z30_engine::pipeline::RxPipeline"), "{:?}", use_paths(code));
 }
 
 #[test]

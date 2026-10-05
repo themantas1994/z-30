@@ -156,7 +156,8 @@ impl SlotScheduler {
         let now_slot = slot_of(newest_utc);
         let next = *self.next_slot.get_or_insert(now_slot);
         // While waiting for `next`, the newest sample lies in slot next-1 or next (the window
-        // closes 25.5 s into it). Anything else is a clock step, not the passage of time.
+        // closes 25.5 s into it); next+1 is also tolerated, so a late or slow pipeline is reported
+        // as missed slots, not as a step. Anything further is a clock step, not the passage of time.
         let next = if now_slot + 1 < next || now_slot > next + 1 {
             out.push(SlotEvent::ClockStepped { from: next, to: now_slot });
             now_slot

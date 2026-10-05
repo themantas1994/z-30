@@ -103,7 +103,12 @@ It is never dropped silently.
 is absorbed: at most a new clock epoch and the one slot straddling it missed. A step that puts
 the clock more than one slot before or after the slot the scheduler is waiting for re-seats the
 scheduler on the slot the clock now reports and says so: `SlotEvent::ClockStepped
-{ from, to }`, shown by the GUI and by `z30 --receive` as `Event::ClockStepped`. After a backward
+{ from, to }`, shown by the GUI and by `z30 --receive` as `Event::ClockStepped`. A step also
+**disarms transmission** and aborts a transmission in progress: the sequencer and the transmit
+timeline count slots on that clock, and a frame's end is timed on it (review L-5;
+`gate_contract::l5_a_clock_step_disarms_transmission_until_the_operator_arms_again`,
+`tx_runtime::l5_a_clock_step_during_a_transmission_aborts_it_and_disarms`). The operator arms
+again once the clock is right; the QSO sequencer's own slot bookkeeping is not reset. After a backward
 step the slots that come round again are decoded again under the new clock; after a forward step
 the skipped slots were never heard and are not decoded (and not listed one by one). Before this
 existed a backward step left the scheduler waiting for a slot in the future and the receiver fell

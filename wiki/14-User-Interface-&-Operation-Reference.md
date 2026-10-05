@@ -52,7 +52,9 @@ logged contacts. Among them:
 - **"PTT watchdog released the transmitter"** (red).
 - **"The system clock stepped ±N s; the receiver moved from slot A to slot B"** (yellow): the
   operating system's clock jumped by more than about a slot and the receiver re-seated itself on
-  the new time ([07](07-RF-Time-Synchronization-Engine.md)).
+  the new time ([07](07-RF-Time-Synchronization-Engine.md)). If transmission was armed it is
+  disarmed, and a transmission in progress is stopped (**"transmission disarmed: the system clock
+  stepped"**, red): check the clock, then arm again.
 - **"Logged …"** appears only after the logbook has actually written the contact.
   **"NOT LOGGED: <call> - <reason>"** (red) means it was not written.
 
@@ -98,7 +100,10 @@ went out complete advances the sequence. After `watchdog_cycles` transmissions w
 
 **Apply and save** writes `config.toml`. Changing the configuration while transmitting ends the
 transmission: the gate approved the old configuration, not the new one. Changing the audio,
-PTT or rig settings restarts the station (PTT is released first); with serial RTS/DTR PTT,
+PTT or rig settings restarts the station (PTT is released first). That is refused while the
+station is transmitting or a PTT release is not confirmed: the restart would stop z-30 retrying
+the release. Closing the window in that state is refused once with a warning; closing again exits.
+With serial RTS/DTR PTT,
 reopening the port may briefly key the radio ([06](06-Transceiver-CAT-Control-&-PTT-Wiring.md#ptt-methods)).
 
 ## Logbook

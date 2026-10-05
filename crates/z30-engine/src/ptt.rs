@@ -364,6 +364,23 @@ impl PttController {
         self.shared.release_bounded(ReleaseCause::Emergency, 0)
     }
 
+    /// HALT's release: `request_release_now` on a short-lived thread, so the caller never waits
+    /// for the driver's I/O either. On the GUI thread a hung rigctld held the window, HALT button
+    /// and all, for its timeouts (post-remediation review L-1). The state changes exactly as with
+    /// `request_release_now`; if no thread can be started the release is driven here instead.
+    pub fn request_release_in_background(&self) {
+        if self.state() == PttState::Released {
+            return;
+        }
+        let me = self.clone();
+        let spawned = std::thread::Builder::new().name("z30-ptt-release".into()).spawn(move || {
+            me.request_release_now();
+        });
+        if spawned.is_err() {
+            self.request_release_now();
+        }
+    }
+
     /// Whether the transmitter may be keyed: keyed, or a release not yet confirmed.
     pub fn is_keyed(&self) -> bool {
         self.state() != PttState::Released
