@@ -101,7 +101,14 @@ paired curves. The proposal fixes, before any run:
 1. **The frames.** Benchmark, SNR points (e.g. awgn −24…−22 dB), and replicate set (e.g.
    replicates 0–4, 1000 frames per point). Both sides run with `--per-frame`; the pairing unit
    is (benchmark, point, frame, seed), and the instrument identity must match
-   (`paired_mcnemar.py` refuses otherwise).
+   (`paired_mcnemar.py` refuses otherwise). **Today `paired_mcnemar.py` pairs one replicate at a
+   time** and takes every point in the file as the Holm family; pooling several replicate pairs
+   and restricting the family to the pre-registered points are not implemented (ledger F-82).
+   Until they are, pre-register one replicate with the frame count you need, run it with `--out`
+   (a clean replicate-0 run at or above the publishable size without `--out` takes the commit's
+   published slot), and recompute Holm over the pre-registered points from `--json`'s per-point
+   `mcnemar_exact_p`. Busy-band records share a slot's audio, so their pairs are clustered and
+   McNemar's p-values for `busy` are too small; false decodes are not paired (use `false.json`).
 2. **Acceptance statistic.** At each pre-registered point, the exact two-sided McNemar test over
    the discordant frames; across the points, Holm's step-down correction at the proposal's α
    (default 0.05). A point has moved if its Holm-adjusted p < α, in the direction of the larger

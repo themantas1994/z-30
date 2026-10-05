@@ -119,3 +119,22 @@ def test_the_crossing_bootstrap_is_paired_seeded_and_reproducible(tmp_path):
     # Baseline crosses 50% at -23.0 dB (2/4); the candidate at 3/4 there crosses at -23.5 dB.
     assert r["baseline_crossing_50"] == pytest.approx(-23.0) and r["candidate_crossing_50"] == pytest.approx(-23.5)
     assert r["delta"] == pytest.approx(-0.5) and r["seed"] == 7
+
+
+def test_malformed_input_is_refused_not_miscounted(tmp_path):
+    # Research-engineer review finding 6: "correct": "false" counted as a success, a missing
+    # field was a traceback, a truncated file paired, and unknown flags were ignored.
+    good = write(tmp_path / "a.jsonl", [header()] + frames(BASE))
+    for name, mutate in [("string", lambda r: r.update(correct="false")), ("missing", lambda r: r.pop("correct"))]:
+        recs = frames(CAND)
+        mutate(recs[0])
+        bad = write(tmp_path / f"{name}.jsonl", [header()] + recs)
+        code, _, err = run("paired_mcnemar.py", good, bad)
+        assert code == 2 and "boolean 'correct'" in err, (name, err)
+    short = write(tmp_path / "short.jsonl", [header()] + frames(CAND)[:-1])
+    code, _, err = run("paired_mcnemar.py", short, short)
+    assert code == 2 and "frames per point" in err, err
+    b = write(tmp_path / "b.jsonl", [header()] + frames(CAND))
+    for argv in (["--bootstrap=2000"], ["--json", "--allow-dirty"]):
+        code, _, err = run("paired_mcnemar.py", good, b, *argv)
+        assert code == 2, (argv, err)

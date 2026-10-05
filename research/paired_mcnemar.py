@@ -81,10 +81,28 @@ def read_frames(path):
                 raise PairingError(f"{path}:{n}: a frame record without benchmark/point/frame/seed")
             if key in frames:
                 raise PairingError(f"{path}:{n}: frame {key} recorded twice")
+            # A boolean, nothing else: bool("false") is True, and a missing field was a traceback
+            # (research-engineer review finding 6).
+            if not isinstance(r.get("correct"), bool):
+                raise PairingError(f"{path}:{n}: frame {key} has no boolean 'correct' ({r.get('correct')!r})")
             frames[key] = r
     if header is None:
         raise PairingError(f"{path}: no header line (was it written by z30 --per-frame?)")
     return header, frames
+
+
+def check_counts(path, header, frames):
+    """Every point holds the frames the header declares: two equally truncated files used to pair
+    without complaint (research-engineer review finding 6). Checked after the headers and frame
+    sets, whose own refusals say more."""
+    want = header.get("frames_per_point")
+    if isinstance(want, int):
+        per_point = {}
+        for k in frames:
+            per_point.setdefault(k[1], set()).add(k[2])
+        short = {p: len(s) for p, s in per_point.items() if len(s) != want}
+        if short:
+            raise PairingError(f"{path}: the header declares {want} frames per point, but points {short} hold other counts")
 
 
 def check_headers(ha, hb, allow_dirty):
@@ -171,13 +189,21 @@ def bootstrap(points, draws, seed):
     return out
 
 
+KNOWN_FLAGS = ("--bootstrap", "--bootstrap-seed", "--json", "--allow-dirty")
+
+
 def main(argv):
+    # An unknown or misspelt flag (`--bootstrap=2000`) used to be ignored silently.
+    unknown = [a for a in argv if a.startswith("--") and a not in KNOWN_FLAGS]
+    if unknown:
+        print(f"paired_mcnemar.py: unknown option {unknown[0]} (options: {', '.join(KNOWN_FLAGS)})", file=sys.stderr)
+        return 2
     args = [a for a in argv if not a.startswith("--")]
     opt = {}
     for flag in ("--bootstrap", "--bootstrap-seed", "--json"):
         if flag in argv:
             i = argv.index(flag)
-            if i + 1 >= len(argv):
+            if i + 1 >= len(argv) or argv[i + 1].startswith("--"):
                 print(f"paired_mcnemar.py: {flag} needs a value", file=sys.stderr)
                 return 2
             opt[flag] = argv[i + 1]
@@ -193,6 +219,7 @@ def main(argv):
         hb, fb = read_frames(args[1])
         check_headers(ha, hb, "--allow-dirty" in argv)
         points = pair(fa, fb)
+        check_counts(args[0], ha, fa)
     except (PairingError, OSError) as e:
         print(f"paired_mcnemar.py: refused: {e}", file=sys.stderr)
         return 2
