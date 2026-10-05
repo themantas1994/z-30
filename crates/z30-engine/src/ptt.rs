@@ -154,6 +154,8 @@ struct Shared {
     release_failures: AtomicU64,
     last_release_error: Mutex<Option<String>>,
     limit_ms: u64,
+    /// Set by `PttController::close`: this controller never keys again.
+    closed: AtomicBool,
 }
 
 impl Shared {
@@ -321,6 +323,7 @@ impl PttController {
             release_failures: AtomicU64::new(0),
             last_release_error: Mutex::new(None),
             limit_ms: limit_ms.min(MAX_TX_SECONDS * 1000),
+            closed: AtomicBool::new(false),
         });
         registry().lock().unwrap_or_else(|p| p.into_inner()).push(Arc::downgrade(&shared));
         PttController { shared, clock }
@@ -354,12 +357,14 @@ impl PttController {
             // Released (watchdog, halt, emergency) while this thread waited for the line.
             return Err(PttError("the transmitter was released before the key was sent".into()));
         }
-        if NO_MORE_KEYS.load(Ordering::SeqCst) {
+        // Read after the state went KEYED (SeqCst), so a `close` either is seen here or happened
+        // after the KEYED store, where the closer's own read of the state sees it.
+        if NO_MORE_KEYS.load(Ordering::SeqCst) || s.closed.load(Ordering::SeqCst) {
             let _ = s.release_locked(&mut line, ReleaseCause::Emergency);
-            return Err(PttError("refusing to key: the process is exiting".into()));
+            return Err(PttError("refusing to key: the process is exiting or the station is stopping".into()));
         }
         let r = Shared::drive(&mut line, true);
-        if r.is_err() || s.state.load(Ordering::SeqCst) != KEYED || NO_MORE_KEYS.load(Ordering::SeqCst) {
+        if r.is_err() || s.state.load(Ordering::SeqCst) != KEYED || NO_MORE_KEYS.load(Ordering::SeqCst) || s.closed.load(Ordering::SeqCst) {
             // A key that never reached the hardware, or one that raced a halt: the release is
             // sent in case the line half-changed, and must itself be confirmed.
             let _ = s.release_locked(&mut line, ReleaseCause::Emergency);
@@ -379,6 +384,16 @@ impl PttController {
     /// the watchdog (50 ms). For HALT: it must not wait behind a hung control thread.
     pub fn request_release_now(&self) -> bool {
         self.shared.release_bounded(ReleaseCause::Emergency, 0)
+    }
+
+    /// This controller never keys again; releases still work. `RuntimeHandle::shutdown` calls it
+    /// before its HALT: a control thread that passed its HALT check just before the flag rose
+    /// could otherwise key after shutdown had read the line released, and its unchecked unkey on
+    /// the way out could leave the line keyed under a "confirmed" report (CTO re-review N-2,
+    /// F-84). With the latch the key is refused, or it landed before shutdown's read, which then
+    /// waits for its release.
+    pub fn close(&self) {
+        self.shared.closed.store(true, Ordering::SeqCst);
     }
 
     /// HALT's release: `request_release_now` on a short-lived thread, so the caller never waits

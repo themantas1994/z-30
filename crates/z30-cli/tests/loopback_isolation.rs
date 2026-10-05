@@ -4,9 +4,9 @@
 //! The 2026-09-24 post-remediation audit (N-04) found that `--loopback-test` played its frame
 //! through the configured sound card past the transmit gate, so a radio on VOX would have
 //! radiated it. The software loopback now lives in `src/loopback.rs` and works on samples in
-//! memory. This test reads that file's code (comments excluded) and fails if anything that can
-//! produce sound, key a line or talk to a rig appears in it - the edit that would reconnect the
-//! loopback to a radio. The hardware test is `src/audio_loopback.rs`, which refuses any
+//! memory. This test parses that file and fails if it names anything outside an allowlist of what
+//! it may reach - the edit that would reconnect the loopback to a radio (something that can
+//! produce sound, key a line or talk to a rig). The hardware test is `src/audio_loopback.rs`, which refuses any
 //! configuration with a PTT method or rig control (its own unit tests).
 
 const FORBIDDEN: [&str; 15] = [
@@ -134,58 +134,16 @@ fn blank_non_code(src: &str) -> String {
 }
 
 #[test]
-fn literals_and_comments_cannot_hide_code_from_the_guard() {
-    // Both of the confirmation re-review's surviving mutants, as source text.
-    let url = blank_non_code("let _u = \"http://\"; let _ = std::net::TcpStream::connect(x);");
-    assert!(paths_in(&url).iter().any(|p| p == "std::net::TcpStream::connect"), "{url}");
-    // Raw strings of every prefix end at their own closing quote, backslash or not (CTO N-6).
-    for prefix in ["r", "br", "cr"] {
-        let raw = blank_non_code(&format!("let _ = {prefix}\"\\\"; std::net::TcpStream::connect(x); let _ = \"\";"));
-        assert!(paths_in(&raw).iter().any(|p| p == "std::net::TcpStream::connect"), "{prefix}: {raw}");
-    }
-    let braces = "fn run() { side() }\n#[cfg(test)]\nmod tests { fn a() { let _ = '{'; } }\nfn side() { let _ = '}'; std::net::x(); }\n";
-    assert!(non_test_code(&blank_non_code(braces)).is_err(), "code after `mod tests` passed as part of it");
-    // Comments go, code survives, lifetimes are code.
+fn the_lexer_blanks_comments_and_literals_and_keeps_code() {
+    // `code_of` feeds the deny-list and the main.rs checks below; the allowlist parses Rust.
     let mixed = blank_non_code("/* a /* nested */ std::net::x */ fn f<'a>(s: &'a str) -> char { let _ = r#\"}\"#; '\\'' } // std::process");
     assert!(!mixed.contains("std::net") && !mixed.contains("std::process"), "{mixed}");
     assert_eq!((mixed.matches('{').count(), mixed.matches('}').count()), (1, 1), "{mixed}");
     assert!(mixed.contains("fn f<'a>(s: &'a str) -> char"), "{mixed}");
-}
-
-/// The code compiled outside tests: everything before the single `#[cfg(test)]`, which must
-/// introduce a `mod tests` running to the end of the file.
-fn non_test_code(full: &str) -> Result<&str, String> {
-    // Exactly one test-only item, `mod tests`, running to the end of the file. Splitting at the
-    // first `#[cfg(test)]` let any test-only item placed earlier hide everything after it (`run()`
-    // included) from every check below (transmit-safety re-review R-2).
-    if full.matches("#[cfg(test)]").count() != 1 {
-        return Err("src/loopback.rs: exactly one #[cfg(test)], the final `mod tests`".into());
+    for prefix in ["r", "br", "cr"] {
+        let raw = blank_non_code(&format!("let _ = {prefix}\"\\\"; std::net::TcpStream::connect(x); let _ = \"\";"));
+        assert!(raw.contains("std::net::TcpStream::connect"), "{prefix}: {raw}");
     }
-    let (code, tests) = full.split_once("#[cfg(test)]").unwrap();
-    let tests = tests.trim_start();
-    if !tests.starts_with("mod tests {") {
-        return Err("the only #[cfg(test)] item must be `mod tests`".into());
-    }
-    let mut depth = 0i32;
-    let mut closed_at = None;
-    for (i, ch) in tests.char_indices() {
-        match ch {
-            '{' => depth += 1,
-            '}' => {
-                depth -= 1;
-                if depth == 0 {
-                    closed_at = Some(i);
-                    break;
-                }
-            }
-            _ => {}
-        }
-    }
-    let closed_at = closed_at.ok_or("`mod tests` is not closed")?;
-    if !tests[closed_at + 1..].trim().is_empty() {
-        return Err("`mod tests` must run to the end of src/loopback.rs: nothing may follow it unchecked".into());
-    }
-    Ok(code)
 }
 
 #[test]
@@ -200,152 +158,249 @@ fn the_software_loopback_has_no_audio_device_ptt_or_rig_control_in_it() {
     }
 }
 
-/// Every path the software loopback's (non-test) code names, as `root::a::b` strings.
-fn paths_in(code: &str) -> Vec<String> {
-    let mut out = Vec::new();
-    let mut cur = String::new();
-    let flush = |cur: &mut String, out: &mut Vec<String>| {
-        let t = cur.trim_matches(':').to_string();
-        if t.contains("::") {
-            out.push(t);
-        }
-        cur.clear();
-    };
-    // String literals are text, not paths (the report names its pipeline in one).
-    let (mut in_str, mut escaped) = (false, false);
-    for c in code.chars() {
-        if in_str {
-            if escaped {
-                escaped = false;
-            } else if c == '\\' {
-                escaped = true;
-            } else if c == '"' {
-                in_str = false;
+// The allowlist. It parses src/loopback.rs as Rust (`syn`) and checks every path, `use` tree,
+// macro invocation (and the tokens inside it), attribute and item outside the final
+// `#[cfg(test)] mod tests`. It replaced a text scanner that each review got round: a test-only
+// item hiding what followed it (re-review R-2), brace and string literals (02c), raw C strings,
+// `extern crate std as Std`, a macro metavariable in a path, spacing and `include !` (02d).
+
+const ROOTS: [&str; 6] = ["rand", "rustfft", "serde_json", "z30_dsp", "z30_protocol", "z30_channel"];
+// `std` by sub-path, not whole: all of `std` admitted `std::net` (a TCP `T 1` to rigctld),
+// `std::process` (`rigctl`, `aplay`) and `std::fs` on a tty, which asserts DTR/RTS when opened
+// (transmit-safety audit T-1). No file-system access at all: main.rs writes the report (R-3).
+// `core` and `alloc` are held to the same list (`core::net` exists).
+const STD: [&str; 7] = ["f64", "f32", "collections", "time", "fmt", "iter", "cmp"];
+const ENGINE: [&str; 3] = ["z30_engine::pipeline", "z30_engine::slots", "z30_engine::runtime::frame_audio"];
+const CRATE: [&str; 1] = ["crate::version_text"];
+const MACROS: [&str; 10] = ["format", "vec", "json", "println", "eprintln", "write", "writeln", "assert", "assert_eq", "matches"];
+const PRIMITIVES: [&str; 14] = ["f32", "f64", "u8", "u16", "u32", "u64", "usize", "i8", "i16", "i32", "i64", "isize", "char", "str"];
+// Names in scope without an import: the prelude's types and variants.
+const PRELUDE: [&str; 10] = ["Self", "Vec", "String", "Option", "Some", "None", "Result", "Ok", "Err", "Box"];
+
+#[derive(Default)]
+struct Guard {
+    /// Names the file declares (types, functions, constants) or imports through a checked `use`.
+    bound: std::collections::HashSet<String>,
+    paths: Vec<String>,
+    bad: Vec<String>,
+}
+
+fn path_string(p: &syn::Path) -> String {
+    p.segments.iter().map(|s| s.ident.to_string()).collect::<Vec<_>>().join("::")
+}
+
+impl Guard {
+    fn use_tree(&mut self, prefix: &str, t: &syn::UseTree) {
+        let join = |a: &str, b: &str| if a.is_empty() { b.to_string() } else { format!("{a}::{b}") };
+        match t {
+            syn::UseTree::Path(p) => self.use_tree(&join(prefix, &p.ident.to_string()), &p.tree),
+            syn::UseTree::Name(n) => {
+                let name = n.ident.to_string();
+                let full = if name == "self" { prefix.to_string() } else { join(prefix, &name) };
+                self.bound.insert(full.rsplit("::").next().unwrap().to_string());
+                self.paths.push(full);
             }
-            continue;
-        }
-        if c == '"' {
-            flush(&mut cur, &mut out);
-            in_str = true;
-            continue;
-        }
-        if c.is_ascii_alphanumeric() || c == '_' || c == ':' {
-            cur.push(c);
-        } else {
-            flush(&mut cur, &mut out);
+            // A renamed import is how `std::net` would come back under another name.
+            syn::UseTree::Rename(r) => {
+                self.bad.push(format!("`use {} as {}`: renamed imports are refused", join(prefix, &r.ident.to_string()), r.rename))
+            }
+            syn::UseTree::Glob(_) => self.bad.push(format!("`use {prefix}::*`: a glob brings in names nothing here checks")),
+            syn::UseTree::Group(g) => g.items.iter().for_each(|i| self.use_tree(prefix, i)),
         }
     }
-    flush(&mut cur, &mut out);
-    out
-}
 
-/// Every path a `use` declaration brings in, with grouped imports expanded:
-/// `use a::{b::{c}, d as e};` gives `a::b::c` and `a::d`. Without this, `paths_in` saw only
-/// `a::` before the brace, so `use z30_engine::{runtime::{start}};` and a bare `start(...)` passed
-/// the allowlist (post-remediation review I-2).
-fn use_paths(code: &str) -> Vec<String> {
-    let mut out = Vec::new();
-    for chunk in code.split(';') {
-        let Some(start) = chunk.lines().position(|l| {
-            let t = l.trim_start();
-            t.starts_with("use ") || t.starts_with("pub use ") || t.starts_with("pub(crate) use ")
-        }) else {
-            continue;
-        };
-        let stmt: String = chunk.lines().skip(start).collect::<Vec<_>>().join(" ");
-        let tree = stmt.trim().trim_start_matches("pub(crate) ").trim_start_matches("pub ").trim_start_matches("use ");
-        expand_use("", &tree.split_whitespace().collect::<Vec<_>>().join(" "), &mut out);
-    }
-    out
-}
-
-fn expand_use(prefix: &str, tree: &str, out: &mut Vec<String>) {
-    let tree = tree.trim();
-    match tree.find('{') {
-        Some(open) => {
-            let close = tree.rfind('}').expect("unbalanced braces in a use declaration");
-            let head = format!("{prefix}{}", tree[..open].trim());
-            let (mut depth, mut from) = (0, open + 1);
-            for (i, c) in tree.char_indices().take(close).skip(open + 1) {
-                match c {
-                    '{' => depth += 1,
-                    '}' => depth -= 1,
-                    ',' if depth == 0 => {
-                        expand_use(&head, &tree[from..i], out);
-                        from = i + 1;
+    /// Every `a::b` run in a macro's tokens (whitespace is not a token, so `std :: net` is
+    /// `std::net`), and any `$`: a metavariable can splice a name into a path no check sees.
+    fn tokens(&mut self, ts: proc_macro2::TokenStream) {
+        use proc_macro2::{Spacing, TokenTree};
+        let toks: Vec<TokenTree> = ts.into_iter().collect();
+        let mut run: Vec<String> = Vec::new();
+        let mut i = 0;
+        while i < toks.len() {
+            match &toks[i] {
+                TokenTree::Ident(id) => {
+                    run.push(id.to_string());
+                    let sep = matches!((toks.get(i + 1), toks.get(i + 2)),
+                        (Some(TokenTree::Punct(a)), Some(TokenTree::Punct(b))) if a.as_char() == ':' && a.spacing() == Spacing::Joint && b.as_char() == ':');
+                    if sep {
+                        i += 3;
+                        continue;
                     }
-                    _ => {}
+                    if run.len() > 1 {
+                        self.paths.push(run.join("::"));
+                    }
+                    run.clear();
                 }
+                TokenTree::Punct(p) => {
+                    if p.as_char() == '$' {
+                        self.bad.push("`$` in a macro invocation".into());
+                    }
+                    run.clear();
+                }
+                TokenTree::Group(g) => {
+                    run.clear();
+                    self.tokens(g.stream());
+                }
+                TokenTree::Literal(_) => run.clear(),
             }
-            expand_use(&head, &tree[from..close], out);
+            i += 1;
         }
-        None if !tree.is_empty() => {
-            let name = tree.split(" as ").next().unwrap().trim();
-            let full = format!("{prefix}{name}");
-            out.push(full.strip_suffix("::self").unwrap_or(&full).to_string());
+    }
+
+    fn check(&self, p: &str) -> bool {
+        let segs: Vec<&str> = p.split("::").collect();
+        if segs.len() < 2 {
+            return true;
         }
-        None => {}
+        let under = |list: &[&str], p: &str| list.iter().any(|a| p == *a || p.starts_with(&format!("{a}::")));
+        match segs[0] {
+            "crate" => CRATE.contains(&p),
+            "std" | "core" | "alloc" => STD.contains(&segs[1]),
+            "super" | "self" => false,
+            "z30_engine" => under(&ENGINE, p),
+            r if ROOTS.contains(&r) || PRIMITIVES.contains(&r) => true,
+            r => self.bound.contains(r) || PRELUDE.contains(&r),
+        }
     }
 }
 
-#[test]
-fn grouped_imports_are_expanded_before_the_allowlist_sees_them() {
-    let code = "use z30_engine::{runtime::{start}};\nuse a::b::{c, d::{e, f as g}, self};\nfn x() {\n    use std::fmt::Write;\n}";
-    let p = use_paths(code);
-    for want in ["z30_engine::runtime::start", "a::b::c", "a::b::d::e", "a::b::d::f", "a::b", "std::fmt::Write"] {
-        assert!(p.iter().any(|x| x == want), "{want} missing from {p:?}");
+impl<'ast> syn::visit::Visit<'ast> for Guard {
+    fn visit_item(&mut self, i: &'ast syn::Item) {
+        match i {
+            syn::Item::ExternCrate(e) => self.bad.push(format!("`extern crate {}`: a crate (or `std`) under another name", e.ident)),
+            syn::Item::Mod(m) => self.bad.push(format!("`mod {}`: its source is not checked", m.ident)),
+            syn::Item::ForeignMod(_) => self.bad.push("an `extern` block".into()),
+            syn::Item::Macro(m) => self.bad.push(format!("item macro `{}!` (macro_rules! included)", path_string(&m.mac.path))),
+            syn::Item::Verbatim(_) => self.bad.push("unparsed item".into()),
+            syn::Item::Use(u) => self.use_tree("", &u.tree),
+            _ => {}
+        }
+        syn::visit::visit_item(self, i);
     }
+    fn visit_path(&mut self, p: &'ast syn::Path) {
+        self.paths.push(path_string(p));
+        syn::visit::visit_path(self, p);
+    }
+    fn visit_macro(&mut self, m: &'ast syn::Macro) {
+        let name = path_string(&m.path);
+        if !MACROS.contains(&name.as_str()) {
+            self.bad.push(format!("macro `{name}!` is not on the list (include!, env! and friends bring in what no check sees)"));
+        }
+        self.tokens(m.tokens.clone());
+        syn::visit::visit_macro(self, m);
+    }
+    fn visit_attribute(&mut self, a: &'ast syn::Attribute) {
+        let name = path_string(a.path());
+        if name == "path" || name == "macro_use" {
+            self.bad.push(format!("`#[{name}]`"));
+        }
+        syn::visit::visit_attribute(self, a);
+    }
+}
+
+/// Everything in `src` (a whole loopback.rs) that the software loopback must not have.
+fn violations(src: &str) -> Vec<String> {
+    use syn::visit::Visit;
+    let file = match syn::parse_file(src) {
+        Ok(f) => f,
+        Err(e) => return vec![format!("does not parse: {e}")],
+    };
+    let mut g = Guard::default();
+    // Exactly one test-only item, `mod tests`, last, under exactly `#[cfg(test)]`: anything else
+    // marked for tests could hide code compiled into the release binary, and `cfg(any(test, ..))`
+    // is compiled into it (R-2, 02d G12).
+    let (tests, items) = match file.items.split_last() {
+        Some((syn::Item::Mod(m), rest))
+            if m.ident == "tests"
+                && m.content.is_some()
+                && m.attrs.len() == 1
+                && m.attrs[0].path().is_ident("cfg")
+                && m.attrs[0].parse_args::<syn::Ident>().is_ok_and(|i| i == "test") =>
+        {
+            (m, rest)
+        }
+        _ => return vec!["the last item must be `#[cfg(test)] mod tests { .. }`, and only it".into()],
+    };
+    let _ = tests;
+    for i in items {
+        match i {
+            syn::Item::Struct(x) => drop(g.bound.insert(x.ident.to_string())),
+            syn::Item::Enum(x) => drop(g.bound.insert(x.ident.to_string())),
+            syn::Item::Type(x) => drop(g.bound.insert(x.ident.to_string())),
+            syn::Item::Trait(x) => drop(g.bound.insert(x.ident.to_string())),
+            syn::Item::Const(x) => drop(g.bound.insert(x.ident.to_string())),
+            syn::Item::Static(x) => drop(g.bound.insert(x.ident.to_string())),
+            syn::Item::Fn(x) => drop(g.bound.insert(x.sig.ident.to_string())),
+            _ => {}
+        }
+    }
+    for a in &file.attrs {
+        g.visit_attribute(a);
+    }
+    for i in items {
+        g.visit_item(i);
+    }
+    let mut bad = std::mem::take(&mut g.bad);
+    for p in &g.paths {
+        if !g.check(p) {
+            bad.push(format!("names `{p}`, which is outside the allowlist of what the software loopback may reach"));
+        }
+    }
+    bad
 }
 
 #[test]
 fn the_software_loopback_reaches_only_an_allowlist_of_crates_and_items() {
     // 2026-09-28 audit F-08 (TX-08): the deny-list above missed `crate::audio_loopback::run`, a
-    // one-line edit that would play the frame through the sound card (mutation LOOP-e). This
-    // guard is an allowlist instead: anything the loopback names outside it fails, whatever it
-    // is called. Adding to the list is a change the transmit-safety review must see.
-    let full = code_of("src/loopback.rs");
-    let code = non_test_code(&full).unwrap_or_else(|e| panic!("{e}"));
-    // Source the checks below cannot see: a `mod m;` loads src/loopback/m.rs, and `#[macro_use]`
-    // brings its macros in unqualified; `#[path]` points a module anywhere (confirmation re-review,
-    // finding 2). `mod tests` is the only module, and it is cfg(test).
-    for m in ["#[macro_use", "#[path", "#![macro_use"] {
-        assert!(!full.contains(m), "src/loopback.rs uses `{m}`, which can bring in code the allowlist cannot see");
+    // one-line edit that would play the frame through the sound card (mutation LOOP-e). Adding
+    // to the lists above is a change the transmit-safety review must see.
+    let src = std::fs::read_to_string(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/loopback.rs")).unwrap();
+    let bad = violations(&src);
+    assert!(bad.is_empty(), "src/loopback.rs:\n  {}", bad.join("\n  "));
+    // The check must see the imports (it would pass vacuously on an empty file).
+    let mut g = Guard::default();
+    syn::visit::Visit::visit_file(&mut g, &syn::parse_file(&src).unwrap());
+    for want in ["z30_engine::pipeline::RxPipeline", "z30_engine::runtime::frame_audio"] {
+        assert!(g.paths.iter().any(|p| p == want), "{want} not seen");
     }
-    assert!(
-        !code.split(|c: char| !(c.is_alphanumeric() || c == '_')).any(|w| w == "mod"),
-        "src/loopback.rs declares a module outside `mod tests`: its source would not be checked"
+}
+
+#[test]
+fn every_way_round_the_allowlist_a_review_found_is_refused() {
+    let wrap = |body: &str, after: &str| {
+        format!("use z30_engine::pipeline::RxPipeline;\npub fn run() {{ {body} }}\n{after}\n#[cfg(test)]\nmod tests {{}}\n")
+    };
+    let net = "std::net::TcpStream::connect(\"192.0.2.1:9\");";
+    let attacks = [
+        ("plain", wrap(net, "")),
+        ("grouped import (I-2)", wrap("start();", "use z30_engine::{runtime::{start}};")),
+        ("std::fs (R-3)", wrap("std::fs::write(\"/dev/ttyUSB0\", \"\");", "")),
+        ("code after mod tests (R-2, 02c)", format!("pub fn run() {{ side(); }}\n#[cfg(test)]\nmod tests {{ fn a() {{ let _ = '{{'; }} }}\nfn side() {{ let _ = '}}'; {net} }}\n")),
+        ("cfg(any(test, ..)) (02d G12)", format!("pub fn run() {{}}\n#[cfg(any(test, not(test)))]\nmod tests {{ pub fn x() {{ {net} }} }}\n")),
+        ("// in a string (02c)", wrap(&format!("let _u = \"http://\"; {net}"), "")),
+        ("raw C string (N-6, 02d G1)", wrap(&format!("let _a = cr#\"x\"y\"#; {net} let _b = cr#\"p\"q\"#;"), "")),
+        ("extern crate as (02d G3)", wrap("Std::net::TcpStream::connect(\"192.0.2.1:9\");", "extern crate std as Std;")),
+        ("macro metavariable (02d G4)", wrap("via!(net);", "macro_rules! via { ($M:ident) => { std::$M::TcpStream::connect(\"192.0.2.1:9\") } }")),
+        ("renamed import in a block (02d G2)", wrap("if true { use std::{net as Net}; Net::TcpStream::connect(\"192.0.2.1:9\"); }", "")),
+        ("spaced path (02d G5)", wrap("std :: net :: TcpStream :: connect(\"192.0.2.1:9\");", "")),
+        ("spaced path in a macro", wrap("let _ = format!(\"{:?}\", std :: net :: TcpStream :: connect(\"192.0.2.1:9\"));", "")),
+        ("include ! (02d G6)", wrap("include ! (\"side.rs\");", "")),
+        ("mod with #[path] (02d G13)", wrap("", "#[macro_use]\n#[path = \"side.rs\"]\nmod side;")),
+        ("core::net", wrap("core::net::Ipv4Addr::LOCALHOST;", "")),
+        ("unbound uppercase root", wrap("Net::TcpStream::connect(\"192.0.2.1:9\");", "")),
+        ("qualified path", wrap("<std::net::TcpStream>::connect(\"192.0.2.1:9\");", "")),
+        ("glob import", wrap("TcpStream::connect(\"192.0.2.1:9\");", "use std::net::*;")),
+        ("audio_loopback", wrap("crate::audio_loopback::run();", "")),
+    ];
+    for (name, src) in &attacks {
+        assert!(!violations(src).is_empty(), "not refused: {name}\n{src}");
+    }
+    // And the guard is not refusing everything: ordinary loopback-shaped code passes.
+    let ok = wrap(
+        "let mut p = RxPipeline::new(48_000); let v: Vec<f64> = Vec::new(); let _ = f64::NAN; let _ = std::f64::consts::PI; let _ = format!(\"{}\", z30_dsp::DSP_RATE_HZ); let _ = Some(Thing::A);",
+        "enum Thing { A }",
     );
-    const ROOTS: [&str; 7] = ["rand", "rustfft", "serde_json", "z30_dsp", "z30_protocol", "z30_channel", "z30_engine"];
-    // `std` by sub-path, not whole: all of `std` admitted `std::net` (a TCP `T 1` to rigctld),
-    // `std::process` (`rigctl`, `aplay`) and `std::fs` on a tty, which asserts DTR/RTS when opened
-    // (transmit-safety audit T-1). No file-system access at all: main.rs writes the report
-    // (re-review R-3).
-    const STD: [&str; 7] = ["std::f64", "std::f32", "std::collections", "std::time", "std::fmt", "std::iter", "std::cmp"];
-    const ENGINE: [&str; 3] = ["z30_engine::pipeline", "z30_engine::slots", "z30_engine::runtime::frame_audio"];
-    const CRATE: [&str; 1] = ["crate::version_text"];
-    for p in paths_in(code).into_iter().chain(use_paths(code)) {
-        let root = p.split("::").next().unwrap();
-        let ok = match root {
-            "crate" => CRATE.contains(&p.as_str()),
-            "std" => STD.iter().any(|a| p == *a || p.starts_with(&format!("{a}::"))),
-            "super" | "self" => false,
-            "z30_engine" => ENGINE.iter().any(|a| p == *a || p.starts_with(&format!("{a}::"))),
-            r if ROOTS.contains(&r) => true,
-            // Primitive types' associated items (`f64::NAN`, `usize::MAX`).
-            "f32" | "f64" | "u8" | "u16" | "u32" | "u64" | "usize" | "i8" | "i16" | "i32" | "i64" | "isize" | "char" | "str" => true,
-            // Paths rooted at a local type or enum (`SlotEvent::Ready`, `Message::parse`) are
-            // names already imported through a checked `use`.
-            r => r.chars().next().is_some_and(|c| c.is_ascii_uppercase()),
-        };
-        assert!(ok, "src/loopback.rs names `{p}`, which is outside the allowlist of what the software loopback may reach");
-    }
-    // Source pulled in by macro is invisible to the path checks: refused outright.
-    for m in ["include!", "include_str!", "include_bytes!"] {
-        assert!(!code.contains(m), "src/loopback.rs uses `{m}`, which can bring in code the allowlist cannot see");
-    }
-    // The allowlist check itself must see the imports (it would pass vacuously on an empty file).
-    assert!(paths_in(code).iter().any(|p| p == "z30_engine::runtime::frame_audio"));
-    assert!(use_paths(code).iter().any(|p| p == "z30_engine::pipeline::RxPipeline"), "{:?}", use_paths(code));
+    assert_eq!(violations(&ok), Vec::<String>::new(), "{ok}");
 }
 
 #[test]
@@ -356,4 +411,12 @@ fn the_cli_runs_the_software_loopback_for_loopback_test_and_the_hardware_one_onl
     assert!(main.contains("write_report_file(p, &text)"), "the loopback report is written through the device-refusing writer");
     assert!(main.contains("audio_loopback::run(&cfg, cli.confirm_no_transmitter"), "--audio-loopback-test must pass through its refusals");
     assert_eq!(main.matches("audio_loopback::run(").count(), 1, "the hardware loopback has exactly one entry point");
+    // The hardware loopback writes its report through the same device-refusing writer, and
+    // `--out` is checked before its refusals and before any device opens (02d finding 1).
+    let hw = code_of("src/audio_loopback.rs");
+    assert!(
+        !hw.contains("std::fs") && !hw.contains("fs::write"),
+        "src/audio_loopback.rs must write its report through crate::write_report_file"
+    );
+    assert!(hw.contains("crate::write_report_file(p, &text)"), "the hardware loopback's report goes through the device-refusing writer");
 }

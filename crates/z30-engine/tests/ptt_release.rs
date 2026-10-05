@@ -268,3 +268,62 @@ fn f15_the_watchdog_never_blocks_on_a_line_another_thread_is_driving() {
     assert!(within(Duration::from_secs(2), || !hw.load(Ordering::SeqCst)));
     assert_eq!(ptt.state(), PttState::Released);
 }
+
+/// A line whose key blocks until the test lets it finish, so the test can act while a key is in
+/// its driver.
+#[derive(Clone, Default)]
+struct GatedLine {
+    log: Arc<Mutex<Vec<bool>>>,
+    hardware_keyed: Arc<Mutex<bool>>,
+    in_key: Arc<AtomicBool>,
+    go: Arc<AtomicBool>,
+}
+
+impl PttLine for GatedLine {
+    fn set(&mut self, keyed: bool) -> Result<PttAck, PttError> {
+        self.log.lock().unwrap().push(keyed);
+        if keyed {
+            self.in_key.store(true, Ordering::SeqCst);
+            while !self.go.load(Ordering::SeqCst) {
+                std::thread::sleep(Duration::from_millis(1));
+            }
+        }
+        *self.hardware_keyed.lock().unwrap() = keyed;
+        Ok(PttAck::Confirmed)
+    }
+
+    fn describe(&self) -> String {
+        "gated".into()
+    }
+}
+
+// CTO re-review N-2 / F-84: a control thread past its HALT check could key after shutdown had
+// read the line released. `close` (called by shutdown before its HALT) refuses any later key.
+#[test]
+fn f84_a_closed_controller_never_drives_a_key() {
+    let line = FlakyLine::default();
+    let ptt = PttController::new(Box::new(line.clone()), Arc::new(VirtualClock::default()));
+    ptt.close();
+    assert!(ptt.key().is_err(), "a closed controller keyed");
+    assert!(!line.log.lock().unwrap().contains(&true), "the line was driven keyed: {:?}", line.log.lock().unwrap());
+    assert!(!hw(&line));
+    assert_eq!(ptt.state(), PttState::Released);
+}
+
+#[test]
+fn f84_a_key_in_its_driver_when_the_controller_closes_is_released_before_it_returns() {
+    let line = GatedLine::default();
+    let ptt = PttController::new(Box::new(line.clone()), Arc::new(VirtualClock::default()));
+    let p2 = ptt.clone();
+    let keyer = std::thread::spawn(move || p2.key());
+    let t0 = Instant::now();
+    while !line.in_key.load(Ordering::SeqCst) {
+        assert!(t0.elapsed() < Duration::from_secs(5), "the key never reached the line");
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    ptt.close();
+    line.go.store(true, Ordering::SeqCst);
+    assert!(keyer.join().unwrap().is_err(), "a key that finished after close reported success");
+    assert!(!*line.hardware_keyed.lock().unwrap(), "left keyed: {:?}", line.log.lock().unwrap());
+    assert_eq!(ptt.state(), PttState::Released);
+}

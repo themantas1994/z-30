@@ -253,6 +253,15 @@ fn run(cli: &Cli, config_path: &Path) -> Result<(), String> {
         }
         return if pass { Ok(()) } else { Err("software loopback FAILED (see the criteria above)".into()) };
     }
+    // A device as the hardware loopback's report target is refused before anything else: before
+    // its refusals and before it opens a device, so the test plays nothing only to fail at the
+    // end (CTO re-review N-11), and a test of the refusal cannot reach a sound card if the check
+    // is removed - the run then stops at the refusals instead (transmit-safety 02d finding 1).
+    if cli.audio_loopback_test {
+        if let Some(p) = cli.out.as_deref() {
+            check_report_target(p)?;
+        }
+    }
     let cfg = paths::load_config(config_path)?;
     if cli.diagnostics {
         return diagnostics(&cfg, config_path);
@@ -570,7 +579,7 @@ pub(crate) fn check_report_target(p: &Path) -> Result<(), String> {
 /// extension. `metadata` cannot be trusted to say so, so the name decides.
 #[cfg_attr(not(windows), allow(dead_code))]
 fn is_windows_device_path(s: &str) -> bool {
-    if s.starts_with("\\\\.\\") || s.starts_with("\\\\?\\") || s.starts_with("//./") || s.starts_with("//?/") {
+    if s.starts_with("\\\\.\\") || s.starts_with("\\\\?\\") || s.starts_with("\\??\\") || s.starts_with("//./") || s.starts_with("//?/") {
         return true;
     }
     let name = s.rsplit(['\\', '/']).next().unwrap_or(s);
@@ -584,7 +593,17 @@ fn is_windows_device_path(s: &str) -> bool {
 
 #[cfg(test)]
 mod report_target_tests {
-    use super::is_windows_device_path;
+    use super::{is_windows_device_path, write_report_file};
+
+    // The writer refuses a device itself, not only through the early checks in front of it: a
+    // later caller that forgets them is still refused (transmit-safety 02d, mutant B4).
+    // `/dev/null` is a character device like a tty, and harmless if the refusal is ever lost.
+    #[cfg(unix)]
+    #[test]
+    fn the_report_writer_refuses_a_character_device_by_itself() {
+        let e = write_report_file(std::path::Path::new("/dev/null"), "report").unwrap_err();
+        assert!(e.contains("not a regular file"), "{e}");
+    }
 
     // Pure name test, so it runs on every CI platform, not only on Windows where it is used.
     #[test]
@@ -600,6 +619,7 @@ mod report_target_tests {
             r"C:\tmp\COM4.json",
             "out/COM9",
             r"\\.\COM12",
+            r"\??\GLOBALROOT\Device\Serial0",
             r"\\?\C:\x",
             "//./COM3",
             "COM3:",

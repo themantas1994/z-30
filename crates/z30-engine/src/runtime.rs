@@ -415,6 +415,9 @@ impl RuntimeHandle {
         // if another thread holds the line); the watchdog retries too. A release driven here could
         // sit in a wedged driver for as long as the driver liked, which hung the GUI's exit
         // (transmit-safety audit D-4, re-review R-4).
+        // No key after this point, from any thread (F-84): set before HALT and before the read
+        // below, so a key racing the shutdown is refused or is seen by that read.
+        self.ptt.close();
         self.halt();
         self.retry_release_for(Duration::from_millis(SHUTDOWN_RELEASE_WAIT_MS));
         let report = self.report();
@@ -426,19 +429,21 @@ impl RuntimeHandle {
             // are left to end on their own once the driver returns; `stop` is already set.
             self.threads.clear();
             self.watchdog = None;
+            self.drop_elsewhere();
             return report;
         }
         for t in self.threads.drain(..) {
             let _ = t.join();
         }
-        // Read again now that no runtime thread can drive the line. A control thread that passed
-        // its HALT check just before `halt` raised the flag can key after the report above read
-        // `Released`, and its unkey on the way out is unchecked: if the line refused it, the
-        // report said "confirmed" over a line left keyed (CTO re-review N-2).
+        // Read again now that no runtime thread can drive the line: defence in depth behind the
+        // `close` latch above, which already refuses the key in the race this was written for (a
+        // control thread past its HALT check keying after the read above, then an unchecked,
+        // refused unkey on its way out; CTO re-review N-2).
         self.retry_release_for(Duration::from_millis(SHUTDOWN_RELEASE_WAIT_MS));
         let report = self.report();
         if !report.release_confirmed() {
             self.watchdog = None;
+            self.drop_elsewhere();
             return report;
         }
         // The watchdog ends when the last controller does.
@@ -448,6 +453,15 @@ impl RuntimeHandle {
             let _ = w.join();
         }
         report
+    }
+
+    /// Drops the handle, sending its controller to a short-lived thread: holding the last
+    /// reference, the controller's drop drives one more release, which would run on the caller
+    /// - the GUI thread - against shutdown's own rule (transmit-safety 02d, finding 6).
+    fn drop_elsewhere(self) {
+        let ptt = self.ptt.clone();
+        drop(self);
+        let _ = std::thread::Builder::new().name("z30-ptt-last-drop".into()).spawn(move || drop(ptt));
     }
 
     /// Waits up to `window` for the line to be confirmed released, re-requesting the release on
