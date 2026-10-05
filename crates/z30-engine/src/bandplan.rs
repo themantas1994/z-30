@@ -348,7 +348,11 @@ mod tests {
         assert!(!ok(53_999_968.0, UsGeneral));
         assert!(ok(147_999_967.0, UsGeneral));
         assert!(!ok(147_999_968.0, UsGeneral));
-        // 60 m: the channel centres, within the tolerance, and nothing between the channels.
+        // 60 m: the tolerance is the stricter reading's 50 Hz, pinned as a number (the checks below
+        // are relative to the constant, so 59 Hz passed them; transmit-safety audit A-B60-tol).
+        assert_eq!(US_60M_CENTRE_TOLERANCE_HZ, 50.0);
+        assert!(ok(5_332_050.0, UsGeneral) && !ok(5_332_051.0, UsGeneral) && !ok(5_331_949.0, UsGeneral));
+        // The channel centres, within the tolerance, and nothing between the channels.
         for c in US_60M_CHANNEL_CENTRES_HZ {
             assert!(ok(c as f64, UsGeneral), "{c}");
             assert!(ok(c as f64 + US_60M_CENTRE_TOLERANCE_HZ, UsGeneral), "{c}");

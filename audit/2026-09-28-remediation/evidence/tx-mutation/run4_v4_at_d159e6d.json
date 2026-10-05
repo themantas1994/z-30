@@ -1,0 +1,1853 @@
+{
+  "commit": "d159e6d34dc6ff7b3f64c64a208ed4aa16102b89",
+  "toolchain": "rustc 1.95.0, cargo test --release --locked",
+  "mutations": [
+    {
+      "id": "C03-c",
+      "mutation": "own +0.3 s offset applied to UTC",
+      "file": "crates/z30-io/src/wallclock.rs:96",
+      "occurrences": 1,
+      "result": "KILLED",
+      "failing": [
+        "-p z30-io --lib: wallclock::tests::utc_is_the_operating_systems_with_no_offset_applied"
+      ],
+      "tests_run": [
+        "-p z30-io --lib"
+      ]
+    },
+    {
+      "id": "C06-a",
+      "mutation": "verify_round_trip always Ok",
+      "file": "crates/z30-protocol/src/codec.rs:595",
+      "occurrences": 1,
+      "result": "KILLED",
+      "failing": [
+        "-p z30-protocol: every_kind_of_corrupted_frame_is_refused"
+      ],
+      "tests_run": [
+        "-p z30-protocol",
+        "-p z30-engine --test safety"
+      ]
+    },
+    {
+      "id": "C06-b",
+      "mutation": "verify() makes a VerifiedFrame without the round trip",
+      "file": "crates/z30-protocol/src/codec.rs:623",
+      "occurrences": 1,
+      "result": "KILLED",
+      "failing": [
+        "-p z30-protocol: every_kind_of_corrupted_frame_is_refused"
+      ],
+      "tests_run": [
+        "-p z30-protocol",
+        "-p z30-engine --test safety"
+      ]
+    },
+    {
+      "id": "LOG-c",
+      "mutation": "missing received report logged as -16",
+      "file": "crates/z30-engine/src/qso.rs:414",
+      "occurrences": 1,
+      "result": "KILLED",
+      "failing": [
+        "-p z30-engine --lib: qso::tests::the_record_holds_no_report_that_was_not_received_or_sent"
+      ],
+      "tests_run": [
+        "-p z30-engine --test qso_logging",
+        "-p z30-engine --test gate_contract",
+        "-p z30-engine --lib",
+        "-p z30-io --test logbook_integrity",
+        "-p z30-io --lib",
+        "-p z30-engine --test dial_provenance"
+      ]
+    },
+    {
+      "id": "SNR-e",
+      "mutation": "no-estimate SNR floored to -30 dB instead of None",
+      "file": "crates/z30-dsp/src/demod.rs:203",
+      "occurrences": 1,
+      "result": "KILLED",
+      "failing": [
+        "-p z30-dsp --test snr_accuracy: no_signal_is_no_estimate_never_a_floor_value"
+      ],
+      "tests_run": [
+        "-p z30-dsp --test snr_accuracy",
+        "-p z30-engine --test qso_logging"
+      ]
+    },
+    {
+      "id": "G-bw",
+      "mutation": "emission checked at 0 Hz width instead of the measured -40 dB width",
+      "file": "crates/z30-engine/src/txgate.rs:241",
+      "occurrences": 1,
+      "result": "KILLED",
+      "failing": [
+        "-p z30-engine --test gate_contract: f02_the_gate_refuses_us_cw_only_sub_bands_and_off_channel_60m, f05_the_emission_is_checked_at_its_66_hz_width_around_the_tone_span_centre"
+      ],
+      "tests_run": [
+        "-p z30-engine --test safety",
+        "-p z30-engine --test gate_contract",
+        "-p z30-engine --lib",
+        "-p z30-engine --test dial_provenance"
+      ]
+    },
+    {
+      "id": "G-centre",
+      "mutation": "emission centred on tone 0 (tone span ignored)",
+      "file": "crates/z30-engine/src/txgate.rs:238",
+      "occurrences": 1,
+      "result": "KILLED",
+      "failing": [
+        "-p z30-engine --test gate_contract: f02_the_gate_refuses_us_cw_only_sub_bands_and_off_channel_60m, f05_the_emission_is_checked_at_its_66_hz_width_around_the_tone_span_centre, f22_the_plan_carries_exactly_what_the_gate_checked"
+      ],
+      "tests_run": [
+        "-p z30-engine --test safety",
+        "-p z30-engine --test gate_contract",
+        "-p z30-engine --lib",
+        "-p z30-engine --test dial_provenance"
+      ]
+    },
+    {
+      "id": "G-top",
+      "mutation": "upper audio limit checks tone 0 instead of tone 15",
+      "file": "crates/z30-engine/src/txgate.rs:235",
+      "occurrences": 1,
+      "result": "KILLED",
+      "failing": [
+        "-p z30-engine --test gate_contract: f05_the_top_tone_must_stay_below_the_audio_ceiling"
+      ],
+      "tests_run": [
+        "-p z30-engine --test safety",
+        "-p z30-engine --test gate_contract",
+        "-p z30-engine --lib",
+        "-p z30-engine --test dial_provenance"
+      ]
+    },
+    {
+      "id": "G-lsb",
+      "mutation": "emission computed as lower sideband",
+      "file": "crates/z30-engine/src/txgate.rs:238",
+      "occurrences": 1,
+      "result": "KILLED",
+      "failing": [
+        "-p z30-engine --test safety: g3_the_radiated_emission_not_the_dial_is_checked_at_its_edges"
+      ],
+      "tests_run": [
+        "-p z30-engine --test safety",
+        "-p z30-engine --test gate_contract",
+        "-p z30-engine --lib",
+        "-p z30-engine --test dial_provenance"
+      ]
+    },
+    {
+      "id": "G-region",
+      "mutation": "missing region not refused",
+      "file": "crates/z30-engine/src/txgate.rs:220",
+      "occurrences": 1,
+      "result": "KILLED",
+      "failing": [
+        "-p z30-engine --test safety: g2_region_and_class_are_required_and_must_match, g4_fails_closed_and_reports_every_violation"
+      ],
+      "tests_run": [
+        "-p z30-engine --test safety",
+        "-p z30-engine --test gate_contract",
+        "-p z30-engine --lib",
+        "-p z30-engine --test dial_provenance"
+      ]
+    },
+    {
+      "id": "G-stable",
+      "mutation": "an unsettled QSY counts as a contradiction",
+      "file": "crates/z30-engine/src/rig.rs:291",
+      "occurrences": 1,
+      "result": "KILLED",
+      "failing": [
+        "-p z30-engine --test safety: r3_an_unsettled_qsy_is_not_a_refusal"
+      ],
+      "tests_run": [
+        "-p z30-engine --test safety",
+        "-p z30-engine --test gate_contract",
+        "-p z30-engine --lib",
+        "-p z30-engine --test dial_provenance"
+      ]
+    },
+    {
+      "id": "G-res",
+      "mutation": "tuning resolution ignored (1 Hz tolerance)",
+      "file": "crates/z30-engine/src/rig.rs:50",
+      "occurrences": 1,
+      "result": "KILLED",
+      "failing": [
+        "-p z30-engine --test safety: r4_measured_tuning_resolution"
+      ],
+      "tests_run": [
+        "-p z30-engine --test safety",
+        "-p z30-engine --test gate_contract",
+        "-p z30-engine --lib",
+        "-p z30-engine --test dial_provenance"
+      ]
+    },
+    {
+      "id": "G-nan",
+      "mutation": "NaN transmit level not refused",
+      "file": "crates/z30-engine/src/txgate.rs:282",
+      "occurrences": 1,
+      "result": "KILLED",
+      "failing": [
+        "-p z30-engine --test gate_contract: f07_a_nan_level_or_one_above_full_scale_is_refused_not_clamped, f22_the_plan_carries_exactly_what_the_gate_checked"
+      ],
+      "tests_run": [
+        "-p z30-engine --test safety",
+        "-p z30-engine --test gate_contract",
+        "-p z30-engine --lib",
+        "-p z30-engine --test dial_provenance"
+      ]
+    },
+    {
+      "id": "G-over",
+      "mutation": "transmit level above full scale not refused",
+      "file": "crates/z30-engine/src/txgate.rs:282",
+      "occurrences": 1,
+      "result": "KILLED",
+      "failing": [
+        "-p z30-engine --test gate_contract: f07_a_nan_level_or_one_above_full_scale_is_refused_not_clamped"
+      ],
+      "tests_run": [
+        "-p z30-engine --test safety",
+        "-p z30-engine --test gate_contract",
+        "-p z30-engine --lib",
+        "-p z30-engine --test dial_provenance"
+      ]
+    },
+    {
+      "id": "G-hwptt",
+      "mutation": "PTT not configured not refused",
+      "file": "crates/z30-engine/src/txgate.rs:267",
+      "occurrences": 1,
+      "result": "KILLED",
+      "failing": [
+        "-p z30-engine --test safety: h1_no_ptt_method_or_unavailable_tx_hardware_refuses_before_keying"
+      ],
+      "tests_run": [
+        "-p z30-engine --test safety",
+        "-p z30-engine --test gate_contract",
+        "-p z30-engine --lib",
+        "-p z30-engine --test dial_provenance"
+      ]
+    },
+    {
+      "id": "G-hwopen",
+      "mutation": "unavailable TX hardware not refused",
+      "file": "crates/z30-engine/src/txgate.rs:270",
+      "occurrences": 1,
+      "result": "KILLED",
+      "failing": [
+        "-p z30-engine --test safety: h1_no_ptt_method_or_unavailable_tx_hardware_refuses_before_keying"
+      ],
+      "tests_run": [
+        "-p z30-engine --test safety",
+        "-p z30-engine --test gate_contract",
+        "-p z30-engine --lib",
+        "-p z30-engine --test dial_provenance"
+      ]
+    },
+    {
+      "id": "G-relpend",
+      "mutation": "an unconfirmed PTT release not refused by the gate",
+      "file": "crates/z30-engine/src/txgate.rs:273",
+      "occurrences": 1,
+      "result": "KILLED",
+      "failing": [
+        "-p z30-engine --test gate_contract: f22_can_transmit_itself_refuses_missing_or_uncertain_hardware"
+      ],
+      "tests_run": [
+        "-p z30-engine --test safety",
+        "-p z30-engine --test gate_contract",
+        "-p z30-engine --lib",
+        "-p z30-engine --test dial_provenance",
+        "-p z30-engine --test tx_runtime"
+      ]
+    },
+    {
+      "id": "G-dialref",
+      "mutation": "a refused dial not refused by the gate",
+      "file": "crates/z30-engine/src/txgate.rs:276",
+      "occurrences": 1,
+      "result": "KILLED",
+      "failing": [
+        "-p z30-engine --test gate_contract: f22_can_transmit_itself_refuses_missing_or_uncertain_hardware"
+      ],
+      "tests_run": [
+        "-p z30-engine --test safety",
+        "-p z30-engine --test gate_contract",
+        "-p z30-engine --lib",
+        "-p z30-engine --test dial_provenance"
+      ]
+    },
+    {
+      "id": "G-plan",
+      "mutation": "plan_tx trusts only the violation list (a frame request with no frame passes)",
+      "file": "crates/z30-engine/src/engine.rs:541",
+      "occurrences": 1,
+      "result": "SURVIVED",
+      "failing": [],
+      "tests_run": [
+        "-p z30-engine --test safety",
+        "-p z30-engine --test gate_contract",
+        "-p z30-engine --lib",
+        "-p z30-engine --test dial_provenance"
+      ]
+    },
+    {
+      "id": "G-halt",
+      "mutation": "halt commands no longer abandon a planned transmission",
+      "file": "crates/z30-engine/src/engine.rs:298",
+      "occurrences": 1,
+      "result": "KILLED",
+      "failing": [
+        "-p z30-engine --test safety: h2_a_halt_between_plan_and_key_abandons_the_transmission"
+      ],
+      "tests_run": [
+        "-p z30-engine --test safety",
+        "-p z30-engine --test gate_contract",
+        "-p z30-engine --lib",
+        "-p z30-engine --test dial_provenance",
+        "-p z30-engine --test tx_runtime"
+      ]
+    },
+    {
+      "id": "G-hwprob",
+      "mutation": "the engine hands the gate no hardware problems (output fault ignored)",
+      "file": "crates/z30-engine/src/engine.rs:478",
+      "occurrences": 1,
+      "result": "KILLED",
+      "failing": [
+        "-p z30-engine --test safety: h1_no_ptt_method_or_unavailable_tx_hardware_refuses_before_keying"
+      ],
+      "tests_run": [
+        "-p z30-engine --test safety",
+        "-p z30-engine --test gate_contract",
+        "-p z30-engine --lib",
+        "-p z30-engine --test dial_provenance",
+        "-p z30-engine --test tx_runtime"
+      ]
+    },
+    {
+      "id": "B-6m",
+      "mutation": "US 6 m data segment starts at 50.0 MHz (CW-only sub-band cleared)",
+      "file": "crates/z30-engine/src/bandplan.rs:215",
+      "occurrences": 1,
+      "result": "KILLED",
+      "failing": [
+        "-p z30-engine --lib: bandplan::tests::f02_us_cw_only_sub_bands_and_off_channel_60m_are_refused"
+      ],
+      "tests_run": [
+        "-p z30-engine --lib",
+        "-p z30-engine --test gate_contract"
+      ]
+    },
+    {
+      "id": "B-2m",
+      "mutation": "US 2 m data segment starts at 144.0 MHz",
+      "file": "crates/z30-engine/src/bandplan.rs:216",
+      "occurrences": 1,
+      "result": "KILLED",
+      "failing": [
+        "-p z30-engine --lib: bandplan::tests::f02_us_cw_only_sub_bands_and_off_channel_60m_are_refused"
+      ],
+      "tests_run": [
+        "-p z30-engine --lib",
+        "-p z30-engine --test gate_contract"
+      ]
+    },
+    {
+      "id": "B-60c",
+      "mutation": "US 60 m channel centring not enforced (anywhere inside the 2.8 kHz)",
+      "file": "crates/z30-engine/src/bandplan.rs:240",
+      "occurrences": 1,
+      "result": "KILLED",
+      "failing": [
+        "-p z30-engine --lib: bandplan::tests::f02_us_cw_only_sub_bands_and_off_channel_60m_are_refused"
+      ],
+      "tests_run": [
+        "-p z30-engine --lib",
+        "-p z30-engine --test gate_contract"
+      ]
+    },
+    {
+      "id": "N3-sym",
+      "mutation": "tx_audio modulates the verified frame with one data symbol changed",
+      "file": "crates/z30-engine/src/runtime.rs:265",
+      "occurrences": 1,
+      "result": "KILLED",
+      "failing": [
+        "-p z30-engine --test safety: n3_the_transmitted_audio_is_the_verified_frame_and_decodes_as_the_message"
+      ],
+      "tests_run": [
+        "-p z30-engine --test safety",
+        "-p z30-engine --test gate_contract",
+        "-p z30-cli"
+      ]
+    },
+    {
+      "id": "N3-freq",
+      "mutation": "tx_audio transmits 50 Hz above the frequency the gate checked",
+      "file": "crates/z30-engine/src/runtime.rs:277",
+      "occurrences": 1,
+      "result": "KILLED",
+      "failing": [
+        "-p z30-engine --test safety: n3_the_transmitted_audio_is_the_verified_frame_and_decodes_as_the_message"
+      ],
+      "tests_run": [
+        "-p z30-engine --test safety",
+        "-p z30-engine --test gate_contract",
+        "-p z30-cli"
+      ]
+    },
+    {
+      "id": "N3-level",
+      "mutation": "frame_audio no longer limits the level to full scale",
+      "file": "crates/z30-engine/src/runtime.rs:252",
+      "occurrences": 1,
+      "result": "KILLED",
+      "failing": [
+        "-p z30-engine --test gate_contract: f07_the_synthesised_frame_never_exceeds_full_scale"
+      ],
+      "tests_run": [
+        "-p z30-engine --test safety",
+        "-p z30-engine --test gate_contract",
+        "-p z30-cli"
+      ]
+    },
+    {
+      "id": "N3-plvl",
+      "mutation": "tx_audio uses a fixed level instead of the level the gate checked",
+      "file": "crates/z30-engine/src/runtime.rs:277",
+      "occurrences": 1,
+      "result": "KILLED",
+      "failing": [
+        "-p z30-engine --test safety: n3_the_transmitted_audio_is_the_verified_frame_and_decodes_as_the_message"
+      ],
+      "tests_run": [
+        "-p z30-engine --test safety",
+        "-p z30-engine --test gate_contract",
+        "-p z30-cli"
+      ]
+    },
+    {
+      "id": "TUNE-lin",
+      "mutation": "Tune generated as a hand-made sine outside the modulator",
+      "file": "crates/z30-engine/src/runtime.rs:282",
+      "occurrences": 1,
+      "result": "KILLED",
+      "failing": [
+        "-p z30-engine --test gate_contract: f49_tune_is_the_one_modulators_unmodulated_carrier_at_the_span_centre"
+      ],
+      "tests_run": [
+        "-p z30-engine --test gate_contract",
+        "-p z30-engine --test safety"
+      ]
+    },
+    {
+      "id": "P-max",
+      "mutation": "MAX_TX_SECONDS raised to 400",
+      "file": "crates/z30-engine/src/ptt.rs:43",
+      "occurrences": 1,
+      "result": "KILLED",
+      "failing": [
+        "-p z30-engine --test ptt_release: f06_the_transmit_time_limit_is_forty_seconds"
+      ],
+      "tests_run": [
+        "-p z30-engine --test safety",
+        "-p z30-engine --test emergency",
+        "-p z30-engine --test ptt_release",
+        "-p z30-engine --test ptt_panic",
+        "-p z30-engine --lib"
+      ]
+    },
+    {
+      "id": "P-hook",
+      "mutation": "panic hook no longer releases PTT",
+      "file": "crates/z30-engine/src/ptt.rs:294",
+      "occurrences": 1,
+      "result": "KILLED",
+      "failing": [
+        "-p z30-engine --test ptt_panic: f06_the_panic_hook_releases_a_keyed_line_when_another_thread_panics"
+      ],
+      "tests_run": [
+        "-p z30-engine --test safety",
+        "-p z30-engine --test emergency",
+        "-p z30-engine --test ptt_release",
+        "-p z30-engine --test ptt_panic",
+        "-p z30-engine --lib"
+      ]
+    },
+    {
+      "id": "P-drop",
+      "mutation": "Drop of a keyed controller does not release",
+      "file": "crates/z30-engine/src/ptt.rs:507",
+      "occurrences": 1,
+      "result": "KILLED",
+      "failing": [
+        "-p z30-engine --test emergency: p5_emergency_release_and_drop_release_a_keyed_line"
+      ],
+      "tests_run": [
+        "-p z30-engine --test safety",
+        "-p z30-engine --test emergency",
+        "-p z30-engine --test ptt_release",
+        "-p z30-engine --test ptt_panic",
+        "-p z30-engine --lib"
+      ]
+    },
+    {
+      "id": "P-emerg",
+      "mutation": "emergency_release_all releases nothing",
+      "file": "crates/z30-engine/src/ptt.rs:284",
+      "occurrences": 1,
+      "result": "KILLED",
+      "failing": [
+        "-p z30-engine --test emergency: p5_emergency_release_and_drop_release_a_keyed_line"
+      ],
+      "tests_run": [
+        "-p z30-engine --test safety",
+        "-p z30-engine --test emergency",
+        "-p z30-engine --test ptt_release",
+        "-p z30-engine --test ptt_panic",
+        "-p z30-engine --lib"
+      ]
+    },
+    {
+      "id": "P-keyfail",
+      "mutation": "a refused key is not released",
+      "file": "crates/z30-engine/src/ptt.rs:365",
+      "occurrences": 1,
+      "result": "KILLED",
+      "failing": [
+        "-p z30-engine --test safety: z2_a_key_the_hardware_refused_leaves_nothing_keyed"
+      ],
+      "tests_run": [
+        "-p z30-engine --test safety",
+        "-p z30-engine --test emergency",
+        "-p z30-engine --test ptt_release",
+        "-p z30-engine --test ptt_panic",
+        "-p z30-engine --lib"
+      ]
+    },
+    {
+      "id": "P-wdcmp",
+      "mutation": "watchdog fires one tick late (> instead of >=)",
+      "file": "crates/z30-engine/src/ptt.rs:448",
+      "occurrences": 1,
+      "result": "KILLED",
+      "failing": [
+        "-p z30-engine --test safety: p4_the_watchdog_unkeys_at_the_hardware_after_max_tx_seconds, p4c_the_limit_can_never_be_raised"
+      ],
+      "tests_run": [
+        "-p z30-engine --test safety",
+        "-p z30-engine --test emergency",
+        "-p z30-engine --test ptt_release",
+        "-p z30-engine --test ptt_panic",
+        "-p z30-engine --lib"
+      ]
+    },
+    {
+      "id": "P-wdthread",
+      "mutation": "watchdog thread never ticks",
+      "file": "crates/z30-engine/src/ptt.rs:480",
+      "occurrences": 1,
+      "result": "KILLED",
+      "failing": [
+        "-p z30-engine --test safety: p4b_the_watchdog_thread_works_without_the_engine"
+      ],
+      "tests_run": [
+        "-p z30-engine --test safety",
+        "-p z30-engine --test emergency",
+        "-p z30-engine --test ptt_release",
+        "-p z30-engine --test ptt_panic",
+        "-p z30-engine --lib"
+      ]
+    },
+    {
+      "id": "P-clamp",
+      "mutation": "with_limit no longer clamps the limit to MAX_TX_SECONDS",
+      "file": "crates/z30-engine/src/ptt.rs:323",
+      "occurrences": 1,
+      "result": "KILLED",
+      "failing": [
+        "-p z30-engine --test safety: p4c_the_limit_can_never_be_raised"
+      ],
+      "tests_run": [
+        "-p z30-engine --test safety",
+        "-p z30-engine --test emergency",
+        "-p z30-engine --test ptt_release",
+        "-p z30-engine --test ptt_panic",
+        "-p z30-engine --lib"
+      ]
+    },
+    {
+      "id": "P-relflag",
+      "mutation": "F-01 regression: a failed release is recorded as released",
+      "file": "crates/z30-engine/src/ptt.rs:204",
+      "occurrences": 1,
+      "result": "KILLED",
+      "failing": [
+        "-p z30-engine --test ptt_release: f01_drop_releases_a_line_whose_release_is_unconfirmed, f01_a_line_that_cannot_confirm_a_release_cannot_be_keyed_again, f01_a_failed_release_leaves_the_line_possibly_keyed_and_the_watchdog_retries_it, f01_the_background_watchdog_thread_retries_a_failed_release_on_its_own"
+      ],
+      "tests_run": [
+        "-p z30-engine --test safety",
+        "-p z30-engine --test emergency",
+        "-p z30-engine --test ptt_release",
+        "-p z30-engine --test ptt_panic",
+        "-p z30-engine --lib",
+        "-p z30-engine --test tx_runtime"
+      ]
+    },
+    {
+      "id": "P-retry",
+      "mutation": "the watchdog no longer retries an unconfirmed release",
+      "file": "crates/z30-engine/src/ptt.rs:460",
+      "occurrences": 1,
+      "result": "KILLED",
+      "failing": [
+        "-p z30-engine --test ptt_release: f01_a_failed_release_leaves_the_line_possibly_keyed_and_the_watchdog_retries_it, f01_the_background_watchdog_thread_retries_a_failed_release_on_its_own"
+      ],
+      "tests_run": [
+        "-p z30-engine --test safety",
+        "-p z30-engine --test emergency",
+        "-p z30-engine --test ptt_release",
+        "-p z30-engine --test ptt_panic",
+        "-p z30-engine --lib",
+        "-p z30-engine --test tx_runtime"
+      ]
+    },
+    {
+      "id": "P-rekey",
+      "mutation": "a line whose release is unconfirmed can be keyed again",
+      "file": "crates/z30-engine/src/ptt.rs:344",
+      "occurrences": 1,
+      "result": "KILLED",
+      "failing": [
+        "-p z30-engine --test ptt_release: f01_a_line_that_cannot_confirm_a_release_cannot_be_keyed_again"
+      ],
+      "tests_run": [
+        "-p z30-engine --test safety",
+        "-p z30-engine --test emergency",
+        "-p z30-engine --test ptt_release",
+        "-p z30-engine --test ptt_panic",
+        "-p z30-engine --lib"
+      ]
+    },
+    {
+      "id": "P-rearm",
+      "mutation": "F-44 regression: every key re-arms the watchdog deadline",
+      "file": "crates/z30-engine/src/ptt.rs:344",
+      "occurrences": 1,
+      "result": "KILLED",
+      "failing": [
+        "-p z30-engine --test ptt_release: f44_a_second_key_does_not_re_arm_the_watchdog"
+      ],
+      "tests_run": [
+        "-p z30-engine --test safety",
+        "-p z30-engine --test emergency",
+        "-p z30-engine --test ptt_release",
+        "-p z30-engine --test ptt_panic",
+        "-p z30-engine --lib"
+      ]
+    },
+    {
+      "id": "P-unwind",
+      "mutation": "F-15 regression: a driver panic is not caught",
+      "file": "crates/z30-engine/src/ptt.rs:165",
+      "occurrences": 1,
+      "result": "KILLED",
+      "failing": [
+        "-p z30-engine --test ptt_panic: f15_a_panic_inside_set_true_is_released_and_nothing_deadlocks"
+      ],
+      "tests_run": [
+        "-p z30-engine --test safety",
+        "-p z30-engine --test emergency",
+        "-p z30-engine --test ptt_release",
+        "-p z30-engine --test ptt_panic",
+        "-p z30-engine --lib"
+      ]
+    },
+    {
+      "id": "P-wdblock",
+      "mutation": "the watchdog blocks on the line instead of try_lock",
+      "file": "crates/z30-engine/src/ptt.rs:448",
+      "occurrences": 1,
+      "result": "KILLED",
+      "failing": [
+        "-p z30-engine --test ptt_release: f15_the_watchdog_never_blocks_on_a_line_another_thread_is_driving"
+      ],
+      "tests_run": [
+        "-p z30-engine --test safety",
+        "-p z30-engine --test emergency",
+        "-p z30-engine --test ptt_release",
+        "-p z30-engine --test ptt_panic",
+        "-p z30-engine --lib",
+        "-p z30-engine --test tx_runtime"
+      ]
+    },
+    {
+      "id": "P-drivewait",
+      "mutation": "the emergency path waits for a line the current thread is driving",
+      "file": "crates/z30-engine/src/ptt.rs:235",
+      "occurrences": 1,
+      "result": "KILLED",
+      "failing": [
+        "-p z30-engine --test ptt_panic: f15_a_panic_inside_set_true_is_released_and_nothing_deadlocks"
+      ],
+      "tests_run": [
+        "-p z30-engine --test safety",
+        "-p z30-engine --test emergency",
+        "-p z30-engine --test ptt_release",
+        "-p z30-engine --test ptt_panic",
+        "-p z30-engine --lib"
+      ]
+    },
+    {
+      "id": "RT-halt",
+      "mutation": "runtime ignores the engine's halt while planned/keyed",
+      "file": "crates/z30-engine/src/runtime.rs:729",
+      "occurrences": 1,
+      "result": "KILLED",
+      "failing": [
+        "-p z30-engine --test tx_runtime: rt_a_configuration_change_or_queued_halt_while_keyed_ends_the_transmission"
+      ],
+      "tests_run": [
+        "-p z30-engine --test tx_runtime",
+        "-p z30-engine --test safety",
+        "-p z30-engine --test dial_provenance",
+        "-p z30-engine --test live_runtime"
+      ]
+    },
+    {
+      "id": "RT-haltflag",
+      "mutation": "HALT's flag is never acted on by the control loop",
+      "file": "crates/z30-engine/src/runtime.rs:823",
+      "occurrences": 1,
+      "result": "KILLED",
+      "failing": [
+        "-p z30-engine --test tx_runtime: rt_halt_between_plan_and_key_abandons_the_transmission_and_disarms, d1_a_command_queued_before_halt_does_not_rearm_the_station_after_it, rt_halt_after_an_output_recovery_still_silences_the_live_output_from_the_calling_thread, rt_halt_does_not_wait_for_a_slow_release_driver, rt_halt_releases_the_ptt_even_while_the_control_thread_is_stuck_in_the_output, rt_halt_while_keyed_stops_the_audio_releases_the_line_at_once_and_disarms"
+      ],
+      "tests_run": [
+        "-p z30-engine --test tx_runtime",
+        "-p z30-engine --test safety",
+        "-p z30-engine --test dial_provenance",
+        "-p z30-engine --test live_runtime"
+      ]
+    },
+    {
+      "id": "RT-haltptt",
+      "mutation": "HALT does not release the PTT itself (waits for the control thread)",
+      "file": "crates/z30-engine/src/runtime.rs:454",
+      "occurrences": 1,
+      "result": "KILLED",
+      "failing": [
+        "-p z30-engine --test tx_runtime: rt_halt_releases_the_ptt_even_while_the_control_thread_is_stuck_in_the_output"
+      ],
+      "tests_run": [
+        "-p z30-engine --test tx_runtime",
+        "-p z30-engine --test safety",
+        "-p z30-engine --test dial_provenance",
+        "-p z30-engine --test live_runtime"
+      ]
+    },
+    {
+      "id": "RT-haltstop",
+      "mutation": "HALT does not silence the output itself",
+      "file": "crates/z30-engine/src/runtime.rs:453",
+      "occurrences": 1,
+      "result": "KILLED",
+      "failing": [
+        "-p z30-engine --test tx_runtime: rt_halt_after_an_output_recovery_still_silences_the_live_output_from_the_calling_thread, rt_halt_is_not_delayed_by_a_blocked_control_thread, rt_halt_releases_the_ptt_even_while_the_control_thread_is_stuck_in_the_output, rt_halt_while_keyed_stops_the_audio_releases_the_line_at_once_and_disarms, rt_halt_does_not_wait_for_a_slow_release_driver"
+      ],
+      "tests_run": [
+        "-p z30-engine --test tx_runtime",
+        "-p z30-engine --test safety",
+        "-p z30-engine --test dial_provenance",
+        "-p z30-engine --test live_runtime"
+      ]
+    },
+    {
+      "id": "RT-wd",
+      "mutation": "runtime ignores a watchdog release (audio keeps playing, TX not faulted)",
+      "file": "crates/z30-engine/src/runtime.rs:904",
+      "occurrences": 1,
+      "result": "KILLED",
+      "failing": [
+        "-p z30-engine --test tx_runtime: rt_the_watchdog_releases_a_stuck_transmission_and_the_runtime_reports_it"
+      ],
+      "tests_run": [
+        "-p z30-engine --test tx_runtime",
+        "-p z30-engine --test safety",
+        "-p z30-engine --test dial_provenance",
+        "-p z30-engine --test live_runtime"
+      ]
+    },
+    {
+      "id": "RT-keyfail",
+      "mutation": "a refused key still plays the audio",
+      "file": "crates/z30-engine/src/runtime.rs:1008",
+      "occurrences": 1,
+      "result": "KILLED",
+      "failing": [
+        "-p z30-engine --test tx_runtime: rt_a_refused_key_plays_nothing_and_is_reported_failed"
+      ],
+      "tests_run": [
+        "-p z30-engine --test tx_runtime",
+        "-p z30-engine --test safety",
+        "-p z30-engine --test dial_provenance",
+        "-p z30-engine --test live_runtime"
+      ]
+    },
+    {
+      "id": "RT-unkey",
+      "mutation": "end of frame stops audio but does not unkey",
+      "file": "crates/z30-engine/src/runtime.rs:850",
+      "occurrences": 1,
+      "result": "KILLED",
+      "failing": [
+        "-p z30-engine --test tx_runtime: rt_a_failed_play_flushes_the_partial_frame_and_releases, l5_a_clock_step_during_a_transmission_aborts_it_and_disarms, rt_a_frame_the_device_did_not_finish_is_partial_not_complete, rt_a_key_too_slow_for_the_slot_abandons_it_without_audio, f18_no_poll_starts_inside_the_ptt_settle_window_during_a_transmission, rt_a_configuration_change_or_queued_halt_while_keyed_ends_the_transmission, rt_a_frame_is_keyed_played_whole_and_released_in_that_order_and_reported_complete, rt_a_radio_that_moves_off_the_checked_dial_mid_frame_stops_the_transmission, rt_a_slow_key_still_sends_the_whole_frame, rt_an_output_failure_while_keyed_stops_releases_refuses_and_recovers, rt_an_unconfirmed_release_is_a_gate_refusal_while_it_lasts, rt_an_unconfirmed_release_is_reported_blocks_transmission_and_is_retried_until_confirmed"
+      ],
+      "tests_run": [
+        "-p z30-engine --test tx_runtime",
+        "-p z30-engine --test safety",
+        "-p z30-engine --test dial_provenance",
+        "-p z30-engine --test live_runtime"
+      ]
+    },
+    {
+      "id": "RT-relfault",
+      "mutation": "an unconfirmed release is not reported or refused by the runtime",
+      "file": "crates/z30-engine/src/runtime.rs:861",
+      "occurrences": 1,
+      "result": "SURVIVED",
+      "failing": [],
+      "tests_run": [
+        "-p z30-engine --test tx_runtime",
+        "-p z30-engine --test safety",
+        "-p z30-engine --test dial_provenance",
+        "-p z30-engine --test live_runtime"
+      ]
+    },
+    {
+      "id": "RT-outfail",
+      "mutation": "an output failure while keyed is ignored",
+      "file": "crates/z30-engine/src/runtime.rs:912",
+      "occurrences": 1,
+      "result": "KILLED",
+      "failing": [
+        "-p z30-engine --test tx_runtime: rt_an_output_failure_while_keyed_stops_releases_refuses_and_recovers, rt_halt_after_an_output_recovery_still_silences_the_live_output_from_the_calling_thread"
+      ],
+      "tests_run": [
+        "-p z30-engine --test tx_runtime",
+        "-p z30-engine --test safety",
+        "-p z30-engine --test dial_provenance",
+        "-p z30-engine --test live_runtime"
+      ]
+    },
+    {
+      "id": "RT-playstop",
+      "mutation": "a failed play leaves the partial frame queued",
+      "file": "crates/z30-engine/src/runtime.rs:843",
+      "occurrences": 1,
+      "result": "KILLED",
+      "failing": [
+        "-p z30-engine --test tx_runtime: rt_a_failed_play_flushes_the_partial_frame_and_releases, rt_a_frame_is_keyed_played_whole_and_released_in_that_order_and_reported_complete, rt_an_output_failure_while_keyed_stops_releases_refuses_and_recovers, rt_the_watchdog_releases_a_stuck_transmission_and_the_runtime_reports_it"
+      ],
+      "tests_run": [
+        "-p z30-engine --test tx_runtime",
+        "-p z30-engine --test safety",
+        "-p z30-engine --test dial_provenance",
+        "-p z30-engine --test live_runtime"
+      ]
+    },
+    {
+      "id": "RT-lateend",
+      "mutation": "F-17 regression: the frame's end fixed before the audio actually starts",
+      "file": "crates/z30-engine/src/runtime.rs:233",
+      "occurrences": 1,
+      "result": "KILLED",
+      "failing": [
+        "-p z30-engine --test tx_runtime: rt_a_slow_key_still_sends_the_whole_frame"
+      ],
+      "tests_run": [
+        "-p z30-engine --test tx_runtime",
+        "-p z30-engine --test safety",
+        "-p z30-engine --test dial_provenance",
+        "-p z30-engine --test live_runtime"
+      ]
+    },
+    {
+      "id": "RT-latekey",
+      "mutation": "a key far past its time is still sent",
+      "file": "crates/z30-engine/src/runtime.rs:213",
+      "occurrences": 1,
+      "result": "KILLED",
+      "failing": [
+        "-p z30-engine --test tx_runtime: rt_a_stalled_control_loop_does_not_key_late"
+      ],
+      "tests_run": [
+        "-p z30-engine --test tx_runtime",
+        "-p z30-engine --test safety",
+        "-p z30-engine --test dial_provenance",
+        "-p z30-engine --test live_runtime"
+      ]
+    },
+    {
+      "id": "RT-latestart",
+      "mutation": "audio far past its time is still started",
+      "file": "crates/z30-engine/src/runtime.rs:224",
+      "occurrences": 1,
+      "result": "KILLED",
+      "failing": [
+        "-p z30-engine --test tx_runtime: rt_a_key_too_slow_for_the_slot_abandons_it_without_audio"
+      ],
+      "tests_run": [
+        "-p z30-engine --test tx_runtime",
+        "-p z30-engine --test safety",
+        "-p z30-engine --test dial_provenance",
+        "-p z30-engine --test live_runtime"
+      ]
+    },
+    {
+      "id": "RT-partial",
+      "mutation": "a frame the device did not finish is reported complete",
+      "file": "crates/z30-engine/src/runtime.rs:1037",
+      "occurrences": 1,
+      "result": "KILLED",
+      "failing": [
+        "-p z30-engine --test tx_runtime: rt_a_frame_the_device_did_not_finish_is_partial_not_complete"
+      ],
+      "tests_run": [
+        "-p z30-engine --test tx_runtime",
+        "-p z30-engine --test safety",
+        "-p z30-engine --test dial_provenance",
+        "-p z30-engine --test live_runtime"
+      ]
+    },
+    {
+      "id": "RT-settle",
+      "mutation": "the rig thread polls inside the PTT settle window",
+      "file": "crates/z30-engine/src/runtime.rs:507",
+      "occurrences": 1,
+      "result": "KILLED",
+      "failing": [
+        "-p z30-engine --test tx_runtime: f18_the_poll_schedule_honours_the_interval_and_the_ptt_settle_window"
+      ],
+      "tests_run": [
+        "-p z30-engine --test tx_runtime",
+        "-p z30-engine --test safety",
+        "-p z30-engine --test dial_provenance",
+        "-p z30-engine --test live_runtime"
+      ]
+    },
+    {
+      "id": "RT-pollint",
+      "mutation": "the rig thread ignores poll_interval_ms",
+      "file": "crates/z30-engine/src/runtime.rs:492",
+      "occurrences": 1,
+      "result": "KILLED",
+      "failing": [
+        "-p z30-engine --test tx_runtime: f18_the_poll_schedule_honours_the_interval_and_the_ptt_settle_window, f18_the_rig_thread_polls_at_the_configured_interval"
+      ],
+      "tests_run": [
+        "-p z30-engine --test tx_runtime",
+        "-p z30-engine --test safety",
+        "-p z30-engine --test dial_provenance",
+        "-p z30-engine --test live_runtime"
+      ]
+    },
+    {
+      "id": "RT-midtx",
+      "mutation": "a rig contradiction during a frame does not stop it",
+      "file": "crates/z30-engine/src/runtime.rs:964",
+      "occurrences": 1,
+      "result": "KILLED",
+      "failing": [
+        "-p z30-engine --test tx_runtime: rt_a_radio_that_moves_off_the_checked_dial_mid_frame_stops_the_transmission"
+      ],
+      "tests_run": [
+        "-p z30-engine --test tx_runtime",
+        "-p z30-engine --test safety",
+        "-p z30-engine --test dial_provenance",
+        "-p z30-engine --test live_runtime",
+        "-p z30-engine --test gate_contract"
+      ]
+    },
+    {
+      "id": "RT-lat",
+      "mutation": "F-47 regression: output latency not read at plan time",
+      "file": "crates/z30-engine/src/runtime.rs:985",
+      "occurrences": 1,
+      "result": "KILLED",
+      "failing": [
+        "-p z30-engine --test tx_runtime: d1_a_command_queued_before_halt_does_not_rearm_the_station_after_it, l5_a_clock_step_during_a_transmission_aborts_it_and_disarms, f18_no_poll_starts_inside_the_ptt_settle_window_during_a_transmission, m2_shutdown_retries_an_unconfirmed_release_and_says_so_when_it_stays_unconfirmed, rt_a_failed_play_flushes_the_partial_frame_and_releases, rt_a_configuration_change_or_queued_halt_while_keyed_ends_the_transmission, rt_a_frame_is_keyed_played_whole_and_released_in_that_order_and_reported_complete, rt_a_frame_the_device_did_not_finish_is_partial_not_complete, rt_a_key_too_slow_for_the_slot_abandons_it_without_audio, rt_a_radio_that_moves_off_the_checked_dial_mid_frame_stops_the_transmission, rt_a_refused_key_plays_nothing_and_is_reported_failed, rt_a_slow_key_still_sends_the_whole_frame, rt_a_stalled_control_loop_does_not_key_late, rt_after_a_refused_key_the_station_can_transmit_again_when_rearmed, rt_an_output_failure_while_keyed_stops_releases_refuses_and_recovers, rt_an_unconfirmed_release_is_a_gate_refusal_while_it_lasts, rt_an_unconfirmed_release_is_reported_blocks_transmission_and_is_retried_until_confirmed, rt_halt_between_plan_and_key_abandons_the_transmission_and_disarms, rt_halt_after_an_output_recovery_still_silences_the_live_output_from_the_calling_thread, rt_halt_does_not_wait_for_a_slow_release_driver, rt_halt_is_not_delayed_by_a_blocked_control_thread, rt_halt_releases_the_ptt_even_while_the_control_thread_is_stuck_in_the_output, rt_halt_while_keyed_stops_the_audio_releases_the_line_at_once_and_disarms, rt_the_watchdog_releases_a_stuck_transmission_and_the_runtime_reports_it, t2_a_clock_step_between_plan_and_key_abandons_the_plan"
+      ],
+      "tests_run": [
+        "-p z30-engine --test tx_runtime",
+        "-p z30-engine --test safety",
+        "-p z30-engine --test dial_provenance",
+        "-p z30-engine --test live_runtime"
+      ]
+    },
+    {
+      "id": "RT-outcome",
+      "mutation": "only-Complete-advances regression: any outcome advances the QSO",
+      "file": "crates/z30-engine/src/engine.rs:591",
+      "occurrences": 1,
+      "result": "KILLED",
+      "failing": [
+        "-p z30-engine --test gate_contract: f17_only_a_complete_closing_frame_completes_and_logs_the_contact"
+      ],
+      "tests_run": [
+        "-p z30-engine --test tx_runtime",
+        "-p z30-engine --test safety",
+        "-p z30-engine --test dial_provenance",
+        "-p z30-engine --test live_runtime",
+        "-p z30-engine --test gate_contract"
+      ]
+    },
+    {
+      "id": "RT-logpersist",
+      "mutation": "Event::Logged emitted before the logbook wrote the contact",
+      "file": "crates/z30-engine/src/engine.rs:408",
+      "occurrences": 1,
+      "result": "KILLED",
+      "failing": [
+        "-p z30-engine --test gate_contract: f17_only_a_complete_closing_frame_completes_and_logs_the_contact, f09_configured_power_is_logged_as_configuration_never_as_measured"
+      ],
+      "tests_run": [
+        "-p z30-engine --test qso_logging",
+        "-p z30-engine --test gate_contract",
+        "-p z30-engine --lib",
+        "-p z30-io --test logbook_integrity",
+        "-p z30-io --lib",
+        "-p z30-engine --test dial_provenance",
+        "-p z30-engine --test tx_runtime"
+      ]
+    },
+    {
+      "id": "RIG-stale",
+      "mutation": "a mode the poll did not read is re-dated as fresh",
+      "file": "crates/z30-engine/src/rig.rs:280",
+      "occurrences": 1,
+      "result": "KILLED",
+      "failing": [
+        "-p z30-engine --test gate_contract: f18_a_mode_the_poll_did_not_read_is_not_re_dated_as_fresh"
+      ],
+      "tests_run": [
+        "-p z30-engine --test safety",
+        "-p z30-engine --test gate_contract",
+        "-p z30-engine --lib",
+        "-p z30-engine --test dial_provenance"
+      ]
+    },
+    {
+      "id": "RIG-refused",
+      "mutation": "a refused set-frequency is not a refusal",
+      "file": "crates/z30-engine/src/engine.rs:199",
+      "occurrences": 1,
+      "result": "KILLED",
+      "failing": [
+        "-p z30-engine --test dial_provenance: p5_a_command_the_radio_refused_is_not_commanded"
+      ],
+      "tests_run": [
+        "-p z30-engine --test safety",
+        "-p z30-engine --test gate_contract",
+        "-p z30-engine --lib",
+        "-p z30-engine --test dial_provenance"
+      ]
+    },
+    {
+      "id": "CLK-step",
+      "mutation": "a clock step is not detected (the receiver goes silent)",
+      "file": "crates/z30-engine/src/slots.rs:161",
+      "occurrences": 1,
+      "result": "KILLED",
+      "failing": [
+        "-p z30-engine --test clock_step: f48_a_backward_step_is_reported_and_decoding_resumes, f48_a_forward_step_is_reported_and_decoding_resumes"
+      ],
+      "tests_run": [
+        "-p z30-engine --test clock_step",
+        "-p z30-engine --test live_runtime",
+        "-p z30-engine --test virtual_clock"
+      ]
+    },
+    {
+      "id": "LOOP-b",
+      "mutation": "audio loopback refusal lets VOX through",
+      "file": "crates/z30-cli/src/audio_loopback.rs:48",
+      "occurrences": 1,
+      "result": "KILLED",
+      "failing": [
+        "-p z30-cli: audio_loopback::tests::it_refuses_every_configuration_that_can_key_a_transmitter_before_opening_a_device"
+      ],
+      "tests_run": [
+        "-p z30-cli"
+      ]
+    },
+    {
+      "id": "LOOP-e",
+      "mutation": "software loopback reaches the sound-card test via crate:: (unreachable at run time)",
+      "file": "crates/z30-cli/src/loopback.rs:153",
+      "occurrences": 1,
+      "result": "KILLED",
+      "failing": [
+        "-p z30-cli: the_software_loopback_reaches_only_an_allowlist_of_crates_and_items, the_software_loopback_has_no_audio_device_ptt_or_rig_control_in_it"
+      ],
+      "tests_run": [
+        "-p z30-cli"
+      ]
+    },
+    {
+      "id": "DIAL-a",
+      "mutation": "a configured dial is logged as commanded",
+      "file": "crates/z30-engine/src/engine.rs:393",
+      "occurrences": 1,
+      "result": "KILLED",
+      "failing": [
+        "-p z30-engine --test dial_provenance: p2_a_configured_dial_with_no_radio_is_logged_as_configuration_not_as_commanded, p5_a_command_the_radio_refused_is_not_commanded, p6_stale_readings_old_acknowledgements_and_defaults_are_not_evidence"
+      ],
+      "tests_run": [
+        "-p z30-engine --test qso_logging",
+        "-p z30-engine --test gate_contract",
+        "-p z30-engine --lib",
+        "-p z30-io --test logbook_integrity",
+        "-p z30-io --lib",
+        "-p z30-engine --test dial_provenance"
+      ]
+    },
+    {
+      "id": "PWR-a",
+      "mutation": "configured TX power logged as measured",
+      "file": "crates/z30-engine/src/engine.rs:405",
+      "occurrences": 1,
+      "result": "KILLED",
+      "failing": [
+        "-p z30-engine --test gate_contract: f09_configured_power_is_logged_as_configuration_never_as_measured"
+      ],
+      "tests_run": [
+        "-p z30-engine --test qso_logging",
+        "-p z30-engine --test gate_contract",
+        "-p z30-engine --lib",
+        "-p z30-io --test logbook_integrity",
+        "-p z30-io --lib",
+        "-p z30-engine --test dial_provenance"
+      ]
+    },
+    {
+      "id": "LOG-p",
+      "mutation": "validate accepts a record with no partner",
+      "file": "crates/z30-engine/src/qso.rs:173",
+      "occurrences": 1,
+      "result": "KILLED",
+      "failing": [
+        "-p z30-engine --test qso_logging: a_record_without_a_partner_or_a_real_utc_time_is_refused"
+      ],
+      "tests_run": [
+        "-p z30-engine --test qso_logging",
+        "-p z30-engine --test gate_contract",
+        "-p z30-engine --lib",
+        "-p z30-io --test logbook_integrity",
+        "-p z30-io --lib",
+        "-p z30-engine --test dial_provenance"
+      ]
+    },
+    {
+      "id": "MIG-level",
+      "mutation": "migration writes a transmit level of 0.5",
+      "file": "crates/z30-io/src/migrate.rs:415",
+      "occurrences": 1,
+      "result": "KILLED",
+      "failing": [
+        "-p z30-io --lib: migrate::tests::f21_legacy_defaults_are_not_migrated_into_a_transmit_capable_station"
+      ],
+      "tests_run": [
+        "-p z30-io --lib"
+      ]
+    },
+    {
+      "id": "MIG-call",
+      "mutation": "migration imports the legacy default callsign",
+      "file": "crates/z30-io/src/migrate.rs:197",
+      "occurrences": 1,
+      "result": "KILLED",
+      "failing": [
+        "-p z30-io --lib: migrate::tests::f21_legacy_defaults_are_not_migrated_into_a_transmit_capable_station"
+      ],
+      "tests_run": [
+        "-p z30-io --lib"
+      ]
+    },
+    {
+      "id": "MIG-ptt",
+      "mutation": "migration imports the legacy default PTT method",
+      "file": "crates/z30-io/src/migrate.rs:334",
+      "occurrences": 1,
+      "result": "KILLED",
+      "failing": [
+        "-p z30-io --lib: migrate::tests::f21_a_tk_only_install_and_a_cm108_without_a_pin_bring_no_invented_settings, migrate::tests::f21_legacy_defaults_are_not_migrated_into_a_transmit_capable_station"
+      ],
+      "tests_run": [
+        "-p z30-io --lib"
+      ]
+    },
+    {
+      "id": "MIG-dial",
+      "mutation": "migration imports the legacy default dial",
+      "file": "crates/z30-io/src/migrate.rs:264",
+      "occurrences": 1,
+      "result": "KILLED",
+      "failing": [
+        "-p z30-io --lib: migrate::tests::f21_a_tk_only_install_and_a_cm108_without_a_pin_bring_no_invented_settings, migrate::tests::f21_legacy_defaults_are_not_migrated_into_a_transmit_capable_station"
+      ],
+      "tests_run": [
+        "-p z30-io --lib"
+      ]
+    },
+    {
+      "id": "DEV-first",
+      "mutation": "an ambiguous audio name resolves to the first match",
+      "file": "crates/z30-io/src/audio.rs:165",
+      "occurrences": 1,
+      "result": "KILLED",
+      "failing": [
+        "-p z30-io --lib: audio::tests::f43_an_ambiguous_device_name_is_refused_not_resolved_to_the_first_match"
+      ],
+      "tests_run": [
+        "-p z30-io --lib"
+      ]
+    },
+    {
+      "id": "CM-first",
+      "mutation": "an empty CM108 path takes the first of several devices",
+      "file": "crates/z30-io/src/cm108.rs:55",
+      "occurrences": 1,
+      "result": "KILLED",
+      "failing": [
+        "-p z30-io --lib --features cm108: cm108::tests::f43_no_cm108_device_is_guessed_when_there_is_more_than_one"
+      ],
+      "tests_run": [
+        "-p z30-io --lib --features cm108"
+      ]
+    },
+    {
+      "id": "OUT-err",
+      "mutation": "the output error callback discards the error",
+      "file": "crates/z30-io/src/audio.rs:280",
+      "occurrences": 1,
+      "result": "KILLED",
+      "failing": [
+        "-p z30-io --lib: audio::tests::f19_an_output_error_is_recorded_and_a_flush_empties_the_ring"
+      ],
+      "tests_run": [
+        "-p z30-io --lib"
+      ]
+    },
+    {
+      "id": "OUT-alloc",
+      "mutation": "the playback callback allocates",
+      "file": "crates/z30-io/src/audio.rs:313",
+      "occurrences": 1,
+      "result": "KILLED",
+      "failing": [
+        "-p z30-io --test callback_alloc: the_playback_callback_never_allocates_and_plays_what_was_queued"
+      ],
+      "tests_run": [
+        "-p z30-io --test callback_alloc"
+      ]
+    },
+    {
+      "id": "CAT-lazy",
+      "mutation": "CAT PTT connects lazily at the first key",
+      "file": "crates/z30-io/src/rigctld.rs:94",
+      "occurrences": 1,
+      "result": "SURVIVED",
+      "failing": [],
+      "tests_run": [
+        "-p z30-io --lib"
+      ]
+    },
+    {
+      "id": "WALL-block",
+      "mutation": "the clock status query runs on the caller's thread",
+      "file": "crates/z30-io/src/wallclock.rs:108",
+      "occurrences": 1,
+      "result": "KILLED",
+      "failing": [
+        "-p z30-io --lib: wallclock::tests::f16_the_status_never_blocks_on_the_os_query, wallclock::tests::l4_a_query_that_stops_answering_turns_an_old_synchronised_into_unknown"
+      ],
+      "tests_run": [
+        "-p z30-io --lib"
+      ]
+    },
+    {
+      "id": "RV-M1",
+      "mutation": "M-1: the HALT stop is not refreshed after an output recovery",
+      "file": "crates/z30-engine/src/runtime.rs:927",
+      "occurrences": 1,
+      "result": "KILLED",
+      "failing": [
+        "-p z30-engine --test tx_runtime: rt_halt_after_an_output_recovery_still_silences_the_live_output_from_the_calling_thread"
+      ],
+      "tests_run": [
+        "-p z30-engine --test tx_runtime",
+        "-p z30-engine --test safety",
+        "-p z30-engine --test dial_provenance",
+        "-p z30-engine --test live_runtime"
+      ]
+    },
+    {
+      "id": "RV-M2-retry",
+      "mutation": "M-2: shutdown tries the release once and gives up",
+      "file": "crates/z30-engine/src/runtime.rs:417",
+      "occurrences": 1,
+      "result": "KILLED",
+      "failing": [
+        "-p z30-engine --test tx_runtime: m2_shutdown_retries_an_unconfirmed_release_and_says_so_when_it_stays_unconfirmed"
+      ],
+      "tests_run": [
+        "-p z30-engine --test tx_runtime",
+        "-p z30-engine --test safety",
+        "-p z30-engine --test dial_provenance",
+        "-p z30-engine --test live_runtime"
+      ]
+    },
+    {
+      "id": "RV-M2-report",
+      "mutation": "M-2: shutdown reports the line released whatever its state",
+      "file": "crates/z30-engine/src/runtime.rs:422",
+      "occurrences": 1,
+      "result": "KILLED",
+      "failing": [
+        "-p z30-engine --test tx_runtime: m2_shutdown_retries_an_unconfirmed_release_and_says_so_when_it_stays_unconfirmed"
+      ],
+      "tests_run": [
+        "-p z30-engine --test tx_runtime",
+        "-p z30-engine --test safety",
+        "-p z30-engine --test dial_provenance",
+        "-p z30-engine --test live_runtime"
+      ]
+    },
+    {
+      "id": "RV-M2-cat",
+      "mutation": "M-2: CAT PTT does not command a release when it is opened",
+      "file": "crates/z30-io/src/rigctld.rs:100",
+      "occurrences": 1,
+      "result": "KILLED",
+      "failing": [
+        "-p z30-io --lib: rigctld::tests::d6_only_rprt_0_confirms_a_cat_key_or_release, rigctld::tests::f17_the_cat_ptt_connection_is_open_and_released_before_the_first_key, rigctld::tests::m2_a_rigctld_that_refuses_the_start_up_release_is_not_a_working_ptt"
+      ],
+      "tests_run": [
+        "-p z30-io --lib"
+      ]
+    },
+    {
+      "id": "RV-L1",
+      "mutation": "L-1: HALT drives the release on the calling thread",
+      "file": "crates/z30-engine/src/runtime.rs:456",
+      "occurrences": 1,
+      "result": "KILLED",
+      "failing": [
+        "-p z30-engine --test tx_runtime: rt_halt_does_not_wait_for_a_slow_release_driver"
+      ],
+      "tests_run": [
+        "-p z30-engine --test tx_runtime",
+        "-p z30-engine --test safety",
+        "-p z30-engine --test dial_provenance",
+        "-p z30-engine --test live_runtime"
+      ]
+    },
+    {
+      "id": "RV-L3",
+      "mutation": "L-3: the applied level passes NaN through",
+      "file": "crates/z30-engine/src/runtime.rs:252",
+      "occurrences": 1,
+      "result": "KILLED",
+      "failing": [
+        "-p z30-engine --lib: runtime::tests::the_applied_level_is_within_full_scale_and_nan_is_silence_on_both_paths"
+      ],
+      "tests_run": [
+        "-p z30-engine --lib"
+      ]
+    },
+    {
+      "id": "RV-L4",
+      "mutation": "L-4: an unanswered clock-status query keeps the old answer as current",
+      "file": "crates/z30-io/src/wallclock.rs:121",
+      "occurrences": 1,
+      "result": "KILLED",
+      "failing": [
+        "-p z30-io --lib: wallclock::tests::l4_a_query_that_stops_answering_turns_an_old_synchronised_into_unknown"
+      ],
+      "tests_run": [
+        "-p z30-io --lib"
+      ]
+    },
+    {
+      "id": "RV-L5-disarm",
+      "mutation": "L-5: a clock step leaves transmission armed",
+      "file": "crates/z30-engine/src/engine.rs:326",
+      "occurrences": 1,
+      "result": "KILLED",
+      "failing": [
+        "-p z30-engine --test gate_contract: l5_a_clock_step_disarms_transmission_until_the_operator_arms_again"
+      ],
+      "tests_run": [
+        "-p z30-engine --test gate_contract",
+        "-p z30-engine --test tx_runtime"
+      ]
+    },
+    {
+      "id": "RV-L5-abort",
+      "mutation": "L-5: a clock step does not abort a frame in progress",
+      "file": "crates/z30-engine/src/runtime.rs:952",
+      "occurrences": 1,
+      "result": "KILLED",
+      "failing": [
+        "-p z30-engine --test tx_runtime: t2_a_clock_step_between_plan_and_key_abandons_the_plan, l5_a_clock_step_during_a_transmission_aborts_it_and_disarms"
+      ],
+      "tests_run": [
+        "-p z30-engine --test tx_runtime",
+        "-p z30-engine --test safety",
+        "-p z30-engine --test dial_provenance",
+        "-p z30-engine --test live_runtime"
+      ]
+    },
+    {
+      "id": "A-SH-nohalt",
+      "mutation": "shutdown does not halt (no output stop, no disarm) before releasing (tx-safety audit)",
+      "file": "crates/z30-engine/src/runtime.rs:411",
+      "occurrences": 1,
+      "result": "SURVIVED",
+      "failing": [],
+      "tests_run": [
+        "-p z30-engine --test tx_runtime",
+        "-p z30-engine --test safety",
+        "-p z30-engine --test dial_provenance",
+        "-p z30-engine --test live_runtime",
+        "-p z30-engine --test clock_step"
+      ]
+    },
+    {
+      "id": "A-SH-confirmed",
+      "mutation": "ShutdownReport::release_confirmed treats ReleasePending as confirmed (tx-safety audit)",
+      "file": "crates/z30-engine/src/runtime.rs:397",
+      "occurrences": 1,
+      "result": "KILLED",
+      "failing": [
+        "-p z30-engine --test tx_runtime: m2_shutdown_retries_an_unconfirmed_release_and_says_so_when_it_stays_unconfirmed"
+      ],
+      "tests_run": [
+        "-p z30-engine --test tx_runtime",
+        "-p z30-engine --test safety",
+        "-p z30-engine --test dial_provenance",
+        "-p z30-engine --test live_runtime",
+        "-p z30-engine --test clock_step"
+      ]
+    },
+    {
+      "id": "A-SH-loop",
+      "mutation": "shutdown stops retrying once the line is ReleasePending (retries only while Keyed) (tx-safety audit)",
+      "file": "crates/z30-engine/src/runtime.rs:417",
+      "occurrences": 1,
+      "result": "KILLED",
+      "failing": [
+        "-p z30-engine --test tx_runtime: m2_shutdown_retries_an_unconfirmed_release_and_says_so_when_it_stays_unconfirmed"
+      ],
+      "tests_run": [
+        "-p z30-engine --test tx_runtime",
+        "-p z30-engine --test safety",
+        "-p z30-engine --test dial_provenance",
+        "-p z30-engine --test live_runtime",
+        "-p z30-engine --test clock_step"
+      ]
+    },
+    {
+      "id": "A-CAT-ignore",
+      "mutation": "rigctld PTT: a refused T 0 at open is ignored (line returned as working) (tx-safety audit)",
+      "file": "crates/z30-io/src/rigctld.rs:100",
+      "occurrences": 1,
+      "result": "KILLED",
+      "failing": [
+        "-p z30-io --lib: rigctld::tests::m2_a_rigctld_that_refuses_the_start_up_release_is_not_a_working_ptt"
+      ],
+      "tests_run": [
+        "-p z30-io --lib"
+      ]
+    },
+    {
+      "id": "A-BG-skippending",
+      "mutation": "HALT's background release skips a line already ReleasePending (tx-safety audit)",
+      "file": "crates/z30-engine/src/ptt.rs:396",
+      "occurrences": 1,
+      "result": "SURVIVED",
+      "failing": [],
+      "tests_run": [
+        "-p z30-engine --test safety",
+        "-p z30-engine --test emergency",
+        "-p z30-engine --test ptt_release",
+        "-p z30-engine --test ptt_panic",
+        "-p z30-engine --lib",
+        "-p z30-engine --test tx_runtime"
+      ]
+    },
+    {
+      "id": "A-BG-noop",
+      "mutation": "HALT's background release thread drives nothing (tx-safety audit)",
+      "file": "crates/z30-engine/src/ptt.rs:402",
+      "occurrences": 1,
+      "result": "KILLED",
+      "failing": [
+        "-p z30-engine --test tx_runtime: rt_halt_releases_the_ptt_even_while_the_control_thread_is_stuck_in_the_output"
+      ],
+      "tests_run": [
+        "-p z30-engine --test safety",
+        "-p z30-engine --test emergency",
+        "-p z30-engine --test ptt_release",
+        "-p z30-engine --test ptt_panic",
+        "-p z30-engine --lib",
+        "-p z30-engine --test tx_runtime"
+      ]
+    },
+    {
+      "id": "A-BD-nomark",
+      "mutation": "release_bounded does not mark ReleasePending before trying the line (tx-safety audit)",
+      "file": "crates/z30-engine/src/ptt.rs:234",
+      "occurrences": 1,
+      "result": "KILLED",
+      "failing": [
+        "-p z30-engine --test ptt_release: f16_a_halt_while_the_driver_is_busy_never_blocks_and_the_line_held_by_a_slow_driver_is_left_pending_and_the_watchdog_releases_it"
+      ],
+      "tests_run": [
+        "-p z30-engine --test safety",
+        "-p z30-engine --test emergency",
+        "-p z30-engine --test ptt_release",
+        "-p z30-engine --test ptt_panic",
+        "-p z30-engine --lib",
+        "-p z30-engine --test tx_runtime"
+      ]
+    },
+    {
+      "id": "A-STOP-stale",
+      "mutation": "M-1: stopper taken from the dead stream (before recover) is installed (tx-safety audit)",
+      "file": "crates/z30-engine/src/runtime.rs:926",
+      "occurrences": 1,
+      "result": "KILLED",
+      "failing": [
+        "-p z30-engine --test tx_runtime: rt_halt_after_an_output_recovery_still_silences_the_live_output_from_the_calling_thread"
+      ],
+      "tests_run": [
+        "-p z30-engine --test tx_runtime",
+        "-p z30-engine --test safety",
+        "-p z30-engine --test dial_provenance",
+        "-p z30-engine --test live_runtime",
+        "-p z30-engine --test clock_step"
+      ]
+    },
+    {
+      "id": "A-CLK-tune",
+      "mutation": "L-5: a clock step leaves a pending Tune armed (tx-safety audit)",
+      "file": "crates/z30-engine/src/engine.rs:327",
+      "occurrences": 1,
+      "result": "KILLED",
+      "failing": [
+        "-p z30-engine --test gate_contract: l5_a_clock_step_disarms_transmission_until_the_operator_arms_again"
+      ],
+      "tests_run": [
+        "-p z30-engine --test gate_contract",
+        "-p z30-engine --test clock_step",
+        "-p z30-engine --test tx_runtime",
+        "-p z30-engine --test safety"
+      ]
+    },
+    {
+      "id": "A-CLK-keyedonly",
+      "mutation": "L-5: a clock step aborts only a keyed transmission, not an accepted plan (tx-safety audit)",
+      "file": "crates/z30-engine/src/runtime.rs:952",
+      "occurrences": 1,
+      "result": "KILLED",
+      "failing": [
+        "-p z30-engine --test tx_runtime: t2_a_clock_step_between_plan_and_key_abandons_the_plan"
+      ],
+      "tests_run": [
+        "-p z30-engine --test tx_runtime",
+        "-p z30-engine --test safety",
+        "-p z30-engine --test dial_provenance",
+        "-p z30-engine --test live_runtime",
+        "-p z30-engine --test clock_step"
+      ]
+    },
+    {
+      "id": "A-ABORT-keyedonly",
+      "mutation": "halt/abort ends only a keyed transmission (a planned one survives check_halt) (tx-safety audit)",
+      "file": "crates/z30-engine/src/runtime.rs:834",
+      "occurrences": 1,
+      "result": "KILLED",
+      "failing": [
+        "-p z30-engine --test tx_runtime: rt_halt_between_plan_and_key_abandons_the_transmission_and_disarms, t2_a_clock_step_between_plan_and_key_abandons_the_plan"
+      ],
+      "tests_run": [
+        "-p z30-engine --test tx_runtime",
+        "-p z30-engine --test safety",
+        "-p z30-engine --test dial_provenance",
+        "-p z30-engine --test live_runtime",
+        "-p z30-engine --test clock_step"
+      ]
+    },
+    {
+      "id": "A-LOG-nonfailed",
+      "mutation": "F-17: Partial/Aborted/WatchdogAborted advance the QSO (only Failed does not) (tx-safety audit)",
+      "file": "crates/z30-engine/src/engine.rs:591",
+      "occurrences": 1,
+      "result": "KILLED",
+      "failing": [
+        "-p z30-engine --test gate_contract: f17_only_a_complete_closing_frame_completes_and_logs_the_contact"
+      ],
+      "tests_run": [
+        "-p z30-engine --test gate_contract",
+        "-p z30-engine --test qso_logging",
+        "-p z30-engine --test safety",
+        "-p z30-engine --lib",
+        "-p z30-engine --test tx_runtime",
+        "-p z30-engine --test dial_provenance"
+      ]
+    },
+    {
+      "id": "A-LOG-tune",
+      "mutation": "a completed TUNE advances the QSO like a frame (tx-safety audit)",
+      "file": "crates/z30-engine/src/engine.rs:588",
+      "occurrences": 1,
+      "result": "KILLED",
+      "failing": [
+        "-p z30-engine --test gate_contract: t3_a_completed_tune_in_place_of_the_rr73_does_not_complete_the_contact"
+      ],
+      "tests_run": [
+        "-p z30-engine --test gate_contract",
+        "-p z30-engine --test qso_logging",
+        "-p z30-engine --test safety",
+        "-p z30-engine --lib",
+        "-p z30-engine --test tx_runtime",
+        "-p z30-engine --test dial_provenance"
+      ]
+    },
+    {
+      "id": "A-CHK-pending",
+      "mutation": "check_hardware never reports a ReleasePending line (only finish does) (tx-safety audit)",
+      "file": "crates/z30-engine/src/runtime.rs:879",
+      "occurrences": 1,
+      "result": "SURVIVED",
+      "failing": [],
+      "tests_run": [
+        "-p z30-engine --test tx_runtime",
+        "-p z30-engine --test safety",
+        "-p z30-engine --test dial_provenance",
+        "-p z30-engine --test live_runtime",
+        "-p z30-engine --test clock_step",
+        "-p z30-engine --test ptt_release"
+      ]
+    },
+    {
+      "id": "A-LATE-key",
+      "mutation": "MAX_KEY_LATENESS_SEC 0.5 -> 1.0 (tx-safety audit)",
+      "file": "crates/z30-engine/src/runtime.rs:109",
+      "occurrences": 1,
+      "result": "KILLED",
+      "failing": [
+        "-p z30-engine --test tx_runtime: rt_a_stalled_control_loop_does_not_key_late"
+      ],
+      "tests_run": [
+        "-p z30-engine --test tx_runtime",
+        "-p z30-engine --test safety",
+        "-p z30-engine --test dial_provenance",
+        "-p z30-engine --test live_runtime",
+        "-p z30-engine --test clock_step"
+      ]
+    },
+    {
+      "id": "A-LATE-start",
+      "mutation": "MAX_START_LATENESS_SEC 0.5 -> 0.7 (tx-safety audit)",
+      "file": "crates/z30-engine/src/runtime.rs:113",
+      "occurrences": 1,
+      "result": "SURVIVED",
+      "failing": [],
+      "tests_run": [
+        "-p z30-engine --test tx_runtime",
+        "-p z30-engine --test safety",
+        "-p z30-engine --test dial_provenance",
+        "-p z30-engine --test live_runtime",
+        "-p z30-engine --test clock_step"
+      ]
+    },
+    {
+      "id": "A-B60-tol",
+      "mutation": "US 60 m centre tolerance 50 -> 59 Hz (tx-safety audit)",
+      "file": "crates/z30-engine/src/bandplan.rs:123",
+      "occurrences": 1,
+      "result": "SURVIVED",
+      "failing": [],
+      "tests_run": [
+        "-p z30-engine --lib",
+        "-p z30-engine --test gate_contract",
+        "-p z30-engine --test safety"
+      ]
+    },
+    {
+      "id": "A-B60-table",
+      "mutation": "US 60 m channel 5358.5 kHz moved to 5357.0 kHz in the table only (tx-safety audit)",
+      "file": "crates/z30-engine/src/bandplan.rs:202",
+      "occurrences": 1,
+      "result": "KILLED",
+      "failing": [
+        "-p z30-engine --lib: bandplan::tests::f02_us_cw_only_sub_bands_and_off_channel_60m_are_refused"
+      ],
+      "tests_run": [
+        "-p z30-engine --lib",
+        "-p z30-engine --test gate_contract",
+        "-p z30-engine --test safety"
+      ]
+    },
+    {
+      "id": "A-MIG-tkpower",
+      "mutation": "migration imports the Tk wizard's default 50 W as configured power (tx-safety audit)",
+      "file": "crates/z30-io/src/migrate.rs:246",
+      "occurrences": 1,
+      "result": "KILLED",
+      "failing": [
+        "-p z30-io --lib: migrate::tests::f21_a_tk_only_install_and_a_cm108_without_a_pin_bring_no_invented_settings"
+      ],
+      "tests_run": [
+        "-p z30-io --lib"
+      ]
+    },
+    {
+      "id": "A-MIG-tkptt",
+      "mutation": "migration imports the Tk wizard's default 'CAT Command' PTT (tx-safety audit)",
+      "file": "crates/z30-io/src/migrate.rs:322",
+      "occurrences": 1,
+      "result": "KILLED",
+      "failing": [
+        "-p z30-io --lib: migrate::tests::f21_a_tk_only_install_and_a_cm108_without_a_pin_bring_no_invented_settings"
+      ],
+      "tests_run": [
+        "-p z30-io --lib"
+      ]
+    },
+    {
+      "id": "A-MIG-cm108pin",
+      "mutation": "migration invents GPIO 3 for a CM108 config with no pin (tx-safety audit)",
+      "file": "crates/z30-io/src/migrate.rs:353",
+      "occurrences": 1,
+      "result": "KILLED",
+      "failing": [
+        "-p z30-io --lib: migrate::tests::f21_a_tk_only_install_and_a_cm108_without_a_pin_bring_no_invented_settings"
+      ],
+      "tests_run": [
+        "-p z30-io --lib"
+      ]
+    },
+    {
+      "id": "A-MIG-dev",
+      "mutation": "migration takes 'Default System Audio Device' as a device name (tx-safety audit)",
+      "file": "crates/z30-io/src/migrate.rs:375",
+      "occurrences": 1,
+      "result": "KILLED",
+      "failing": [
+        "-p z30-io --lib: migrate::tests::f21_legacy_defaults_are_not_migrated_into_a_transmit_capable_station"
+      ],
+      "tests_run": [
+        "-p z30-io --lib"
+      ]
+    },
+    {
+      "id": "A-DEV-dupexact",
+      "mutation": "two devices with the same exact name resolve to the first (tx-safety audit)",
+      "file": "crates/z30-io/src/audio.rs:163",
+      "occurrences": 1,
+      "result": "KILLED",
+      "failing": [
+        "-p z30-io --lib: audio::tests::f43_an_ambiguous_device_name_is_refused_not_resolved_to_the_first_match"
+      ],
+      "tests_run": [
+        "-p z30-io --lib"
+      ]
+    },
+    {
+      "id": "A-LOOP-std",
+      "mutation": "software loopback reaches rigctld via std::net (never executed: env-gated) (tx-safety audit)",
+      "file": "crates/z30-cli/src/loopback.rs:153",
+      "occurrences": 1,
+      "result": "KILLED",
+      "failing": [
+        "-p z30-cli --test loopback_isolation: the_software_loopback_reaches_only_an_allowlist_of_crates_and_items"
+      ],
+      "tests_run": [
+        "-p z30-cli --test loopback_isolation"
+      ]
+    },
+    {
+      "id": "RV2-D1",
+      "mutation": "D-1: an arming command sent before HALT is applied after it",
+      "file": "crates/z30-engine/src/runtime.rs:721",
+      "occurrences": 1,
+      "result": "KILLED",
+      "failing": [
+        "-p z30-engine --test tx_runtime: d1_a_command_queued_before_halt_does_not_rearm_the_station_after_it"
+      ],
+      "tests_run": [
+        "-p z30-engine --test tx_runtime",
+        "-p z30-engine --test safety",
+        "-p z30-engine --test dial_provenance",
+        "-p z30-engine --test live_runtime",
+        "-p z30-engine --test clock_step"
+      ]
+    },
+    {
+      "id": "RV2-D1-stamp",
+      "mutation": "D-1: halt() does not advance the epoch",
+      "file": "crates/z30-engine/src/runtime.rs:451",
+      "occurrences": 1,
+      "result": "KILLED",
+      "failing": [
+        "-p z30-engine --test tx_runtime: d1_a_command_queued_before_halt_does_not_rearm_the_station_after_it"
+      ],
+      "tests_run": [
+        "-p z30-engine --test tx_runtime",
+        "-p z30-engine --test safety",
+        "-p z30-engine --test dial_provenance",
+        "-p z30-engine --test live_runtime",
+        "-p z30-engine --test clock_step"
+      ]
+    },
+    {
+      "id": "RV2-D2",
+      "mutation": "D-2: the exit latch does not stop a key",
+      "file": "crates/z30-engine/src/ptt.rs:357",
+      "occurrences": 1,
+      "result": "KILLED",
+      "failing": [
+        "-p z30-engine --test ptt_exit_latch: d2_after_the_exit_latch_no_line_is_keyed"
+      ],
+      "tests_run": [
+        "-p z30-engine --test ptt_exit_latch",
+        "-p z30-engine --test ptt_release"
+      ]
+    },
+    {
+      "id": "RV2-D6",
+      "mutation": "D-6: any reply confirms a CAT key or release",
+      "file": "crates/z30-io/src/rigctld.rs:112",
+      "occurrences": 1,
+      "result": "KILLED",
+      "failing": [
+        "-p z30-io --lib: rigctld::tests::d6_only_rprt_0_confirms_a_cat_key_or_release"
+      ],
+      "tests_run": [
+        "-p z30-io --lib"
+      ]
+    }
+  ]
+}

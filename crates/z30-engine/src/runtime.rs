@@ -1059,6 +1059,15 @@ mod tests {
     use super::safe_level;
 
     #[test]
+    fn the_key_and_audio_start_lateness_limits_are_half_a_second() {
+        // Pinned as numbers: the runtime tests derive their timings from these constants, so a
+        // limit raised to 0.7 s passed them (transmit-safety audit A-LATE-start). A start later
+        // than this would truncate the frame the slot can hold (F-17).
+        assert_eq!(super::MAX_KEY_LATENESS_SEC, 0.5);
+        assert_eq!(super::MAX_START_LATENESS_SEC, 0.5);
+    }
+
+    #[test]
     fn the_applied_level_is_within_full_scale_and_nan_is_silence_on_both_paths() {
         // Frame and Tune both scale by `safe_level` (review L-3: Tune's bare clamp passed NaN).
         assert_eq!(safe_level(f32::NAN), 0.0);
