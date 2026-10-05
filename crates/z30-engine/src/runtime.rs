@@ -383,7 +383,9 @@ pub const SHUTDOWN_RELEASE_WAIT_MS: u64 = 2_000;
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ShutdownReport {
     /// The controller's state when the runtime stopped: anything but `Released` means the
-    /// radio may still be keyed and nothing in this runtime is retrying any more.
+    /// radio may still be keyed. A thread left wedged in the line's driver keeps its controller,
+    /// and so the watchdog's retries, alive until the driver returns; nothing retries after that,
+    /// and nothing at all once the process exits.
     pub ptt: PttState,
     /// Releases the hardware refused over the runtime's life.
     pub release_failures: u64,
@@ -414,20 +416,8 @@ impl RuntimeHandle {
         // sit in a wedged driver for as long as the driver liked, which hung the GUI's exit
         // (transmit-safety audit D-4, re-review R-4).
         self.halt();
-        let t0 = std::time::Instant::now();
-        let mut last_retry = t0;
-        while self.ptt.state() != PttState::Released && t0.elapsed() < Duration::from_millis(SHUTDOWN_RELEASE_WAIT_MS) {
-            std::thread::sleep(Duration::from_millis(20));
-            if last_retry.elapsed() >= Duration::from_millis(200) {
-                last_retry = std::time::Instant::now();
-                self.ptt.request_release_in_background();
-            }
-        }
-        let report = ShutdownReport {
-            ptt: self.ptt.state(),
-            release_failures: self.ptt.release_failures(),
-            last_release_error: self.ptt.last_release_error(),
-        };
+        self.retry_release_for(Duration::from_millis(SHUTDOWN_RELEASE_WAIT_MS));
+        let report = self.report();
         self.stop.store(true, Ordering::SeqCst);
         if !report.release_confirmed() {
             // A thread may be wedged in the line's driver (it holds the line, which is why the
@@ -441,6 +431,16 @@ impl RuntimeHandle {
         for t in self.threads.drain(..) {
             let _ = t.join();
         }
+        // Read again now that no runtime thread can drive the line. A control thread that passed
+        // its HALT check just before `halt` raised the flag can key after the report above read
+        // `Released`, and its unkey on the way out is unchecked: if the line refused it, the
+        // report said "confirmed" over a line left keyed (CTO re-review N-2).
+        self.retry_release_for(Duration::from_millis(SHUTDOWN_RELEASE_WAIT_MS));
+        let report = self.report();
+        if !report.release_confirmed() {
+            self.watchdog = None;
+            return report;
+        }
         // The watchdog ends when the last controller does.
         let watchdog = self.watchdog.take();
         drop(self);
@@ -448,6 +448,28 @@ impl RuntimeHandle {
             let _ = w.join();
         }
         report
+    }
+
+    /// Waits up to `window` for the line to be confirmed released, re-requesting the release on
+    /// a short-lived thread every 200 ms. Returns at once if it already is.
+    fn retry_release_for(&self, window: Duration) {
+        let t0 = std::time::Instant::now();
+        let mut last_retry = t0;
+        while self.ptt.state() != PttState::Released && t0.elapsed() < window {
+            std::thread::sleep(Duration::from_millis(20));
+            if last_retry.elapsed() >= Duration::from_millis(200) {
+                last_retry = std::time::Instant::now();
+                self.ptt.request_release_in_background();
+            }
+        }
+    }
+
+    fn report(&self) -> ShutdownReport {
+        ShutdownReport {
+            ptt: self.ptt.state(),
+            release_failures: self.ptt.release_failures(),
+            last_release_error: self.ptt.last_release_error(),
+        }
     }
 
     /// HALT: stop transmitting now, from any thread, without waiting for anything.

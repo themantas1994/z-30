@@ -243,6 +243,9 @@ fn run(cli: &Cli, config_path: &Path) -> Result<(), String> {
     }
     if cli.loopback_test {
         // No configuration is read: nothing in it could matter to a test that touches no device.
+        if let Some(p) = cli.out.as_deref() {
+            check_report_target(p)?;
+        }
         let (text, pass) = loopback::run()?;
         println!("{text}");
         if let Some(p) = cli.out.as_deref() {
@@ -529,20 +532,82 @@ fn receive(cfg: z30_engine::config::Config, capture: Option<PathBuf>) -> Result<
     Ok(())
 }
 
-/// Writes the `--loopback-test` report. A character device is refused, judged by `stat` before
-/// anything opens it: on Linux, opening a serial tty asserts DTR and RTS, so
-/// `--out /dev/ttyUSB0` would briefly key a serial-PTT radio from a test that must not be able to
-/// (transmit-safety re-review R-3).
-fn write_report_file(p: &Path, text: &str) -> Result<(), String> {
+/// Writes a loopback test's report, only to a file. A device is refused, judged without
+/// opening it: on Linux, opening a serial tty asserts DTR and RTS, and on Windows opening a COM
+/// port usually raises DTR, so `--out /dev/ttyUSB0` or `--out COM3` would briefly key a
+/// serial-PTT radio from a test that must not be able to (transmit-safety re-review R-3, and its
+/// confirmation's finding 4 for Windows).
+pub(crate) fn write_report_file(p: &Path, text: &str) -> Result<(), String> {
+    check_report_target(p)?;
+    std::fs::write(p, text).map_err(|e| format!("{}: {e}", p.display()))
+}
+
+/// Refuses a report target that is not, or could not become, a regular file. Called before the
+/// test runs as well, so a wrong `--out` fails at once rather than after the test.
+fn check_report_target(p: &Path) -> Result<(), String> {
+    let refuse = || Err(format!("{}: not a regular file; the loopback report is written only to a file", p.display()));
     #[cfg(unix)]
     {
         use std::os::unix::fs::FileTypeExt;
         if let Ok(m) = std::fs::metadata(p) {
             let t = m.file_type();
             if t.is_char_device() || t.is_block_device() || t.is_fifo() || t.is_socket() {
-                return Err(format!("{}: not a regular file; the loopback report is written only to a file", p.display()));
+                return refuse();
             }
         }
     }
-    std::fs::write(p, text).map_err(|e| format!("{}: {e}", p.display()))
+    #[cfg(windows)]
+    {
+        if is_windows_device_path(&p.to_string_lossy()) {
+            return refuse();
+        }
+    }
+    Ok(())
+}
+
+/// A Win32 device namespace path (`\\.\COM3`, `\\?\...`) or a reserved DOS device name (`COM3`,
+/// `nul.json`, `dir\LPT1.txt`): Windows opens the device for these, whatever the directory or
+/// extension. `metadata` cannot be trusted to say so, so the name decides.
+#[cfg_attr(not(windows), allow(dead_code))]
+fn is_windows_device_path(s: &str) -> bool {
+    if s.starts_with("\\\\.\\") || s.starts_with("\\\\?\\") || s.starts_with("//./") || s.starts_with("//?/") {
+        return true;
+    }
+    let name = s.rsplit(['\\', '/']).next().unwrap_or(s);
+    let stem = name.split('.').next().unwrap_or(name).trim_end_matches([' ', ':']).to_ascii_uppercase();
+    matches!(stem.as_str(), "CON" | "PRN" | "AUX" | "NUL" | "CONIN$" | "CONOUT$")
+        || ["COM", "LPT"].iter().any(|d| {
+            stem.strip_prefix(d)
+                .is_some_and(|n| matches!(n, "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9" | "\u{b9}" | "\u{b2}" | "\u{b3}"))
+        })
+}
+
+#[cfg(test)]
+mod report_target_tests {
+    use super::is_windows_device_path;
+
+    // Pure name test, so it runs on every CI platform, not only on Windows where it is used.
+    #[test]
+    fn windows_device_names_and_namespace_paths_are_refused_and_ordinary_files_are_not() {
+        for d in [
+            "COM3",
+            "com1",
+            "LPT2",
+            "NUL",
+            "nul.json",
+            "CON",
+            "AUX.txt",
+            r"C:\tmp\COM4.json",
+            "out/COM9",
+            r"\\.\COM12",
+            r"\\?\C:\x",
+            "//./COM3",
+            "COM3:",
+        ] {
+            assert!(is_windows_device_path(d), "{d} must be refused");
+        }
+        for f in ["report.json", "COM10x.json", "COMMIT.json", r"C:\tmp\loopback.json", "console.json", "LPT.json", "/tmp/com.json"] {
+            assert!(!is_windows_device_path(f), "{f} is an ordinary file name");
+        }
+    }
 }

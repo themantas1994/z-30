@@ -286,9 +286,14 @@ Each defends against a different failure. Do not merge them.
    bound is real: shutdown never drives the line on the calling thread (the release and its
    retries run on short-lived threads), and when the release is not confirmed it does not wait
    for the runtime's threads, one of which may be wedged in the driver (audit D-4, re-review R-4;
-   `tx_runtime::r4_shutdown_returns_within_its_window_even_behind_a_wedged_release_driver`). The GUI
+   `tx_runtime::r4_shutdown_returns_within_its_window_even_behind_a_wedged_release_driver`). When
+   the release is confirmed, shutdown joins the threads with no time limit (the line is already
+   released; a rig or decode thread can still delay exit) and then reads the line again, with a
+   second 2 s window, because a key that raced HALT could have been followed by a refused unkey on
+   the control thread's way out (CTO re-review N-2). The GUI
    does not apply hardware settings while the line is keyed or pending, does not start a new
-   runtime after an unconfirmed shutdown, and refuses the first close of the window with a warning;
+   runtime after an unconfirmed shutdown (it shows the warning in an otherwise empty window, review
+   N-1), and refuses the first close of the window with a warning;
    CAT PTT, like serial and CM108, commands a release when it is opened, so a new runtime never
    assumes a line it did not command (`tx_runtime.rs::m2_shutdown_retries_an_unconfirmed_release_and_says_so_when_it_stays_unconfirmed`,
    `rigctld::tests::f17_the_cat_ptt_connection_is_open_and_released_before_the_first_key`,

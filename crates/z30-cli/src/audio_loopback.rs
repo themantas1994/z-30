@@ -130,7 +130,7 @@ pub fn run(cfg: &Config, confirmed: bool, out: Option<&Path>) -> Result<(), Stri
                     let text = serde_json::to_string_pretty(&v).map_err(|e| e.to_string())?;
                     println!("{text}");
                     if let Some(p) = out {
-                        std::fs::write(p, &text).map_err(|e| format!("{}: {e}", p.display()))?;
+                        crate::write_report_file(p, &text)?;
                     }
                     output.stop();
                     return if v["pass"].as_bool() == Some(true) {

@@ -311,9 +311,10 @@ impl eframe::App for App {
         if self.close_warned && self.rt.as_ref().is_some_and(|rt| rt.ptt_state() == PttState::Released) {
             self.close_warned = false;
         }
+        // No runtime means the last shutdown did not confirm the release (see below).
         if ctx.input(|i| i.viewport().close_requested())
             && !self.close_warned
-            && self.rt.as_ref().is_some_and(|rt| rt.ptt_state() != PttState::Released)
+            && self.rt.as_ref().is_none_or(|rt| rt.ptt_state() != PttState::Released)
         {
             ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
             self.close_warned = true;
@@ -322,7 +323,22 @@ impl eframe::App for App {
                 Color32::RED,
             ));
         }
-        let Some(snap) = self.snapshot() else { return };
+        let Some(snap) = self.snapshot() else {
+            // No runtime: only after a shutdown that did not confirm the PTT release, when
+            // `apply_settings` will not start a new one over a line that may be stuck. Returning
+            // here drew an empty window, so the red warning was never seen (CTO re-review N-1).
+            egui::CentralPanel::default().show(ui, |ui| {
+                ui.heading(RichText::new("z-30 stopped: PTT release not confirmed").color(Color32::RED));
+                ui.label("Check the radio is not transmitting, then restart z-30.");
+                ui.separator();
+                egui::ScrollArea::vertical().stick_to_bottom(true).show(ui, |ui| {
+                    for (m, c) in &self.messages {
+                        ui.label(RichText::new(m).color(*c));
+                    }
+                });
+            });
+            return;
+        };
         let now = utc_now();
         let (date, time) = z30_io::logbook::utc_parts(now);
         let slot = z30_engine::slots::slot_of(now);
