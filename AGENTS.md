@@ -205,7 +205,8 @@ the test to match. Full rationale: [`docs/safety.md`](docs/safety.md).
   on scheduling.
 
 **A priori decoding** (`golden_ldpc.rs`, `ap.rs`)
-- AP never runs first; it may add decodes, never change or lose one. An AP-assisted decode is
+- AP never runs first; per candidate it may add decodes, never change or lose one (across SIC
+  passes that is not guaranteed and not yet tested: `ap.rs`, wiki/17). An AP-assisted decode is
   labelled `a1`…`a6` everywhere it is shown. The gates only narrow. An empty mask decodes
   bit-identically; the CRC bits are never asserted. AP is off by default.
 

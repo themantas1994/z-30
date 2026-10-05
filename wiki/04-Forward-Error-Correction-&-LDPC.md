@@ -178,7 +178,8 @@ not answering you. **A priori (AP) decoding** asserts those bits instead of meas
 lets the CRC-14 decide whether the assertion was right.
 
 The whole cascade above runs first and unchanged — AP is only attempted on a frame that has
-already failed every schedule, so it can add decodes but cannot change or lose one. An asserted
+already failed every schedule, so for that frame it can add a decode but cannot change or lose one
+(across SIC passes the guarantee is weaker; see [17](17-A-Priori-(AP)-Decoding.md)). An asserted
 bit is *pinned*: its belief is held at the asserted value for every iteration rather than merely
 initialised there, so no run of confident check messages can walk it back.
 
