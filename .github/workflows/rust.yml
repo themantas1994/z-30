@@ -193,5 +193,10 @@ jobs:
           row = s["rows"][0]
           assert row["vnext"] == 4 and row["oracle"] == 4, row
           assert row["vnext_false"] == 0, row
-          print("harness drives the production receiver:", row)
+          # The record must say which build produced it (F-34): the wheel built here, from this
+          # clean checkout. Asserting only the counts left a provenance regression green (QA 05b).
+          p = s["provenance"]
+          assert p["status"] == "attributable" and p["status_reasons"] == [], p
+          assert p["wheel"]["commit"] == p["checkout"] and p["wheel"]["rustc"].startswith("rustc "), p
+          print("harness drives the production receiver:", row, "built from", p["wheel"]["commit"])
           PY
