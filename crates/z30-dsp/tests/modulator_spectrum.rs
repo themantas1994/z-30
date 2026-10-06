@@ -184,34 +184,42 @@ fn instantaneous_frequency_hits_each_tone_at_the_symbol_centre() {
     }
 }
 
+/// The analytic-signal magnitude of a frame between its edge ramps: Hilbert transform (keep DC
+/// and Nyquist, double the positive frequencies, drop the rest), then the interior after twice the
+/// 20 ms ramp, less 2 % each side where the circular transform rings by construction.
+fn interior_envelope(w: &[f64]) -> Vec<f64> {
+    let n = w.len();
+    let mut buf: Vec<Complex64> = w.iter().map(|&v| Complex64::new(v, 0.0)).collect();
+    let mut planner = FftPlanner::<f64>::new();
+    planner.plan_fft_forward(n).process(&mut buf);
+    for (k, z) in buf.iter_mut().enumerate() {
+        if k > 0 && k < n / 2 {
+            *z *= 2.0;
+        } else if k > n / 2 {
+            *z = Complex64::new(0.0, 0.0);
+        }
+    }
+    planner.plan_fft_inverse(n).process(&mut buf);
+    let ramp = (FRAME_RAMP_SEC * FS) as usize;
+    let interior = &buf[2 * ramp..n - 2 * ramp];
+    let edge = interior.len() / 50;
+    interior[edge..interior.len() - edge].iter().map(|z| z.norm() / n as f64).collect()
+}
+
 /// No per-symbol amplitude gating: away from the one ramp at each end, the transmitted
 /// waveform's envelope (its analytic-signal magnitude) never dips. This is the property that keeps
 /// the sidebands where they belong. `gfsk.rs` checks the envelope function and ties `synthesize`
-/// to `analytic`; this checks `synthesize` itself, on random payloads, as the oracle did.
+/// to `analytic`; this checks `synthesize` itself, on random payloads, as the oracle did - and
+/// checks that the same measurement sees the dips of the per-symbol-gated reference, so it cannot
+/// pass vacuously.
 #[test]
 fn the_envelope_is_constant_between_the_frame_edge_ramps() {
     for seed in SEEDS {
-        let w = transmitted(seed);
-        let n = w.len();
-        // Hilbert transform: keep DC and Nyquist, double the positive frequencies, drop the rest.
-        let mut buf: Vec<Complex64> = w.iter().map(|&v| Complex64::new(v, 0.0)).collect();
-        let mut planner = FftPlanner::<f64>::new();
-        planner.plan_fft_forward(n).process(&mut buf);
-        for (k, z) in buf.iter_mut().enumerate() {
-            if k > 0 && k < n / 2 {
-                *z *= 2.0;
-            } else if k > n / 2 {
-                *z = Complex64::new(0.0, 0.0);
-            }
-        }
-        planner.plan_fft_inverse(n).process(&mut buf);
-        let ramp = (FRAME_RAMP_SEC * FS) as usize;
-        let interior = &buf[2 * ramp..n - 2 * ramp];
-        // The transform rings at the edges of the interval by construction; skip 2 % each side.
-        let edge = interior.len() / 50;
-        for z in &interior[edge..interior.len() - edge] {
-            let a = z.norm() / n as f64;
+        for a in interior_envelope(&transmitted(seed)) {
             assert!((0.9..1.1).contains(&a), "seed {seed}: envelope {a:.3} inside the frame");
         }
     }
+    let gated = interior_envelope(&per_symbol_gated(SEEDS[0]));
+    let low = gated.iter().cloned().fold(f64::INFINITY, f64::min);
+    assert!(low < 0.1, "the gated reference's envelope only fell to {low:.3}: this check can no longer see gating");
 }
