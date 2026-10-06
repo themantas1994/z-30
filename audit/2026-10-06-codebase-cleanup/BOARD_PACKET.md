@@ -196,3 +196,31 @@ Other independent checks made for this packet:
 Does the board accept, reject, or request more evidence on PR #50 at commit
 `88f4ddb4acbe7c6dcaaa1d3490da873b633ef255`, with any acceptance conditional on every CI check on
 that commit finishing green, and with explicit answers to decisions (a)–(e)?
+
+---
+
+## Addendum by the implementer (not part of the liaison's packet; no board decision)
+
+What was done about the packet's conditions after it was written:
+
+- **C2, confirmation reviews.** Each reviewer re-ran on its fixes:
+  - `rf-dsp-reviewer` on `0bcf07e`: all four earlier findings FIXED; one new low (the envelope
+    test had no negative control), fixed in `05064c8`.
+  - `docs-honesty-auditor` on `cbbcb8b` and on the later process text (`251d7d2`, `88f4ddb`):
+    8 of 9 FIXED, the ninth stale again; new findings, the medium one being that `serde` is inside
+    the instrument's recorded `channel_dependencies` (so research-process §7's "a `serde` bump is
+    outside the instrument" was wrong, and a `toml` bump is outside it only if it moves no `serde`
+    version). All fixed in `d51cb94`. This changes the wording of decision (d): `toml` takes the
+    §7 route only if it moves nothing in the instrument's dependency list.
+  - `research-engineer` on `251d7d2`/`88f4ddb`/`d51cb94`: every earlier finding FIXED; one new
+    low (the frozen-file check was one level deep and skipped dotfiles), fixed in the commit
+    after `d51cb94`.
+  - `cto-code-reviewer`'s two lows were the `serde` line and FINAL_REPORT §8; the liaison
+    spot-checked the first, and clippy and the `z30-io` tests pass.
+- **C1, review records.** `FINAL_REPORT.md` §8 states where each full report is and that the
+  reports themselves are not kept in the tree; each fixing commit names the reviewer and the
+  findings.
+- **C3, PR description.** Rewritten for the final head.
+- **B1, CI.** A macOS job on `00d5528` failed before compiling anything (DNS: `Could not resolve
+  host: index.crates.io`); explained on the PR. The decision applies to the final head, whose CI
+  must be green.
