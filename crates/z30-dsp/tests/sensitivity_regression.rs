@@ -28,8 +28,8 @@ fn minus_22_db_blind_decodes_at_least_84_of_100_with_no_false_decodes() {
                 let mut i = t;
                 while i < n {
                     let mut r = rng(0x5E75_0000 + i);
-                    let f0 = r.gen_range(210.0..2740.0);
-                    let dt = r.gen_range(-1.4..1.4);
+                    let f0 = r.random_range(210.0..2740.0);
+                    let dt = r.random_range(-1.4..1.4);
                     let (payload, st) = random_station(&mut r, f0, dt, -22.0);
                     let x = synthesize(&Band { stations: vec![st], noise: true, ..Default::default() }, &mut rng(0x5E76_0000 + i));
                     let rep = rx.decode_slot(&x, &RxConfig::default());

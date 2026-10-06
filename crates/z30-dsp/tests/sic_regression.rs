@@ -76,9 +76,9 @@ fn random_band(seed: u64, k: usize) -> (Band, Vec<[u8; 63]>) {
     let mut payloads = Vec::new();
     for _ in 0..k {
         // Uniform placement: overlaps in frequency and time are allowed, as on a real band.
-        let f0 = r.gen_range(210.0..2740.0);
-        let dt = r.gen_range(-1.4..1.4);
-        let snr = r.gen_range(-18.0..5.0);
+        let f0 = r.random_range(210.0..2740.0);
+        let dt = r.random_range(-1.4..1.4);
+        let snr = r.random_range(-18.0..5.0);
         let (p, st) = random_station(&mut r, f0, dt, snr);
         stations.push(st);
         payloads.push(p);

@@ -239,8 +239,8 @@ pub fn software_loopback(rate: u32, snr_db: Option<f64>) -> Result<Value, String
 
 /// Standard normal deviate (Box-Muller).
 fn gauss(r: &mut z30_channel::ChannelRng) -> f64 {
-    let u1: f64 = r.gen_range(f64::MIN_POSITIVE..1.0);
-    let u2: f64 = r.gen_range(0.0..1.0);
+    let u1: f64 = r.random_range(f64::MIN_POSITIVE..1.0);
+    let u2: f64 = r.random_range(0.0..1.0);
     (-2.0 * u1.ln()).sqrt() * (std::f64::consts::TAU * u2).cos()
 }
 
