@@ -478,8 +478,8 @@ fn score(rep: &SlotReport, payloads: &[[u8; 63]]) -> (usize, usize, usize, usize
 /// random carrier phase and payload. `tweak` sets the condition under test.
 fn blind_station(r: &mut ChannelRng, snr: f64, dt_max: f64) -> ([u8; 63], Station) {
     use rand::Rng;
-    let f0 = r.gen_range(210.0..2740.0);
-    let dt = if dt_max > 0.0 { r.gen_range(-dt_max..dt_max) } else { 0.0 };
+    let f0 = r.random_range(210.0..2740.0);
+    let dt = if dt_max > 0.0 { r.random_range(-dt_max..dt_max) } else { 0.0 };
     z30_channel::random_station(r, f0, dt, snr)
 }
 
@@ -747,8 +747,8 @@ fn impairments() -> Vec<Impairment> {
                     use rand::Rng;
                     let a = 50.0 * rms(x);
                     for _ in 0..200 {
-                        let at = r.gen_range(0..x.len());
-                        let sign = if r.gen_bool(0.5) { 1.0 } else { -1.0 };
+                        let at = r.random_range(0..x.len());
+                        let sign = if r.random_bool(0.5) { 1.0 } else { -1.0 };
                         // Exponentially decaying, 5 ms time constant.
                         for k in 0..180 {
                             if at + k < x.len() {
@@ -794,7 +794,7 @@ fn busy(slots: usize) -> Value {
                 let mut stations = Vec::new();
                 let mut payloads = Vec::new();
                 for _ in 0..k {
-                    let snr = r.gen_range(lo..hi);
+                    let snr = r.random_range(lo..hi);
                     let (pl, st) = blind_station(&mut r, snr, 1.4);
                     stations.push(st);
                     payloads.push(pl);
@@ -855,9 +855,9 @@ fn interference(kind: usize, r: &mut ChannelRng, x: &mut [f32]) {
             let m = Modulator::new(FS).unwrap();
             for _ in 0..8 {
                 let mut sym = [0u8; 75];
-                sym.iter_mut().for_each(|s| *s = r.gen_range(0..16));
-                let (re, _) = m.analytic(&sym, r.gen_range(210.0..2740.0), 0.0, 0.0);
-                let start = r.gen_range(0..n - re.len());
+                sym.iter_mut().for_each(|s| *s = r.random_range(0..16));
+                let (re, _) = m.analytic(&sym, r.random_range(210.0..2740.0), 0.0, 0.0);
+                let start = r.random_range(0..n - re.len());
                 let a = amp_for(0.0) as f32 / 2f32.sqrt();
                 for (i, v) in re.iter().enumerate() {
                     x[start + i] += a * *v as f32;
@@ -867,12 +867,12 @@ fn interference(kind: usize, r: &mut ChannelRng, x: &mut [f32]) {
         // 8 FT8-like 8-FSK signals: 6.25 Hz spacing, 0.16 s symbols, 79 symbols, continuous phase, 0 dB.
         2 => {
             for _ in 0..8 {
-                let f0 = r.gen_range(210.0..2740.0);
-                let start = r.gen_range(0..n - 79 * 960);
+                let f0 = r.random_range(210.0..2740.0);
+                let start = r.random_range(0..n - 79 * 960);
                 let a = amp_for(0.0) as f32;
-                let mut ph = r.gen_range(0.0..std::f64::consts::TAU);
+                let mut ph = r.random_range(0.0..std::f64::consts::TAU);
                 for s in 0..79 {
-                    let f = f0 + 6.25 * r.gen_range(0..8) as f64;
+                    let f = f0 + 6.25 * r.random_range(0..8) as f64;
                     for k in 0..960 {
                         ph += std::f64::consts::TAU * f / FS;
                         x[start + s * 960 + k] += a * ph.sin() as f32;
@@ -883,8 +883,8 @@ fn interference(kind: usize, r: &mut ChannelRng, x: &mut [f32]) {
         // 500 impulses, amplitude up to 40 sigma, 2 ms decay.
         3 => {
             for _ in 0..500 {
-                let at = r.gen_range(0..n);
-                let a = r.gen_range(-40.0f32..40.0);
+                let at = r.random_range(0..n);
+                let a = r.random_range(-40.0f32..40.0);
                 for k in 0..60 {
                     if at + k < n {
                         x[at + k] += a * (-(k as f32) / 12.0).exp();
@@ -932,7 +932,11 @@ fn false_decodes(slots: usize) -> Value {
             .map_init(Receiver::new, |rx, i| {
                 use rand::Rng;
                 let mut r = rng(frame_seed(8, p, i));
-                let cw = if kind == 4 { (0..20).map(|_| (r.gen_range(200.0..2800.0), r.gen_range(-10.0..20.0))).collect() } else { vec![] };
+                let cw = if kind == 4 {
+                    (0..20).map(|_| (r.random_range(200.0..2800.0), r.random_range(-10.0..20.0))).collect()
+                } else {
+                    vec![]
+                };
                 let mut x = synthesize(&Band { cw, noise: true, ..Default::default() }, &mut r);
                 interference(kind, &mut r, &mut x);
                 let rep = rx.decode_slot(&x, &RxConfig::default());
@@ -978,8 +982,8 @@ fn sic(trials: usize) -> Value {
                     .map_init(Receiver::new, |rx, i| {
                         use rand::Rng;
                         let mut r = rng(frame_seed(9, p, i));
-                        let f = r.gen_range(300.0..2600.0 - df);
-                        let dt = r.gen_range(-1.0..0.6);
+                        let f = r.random_range(300.0..2600.0 - df);
+                        let dt = r.random_range(-1.0..0.6);
                         let (ps, strong) = z30_channel::random_station(&mut r, f, dt, weak_snr + dpow);
                         let (pw, weak) = z30_channel::random_station(&mut r, f + df, dt + ddt, weak_snr);
                         let x = synthesize(&Band { stations: vec![strong, weak], noise: true, ..Default::default() }, &mut r);

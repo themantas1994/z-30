@@ -38,7 +38,7 @@ pub const SLOT_ZERO_INDEX: usize = 9_000;
 pub fn random_frame(rng: &mut ChannelRng) -> ([u8; PAYLOAD_BITS], [u8; TOTAL_SYMBOLS]) {
     let mut payload = [0u8; PAYLOAD_BITS];
     for b in payload.iter_mut() {
-        *b = rng.gen_range(0..2);
+        *b = rng.random_range(0..2);
     }
     let symbols = codeword_to_symbols(&encode_payload(&payload));
     (payload, symbols)
@@ -257,7 +257,7 @@ pub fn synthesize(band: &Band, rng: &mut ChannelRng) -> Vec<f32> {
     }
     for &(f, snr) in &band.cw {
         let a = (2.0 * 10f64.powf(snr / 10.0) * noise_var_2500).sqrt();
-        let ph: f64 = rng.gen_range(0.0..std::f64::consts::TAU);
+        let ph: f64 = rng.random_range(0.0..std::f64::consts::TAU);
         for (n, v) in acc.iter_mut().enumerate() {
             *v += a * (std::f64::consts::TAU * f * n as f64 / FS + ph).cos();
         }
@@ -282,7 +282,7 @@ pub fn synthesize(band: &Band, rng: &mut ChannelRng) -> Vec<f32> {
 /// A station with random payload and the given placement; returns its payload too.
 pub fn random_station(rng: &mut ChannelRng, f0_hz: f64, dt_sec: f64, snr_db: f64) -> ([u8; PAYLOAD_BITS], Station) {
     let (payload, symbols) = random_frame(rng);
-    let phase_rad = rng.gen_range(0.0..std::f64::consts::TAU);
+    let phase_rad = rng.random_range(0.0..std::f64::consts::TAU);
     (payload, Station { symbols, f0_hz, dt_sec, snr_db, drift_hz: 0.0, phase_rad, fading: None })
 }
 
