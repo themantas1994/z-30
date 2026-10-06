@@ -104,8 +104,8 @@ suite takes about an hour on 4 cores (the `elapsed_s` of the ten `672cef9b3cdb` 
 | :--- | :--- | :--- |
 | Rust workspace | `cargo test --workspace --release` | the frozen golden vectors the deleted oracle generated, and the shared known-answer vectors in `tests/vectors/`; the modulator's bandwidth budgets; protocol round trip of every grid, report and sampled callsign; the transmit gate and PTT fail-closed rules; the live runtime decoding a slot only from its complete window (virtual sound card and clock); QSO logging with missing values and non-UTC time zones; SNR accuracy (and no estimate, not a floor, from silence); SIC; a sensitivity regression floor at −22 dB; migration idempotence and each legacy writer's defaults; dial-frequency provenance through the engine and the runtime; every kind of corrupted frame refused by the round trip and by the transmit gate, and the transmitted audio decoding back to the verified frame; the Watterson model's measured Doppler spread; the software loopback through the resampler, and that it reaches only an allowlist of crates and items (no audio/PTT/rig code); the production transmit loop on fake PTT, output, rig and clock (HALT before and while keyed and behind a blocked control thread, the watchdog, refused keys, unconfirmed releases, output failure and recovery, late keys, partial frames, the rig poll interval and settle window); PTT release confirmation and panicking line drivers; the gate's hardware, level and band-plan-edge refusals; system-clock steps; migration writing no transmit level and no legacy defaults; the playback callback allocating nothing |
 | Formatting and lints | `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D warnings` (as CI runs them) | |
-| Frozen golden vectors | `cd fixtures/golden && sha256sum --check --strict FROZEN.sha256` (as `ci.yml` runs it) | no byte of `fixtures/golden/` has changed; their generators were deleted with the oracle, so they can be kept but not regenerated |
-| Research tools | `python -m pytest research/tests -q` | the summarise, compare and pairing tools fail closed |
+| Frozen golden vectors and shared vectors | `(cd fixtures/golden && sha256sum --check --strict FROZEN.sha256)`, `(cd tests/vectors && sha256sum --check --strict FROZEN.sha256)` (`ci.yml` also refuses an unpinned file) | no byte of `fixtures/golden/` or `tests/vectors/` has changed; their generators were deleted with the oracle and the TypeScript codec, so they can be kept but not regenerated |
+| Research tools | `python -m pytest research/tests -q` | the summarise, compare, pairing and lock-closure tools fail closed |
 
 ## What CI enforces
 
@@ -119,7 +119,8 @@ suite takes about an hour on 4 cores (the `elapsed_s` of the ten `672cef9b3cdb` 
   launcher or installer for the retired runtime, none of the deleted stacks (the Python oracle,
   the browser runtime, the PyO3 bindings, the golden generators), no package-manager files and a
   single `Cargo.lock`, no Python outside `research/` and `audit/`, no JS/TS outside `audit/`, the
-  frozen golden vectors unchanged against `FROZEN.sha256`; and the research tools' tests. The
+  frozen golden vectors and shared vectors (`fixtures/golden/` and any version subdirectory,
+  `tests/vectors/`) unchanged against their `FROZEN.sha256`, every file pinned; and the research tools' tests. The
   oracle, browser runtime, golden-regeneration and paired-harness jobs went with what they
   tested in the 2026-10-06 cleanup.
 - **`release.yml`** — on a version tag (and as a dry run on pull requests that touch the release

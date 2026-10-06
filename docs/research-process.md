@@ -223,11 +223,14 @@ toolchain and no hour of compute, so a reviewer can always produce it.
 
 It proves one direction only. When a closure **does** change, section 7 does not apply on this
 evidence: the update reaches the measurement and needs the suite on both commits. For a crate
-outside the benchmark instrument (a `toml` or `serde` bump in `z30-cli`'s closure) that means
-`compare_results.py` on the two result directories, which must say IDENTICAL. A bump to `rand`,
-`rand_chacha` or `rand_distr` is different in kind: they generate every seeded channel
-realisation (`crates/z30-channel/src/lib.rs`) and are part of the instrument identity, so
-`compare_results.py` and `paired_mcnemar.py` refuse to compare across it. Such a bump is an
+outside the benchmark instrument - one not in the `channel_dependencies` a result records
+(`build_support.rs` hashes the whole resolved closure of `z30-channel` and `z30-protocol`, dev
+dependencies included, so `serde` and `serde_json` are in it) - that means `compare_results.py`
+on the two result directories, which must say IDENTICAL; for example a `toml` bump in `z30-io`
+that moves no version in that list. Anything in that list is part of the instrument identity,
+and `compare_results.py` and `paired_mcnemar.py` refuse to compare across it. A bump to `rand`,
+`rand_chacha` or `rand_distr` is the plainest case: they generate every seeded channel
+realisation (`crates/z30-channel/src/lib.rs`). Such a bump is an
 instrument change: its own proposal, `suite`, `false` and `perf` on both commits, and a
 deliberate re-baseline under section 5 (the old results superseded and kept), never absorbed
 quietly into a routine bump.

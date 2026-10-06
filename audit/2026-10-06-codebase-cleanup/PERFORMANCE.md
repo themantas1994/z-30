@@ -74,7 +74,7 @@ run; its numbers agreed within the noise, e.g. K = 20 / 4 threads 1.02 against 0
 The saving grows with the number of decodes (it is per decode): small at K = 1 (−1 to −8 %,
 within the noise of these runs); at K = 20 and K = 50 between −27 % and −43 % of CPU per slot.
 QA reproduced the direction independently (`evidence/qa/qa-perf-{1..4}-*.log`: `acfce5e` and
-`4bd6811` alternating, two runs each, 10 slots per K): −29 % (K = 20, 4 threads), −38 % (K = 50,
+`4bd6811` alternating, two runs each, 10 slots per K): −29 % (K = 20, 4 threads), −37 % (K = 50,
 4 threads), −27 % (K = 20, 1 thread), −35 % (K = 50, 1 thread). The −43 % of the single run
 above rests on one high baseline (1.66 s; QA's two baselines were 1.29 and 1.44 s), so the range,
 not the single figure, is what these measurements support. That is more than `replica_spectra`'s 20 % share of user self time in the profile

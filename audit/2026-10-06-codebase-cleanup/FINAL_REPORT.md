@@ -110,7 +110,7 @@ head, so every published result stays comparable without a new baseline.
 | Port `research/*.py` to Rust | active, documented, stdlib-only, fail closed, outside the Cargo graph; a port changes the measurement instrument and its byte-for-byte `SUMMARY.md` regeneration, so it needs its own reviewed pull request |
 | A cheaper `ln_1p(exp(x))` in the LDPC check node (12–16 % of decode time) | changes the decoder's arithmetic: breaks golden bit-exactness and moves every figure; a receiver change for the research process |
 | `rand` 0.9 / `rand_chacha` 0.9 / `rand_distr` 0.6 (PR #49) | they are dependencies of `z30-channel`, so they are part of the benchmark instrument's identity: a bump is an instrument change, which `compare_results.py` and `paired_mcnemar.py` refuse to compare across. It needs its own proposal, `suite`/`false`/`perf` on both commits and a deliberate re-baseline (`docs/research-process.md` §5 and §7), not a routine merge |
-| `toml` 1 (PR #49) | in `z30-cli`'s closure through `z30-io` but not in the instrument: the §7 route applies (`lock_closure.py` will report the closure change; run the suite on both commits and show `compare_results.py` IDENTICAL). Better split from the `rand` bumps. `pyo3` from #49 is moot (removed) |
+| `toml` 1 (PR #49) | in `z30-cli`'s closure through `z30-io` and, as long as it moves no version in the instrument's recorded `channel_dependencies` (which include `serde`), outside the instrument: then the §7 route applies (`lock_closure.py` will report the closure change; run the suite on both commits and show `compare_results.py` IDENTICAL). If the bump moves `serde`, it is an instrument change like `rand`. Better split from the `rand` bumps. `pyo3` from #49 is moot (removed) |
 | PR #48 (`source-map-js` in `legacy/browser-runtime`) | moot: the subsystem is deleted. It should be closed, not merged |
 | Release profile (`lto = "thin"`, `codegen-units = 1`, `debug = 1`) | it built every published figure's binary; `debug = 1` keeps backtraces from an experimental radio program useful. No measured problem |
 | Locks, channels and traits in the runtime | every trait has 3–16 implementations (hardware plus test fakes); the locks are the transmit-safety runtime's. No measured contention |
@@ -159,8 +159,10 @@ The final team's questions:
 - **Did deletion remove a required production capability?** No: `crates/z30-cli`
   has no diff at all; `z30-gui` and `z30-io` changed only in `Cargo.toml` (CTO).
 - **Did a safety invariant disappear?** No (tx-safety-auditor; safety tests byte-identical).
-- **Did performance improve?** `decode_slot` CPU per slot −27…−43 % at K = 20–50, bit-identical
-  output (QA reproduced direction and identity). Indicative, not a published figure.
+- **Did performance improve?** `decode_slot` CPU per slot −27…−43 % at K = 20–50 (simulated
+  seeded bands, shared 4-vCPU VM, 10–20 slots per K, two measurements; §4), output identical on
+  the 42-band bit-check and the exploratory-size suite (QA reproduced direction and identity).
+  Indicative, not a published figure.
 - **Did compile/test time improve?** Locally, clean dev/test builds −14 % (dependency debug info);
   `cargo check` unchanged. CI: `rust.yml` 29 → 12 min wall, ~104 → ~40 job-minutes; `ci.yml`
   3.3 → 0.4 min; one run per push instead of two (single runs, indicative).

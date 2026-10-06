@@ -108,8 +108,9 @@ benchmark suite at exploratory size with a provenance check on every result file
 `.github/workflows/ci.yml`: `cargo audit` of `Cargo.lock` against the RustSec database; the
 hygiene checks that keep the retired runtime, the web bundle, the old installers and the deleted
 stacks (`legacy/`, the PyO3 bindings, the golden generators, package-manager files, Python
-outside `research/` and `audit/`, JS/TS outside `audit/`) out of the tree, and that the frozen
-golden fixtures still match `FROZEN.sha256`; and the research tools' tests.
+outside `research/` and `audit/`, JS/TS outside `audit/`) out of the tree, and that
+`fixtures/golden/` (and any version subdirectory) and `tests/vectors/` match their
+`FROZEN.sha256`, every file pinned; and the research tools' tests.
 
 `.github/workflows/release.yml`: per-platform release archives from a `v*` tag
 ([install.md](install.md)).
