@@ -131,6 +131,13 @@ Implemented by this session; reviewed independently, routed per area:
 
 ## 8. Final review round
 
+Where the reviews are: each reviewer's full report (severity, `file:line`, evidence) was
+delivered in the implementing session and is summarised here; the reports themselves are not
+kept in the tree (`audit/EVIDENCE_POLICY.md`: an audit says when evidence is not kept). What is
+kept: QA's raw logs (`evidence/qa/`), every finding's disposition in the commit that fixed it
+(`git log acfce5e..` — each fixing commit names the reviewer and lists the findings), and the
+board packet (`BOARD_PACKET.md`).
+
 Head at the end of the round: `251d7d2` plus `serde` removed from `z30-io` (the CTO's low
 finding), in the commit that adds this section. CI on `251d7d2` completed with no failed check
 suite (rust.yml on Linux, Windows, macOS and MSRV; ci.yml; release.yml dry run).
