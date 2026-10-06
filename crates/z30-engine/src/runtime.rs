@@ -1108,6 +1108,89 @@ impl Control {
 mod tests {
     use super::safe_level;
 
+    // F-84: the race `close` exists for cannot be staged, but its wiring can: after shutdown,
+    // the controller it held must refuse to key. Deleting the call reverted the latch with every
+    // test green (transmit-safety 02e, mutant N0; this test is the auditor's).
+    #[test]
+    fn f84_shutdown_closes_the_controller_before_its_halt() {
+        use super::*;
+        use crate::ptt::{PttAck, PttError, SystemMonotonic};
+        struct In;
+        impl AudioInput for In {
+            fn sample_rate(&self) -> u32 {
+                48_000
+            }
+            fn next_block(&mut self, t: Duration) -> Result<Option<AudioBlock>, String> {
+                std::thread::sleep(t.min(Duration::from_millis(5)));
+                Ok(None)
+            }
+        }
+        struct Out;
+        impl AudioOutput for Out {
+            fn sample_rate(&self) -> u32 {
+                48_000
+            }
+            fn latency_sec(&self) -> f64 {
+                0.0
+            }
+            fn play(&mut self, _: Vec<f32>) -> Result<(), String> {
+                Ok(())
+            }
+            fn stop(&mut self) {}
+        }
+        struct Line(Arc<AtomicBool>);
+        impl PttLine for Line {
+            fn set(&mut self, k: bool) -> Result<PttAck, PttError> {
+                if k {
+                    self.0.store(true, Ordering::SeqCst);
+                }
+                Ok(PttAck::Confirmed)
+            }
+            fn describe(&self) -> String {
+                "test".into()
+            }
+        }
+        struct Wall;
+        impl WallClock for Wall {
+            fn utc_now(&self) -> f64 {
+                1.0e9
+            }
+            fn status(&self) -> String {
+                "test".into()
+            }
+        }
+        struct Book;
+        impl LogSink for Book {
+            fn log(&mut self, _: &QsoRecord) -> Result<(), String> {
+                Ok(())
+            }
+        }
+        let keyed = Arc::new(AtomicBool::new(false));
+        let mut h = start(
+            Config::default(),
+            RuntimeParts {
+                input: Box::new(In),
+                output: Box::new(Out),
+                rig: None,
+                ptt: Box::new(Line(keyed.clone())),
+                wall: Arc::new(Wall),
+                mono: Arc::new(SystemMonotonic::default()),
+                log: Box::new(Book),
+                slot_tap: None,
+                tx_unavailable: Some("test parts".into()),
+            },
+        );
+        let ptt = h.ptt.clone();
+        let wd = h.watchdog.take(); // the clone keeps the watchdog alive; joined below instead
+        assert!(h.shutdown().release_confirmed());
+        assert!(ptt.key().is_err(), "shutdown left its controller able to key");
+        assert!(!keyed.load(Ordering::SeqCst), "the line was keyed after shutdown");
+        drop(ptt);
+        if let Some(w) = wd {
+            let _ = w.join();
+        }
+    }
+
     #[test]
     fn the_key_and_audio_start_lateness_limits_are_half_a_second() {
         // Pinned as numbers: the runtime tests derive their timings from these constants, so a

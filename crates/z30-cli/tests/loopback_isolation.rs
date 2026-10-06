@@ -179,7 +179,9 @@ const PRELUDE: [&str; 10] = ["Self", "Vec", "String", "Option", "Some", "None", 
 
 #[derive(Default)]
 struct Guard {
-    /// Names the file declares (types, functions, constants) or imports through a checked `use`.
+    /// Path roots the file binds: the types it declares and the names a checked `use` imports.
+    /// Not functions or constants: they are values, and `fn crossbeam_channel() {}` left
+    /// `crossbeam_channel::..` naming the crate (02e S6).
     bound: std::collections::HashSet<String>,
     paths: Vec<String>,
     bad: Vec<String>,
@@ -210,41 +212,61 @@ impl Guard {
     }
 
     /// Every `a::b` run in a macro's tokens (whitespace is not a token, so `std :: net` is
-    /// `std::net`), and any `$`: a metavariable can splice a name into a path no check sees.
+    /// `std::net`), held to rules strict enough that no path can be split: `::` only between two
+    /// names, so `::<`, `::{` and `::*` are refused and `<T>::` too; no `use`; no `$`. Losing the
+    /// prefix at `::<` let `std::net::TcpStream::connect::<&str>(..)` inside `format!` pass, and a
+    /// `use` inside a block in a macro argument imported anything (transmit-safety 02e S1-S5).
     fn tokens(&mut self, ts: proc_macro2::TokenStream) {
         use proc_macro2::{Spacing, TokenTree};
         let toks: Vec<TokenTree> = ts.into_iter().collect();
+        let is_sep = |i: usize| {
+            matches!((toks.get(i), toks.get(i + 1)),
+                (Some(TokenTree::Punct(a)), Some(TokenTree::Punct(b))) if a.as_char() == ':' && a.spacing() == Spacing::Joint && b.as_char() == ':')
+        };
         let mut run: Vec<String> = Vec::new();
+        let flush = |run: &mut Vec<String>, paths: &mut Vec<String>| {
+            if run.len() > 1 {
+                paths.push(run.join("::"));
+            }
+            run.clear();
+        };
         let mut i = 0;
         while i < toks.len() {
+            if is_sep(i) {
+                let after_name = i > 0 && matches!(toks[i - 1], TokenTree::Ident(_));
+                let before_name = matches!(toks.get(i + 2), Some(TokenTree::Ident(_)));
+                if !(after_name && before_name) {
+                    self.bad.push("`::` not between two names in a macro invocation (`::<`, `::{`, `::*`, `<T>::`)".into());
+                }
+                i += 2;
+                continue;
+            }
             match &toks[i] {
                 TokenTree::Ident(id) => {
+                    if id == "use" || id == "extern" || id == "mod" {
+                        self.bad.push(format!("`{id}` inside a macro invocation"));
+                    }
+                    // A name not preceded by `::` starts a new path.
+                    if !(i >= 2 && is_sep(i - 2)) {
+                        flush(&mut run, &mut self.paths);
+                    }
                     run.push(id.to_string());
-                    let sep = matches!((toks.get(i + 1), toks.get(i + 2)),
-                        (Some(TokenTree::Punct(a)), Some(TokenTree::Punct(b))) if a.as_char() == ':' && a.spacing() == Spacing::Joint && b.as_char() == ':');
-                    if sep {
-                        i += 3;
-                        continue;
-                    }
-                    if run.len() > 1 {
-                        self.paths.push(run.join("::"));
-                    }
-                    run.clear();
                 }
                 TokenTree::Punct(p) => {
                     if p.as_char() == '$' {
                         self.bad.push("`$` in a macro invocation".into());
                     }
-                    run.clear();
+                    flush(&mut run, &mut self.paths);
                 }
                 TokenTree::Group(g) => {
-                    run.clear();
+                    flush(&mut run, &mut self.paths);
                     self.tokens(g.stream());
                 }
-                TokenTree::Literal(_) => run.clear(),
+                TokenTree::Literal(_) => flush(&mut run, &mut self.paths),
             }
             i += 1;
         }
+        flush(&mut run, &mut self.paths);
     }
 
     fn check(&self, p: &str) -> bool {
@@ -291,7 +313,9 @@ impl<'ast> syn::visit::Visit<'ast> for Guard {
     }
     fn visit_attribute(&mut self, a: &'ast syn::Attribute) {
         let name = path_string(a.path());
-        if name == "path" || name == "macro_use" {
+        // `cfg_attr` hides attributes, `doc = include_str!(..)` among them, in a token list
+        // nothing visits (02e S9).
+        if name == "path" || name == "macro_use" || name == "cfg_attr" {
             self.bad.push(format!("`#[{name}]`"));
         }
         syn::visit::visit_attribute(self, a);
@@ -328,9 +352,6 @@ fn violations(src: &str) -> Vec<String> {
             syn::Item::Enum(x) => drop(g.bound.insert(x.ident.to_string())),
             syn::Item::Type(x) => drop(g.bound.insert(x.ident.to_string())),
             syn::Item::Trait(x) => drop(g.bound.insert(x.ident.to_string())),
-            syn::Item::Const(x) => drop(g.bound.insert(x.ident.to_string())),
-            syn::Item::Static(x) => drop(g.bound.insert(x.ident.to_string())),
-            syn::Item::Fn(x) => drop(g.bound.insert(x.sig.ident.to_string())),
             _ => {}
         }
     }
@@ -391,6 +412,13 @@ fn every_way_round_the_allowlist_a_review_found_is_refused() {
         ("qualified path", wrap("<std::net::TcpStream>::connect(\"192.0.2.1:9\");", "")),
         ("glob import", wrap("TcpStream::connect(\"192.0.2.1:9\");", "use std::net::*;")),
         ("audio_loopback", wrap("crate::audio_loopback::run();", "")),
+        ("turbofish in a macro (02e S1)", wrap("let _ = format!(\"{:?}\", std::net::TcpStream::connect::<&str>(\"192.0.2.1:9\"));", "")),
+        ("renamed group import in a macro block (02e S2)", wrap("let _ = format!(\"{}\", { use std::net::{Shutdown, TcpStream as Vec}; let _s: Option<Shutdown> = None; Vec::connect(\"192.0.2.1:9\").is_ok() });", "")),
+        ("qualified path from a macro block import (02e S3)", wrap("let _ = format!(\"{}\", { use std::net::{Shutdown, TcpStream}; let _s: Option<Shutdown> = None; <TcpStream>::connect(\"192.0.2.1:9\").is_ok() });", "")),
+        ("glob import in a macro block (02e S4)", wrap("let _ = format!(\"{:?}\", { use std::fs::*; write(\"/dev/null\", \"\") });", "")),
+        ("process with a turbofish in a macro (02e S5)", wrap("let _ = format!(\"{:?}\", std::process::Command::new::<&str>(\"rigctl\").status());", "")),
+        ("a fn binding a crate name (02e S6)", wrap("let _ = crossbeam_channel::bounded::<u8>(1);", "fn crossbeam_channel() {}")),
+        ("cfg_attr (02e S9)", wrap("", "#[cfg_attr(all(), doc = include_str!(\"/dev/null\"))]\nfn side() {}")),
     ];
     for (name, src) in &attacks {
         assert!(!violations(src).is_empty(), "not refused: {name}\n{src}");
@@ -413,6 +441,16 @@ fn the_cli_runs_the_software_loopback_for_loopback_test_and_the_hardware_one_onl
     assert_eq!(main.matches("audio_loopback::run(").count(), 1, "the hardware loopback has exactly one entry point");
     // The hardware loopback writes its report through the same device-refusing writer, and
     // `--out` is checked before its refusals and before any device opens (02d finding 1).
+    // Parsed, not matched: `use std::{fs::File}` has no `std::fs` in its text (02e B5b).
+    let mut g = Guard::default();
+    let hw_src = std::fs::read_to_string(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/audio_loopback.rs")).unwrap();
+    syn::visit::Visit::visit_file(&mut g, &syn::parse_file(&hw_src).unwrap());
+    for p in &g.paths {
+        assert!(
+            !p.split("::").any(|s| s == "fs" || s == "net" || s == "process" || s == "File" || s == "OpenOptions"),
+            "src/audio_loopback.rs names `{p}`: its report is written only through crate::write_report_file"
+        );
+    }
     let hw = code_of("src/audio_loopback.rs");
     assert!(
         !hw.contains("std::fs") && !hw.contains("fs::write"),
