@@ -18,9 +18,10 @@ acceptance, not a release decision and not permission to key a transmitter.**
 ## 1. Executive summary
 
 The 2026-09-28 agent-team review found 79 defects (F-01…F-79) at `78db463`. The independent
-reviews of the remediation added five more: F-80 (split out of F-26 by the DSP review), F-81 and
-F-82 (research-tool follow-ups from the research-engineer review), and F-83 and F-84 (two Low
-reporting gaps from the CTO re-review). The work followed the brief's phases:
+reviews of the remediation added five more: F-80 (split out of F-26 by the DSP review), F-81 (a
+transmit-path residual of the clock-step fix, from the transmit-safety audit's D-3), F-82
+(research-tool follow-ups from the research-engineer review), and F-83 and F-84 (two Low reporting
+gaps from the CTO re-review). The work followed the brief's phases:
 
 1. **Reproduce before fixing.** F-01 (a failed PTT release believed released), F-15 (a panic in a
    line driver deadlocking the panic hook, watchdog and signal handler) and F-17 (a late key
@@ -64,7 +65,9 @@ head: every fix was re-reviewed until its reviewer verified it.
 regulatory reading of the US band plan (F-02, board); the FT8 comparison's framing (F-25, F-30,
 board); the decision statistic for crossings (F-40, board); the SNR estimate on fading channels
 (F-24), the pass-2/3 restriction's effect (F-41), the code-distance notes (F-78) and an AP-on
-false-decode benchmark (F-80), all still open. **No release is proposed.**
+false-decode benchmark (F-80), all still open; and F-81, a Low transmit-path residual: a small
+backward clock step during a frame, or a dropped clock-step event, can hold the line keyed until
+the 40 s watchdog releases it. **No release is proposed.**
 
 ## 2. Defect closure table
 
@@ -203,7 +206,7 @@ Each review role ran read-only on a fixed commit; reports are saved verbatim in 
 | `02-transmit-safety.md` | tx-safety-auditor | `c164dd0` | **FINDINGS** | D-1 (a command queued before HALT re-armed the station; its probe keyed a TUNE), D-2 (a key racing the signal handler's release outlived the process), D-4 (shutdown could hang behind a wedged driver), D-5, D-6, T-1 (the loopback allowlist admitted all of `std`) and four High test gaps (T-2…T-4 and its own surviving mutants): fixed in `d159e6d` with tests; its 24 mutants joined run 4 (§6). |
 | `02b-transmit-safety-re-review.md` | tx-safety-auditor | `6015d86` | **FINDINGS** | F-21, F-43 VERIFIED; F-01 stays VERIFIED. R-1 (the Answer drop unpinned), R-2 (a test-only item hid the rest of `loopback.rs` from the allowlist), R-3 (the loopback could write its report to a tty), R-4 (shutdown still drove the line on the caller): fixed in `df45d56`. |
 | `03b-dsp-re-review.md`, `03c-dsp-confirmation.md` | rf-dsp-reviewer | `b6a1f32`, `d7bbbc2` | F-26, F-33 **VERIFIED** (03c) | 03b showed the busy-band AP test never puts a plain decode at risk, so "AP never loses a decode across SIC passes" was untested: the docs now say it holds per candidate and is not guaranteed across passes (`d7bbbc2`). |
-| `06-research-engineer.md` | research-engineer | `38e43c6` | F-11, F-14 **VERIFIED** | Paired per-frame outcomes and results routing work end to end; the limits of `paired_mcnemar.py` against research-process §2a and a symlink bypass of the published-directory check recorded as F-81 and F-82 (OPEN). |
+| `06-research-engineer.md` | research-engineer | `38e43c6` | F-11, F-14 **VERIFIED** | Paired per-frame outcomes and results routing work end to end; the limits of `paired_mcnemar.py` against research-process §2a and a symlink bypass of the published-directory check recorded as F-82 (OPEN). |
 | `01b-code-review-cto-re-review.md` | cto-code-reviewer | `5e23c9b` | **READY FOR BOARD** (F-01, F-16 scope) | F-01 and F-16 VERIFIED; M-1, M-2, M-3, L-1 closed; no test weakened; 261 passed. N-1 (the GUI hid the unconfirmed-shutdown warning) and N-2 (the confirmed-path report read before the threads stopped) recorded as F-83, F-84 and fixed in `7483f17`. |
 | `02c-transmit-safety-confirmation.md` | tx-safety-auditor | `df45d56` | **FINDINGS** | F-16 VERIFIED (R-1 pinned, R-4 mutants killed, no D-1 bypass). F-08 NOT VERIFIED: the device refusal untested, brace literals and `//` in strings could hide code from the guard, Windows unprotected: fixed in `7483f17` (§6.4). |
 | `05b-qa-f34-paired-harness.md` | qa-reproducer | `7483f17` | F-34 **VERIFIED** | Wheel built clean and dirty with maturin; wheel and result record commit, dirty-diff hash (matched independently) and rustc; dirty, mismatched and stale wheels are `not_the_published_run` with reasons. Its Low finding (CI asserted only the counts) fixed in `2a5ec51`: the harness job now asserts the provenance. |
@@ -571,6 +574,10 @@ What the transmit path now guarantees, each with tests and mutants (§6) behind 
   releases a key that was in its driver when the controller closed. An unconfirmed shutdown drops
   the last controller on a short-lived thread, not the caller's.
 
+Open on the transmit path: **F-81** (Low): a backward clock step smaller than about a slot during a
+frame, or a dropped `ClockStepped`, can hold the line keyed until the independent 40 s watchdog
+releases it (§11). The watchdog bounds it; nothing shortens it yet.
+
 What the reviews could not establish and no test covers: the GUI's behaviour (no GUI test
 harness; checked by inspection), the call to `close` in `shutdown` (run 6 N0; no test can stage
 the race it closes), and anything about real drivers: every line, device and rigctld in these
@@ -584,7 +591,10 @@ crossing-delta statistic in research-process.md §2a binds only if accepted), M-
 radio's own time-out timer is accepted as the last layer for CAT and CM108 after SIGKILL or power
 loss), and the PR's size (review L-6: the board may accept per area).
 
-**Open:** F-24, F-41, F-78, F-80 (§8); F-81, F-82 (research-tool follow-ups: `paired_mcnemar.py` cannot run research-process §2a's pooled replicate design, busy-band pairs are clustered, false decodes are not paired, a symlink in `--out` bypasses the published-directory check).
+**Open:** F-24, F-41, F-78, F-80 (§8); **F-81** (transmit path, Low: the frame's end is timed on
+the wall clock; a backward step smaller than about a slot is not a `ClockStepped`, and that event
+is sent by `try_send` and can be dropped while the control thread stalls, so a step during a frame
+can hold the line keyed until the 40 s watchdog releases it); F-82 (research-tool follow-ups: `paired_mcnemar.py` cannot run research-process §2a's pooled replicate design, busy-band pairs are clustered, false decodes are not paired, a symlink in `--out` bypasses the published-directory check).
 
 **Documented limitations:** F-35 (historical latency table), F-39 (cited logs never committed),
 F-56 (v1 sends a clamped report, not a bound), F-65 (an old SUMMARY header), F-73 (loose result
