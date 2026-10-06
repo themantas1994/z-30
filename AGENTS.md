@@ -116,10 +116,11 @@ the test to match. Full rationale: [`docs/safety.md`](docs/safety.md).
   path take an `EncodedMessage` or bare symbols (post-remediation audit N-03;
   `z30-protocol/tests/frame_integrity.rs`, `safety.rs` n3).
 - **Loopback never transmits.** `z30 --loopback-test` is in memory and has no audio output, PTT or
-  rig control: `src/loopback.rs` forbids clippy's disallowed lists (`crates/z30-cli/clippy.toml`:
-  network, file system, processes, audio, PTT, the runtime), and
-  `z30-cli/tests/loopback_isolation.rs` parses it against an allowlist. Its report goes only to a
-  file, never a device (a tty asserts DTR/RTS when opened). The sound-card test
+  rig control, held by two required layers: `src/loopback.rs` forbids `unsafe_code` and clippy's
+  disallowed lists (`crates/z30-cli/clippy.toml`: network, file system, processes, audio, PTT, the
+  runtime, path-opening `z30_io` functions), and `z30-cli/tests/loopback_isolation.rs` parses it
+  against an allowlist and pins the forbid and the whole list. Its report goes only to a file,
+  never a device (a tty asserts DTR/RTS when opened). The sound-card test
   `--audio-loopback-test` refuses any configuration with a PTT method (VOX included) or rig
   control (N-04).
 - **Readback only adds refusals.** No readback is "unverified", not "wrong"; an unsettled QSY

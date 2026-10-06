@@ -3,8 +3,12 @@
 # clippy with `-D warnings` on every platform. The rest of the crate allows these (main.rs writes
 # files; the station opens devices). Resolved names cannot be hidden by aliases, globs, macros or
 # trait dispatch, which got round four syntax-level guards in a row (transmit-safety 02c-02f).
-# `tests/loopback_isolation.rs` checks the forbid is in place and keeps its allowlist as a second
-# layer. Paths that exist only on one platform or with a feature are `allow-invalid`.
+# It sees only calls made in loopback.rs itself, so it is one of two required layers, not the
+# guarantee alone: tests/loopback_isolation.rs holds the file to an allowlist of what it may name
+# (which is what refuses this crate's other functions and every z30_io item), and pins this list,
+# the forbid and the absence of any other clippy configuration (02g). FFI is refused by
+# `forbid(unsafe_code)` in loopback.rs. Paths that exist only on one platform or with a feature are
+# `allow-invalid`.
 
 disallowed-types = [
   { path = "std::net::TcpStream", reason = "rigctld: `T 1` keys a CAT radio" },
@@ -27,6 +31,7 @@ disallowed-types = [
   { path = "z30_engine::ptt::PttController", reason = "PTT" },
   { path = "z30_engine::ptt::VoxPtt", reason = "PTT" },
   { path = "z30_engine::runtime::RuntimeParts", reason = "the live runtime" },
+  { path = "z30_io::logbook::Logbook", reason = "opens a path the caller names" },
 ]
 
 disallowed-methods = [
@@ -51,4 +56,15 @@ disallowed-methods = [
   { path = "z30_io::open_ptt", reason = "PTT" },
   { path = "z30_engine::runtime::start", reason = "the live runtime: audio output, PTT and rig" },
   { path = "z30_engine::ptt::emergency_release_all", reason = "PTT" },
+  # z30_io functions that open a path the caller names (a tty asserts DTR/RTS when opened), and
+  # this crate's own entry points to the sound card and the file system (02g findings B1, B2).
+  { path = "z30_io::wav::read_mono", reason = "opens a path the caller names" },
+  { path = "z30_io::wav::write_mono", reason = "opens a path the caller names" },
+  { path = "z30_io::paths::load_config", reason = "opens a path the caller names" },
+  { path = "z30_io::paths::save_config", reason = "opens a path the caller names" },
+  { path = "z30_io::migrate::migrate_config", reason = "opens a path the caller names" },
+  { path = "z30_io::migrate::migrate_logbook", reason = "opens a path the caller names" },
+  { path = "z30::audio_loopback::run", reason = "plays through the sound card: a VOX radio transmits it (N-04)" },
+  { path = "z30::write_report_file", reason = "file system" },
+  { path = "z30::check_report_target", reason = "file system" },
 ]

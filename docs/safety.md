@@ -114,14 +114,19 @@ transmission is enabled, and again at each slot. The CLI never transmits at all.
 
 `z30 --loopback-test` is a **software** loopback: the frame goes from the transmit synthesis to
 the receive chain as samples in memory. The code that runs it has no audio output, PTT line or
-rig control in it, held there by two layers. `src/loopback.rs` forbids clippy's
-`disallowed_methods` and `disallowed_types`, and `crates/z30-cli/clippy.toml` lists the network,
-file system, processes, audio devices, PTT and the live runtime: clippy resolves names, so no
-alias, glob, macro or trait call reaches them, and CI runs clippy with `-D warnings`.
-`crates/z30-cli/tests/loopback_isolation.rs` parses the file and holds it to an allowlist of what
-it may name, checks the forbid and the list are in place, and fails if the flag is routed to the
-sound-card test. Four syntax-level guards in a row were got round before the semantic layer was
-added (transmit-safety reviews 02c-02f). Until 2026-09-24 this flag played the frame through
+rig control in it, held there by two layers, both required. `src/loopback.rs` forbids clippy's
+`disallowed_methods` and `disallowed_types` and `unsafe_code`; `crates/z30-cli/clippy.toml` lists
+the network, file system, processes, audio devices, PTT, the live runtime, the `z30_io` functions
+that open a path the caller names, and this crate's own sound-card and file entry points. Clippy
+resolves names, so no alias, glob, macro or trait call made in that file reaches them, and CI runs
+clippy with `-D warnings`; rustc itself refuses `unsafe`, so no FFI `open(2)`. Clippy sees only
+calls made in the file, so `crates/z30-cli/tests/loopback_isolation.rs` is the other required
+layer: it parses the file and holds it to an allowlist of what it may name (which is what refuses
+every other item of this crate and of `z30_io`), pins the forbid, the whole list and the absence of
+any other clippy configuration, and fails if the flag is routed to the sound-card test. Four
+syntax-level guards in a row were got round before the clippy layer was added, and three ways of
+switching that layer off passed the test until it pinned them (transmit-safety reviews
+02c-02g). Until 2026-09-24 this flag played the frame through
 the configured sound card with no transmit gate in front of it, so a VOX radio on that output
 would have radiated it (post-remediation audit N-04).
 

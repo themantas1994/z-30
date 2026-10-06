@@ -26,9 +26,11 @@
 //! synthesis and receive chain, not about any sound card, cable or radio: NOT HARDWARE VALIDATED.
 
 // Network, file system, processes, audio devices, PTT and the live runtime, by resolved name
-// (clippy.toml): no alias, glob, macro or trait call can reach them from here. `forbid`, so no
-// `allow` below can lift it; tests/loopback_isolation.rs checks it stays.
+// (clippy.toml): no alias, glob, macro or trait call made here can reach them. `forbid`, so no
+// `allow` below can lift it. No `unsafe`, so no FFI `open(2)` either, enforced by rustc itself.
+// tests/loopback_isolation.rs checks both stay, and holds the file to its allowlist (02g).
 #![forbid(clippy::disallowed_methods, clippy::disallowed_types)]
+#![forbid(unsafe_code)]
 
 use rand::Rng;
 use rustfft::num_complex::Complex32;

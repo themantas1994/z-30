@@ -386,25 +386,101 @@ fn the_software_loopback_reaches_only_an_allowlist_of_crates_and_items() {
     // by any alias, glob, macro or trait call, and CI runs clippy with -D warnings. It holds only
     // while loopback.rs forbids those lints and clippy.toml still lists the hazards (02f).
     let file = syn::parse_file(&src).unwrap();
-    let forbids = file.attrs.iter().any(|a| {
-        a.path().is_ident("forbid") && {
-            let t = a.meta.require_list().map(|l| l.tokens.to_string().replace(' ', "")).unwrap_or_default();
-            t.contains("clippy::disallowed_methods") && t.contains("clippy::disallowed_types")
+    // Exactly these lints forbidden: a renamed lint (`disallowed_methods_x` under
+    // `allow(unknown_lints)`) passed a substring check while switching the layer off (02g L6).
+    let mut forbidden: Vec<String> = Vec::new();
+    for a in file.attrs.iter().filter(|a| a.path().is_ident("forbid")) {
+        let list = a.parse_args_with(syn::punctuated::Punctuated::<syn::Path, syn::Token![,]>::parse_terminated).unwrap();
+        forbidden.extend(list.iter().map(|p| p.segments.iter().map(|s| s.ident.to_string()).collect::<Vec<_>>().join("::")));
+    }
+    forbidden.sort();
+    assert_eq!(
+        forbidden,
+        ["clippy::disallowed_methods", "clippy::disallowed_types", "unsafe_code"],
+        "src/loopback.rs must forbid exactly clippy::disallowed_methods, clippy::disallowed_types and unsafe_code"
+    );
+    // No other lint level anywhere in the file: nothing can be allowed beside the forbid.
+    let code = code_of("src/loopback.rs");
+    for level in ["allow", "expect", "warn", "deny"] {
+        for open in ["#[", "#!["] {
+            assert!(
+                !code.replace(' ', "").contains(&format!("{open}{level}(")),
+                "src/loopback.rs sets a lint level (`{level}`): only the forbid is allowed"
+            );
         }
-    });
-    assert!(forbids, "src/loopback.rs must carry #![forbid(clippy::disallowed_methods, clippy::disallowed_types)]");
-    let conf = std::fs::read_to_string(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("clippy.toml")).unwrap();
-    for hazard in [
-        "std::net::TcpStream",
+    }
+    // The configuration clippy actually reads: this crate's clippy.toml, with nothing that would
+    // replace it. An empty `.clippy.toml` beside it turned the layer off with CI green (02g L5b).
+    let manifest = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    assert!(!manifest.join(".clippy.toml").exists(), "a .clippy.toml in crates/z30-cli replaces clippy.toml");
+    for dir in [manifest.parent().unwrap(), manifest.parent().unwrap().parent().unwrap()] {
+        for name in ["clippy.toml", ".clippy.toml"] {
+            assert!(!dir.join(name).exists(), "{} would change the configuration clippy reads", dir.join(name).display());
+        }
+    }
+    let workflows = manifest.join("../../.github/workflows");
+    for w in std::fs::read_dir(&workflows).unwrap() {
+        let text = std::fs::read_to_string(w.unwrap().path()).unwrap();
+        assert!(!text.contains("CLIPPY_CONF_DIR"), "CI must not point clippy at another configuration");
+    }
+    // The whole list, not a sample: dropping any entry is a change this test must see (02g L4b).
+    let conf = std::fs::read_to_string(manifest.join("clippy.toml")).unwrap();
+    let mut listed: Vec<&str> = conf.split("path = \"").skip(1).map(|r| r.split('"').next().unwrap()).collect();
+    listed.sort();
+    const EXPECTED: [&str; 51] = [
+        "std::fs::DirBuilder",
         "std::fs::File",
         "std::fs::OpenOptions",
+        "std::fs::canonicalize",
+        "std::fs::copy",
+        "std::fs::create_dir",
+        "std::fs::create_dir_all",
+        "std::fs::hard_link",
+        "std::fs::metadata",
+        "std::fs::read",
+        "std::fs::read_dir",
+        "std::fs::read_link",
+        "std::fs::read_to_string",
+        "std::fs::remove_dir",
+        "std::fs::remove_dir_all",
+        "std::fs::remove_file",
+        "std::fs::rename",
+        "std::fs::set_permissions",
+        "std::fs::symlink_metadata",
         "std::fs::write",
+        "std::net::TcpListener",
+        "std::net::TcpStream",
+        "std::net::ToSocketAddrs::to_socket_addrs",
+        "std::net::UdpSocket",
+        "std::os::unix::net::UnixDatagram",
+        "std::os::unix::net::UnixListener",
+        "std::os::unix::net::UnixStream",
+        "std::process::Child",
         "std::process::Command",
-        "z30_io::audio::CpalOutput",
+        "z30::audio_loopback::run",
+        "z30::check_report_target",
+        "z30::write_report_file",
+        "z30_engine::ptt::PttController",
+        "z30_engine::ptt::VoxPtt",
+        "z30_engine::ptt::emergency_release_all",
+        "z30_engine::runtime::RuntimeParts",
         "z30_engine::runtime::start",
-    ] {
-        assert!(conf.contains(&format!("\"{hazard}\"")), "clippy.toml no longer disallows {hazard}");
-    }
+        "z30_io::audio::CpalInput",
+        "z30_io::audio::CpalOutput",
+        "z30_io::cm108::Cm108Ptt",
+        "z30_io::logbook::Logbook",
+        "z30_io::migrate::migrate_config",
+        "z30_io::migrate::migrate_logbook",
+        "z30_io::open_ptt",
+        "z30_io::paths::load_config",
+        "z30_io::paths::save_config",
+        "z30_io::rigctld::Rigctld",
+        "z30_io::rigctld::RigctldPtt",
+        "z30_io::serial_ptt::SerialPtt",
+        "z30_io::wav::read_mono",
+        "z30_io::wav::write_mono",
+    ];
+    assert_eq!(listed, EXPECTED, "crates/z30-cli/clippy.toml changed: the transmit-safety review must see it");
     // The check must see the imports (it would pass vacuously on an empty file).
     let mut g = Guard::default();
     syn::visit::Visit::visit_file(&mut g, &syn::parse_file(&src).unwrap());
