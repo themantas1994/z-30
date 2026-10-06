@@ -30,5 +30,5 @@ cm108 = ["z30-io/cm108"]
 [dev-dependencies]
 # The loopback-isolation guard parses src/loopback.rs as Rust (tests/loopback_isolation.rs):
 # text matching was bypassed by literals, spacing, aliases and macros (transmit-safety 02c, 02d).
-syn = { version = "2.0.119", default-features = false, features = ["full", "visit", "parsing", "printing", "proc-macro"] }
+syn = { version = "3.0.6", default-features = false, features = ["full", "visit", "parsing", "printing", "proc-macro"] }
 proc-macro2 = "1.0.107"
