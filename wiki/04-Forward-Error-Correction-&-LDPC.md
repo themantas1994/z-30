@@ -1,12 +1,14 @@
 # 04. Forward Error Correction & LDPC
 
-This document details the source coding, message compression, Low-Density Parity-Check (LDPC) forward error correction matrix, and belief-propagation decoding algorithm used in **z-30**.
+This page covers how a message becomes 216 coded bits and how the receiver turns noisy
+log-likelihood ratios (LLRs) back into a message: the 63-bit message packing, the CRC-14, the
+(216, 77) LDPC code and the decoder cascade. The code is `crates/z30-protocol` (codec, CRC,
+encoder) and `crates/z30-dsp/src/ldpc.rs` (decoder); the developer account is
+[`docs/ldpc.md`](../docs/ldpc.md).
 
----
+## Message structure
 
-## 📦 Message Structure & 63-Bit Source Packing
-
-A z-30 v1 frame carries a **63-bit message** (`crates/z30-protocol/src/codec.rs`; `SPEC.md` §6):
+A v1 frame carries a **63-bit message** (`crates/z30-protocol/src/codec.rs`; `SPEC.md` §6):
 
 | Field | Bits | Contents |
 | :--- | :--- | :--- |
@@ -15,8 +17,8 @@ A z-30 v1 frame carries a **63-bit message** (`crates/z30-protocol/src/codec.rs`
 | Extra | 7 | a report −30…+30 dB (codes 0–60), `RRR` (61), `73` (62), `RR73` (63), a grid from the 63-square v1 table (64–126); 127 unassigned |
 | **Message** | **63** | |
 
-Plus the 14-bit CRC below: 77 information bits. (Earlier text called this a "77-bit QSO
-exchange"; the message is 63 bits. FT8 carries 77 message bits.)
+The 14-bit CRC below brings this to 77 information bits. FT8, for comparison, carries 77
+message bits.
 
 ### Callsigns
 
@@ -25,164 +27,128 @@ A callsign v1 can carry is a 1–2 character prefix, one digit and a 1–3 lette
 $$N = \big( (p \cdot 37 + p') \cdot 10 + d \big) \cdot 27^3 + (s_0 \cdot 27^2 + s_1 \cdot 27 + s_2) + 100$$
 
 ($p, p'$ over `[ 0-9A-Z]`, $s_i$ over `[ A-Z]`). The full space exceeds $2^{28}$, so prefixes from
-`ZV` upward would wrap onto other callsigns. **z-30 refuses them**, and refuses portable (`/P`),
-compound (`EA8/G4XYZ`) and 3-character-prefix calls, rather than transmitting something else.
-The retired browser packer did transmit something else — `ZY2ABC` as `24BWE`, `G4XYZ/P` as
-`EY6ACQ` (audit C-06).
+`ZV` upward would wrap onto other callsigns. The codec refuses them, and it refuses portable
+(`/P`), compound (`EA8/G4XYZ`) and 3-character-prefix calls, rather than transmit something else.
 
 ### The extra field
 
-There is **no roger bit**: `R-12` cannot be sent, and a report sent in reply to a report carries
-the roger by its place in the sequence. Only the 63 grid squares in the v1 table can be sent; any
-other square is refused. The retired packer hashed other squares onto the table and transmitted
-a different grid (`FN42` went out as `RE78`, audit C-06).
+There is **no roger bit**. `R-12` cannot be sent, and a report sent in reply to a report carries
+the roger by its place in the sequence. Only the 63 grid squares in the v1 table can be sent;
+any other square is refused instead of being mapped onto the table.
 
 **The rule, enforced at encode time and again by the transmit gate:** a message is sent only if
 its encoded frame reads back — symbols, parity, CRC, fields and text — as exactly the message
-requested (`EncodedMessage::verify_round_trip`). `crates/z30-protocol/tests/round_trip.rs` checks
-every one of the 32,400 Maidenhead squares, every report and 40,000 sampled callsigns.
+requested (`EncodedMessage::verify_round_trip`).
+`crates/z30-protocol/tests/round_trip.rs` checks every one of the 32,400 Maidenhead squares,
+every report and 40,000 sampled callsigns.
 
----
+## CRC-14
 
-## 🛡️ 14-Bit Cyclic Redundancy Check (CRC-14)
-
-To eliminate false decodes under severe noise conditions, the 63-bit information vector is appended with a **14-bit CRC**:
+The 63-bit message is followed by a 14-bit CRC so that the receiver can tell a decode from noise:
 
 $$P(x) = x^{14} + x^{13} + x^{10} + x^{6} + x + 1 \quad (\text{register constant } \mathtt{0x2443}\text{, } x^{14} \text{ implicit; initial seed } \mathtt{0x2757}\text{, MSB-first})$$
 
-> Earlier revisions of this page, and of both legacy implementations, wrote this as
-> $x^{14} + x^{11} + x^2 + 1$ - a different polynomial (register constant `0x0805`). The two
-> legacy implementations agreed with each other so nothing broke, but a third implementation
-> written from that specification would have produced a CRC failing against both.
-> `tests/vectors/crc14_vectors.json` now pins the answer for every implementation. The original
-> audit reported an independent re-implementation from `SPEC.md` reproducing all golden vectors
-> (E007); that evidence is not in this repository.
+`tests/vectors/crc14_vectors.json` pins the result for every implementation.
 
-- **Protected block**: $K = 63 + 14 = 77$ bits.
-- **False accepts**: a CRC-14 passes a random wrong word with probability $2^{-14} \approx 6.1 \times 10^{-5}$.
-  What reaches the CRC is not random, and how many candidates are tried matters, so the rate
-  that matters is measured, not derived: see the false-decode rows on
-  [16](16-Benchmarking-Testing-&-CI.md) (no false decode has been observed in any vNext run).
+- **Protected block:** $K = 63 + 14 = 77$ bits.
+- **False accepts:** a CRC-14 passes a random wrong word with probability
+  $2^{-14} \approx 6.1 \times 10^{-5}$. What reaches the CRC is not random, and the number of
+  candidates tried matters, so the rate that counts is measured, not derived. See the
+  false-decode rows on [16](16-Benchmarking-Testing-&-CI.md); no false decode has been observed
+  in any benchmark run.
 
----
+## The (216, 77) LDPC code
 
-## 🔢 Irregular Repeat-Accumulate LDPC (216, 77) Code
+The code is a systematic rate-0.356 irregular repeat-accumulate (IRA) LDPC code:
 
-The forward error correction engine uses a systematic **Rate-0.356 Irregular Repeat-Accumulate (IRA) Low-Density Parity-Check code**:
-- **Codeword Length ($N$)**: 216 channel bits ($54 \text{ data symbols} \times 4 \text{ bits/symbol}$).
-- **Information Bits ($K$)**: 77 bits ($63 \text{ payload} + 14 \text{ CRC}$).
-- **Parity Equations ($M$)**: $216 - 77 = 139$ parity-check constraints.
-- **Code Rate ($R$)**: $77 / 216 \approx 0.356$.
+- **Codeword length $N$:** 216 channel bits (54 data symbols × 4 bits/symbol).
+- **Information bits $K$:** 77 (63 payload + 14 CRC).
+- **Parity equations $M$:** $216 - 77 = 139$.
+- **Code rate $R$:** $77 / 216 \approx 0.356$.
 
-### Parity Check Matrix $H$:
-The matrix $H = [H_d \mid H_p]$ consists of a sparse information matrix $H_d$ ($139 \times 77$) and a dual-diagonal parity structure $H_p$ ($139 \times 139$), ensuring linear-time $O(N)$ encoding.
+The parity-check matrix is $H = [H_d \mid H_p]$: a sparse information part $H_d$
+($139 \times 77$) and a dual-diagonal parity part $H_p$ ($139 \times 139$), which makes encoding
+linear in $N$.
 
----
+## Belief-propagation decoder
 
-## 🧠 Multi-Schedule Min-Sum / Sum-Product Belief Propagation Decoder
+The decoder passes messages between variable nodes (the 216 LLRs) and check nodes (the 139
+parity equations) on the code's Tanner graph. It does not run one schedule but a cascade of four.
+A paired benchmark in 2026-08 (240 frames at −24, −25 and −26 dB, the same noise decoded by the
+cascade and by a single normalised min-sum schedule) found 23 disagreements, all in the
+cascade's favour (exact two-sided McNemar p ≈ 2.4 × 10⁻⁷). That run used the earlier reference
+implementation and no result file was kept; the cascade has been in the code since.
 
-The receiver performs iterative message passing between Variable Nodes ($V_n$) and Check Nodes ($C_m$) on the bipartite Tanner graph:
+### The four schedules
 
-```
- Variable Nodes (LLRs)         Check Nodes (Parity Equations)
-    [ V_0 ] ────────┬──────────── [ C_0 ]
-    [ V_1 ] ───────┼───────────── [ C_1 ]
-    [ V_2 ] ──────┼────────────── [ C_2 ]
-      ...          │                ...
-   [ V_215 ] ──────┴───────────── [ C_138 ]
-```
-
-> **Correction (2026-08-31):** every earlier revision of this page described a single normalized
-> min-sum schedule with a fixed $\alpha = 0.75$. That was never what either implementation ran.
-> the oracle's `decode_min_sum` and the legacy `decodeMinSum` have always run the
-> four-schedule cascade documented below, identically in both languages. A paired benchmark
-> (240 frames across SNR −24/−25/−26 dB, same frame and channel noise decoded by both the real
-> cascade and a from-scratch reimplementation of the single-schedule description this page used
-> to carry) found the cascade decodes strictly more frames at every point tested — 23 of 23
-> disagreements went to the cascade, 0 to the single schedule (exact two-sided McNemar
-> p = 2 × 2⁻²³ ≈ 2.4 × 10⁻⁷; measured on the oracle's decoders in 2026-08, and no result file is
-> kept). Per the benchmark-integrity rule in [docs/benchmarking.md](../docs/benchmarking.md#reporting-rules), that clears
-> the bar to correct the documentation rather than the code. See
-> [16. Benchmarking, Testing & CI](16-Benchmarking-Testing-&-CI.md) for the method.
-
-### The four decode schedules
-
-A candidate is tried against up to four schedules in order, stopping the instant any of them
-produces a hard-decision codeword whose syndrome is zero **and** whose 14-bit CRC matches:
+A candidate is tried against up to four schedules in order, stopping the moment one produces a
+hard-decision codeword whose syndrome is zero **and** whose 14-bit CRC matches:
 
 | # | Mode | $\alpha$ | $\beta$ | Damping | Check order | Iteration cap |
 | :-- | :-- | :-- | :-- | :-- | :-- | :-- |
 | 1 | Normalized min-sum (layered) | 0.82 | 0.08 | 0.88 | forward | 45 |
 | 2 | Log-domain sum-product (exact box-plus, Jacobian-corrected) | 0.95 | — | 0.85 | forward | 40 |
 | 3 | Normalized min-sum (layered) | 0.74 | 0.04 | 0.90 | **reverse** | 35 |
-| 4 | Dithered normalized min-sum (random LLR perturbation before decoding) | 0.80 | 0.06 | 0.85 | forward | 30 |
+| 4 | Dithered normalized min-sum (LLR perturbation before decoding) | 0.80 | 0.06 | 0.85 | forward | 30 |
 
-That is a maximum of 150 total iterations across all four schedules for one candidate, though a
-typical clean frame converges within the first schedule in single digits of iterations. Schedule
-3's reverse check-node order and schedule 4's random perturbation exist to escape the trapping
-sets / pseudocodewords a single deterministic schedule can stall on near the decode threshold —
-the mechanism the paired benchmark above measured. The Rust decoder (`crates/z30-dsp/src/ldpc.rs`)
-is bit-exact with the oracle on the recorded corpus: the same verdict, the same information
-bits and the same iteration count on all 540 frames (`tests/golden_ldpc.rs`).
+That is at most 150 iterations per candidate, though a clean frame converges in the first
+schedule within single-digit iterations. Schedule 3's reverse check order and schedule 4's
+perturbation exist to escape the trapping sets and pseudocodewords a single deterministic
+schedule can stall on near the decode threshold. The perturbation is derived from the LLRs
+themselves, so a decode is reproducible. The Rust decoder
+(`crates/z30-dsp/src/ldpc.rs`) reproduces the frozen reference corpus exactly: the same verdict,
+information bits and iteration count on all 540 frames (`tests/golden_ldpc.rs`).
 
-There is no single $\alpha$ for "the decoder" any more than there is a single schedule — the
-$0.75$ figure this page carried for years was nominal, never live. Each schedule's own
-$\alpha$/$\beta$/damping triple above is what is actually applied at every check-node update:
+Each schedule applies its own $\alpha$/$\beta$/damping triple at every check-node update:
 
 $$L_{m \to n} = \left( \prod_{n' \in N(m) \setminus \{n\}} \text{sgn}(L_{n' \to m}) \right) \cdot \max\!\big(0,\ \alpha \cdot \min_{n' \in N(m) \setminus \{n\}} |L_{n' \to m}| - \beta\big)$$
 
 for the three normalized-min-sum schedules, or the box-plus (Jacobian-corrected) combination for
-schedule 2's sum-product pass. Every check-node update is damped: the applied message is a
-weighted blend of the freshly computed value and the previous iteration's message,
-`(1 − damping) × old + damping × new`. A damping of 0.85–0.90 still moves most of the way to the
-new value each iteration, just not all the way, which is what keeps the reverse-order and
-dithered passes from oscillating.
+schedule 2. Every update is damped: the applied message is a blend of the new value and the
+previous iteration's message, `(1 − damping) × old + damping × new`. At 0.85–0.90 each iteration
+still moves most of the way to the new value, which keeps the reverse-order and dithered passes
+from oscillating.
 
-### Algorithm steps (per schedule)
+### Steps per candidate
 
-1. **Initialization**: Initialize variable-to-check messages $L_{n \to m} = \text{LLR}_n$ (schedule 4 additionally adds a small uniform random perturbation to every channel LLR first).
-2. **Check Node Update**: per the table above, in the schedule's check order (forward, or reversed for schedule 3).
-3. **Variable Node Update**:
+1. **Initialisation.** Variable-to-check messages start at the channel LLRs,
+   $L_{n \to m} = \text{LLR}_n$. Schedule 4 first adds a small perturbation to every LLR.
+2. **Check-node update** as in the table, in the schedule's check order.
+3. **Variable-node update:**
    $$L_{n \to m} = \text{LLR}_n + \sum_{m' \in M(n) \setminus \{m\}} L_{m' \to n}$$
-4. **Hard Decision & CRC Parity Check**:
+4. **Hard decision and CRC check:**
    $$\hat{c}_n = \begin{cases} 0 & \text{if } \text{LLR}_n + \sum_{m \in M(n)} L_{m \to n} \ge 0 \\ 1 & \text{if } \text{LLR}_n + \sum_{m \in M(n)} L_{m \to n} < 0 \end{cases}$$
-   If $H \cdot \hat{\mathbf{c}}^T = \mathbf{0} \pmod 2$ and the 14-bit CRC matches, decoding terminates with **SUCCESS** immediately (often in single digits of iterations for a clean frame).
-5. **Trellis-IRA re-check**: independently of the syndrome, whenever the hard decision's
-   payload CRC matches its received CRC field, its 77 information bits are re-encoded (the same
-   forward-substitution the encoder uses), and the result is accepted if that codeword correlates
-   positively with the channel LLRs **and** differs from the hard decision in at most 12 bits
-   (SPEC §7) — this catches a codeword whose information bits are already correct but whose
-   noisy parity bits haven't converged, without spending more iterations on them.
-6. **Escalation**: if a schedule's iteration cap is reached without success, the next schedule in
-   the table runs on a fresh copy of the channel LLRs.
-7. **OSD**: if all four fail, and only if the best BP iteration reached a syndrome weight of at
+   If $H \cdot \hat{\mathbf{c}}^T = \mathbf{0} \pmod 2$ and the 14-bit CRC matches, decoding stops
+   with success.
+5. **Re-encode check.** Independently of the syndrome, whenever the hard decision's payload CRC
+   matches its received CRC field, its 77 information bits are re-encoded with the encoder's
+   forward substitution. The result is accepted if that codeword correlates positively with the
+   channel LLRs **and** differs from the hard decision in at most 12 bits (SPEC §7). This catches
+   a codeword whose information bits are already right but whose noisy parity bits have not
+   converged.
+6. **Escalation.** If a schedule reaches its iteration cap without success, the next schedule
+   runs on a fresh copy of the channel LLRs.
+7. **OSD.** If all four fail, and only if the best BP iteration reached a syndrome weight of at
    most 14 (SPEC §7), ordered-statistics post-processing flips up to two of the 14 least
    reliable of all 77 information bits (payload **and** CRC field) of that iteration's hard
-   decision, re-encodes, and accepts a candidate only if its CRC field equals the CRC of its own
-   payload, then applies the correlation (> 20) and distance (≤ 16 bits) gates (SPEC §7.1). The
-   legacy OSD flipped payload bits only and *recomputed* the CRC from the flipped payload, so its
-   CRC check compared a CRC with itself and was always true (a tautology; audit H-09 / M1). The
-   union bound on a random CRC pass is $106 \times 2^{-14} \approx 6.5 \times 10^{-3}$ per
-   invocation *before* the correlation and distance gates; the measured false-decode figures are
-   in `docs/ldpc.md` and [16](16-Benchmarking-Testing-&-CI.md).
-8. Otherwise the candidate fails. A failed candidate is **not** passed to SIC: SIC subtracts only
-   frames that decoded ([05](05-Successive-Interference-Cancellation-(SIC).md)).
+   decision and re-encodes. A candidate is accepted only if its CRC field equals the CRC of its
+   own payload, and it then passes the correlation (> 20) and distance (≤ 16 bits) gates
+   (SPEC §7.1). Before those two gates, the union bound on a random CRC pass is
+   $106 \times 2^{-14} \approx 6.5 \times 10^{-3}$ per invocation. The measured false-decode
+   figures are in [`docs/ldpc.md`](../docs/ldpc.md) and [16](16-Benchmarking-Testing-&-CI.md).
+8. **Failure.** Otherwise the candidate fails. A failed candidate is not passed to SIC, which
+   subtracts only frames that decoded ([05](05-Successive-Interference-Cancellation-(SIC).md)).
 
----
+## Decoding with information the receiver already has
 
-## 🎯 Decoding with information the receiver already has
+Everything above treats all 77 information bits as unknowns. In a QSO the receiver knows more:
+a station answering your CQ has to have put your callsign in the first 28 bits, or it is not
+answering you. **A priori (AP) decoding** asserts those bits instead of measuring them and lets
+the CRC-14 decide whether the assertion was right.
 
-Everything above treats all 77 information bits as unknowns. When the receiver is in a QSO it is
-not: a station answering your CQ has to have put your callsign in the first 28 bits, or it is
-not answering you. **A priori (AP) decoding** asserts those bits instead of measuring them, and
-lets the CRC-14 decide whether the assertion was right.
-
-The whole cascade above runs first and unchanged — AP is only attempted on a frame that has
-already failed every schedule, so for that frame it can add a decode but cannot change or lose one
+The cascade above runs first and unchanged. AP is attempted only on a frame that has already
+failed every schedule, so for that frame it can add a decode but cannot change or lose one
 (across SIC passes the guarantee is weaker; see [17](17-A-Priori-(AP)-Decoding.md)). An asserted
-bit is *pinned*: its belief is held at the asserted value for every iteration rather than merely
-initialised there, so no run of confident check messages can walk it back.
-
-The mechanism, the hypothesis ladder, the gates that keep it from being tried where the QSO
-state does not apply, the measured effect and the false-accept cost are all in
-[17. A Priori (AP) Decoding](17-A-Priori-(AP)-Decoding.md).
+bit is *pinned*: its belief is held at the asserted value on every iteration, so no run of
+confident check messages can walk it back. The hypothesis ladder, the gates, the measured effect
+and the false-accept cost are all on [17](17-A-Priori-(AP)-Decoding.md).

@@ -1,10 +1,11 @@
 # 05. Successive Interference Cancellation (SIC)
 
 When two stations transmit in the same slot on overlapping frequencies, the stronger one can
-hide the weaker. z-30's receiver decodes what it can, **subtracts** each decoded station from
-the audio, and searches the remainder again — up to three passes in total. FT8's decoder in
-WSJT-X does the same thing (`subtractft8`, three passes); this is not something z-30 has and FT8
-lacks. The developer description of the code is [`docs/sic.md`](../docs/sic.md).
+hide the weaker. The receiver decodes what it can, **subtracts** each decoded station from the
+audio and searches the remainder again, for up to three passes in total. WSJT-X's FT8 decoder
+works the same way (`subtractft8`, three passes), so this is not a capability z-30 has and FT8
+lacks. The developer description of the code is [`docs/sic.md`](../docs/sic.md); the
+implementation is `crates/z30-dsp/src/sic.rs`, driven from `decode_slot`.
 
 ## What happens in a slot
 
@@ -31,7 +32,8 @@ lacks. The developer description of the code is [`docs/sic.md`](../docs/sic.md).
    decode list and the CLI's decode line do not show it.
 
 A decode that repeats a payload already found in the slot is dropped, so a station is never
-reported twice.
+reported twice. A candidate that failed to decode is never subtracted: only a CRC-valid frame is
+regenerated.
 
 ## What has been measured
 
@@ -79,17 +81,17 @@ Unit-level checks (`crates/z30-dsp/tests/`): measured against the true transmitt
 that is not there removes only its noise projection (< 0.5% of the slot) and decodes nothing;
 and SIC never loses a decode that a single pass found.
 
-## What is not claimed
+## Limits and what is not claimed
 
-- **The internal "suppression" figure is not physical suppression.** The receiver reports, per
-  subtraction, the ratio of its own fit before and after. The 2026-09-24 audits measured that
-  ratio overstating the true suppression by 9–16 dB (9–12 dB, then 11–16 dB); the spread is not
-  a constant offset that could be subtracted. It is a diagnostic and is not quoted
-  anywhere as how much of a station was removed.
-- **Withdrawn figures stay withdrawn.** An earlier version of this page carried collision
-  decode rates (98.7 / 95.2 / 91.4 / 84.6 %), a "Pass 3 reaches −27.5 dB" claim and a
-  "−31.5 dB" recovery figure. No instrument produced any of them; they were withdrawn on
-  2026-09-01 and are not replaced by anything but the measured table above.
+- **The internal "suppression" figure is not physical suppression.** For each subtraction the
+  receiver reports the ratio of its own fit residual before and after. Against the true
+  waveform, audits in September 2026 found that ratio overstating the real suppression by 9–16
+  dB, and the gap is not a constant offset. It is a diagnostic and is never quoted as how much of
+  a station was removed.
+- **Withdrawn figures stay withdrawn.** Earlier collision decode rates (98.7 / 95.2 / 91.4 /
+  84.6 %), a "pass 3 reaches −27.5 dB" claim and a "−31.5 dB" recovery figure came from no
+  instrument and were withdrawn on 2026-09-01. The measured table above is their only
+  replacement.
 - Collisions of more than two stations are measured only as the busy-band benchmark (K = 5–40
   stations at random positions, [16](16-Benchmarking-Testing-&-CI.md)), not as a function of
   power difference.
