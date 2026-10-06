@@ -10,8 +10,10 @@ output, oracle-era or audit measurements where they appear.
 
 `SPEC.md` at the repository root is the normative protocol specification; `protocol-v1.md` here
 is its guided tour. `wiki/` is the operator documentation and must agree with these pages; a
-contradiction is a bug. The retired browser/Python runtime is documented only in
-[`legacy/`](../legacy/README.md).
+contradiction is a bug. The retired browser/Python runtime, its Python protocol oracle and the
+PyO3 research bindings were deleted in the 2026-10-06 cleanup
+([`audit/2026-10-06-codebase-cleanup/`](../audit/2026-10-06-codebase-cleanup/REMOVAL_PLAN.md));
+they survive in the repository history (commit `acfce5e`) and in the audits that describe them.
 
 | Page | What it covers |
 | :--- | :--- |

@@ -119,7 +119,6 @@ fn random_overlapping_bands_sic_on_versus_off_paired() {
     assert!(on as f64 >= 0.9 * total as f64, "{on}/{total} with SIC");
 }
 
-#[cfg(feature = "parallel")]
 #[test]
 fn a_busy_band_decodes_identically_on_one_thread_and_on_many() {
     let rx = Receiver::new();
@@ -131,11 +130,26 @@ fn a_busy_band_decodes_identically_on_one_thread_and_on_many() {
     let many = pool(8).install(|| rx.decode_slot(&x, &RxConfig::default()));
     let one = pool(1).install(|| rx.decode_slot(&x, &RxConfig::default()));
     assert_eq!(pool(8).install(rayon::current_num_threads), 8, "the many-thread side really has many threads");
-    let key = |r: &SlotReport| -> Vec<_> {
-        r.decodes
+    // Every field of every decode and every pass statistic but wall-clock time, as raw bits.
+    let key = |r: &SlotReport| {
+        let decodes: Vec<_> = r
+            .decodes
             .iter()
-            .map(|d| (d.info, d.pass, d.iterations, d.dt_sec.to_bits(), d.freq_hz.to_bits(), d.snr_db.map(f64::to_bits)))
-            .collect()
+            .map(|d| {
+                (
+                    (d.info, d.pass, d.iterations, d.ap_type, format!("{:?}", d.method)),
+                    (d.dt_sec.to_bits(), d.freq_hz.to_bits(), d.snr_db.map(f64::to_bits), d.drift_hz.to_bits(), d.sync.to_bits()),
+                )
+            })
+            .collect();
+        let passes: Vec<_> = r
+            .passes
+            .iter()
+            .map(|p| {
+                (p.candidates, p.decoded, p.ldpc_attempts, p.duplicates, p.suppression_db.iter().map(|v| v.to_bits()).collect::<Vec<_>>())
+            })
+            .collect();
+        (decodes, passes)
     };
     assert!(!many.decodes.is_empty());
     assert_eq!(key(&many), key(&one));

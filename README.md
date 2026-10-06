@@ -38,15 +38,16 @@ needs Python, Node or a browser, and neither falls back to anything else: if the
 the PTT line or rig control cannot be opened, the program says so, and the station refuses to
 transmit rather than substitute something.
 
-The earlier browser/Python application is **retired**. Its Python protocol code survives as a
-frozen, non-production reference in [`legacy/`](legacy/README.md); nothing an operator installs
-uses it.
+The earlier browser/Python application is **retired**, and its code was deleted from this
+repository in the 2026-10-06 cleanup ([audit](audit/2026-10-06-codebase-cleanup/REMOVAL_PLAN.md);
+recoverable from commit `acfce5e`). What its Python protocol code pinned survives as frozen golden
+vectors that the Rust tests check.
 
 ## Current state
 
 | | Status |
 | :--- | :--- |
-| **Protocol validated** | **Yes, against the reference.** The Rust implementation reproduces the frozen reference oracle's golden vectors ([`fixtures/golden/`](fixtures/golden/), checked in CI): CRC, LDPC encoder, symbol map and codec bit for bit, and the GFSK waveform numerically equivalent within a tolerance of 1e-6 per stored sample (full scale 1.0). An independent re-implementation from [`SPEC.md`](SPEC.md) alone was reported by the original 2026-09-24 audit (its evidence E007 is not in this repository, so it cannot be checked here). |
+| **Protocol validated** | **Yes, against the reference.** The Rust implementation reproduces the golden vectors the reference oracle generated ([`fixtures/golden/`](fixtures/golden/); the oracle has since been deleted, so the vectors are frozen and hash-pinned, and the Rust tests that read them run in CI): CRC, LDPC encoder, symbol map and codec bit for bit, and the GFSK waveform numerically equivalent within a tolerance of 1e-6 per stored sample (full scale 1.0). An independent re-implementation from [`SPEC.md`](SPEC.md) alone was reported by the original 2026-09-24 audit (its evidence E007 is not in this repository, so it cannot be checked here). |
 | **Software simulation validated** | **Yes.** The receiver is measured through its production entry point in seeded simulation (AWGN, drift, timing, clock error, impairments, busy bands, collisions, fading, false decodes) — [measurements](docs/benchmarking.md). |
 | **Hardware validated** | **No.** Real-radio validation: **not yet performed.** No radio, audio interface or PTT interface has been used with z-30. |
 | **On-air validated** | **No.** No z-30 frame has been decoded over a real radio path. No other software speaks z-30. |
@@ -146,9 +147,7 @@ Also: a radio on VOX wired to a sound card that a PTT-less configuration drives 
 detected by software (post-remediation audit N-04); the reported SNR reads low on non-ideal
 signals such as phase noise and fading ([receiver.md](docs/receiver.md#reported-snr-dt-and-frequency),
 N-08); no published figure goes through the capture → resampler → scheduler chain (N-12;
-[what is not measured](docs/benchmarking.md#not-measured)); `cargo build --workspace` needs a
-Python interpreter because of the research bindings (N-15; build the application with
-`-p z30-cli -p z30-gui`); the rig-readback tolerance is a strict 1 Hz; a serial PTT port may key
+[what is not measured](docs/benchmarking.md#not-measured)); the rig-readback tolerance is a strict 1 Hz; a serial PTT port may key
 briefly when opened. An older list, dated before the post-remediation and corrective audits, is
 [audit/2026-09-24-vnext-remediation/KNOWN_LIMITATIONS.md](audit/2026-09-24-vnext-remediation/KNOWN_LIMITATIONS.md);
 it is not maintained.
@@ -167,8 +166,8 @@ it is not maintained.
 ## Contributing
 
 See [wiki/02](wiki/02-Developer-Setup-&-Contributing.md) and [`AGENTS.md`](AGENTS.md). In short:
-`cargo fmt --all --check`, `cargo clippy --workspace --all-targets --exclude z30-py -- -D warnings`,
-`cargo test --workspace --exclude z30-py --release`;
+`cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D warnings`,
+`cargo test --workspace --release`;
 safety tests are never weakened to pass; every number needs a result file.
 
 ## Licence

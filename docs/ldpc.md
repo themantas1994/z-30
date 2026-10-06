@@ -11,7 +11,7 @@ touches five information bits (`CHECK_TO_INFO`, degree 5, girth 6), and H_parity
 dual-diagonal, so encoding is a running XOR. The 77 information bits are 63 payload bits and
 the 14-bit CRC (register 0x2443, init 0x2757, MSB-first).
 
-## The cascade (bit-exact with the oracle)
+## The cascade (bit-exact with the oracle's golden vectors)
 
 Four layered schedules run in order until one succeeds:
 
@@ -29,7 +29,9 @@ from the hard decision in ≤ 12 bits (`Trellis(n)`). A frame whose raw hard dec
 a valid codeword reports `HardDecision`. Iterations are counted cumulatively (at most 150).
 
 **Bit-exact** means the same verdict, the same 77 bits and the same cumulative iteration count
-as `Z30LdpcCodec.decode_min_sum` on every golden vector. Achieving that requires NumPy 2
+as the oracle's `Z30LdpcCodec.decode_min_sum` recorded in every golden vector (the oracle
+itself was deleted in the 2026-10-06 cleanup; its outputs stay frozen in `fixtures/golden/`).
+Achieving that requires NumPy 2
 (NEP 50) float semantics, which the audit's proof-of-concept established and `ldpc.rs`
 transcribes:
 
@@ -48,6 +50,7 @@ Tests (`crates/z30-dsp/tests/golden_ldpc.rs`):
 | Test | Corpus |
 | :--- | :--- |
 | `dither_matches_the_oracle` | the dither vector for fixed LLRs |
+| `dither_matches_the_shared_vector` | `tests/vectors/dither_vectors.json`, the vector the retired Python and TypeScript implementations shared |
 | `ldpc_cascade_is_bit_exact_on_the_corpus` | 540 frames across the waterfall region |
 | `legacy_osd_path_is_bit_exact_and_the_fixed_rule_agrees_on_it` | 7 frames the oracle's OSD rescues |
 | `production_decoder_never_accepts_a_crc_failure_and_agrees_with_bp` | the 540 frames |
@@ -74,8 +77,9 @@ pass is 6.5 × 10⁻³ before those gates. The measured rate is in
 
 **Gate G2.3, measured.** 4000 frames were drawn the way the golden generator draws them, and
 3004 of them failed BP. The legacy OSD recovered 7; the corrected OSD recovered the same 7.
-That is 0 discordant (`screen_osd_pool`, and `OSD_POOL_INDICES` in
-`reference/golden/generate.py`). Closing the tautology cost no decodes. The golden OSD corpus
+That is 0 discordant (measured by the ignored test helper `screen_osd_pool` and recorded as
+`OSD_POOL_INDICES` in the oracle's golden generator; both were removed in the 2026-10-06 cleanup
+and are recoverable from commit `acfce5e`). Closing the tautology cost no decodes. The golden OSD corpus
 is those 7 frames, and the test asserts that where the corrected rule succeeds it returns the
 oracle's bits.
 
@@ -85,7 +89,8 @@ the identical bits and iteration count.
 
 ## A priori (AP) decoding (`ap.rs`)
 
-This is WSJT-X's `ft8b.f90` ladder, a twin of `legacy/python-oracle/z30_dsp/ap_decode.py` (the design is in
+This is WSJT-X's `ft8b.f90` ladder, a twin of the deleted oracle's `z30_dsp/ap_decode.py`,
+whose ladders and decodes are frozen in the golden AP corpus (the design is in
 `wiki/17`). AP asserts message bits the receiver did not measure, which makes it the one place
 an assumption can become a logged QSO. Three rules keep it honest:
 

@@ -45,8 +45,6 @@ const SCHEDULES: [Schedule; 4] = [
 
 /// Iteration cap of schedule 1 (`LDPC_MAX_ITERATIONS` in the reference).
 pub const LDPC_MAX_ITERATIONS: usize = 45;
-/// Total iterations of a cascade that never converges.
-pub const CASCADE_ITERATIONS: usize = 45 + 40 + 35 + 30;
 /// Peak-to-peak dither of schedule 4.
 pub const DITHER_AMPLITUDE: f64 = 0.45;
 /// OSD runs only when BP got this close (minimum syndrome weight).

@@ -1,0 +1,588 @@
+{
+  "benchmark": "snr",
+  "channel": "AWGN",
+  "definitions": {
+    "duplicates_dropped": "decodes of an already-decoded payload that the receiver itself discarded (PassStats::duplicates)",
+    "duplicates_emitted": "the same payload reported more than once in the output (must be 0)",
+    "false_decode": "a CRC-valid decode whose payload was not transmitted in that slot",
+    "ground_truth": "the harness knows the transmitted payloads; the receiver is given only the 27 s window",
+    "interval": "Wilson score 95% interval, percent",
+    "latency": "wall-clock time of decode_slot per slot, measured while other slots were decoded concurrently on the same pool; indicative only (see `z30 --benchmark perf` for controlled latency)",
+    "sample_rate_hz": 6000.0,
+    "snr": "SPEC.md section 10: frame signal power over the noise power in 2500 Hz; real white Gaussian noise, sigma = 1 per sample at 6 kHz, so SNR = P / (5000 / 6000)",
+    "success": "a decode whose 63 payload bits equal the transmitted payload"
+  },
+  "exploratory": "fewer than 100 per point (this benchmark's publishable size): exploratory, not publishable",
+  "frames_per_point": 20,
+  "frames_policy": "a sensitivity crossing needs at least 200 frames per point (AGENTS.md section 5); a benchmark below its publishable size is exploratory",
+  "not_the_published_run": "status exploratory: 20 per point, below the publishable 100",
+  "placement": "as awgn",
+  "points": [
+    {
+      "decoded": 0,
+      "dt_error_ms": {
+        "bias": null,
+        "max_abs": 0.0,
+        "n": 0,
+        "sd": null
+      },
+      "duplicates_dropped": 0,
+      "duplicates_emitted": 0,
+      "false_decodes": 0,
+      "frames": 20,
+      "freq_error_hz": {
+        "bias": null,
+        "max_abs": 0.0,
+        "n": 0,
+        "sd": null
+      },
+      "label": "true -25 dB",
+      "latency_ms": {
+        "max": 589.512348,
+        "p50": 175.913912,
+        "p95": 202.929702
+      },
+      "param": -25.0,
+      "percent": 0.0,
+      "snr_measured": {
+        "bias_db": null,
+        "max_error_db": null,
+        "min_error_db": null,
+        "n": 0,
+        "not_measured": 0,
+        "sd_db": null
+      },
+      "wilson95": [
+        0.0,
+        16.112515805281937
+      ]
+    },
+    {
+      "decoded": 17,
+      "dt_error_ms": {
+        "bias": 1.3736943790575589,
+        "max_abs": 13.68165753894013,
+        "n": 17,
+        "sd": 4.761625938536977
+      },
+      "duplicates_dropped": 0,
+      "duplicates_emitted": 0,
+      "false_decodes": 0,
+      "frames": 20,
+      "freq_error_hz": {
+        "bias": 0.023898767833585185,
+        "max_abs": 0.319580612676873,
+        "n": 17,
+        "sd": 0.1573576155074245
+      },
+      "label": "true -22 dB",
+      "latency_ms": {
+        "max": 361.686121,
+        "p50": 280.47362999999996,
+        "p95": 352.452305
+      },
+      "param": -22.0,
+      "percent": 85.0,
+      "snr_measured": {
+        "bias_db": -0.18384539317155765,
+        "max_error_db": 0.4112109042743306,
+        "min_error_db": -0.7061006522800284,
+        "n": 17,
+        "not_measured": 0,
+        "sd_db": 0.3340129221936135
+      },
+      "wilson95": [
+        63.95811352592431,
+        94.76312541037835
+      ]
+    },
+    {
+      "decoded": 20,
+      "dt_error_ms": {
+        "bias": 0.20746674628505007,
+        "max_abs": 11.586687196088018,
+        "n": 20,
+        "sd": 3.127210451160265
+      },
+      "duplicates_dropped": 0,
+      "duplicates_emitted": 0,
+      "false_decodes": 0,
+      "frames": 20,
+      "freq_error_hz": {
+        "bias": -0.010378990204213779,
+        "max_abs": 0.27964009017091485,
+        "n": 20,
+        "sd": 0.12554413128604922
+      },
+      "label": "true -20 dB",
+      "latency_ms": {
+        "max": 513.1083829999999,
+        "p50": 317.081892,
+        "p95": 406.640071
+      },
+      "param": -20.0,
+      "percent": 100.0,
+      "snr_measured": {
+        "bias_db": -0.00042142843236412373,
+        "max_error_db": 0.7233621511823074,
+        "min_error_db": -0.4562396359287746,
+        "n": 20,
+        "not_measured": 0,
+        "sd_db": 0.36927869827694565
+      },
+      "wilson95": [
+        83.88748419471807,
+        100.0
+      ]
+    },
+    {
+      "decoded": 20,
+      "dt_error_ms": {
+        "bias": -0.142651787220352,
+        "max_abs": 2.9614284534245083,
+        "n": 20,
+        "sd": 1.0147398393918166
+      },
+      "duplicates_dropped": 0,
+      "duplicates_emitted": 0,
+      "false_decodes": 0,
+      "frames": 20,
+      "freq_error_hz": {
+        "bias": -0.015970423264792543,
+        "max_abs": 0.20075032128897874,
+        "n": 20,
+        "sd": 0.09055651247807453
+      },
+      "label": "true -15 dB",
+      "latency_ms": {
+        "max": 585.792756,
+        "p50": 479.629,
+        "p95": 540.490324
+      },
+      "param": -15.0,
+      "percent": 100.0,
+      "snr_measured": {
+        "bias_db": 0.024598056649644297,
+        "max_error_db": 0.5240095213210143,
+        "min_error_db": -0.39121692078089154,
+        "n": 20,
+        "not_measured": 0,
+        "sd_db": 0.21798060264820743
+      },
+      "wilson95": [
+        83.88748419471807,
+        100.0
+      ]
+    },
+    {
+      "decoded": 20,
+      "dt_error_ms": {
+        "bias": -0.06951541492864469,
+        "max_abs": 1.3077997037894695,
+        "n": 20,
+        "sd": 0.7022576225439922
+      },
+      "duplicates_dropped": 0,
+      "duplicates_emitted": 0,
+      "false_decodes": 0,
+      "frames": 20,
+      "freq_error_hz": {
+        "bias": -0.016566020367582722,
+        "max_abs": 0.10103723390716368,
+        "n": 20,
+        "sd": 0.04175301933479106
+      },
+      "label": "true -10 dB",
+      "latency_ms": {
+        "max": 673.262446,
+        "p50": 590.7135999999999,
+        "p95": 670.077698
+      },
+      "param": -10.0,
+      "percent": 100.0,
+      "snr_measured": {
+        "bias_db": 0.013614380271729764,
+        "max_error_db": 0.25562967606240505,
+        "min_error_db": -0.1828607459366225,
+        "n": 20,
+        "not_measured": 0,
+        "sd_db": 0.1394545575389973
+      },
+      "wilson95": [
+        83.88748419471807,
+        100.0
+      ]
+    },
+    {
+      "decoded": 20,
+      "dt_error_ms": {
+        "bias": -0.21820530836260268,
+        "max_abs": 0.8906989266250775,
+        "n": 20,
+        "sd": 0.34166697068130675
+      },
+      "duplicates_dropped": 0,
+      "duplicates_emitted": 0,
+      "false_decodes": 0,
+      "frames": 20,
+      "freq_error_hz": {
+        "bias": -0.0090370743267556,
+        "max_abs": 0.05054820074747113,
+        "n": 20,
+        "sd": 0.026354418457270035
+      },
+      "label": "true -6 dB",
+      "latency_ms": {
+        "max": 2119.905653,
+        "p50": 619.48437,
+        "p95": 1122.761489
+      },
+      "param": -6.0,
+      "percent": 100.0,
+      "snr_measured": {
+        "bias_db": -0.03393132358317601,
+        "max_error_db": 0.31367266289150564,
+        "min_error_db": -0.46408051710174547,
+        "n": 20,
+        "not_measured": 0,
+        "sd_db": 0.19716747401934895
+      },
+      "wilson95": [
+        83.88748419471807,
+        100.0
+      ]
+    },
+    {
+      "decoded": 20,
+      "dt_error_ms": {
+        "bias": 0.03426304379419293,
+        "max_abs": 0.46650150106941624,
+        "n": 20,
+        "sd": 0.2583885655624038
+      },
+      "duplicates_dropped": 0,
+      "duplicates_emitted": 0,
+      "false_decodes": 0,
+      "frames": 20,
+      "freq_error_hz": {
+        "bias": -0.0028014151952575617,
+        "max_abs": 0.031618485840141375,
+        "n": 20,
+        "sd": 0.014128755916193546
+      },
+      "label": "true +0 dB",
+      "latency_ms": {
+        "max": 730.7769549999999,
+        "p50": 615.559386,
+        "p95": 715.474918
+      },
+      "param": 0.0,
+      "percent": 100.0,
+      "snr_measured": {
+        "bias_db": -0.039269955661095854,
+        "max_error_db": 0.11871108901776495,
+        "min_error_db": -0.36445495372892367,
+        "n": 20,
+        "not_measured": 0,
+        "sd_db": 0.10616818589087465
+      },
+      "wilson95": [
+        83.88748419471807,
+        100.0
+      ]
+    },
+    {
+      "decoded": 20,
+      "dt_error_ms": {
+        "bias": -0.10711379357592372,
+        "max_abs": 0.2918632806563348,
+        "n": 20,
+        "sd": 0.1297689237708826
+      },
+      "duplicates_dropped": 0,
+      "duplicates_emitted": 0,
+      "false_decodes": 0,
+      "frames": 20,
+      "freq_error_hz": {
+        "bias": -0.012029940459575528,
+        "max_abs": 0.03787493686888865,
+        "n": 20,
+        "sd": 0.016435634355227456
+      },
+      "label": "true +5 dB",
+      "latency_ms": {
+        "max": 829.953204,
+        "p50": 680.702418,
+        "p95": 813.166316
+      },
+      "param": 5.0,
+      "percent": 100.0,
+      "snr_measured": {
+        "bias_db": -0.0648688562942354,
+        "max_error_db": 0.0667657169021254,
+        "min_error_db": -0.2575765304256521,
+        "n": 20,
+        "not_measured": 0,
+        "sd_db": 0.0816901703320476
+      },
+      "wilson95": [
+        83.88748419471807,
+        100.0
+      ]
+    },
+    {
+      "decoded": 20,
+      "dt_error_ms": {
+        "bias": -0.0740614680839316,
+        "max_abs": 0.19499887350260536,
+        "n": 20,
+        "sd": 0.059695527738574346
+      },
+      "duplicates_dropped": 0,
+      "duplicates_emitted": 0,
+      "false_decodes": 0,
+      "frames": 20,
+      "freq_error_hz": {
+        "bias": -0.00408427555201456,
+        "max_abs": 0.03401281291996838,
+        "n": 20,
+        "sd": 0.01708661636614673
+      },
+      "label": "true +10 dB",
+      "latency_ms": {
+        "max": 746.2547910000001,
+        "p50": 617.535877,
+        "p95": 745.670703
+      },
+      "param": 10.0,
+      "percent": 100.0,
+      "snr_measured": {
+        "bias_db": -0.009185789439171898,
+        "max_error_db": 0.18390476825588564,
+        "min_error_db": -0.25792512113029886,
+        "n": 20,
+        "not_measured": 0,
+        "sd_db": 0.10160748071313042
+      },
+      "wilson95": [
+        83.88748419471807,
+        100.0
+      ]
+    },
+    {
+      "decoded": 20,
+      "dt_error_ms": {
+        "bias": -0.08306053234013594,
+        "max_abs": 0.1790042275728876,
+        "n": 20,
+        "sd": 0.053319532291188854
+      },
+      "duplicates_dropped": 0,
+      "duplicates_emitted": 0,
+      "false_decodes": 0,
+      "frames": 20,
+      "freq_error_hz": {
+        "bias": -0.00680205849883464,
+        "max_abs": 0.040605996013027834,
+        "n": 20,
+        "sd": 0.015604743909848652
+      },
+      "label": "true +20 dB",
+      "latency_ms": {
+        "max": 727.059052,
+        "p50": 616.979778,
+        "p95": 724.300872
+      },
+      "param": 20.0,
+      "percent": 100.0,
+      "snr_measured": {
+        "bias_db": -0.0848565111152535,
+        "max_error_db": 0.16299261246118846,
+        "min_error_db": -0.2663065702899132,
+        "n": 20,
+        "not_measured": 0,
+        "sd_db": 0.12142376132193497
+      },
+      "wilson95": [
+        83.88748419471807,
+        100.0
+      ]
+    },
+    {
+      "decoded": 20,
+      "dt_error_ms": {
+        "bias": -0.07634729150615069,
+        "max_abs": 0.16545228236308773,
+        "n": 20,
+        "sd": 0.04515939921157953
+      },
+      "duplicates_dropped": 0,
+      "duplicates_emitted": 0,
+      "false_decodes": 0,
+      "frames": 20,
+      "freq_error_hz": {
+        "bias": -0.007278673618614562,
+        "max_abs": 0.032351779493581034,
+        "n": 20,
+        "sd": 0.012842131663433832
+      },
+      "label": "true +30 dB",
+      "latency_ms": {
+        "max": 741.204654,
+        "p50": 635.613662,
+        "p95": 738.5112459999999
+      },
+      "param": 30.0,
+      "percent": 100.0,
+      "snr_measured": {
+        "bias_db": -0.23656586036240412,
+        "max_error_db": 0.17276013797307144,
+        "min_error_db": -0.8255588329127761,
+        "n": 20,
+        "not_measured": 0,
+        "sd_db": 0.26810679751188715
+      },
+      "wilson95": [
+        83.88748419471807,
+        100.0
+      ]
+    }
+  ],
+  "provenance": {
+    "arch": "x86_64",
+    "binary": "z30 (z30-cli), the shipped command-line station",
+    "build_profile": "release",
+    "built": "2026-10-06T07:44:13Z",
+    "cargo_lock_sha256": "19071d50e12ab539368eefdd003f0f438e03acbe4d505e60364d7540ea7576d0",
+    "cpu": "Intel(R) Xeon(R) Processor @ 2.10GHz",
+    "decoder_config": "RxConfig { band_lo_hz: 200.0, band_hi_hz: 2800.0, max_candidates: 50, sync_threshold: 1.5, passes: 3, max_drift_hz: 4.0, drift_gain: 1.05, min_fine_sync: 2.5, whiten: true, ap: None, sic: SicParams { window_sec: 0.4, timing_search: 16 } }",
+    "elapsed_s": 29.881953241,
+    "git_commit": "624fa9b74992",
+    "git_diff_sha256": null,
+    "git_dirty": false,
+    "hardware_involved": false,
+    "instrument": {
+      "channel_dependencies": [
+        "autocfg 1.5.1",
+        "bit-set 0.8.0",
+        "bit-vec 0.8.0",
+        "bitflags 2.13.2",
+        "cfg-if 1.0.5",
+        "errno 0.3.14",
+        "fastrand 2.5.0",
+        "fnv 1.0.7",
+        "getrandom 0.2.17",
+        "getrandom 0.3.4",
+        "getrandom 0.4.3",
+        "itoa 1.0.18",
+        "libc 0.2.189",
+        "libm 0.2.16",
+        "linux-raw-sys 0.12.1",
+        "memchr 2.8.3",
+        "num-complex 0.4.6",
+        "num-integer 0.1.47",
+        "num-traits 0.2.19",
+        "once_cell 1.21.4",
+        "ppv-lite86 0.2.21",
+        "primal-check 0.3.4",
+        "proc-macro2 1.0.107",
+        "proptest 1.11.0",
+        "quick-error 1.2.3",
+        "quote 1.0.47",
+        "r-efi 5.3.0",
+        "r-efi 6.0.0",
+        "rand 0.8.8",
+        "rand 0.9.5",
+        "rand_chacha 0.3.1",
+        "rand_chacha 0.9.0",
+        "rand_core 0.6.4",
+        "rand_core 0.9.5",
+        "rand_distr 0.4.3",
+        "rand_xorshift 0.4.0",
+        "regex-syntax 0.8.11",
+        "rustfft 6.4.1",
+        "rustix 1.1.5",
+        "rusty-fork 0.3.1",
+        "serde 1.0.229",
+        "serde_core 1.0.229",
+        "serde_derive 1.0.229",
+        "serde_json 1.0.151",
+        "strength_reduce 0.2.4",
+        "syn 2.0.119",
+        "syn 3.0.6",
+        "tempfile 3.27.0",
+        "transpose 0.2.3",
+        "unarray 0.1.4",
+        "unicode-ident 1.0.26",
+        "wait-timeout 0.2.1",
+        "wasi 0.11.1+wasi-snapshot-preview1",
+        "wasip2 1.0.4+wasi-0.2.12",
+        "windows-link 0.2.1",
+        "windows-sys 0.61.2",
+        "wit-bindgen 0.57.1",
+        "zerocopy 0.8.57",
+        "zerocopy-derive 0.8.57",
+        "zmij 1.0.23"
+      ],
+      "definition": "sha256 over the LF-normalised sha256 of each file below (path=hash, one per line) and the resolved external dependencies of z30-channel from Cargo.lock; computed by the build script from the tree the binary was compiled from",
+      "files": {
+        "crates/z30-channel/Cargo.toml": "d5e2452f9472e0bf41093ef41f1192f58c432f2d129cd2d9ff885e6167ad66b8",
+        "crates/z30-channel/src/lib.rs": "e9aa9c6f79c66b997a573bd5955d74212f6b2bc5214c48ef12f02c8c946d4940",
+        "crates/z30-cli/src/bench.rs": "e94827d1f06ec5a708fd8733428cd7d0d51fd43c705bf717e3a422c99addecb1",
+        "crates/z30-cli/src/suite.rs": "87daa8b1f6bf9373e1d3e7c44bc57a8c48fcf081e777fb1ed45da90d926c19ae",
+        "crates/z30-protocol/Cargo.toml": "48ac97afe7157236f3790574c15d9a190872befa94425ea1f2f8a5f1613c621b",
+        "crates/z30-protocol/src/codec.rs": "b5c9f171f7336ffd5513122840b508d0d86c5263be9ecb3e4690a5bc7f866d5a",
+        "crates/z30-protocol/src/crc.rs": "328ac9a3a76740eb7f408fe8c59fce0988b5d4e58083257cf6da548914849a12",
+        "crates/z30-protocol/src/gfsk.rs": "a83a00581d4a66a72ca92adab2bf51d4b917ccf5a431ffa78af7b24f557fad56",
+        "crates/z30-protocol/src/ldpc.rs": "887016cbf6810effa31569b4e212f1e7d820615b51d6149195b14c49550f72e7",
+        "crates/z30-protocol/src/lib.rs": "5e36f05a7645f26f08489bb9598d8fd04fc1779a9cc1bb21ed95f12eaa206d53",
+        "crates/z30-protocol/src/symbols.rs": "d3cdbe3370cff17b401750cc6b2a04a724a75b47780e21cbf802b680ba7c02ef"
+      },
+      "sha256": "424e6f0385e112e48a2adbcda5456e62fbad5995be73d3624982f5b8e0e0be90"
+    },
+    "isa_features_detected": {
+      "avx": true,
+      "avx2": true,
+      "avx512f": true,
+      "bmi2": true,
+      "fma": true,
+      "popcnt": true,
+      "sse2": true,
+      "sse3": true,
+      "sse4.1": true,
+      "sse4.2": true,
+      "ssse3": true
+    },
+    "logical_cpus": 4,
+    "note": "Software simulation only. No radio, sound card or RF path was involved.",
+    "os": "linux",
+    "rayon_threads": 4,
+    "receiver": "z30_dsp::slot::Receiver::decode_slot (the production receive entry point)",
+    "rustc": "rustc 1.97.0 (2d8144b78 2026-07-07)",
+    "rustflags": "",
+    "started_utc": "2026-10-06T07:52:27Z",
+    "target": "x86_64-unknown-linux-gnu",
+    "target_features_compiled": [
+      "fxsr",
+      "sse",
+      "sse2"
+    ],
+    "version": "0.1.0-experimental"
+  },
+  "publishable_size": 100,
+  "seed": {
+    "per_frame": "suite_seed ^ (benchmark << 40) ^ (point << 20) ^ frame, ChaCha8 (z30_channel::rng); replicate r: suite_seed = 20260830 ^ (r << 48)",
+    "published_seed": true,
+    "replicate": 0,
+    "suite_seed": 20260830
+  },
+  "status": "exploratory",
+  "status_reasons": [
+    "20 per point, below the publishable 100"
+  ],
+  "title": "Accuracy of the reported SNR, DT and frequency against the truth",
+  "validated_range_db": [
+    -22.0,
+    30.0
+  ]
+}

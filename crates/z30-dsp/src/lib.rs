@@ -1,5 +1,5 @@
 //! z-30 receiver. Pure: takes buffers and configuration, returns data. No audio devices, files,
-//! clocks, threads of its own (beyond an optional rayon pool) or logging.
+//! clocks, threads of its own (beyond the rayon pool) or logging.
 //!
 //! The chain, per slot (`slot::decode_slot`):
 //!

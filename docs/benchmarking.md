@@ -145,8 +145,8 @@ no methodological or implementation difference behind that 0.09 dB (the harness 
 own figure exactly at the corrected commit, the two SNR normalisations agree to 0.00001 dB, and
 three of the suite's own replicates fall at −22.93 to −22.94 dB): it is sampling variability
 (`audit/2026-09-24-corrective-remediation/FINAL_AUDIT.md` §D). The original audit's independent
-seeds put the 50% point at ≈ −23.0 dB (E013) and the earlier paired harness (below) measured
-−23.01 dB.
+seeds put the 50% point at ≈ −23.0 dB (E013) and the earlier paired harness (below; since removed)
+measured −23.01 dB.
 
 ### Reported SNR, DT and frequency
 
@@ -327,9 +327,10 @@ Doppler spread: 0.071 / 0.35 / 0.71 / 7.1 Hz instead of 0.1 / 0.5 / 1 / 10 Hz (p
 audit N-01; the Python oracle had the same defect). The figures published from it (50% at
 −20.79 / −21.31 / −21.07 dB) are **withdrawn**. The tests that measure the spread
 (`z30-channel` `watterson_power_spectrum_has_the_labelled_2_sigma_spread`,
-`generated_taps_have_the_labelled_doppler_spread`, and the oracle's
-`test_watterson_doppler.py`) fail on the old model. The post-remediation audit's own
-measurement script, run on the corrected oracle, measures 0.1002 / 0.502 / 0.999 / 9.99 Hz.
+`generated_taps_have_the_labelled_doppler_spread`; and, until the oracle was deleted in the
+2026-10-06 cleanup, its `test_watterson_doppler.py`) fail on the old model. The post-remediation
+audit's own measurement script, run on the corrected oracle, measured 0.1002 / 0.502 / 0.999 /
+9.99 Hz.
 
 | Preset, SNR | Decoded (Wilson 95%) | False |
 | :--- | :--- | ---: |
@@ -387,6 +388,10 @@ are kept with the commit they were measured at.
 
 ### Paired oracle vs vNext, AWGN (`awgn_paired_200`)
 
+A historical measurement: its harness (`research/paired_receiver.py`), the oracle it compared
+against and the `z30-py` bindings it used were removed in the 2026-10-06 cleanup (recoverable
+from commit `acfce5e`), so it cannot be re-run from this tree. The result files stay as evidence.
+
 `research/paired_receiver.py`, AWGN, the oracle benchmark's `--mode realistic` frame producer
 (carrier ±5 Hz, timing ±0.5 s), seed 20260830, 200 frames per point, −28…−17 dB. Each buffer
 is decoded by both the frozen oracle receiver and `decode_slot`. Measured at `f180122` and
@@ -399,12 +404,13 @@ re-run at `83b1b70`, reproducing frame for frame.
 
 Discordant frames: 34 vNext-only against 17 oracle-only; exact McNemar p = 0.024. vNext's
 blind receiver is **not worse** than the oracle's windowed one. p = 0.024 does not reach the
-99% bar, so it does not establish that vNext is better. The oracle is told the nominal carrier
+99% bar, so it does not establish that vNext is better. The oracle was told the nominal carrier
 and timing and searches ±12 Hz / ±0.55 s. vNext is told nothing.
 
 ### Whitening A/B (`whitening_ab_200`)
 
-Per-tone interference whitening on vs off, same buffers, 200 frames per point, −25…−21 dB:
+Also produced by the removed `research/paired_receiver.py` (with `--vnext-only --arm-b`);
+historical in the same way. Per-tone interference whitening on vs off, same buffers, 200 frames per point, −25…−21 dB:
 0 discordant of 1000, p = 1. Costs nothing on AWGN.
 
 ### False decodes with the fine-sync gate off (`false_decodes_2000`)
@@ -446,9 +452,10 @@ the next slot starts at + 30 s).
 
 ## History
 
-The retired Python benchmark (`legacy/python-oracle/z30_dsp/benchmark.py`) and the browser's
-Monte Carlo engine measured the oracle receiver, not the one that ships. Three findings from
-that period shaped the current instrument:
+The retired Python benchmark (the oracle's `z30_dsp/benchmark.py`) and the browser's Monte
+Carlo engine measured the oracle receiver, not the one that ships. Both were deleted with the
+oracle and the browser runtime in the 2026-10-06 cleanup (recoverable from commit `acfce5e`).
+Three findings from that period shaped the current instrument:
 
 - **The coherence weight.** Both old benchmarks passed a pilot coherence weight of 0.0 while
   both live-receive decoders applied 0.35–0.85. The published figure described a receiver
@@ -457,9 +464,9 @@ that period shaped the current instrument:
   assumed signalling model instead of synthesising and demodulating a waveform, and read about
   2 dB optimistic.
 - **Per-realisation fading normalisation** (audit H-10). It removed the frame-to-frame power
-  variation of slow fading and made the good and moderate channels read optimistic. Both
-  channel models now normalise over the ensemble, and the fading figures above are the first
-  measured that way.
+  variation of slow fading and made the good and moderate channels read optimistic.
+  `z30-channel` normalises over the ensemble (the oracle's model did too, from the same fix
+  until its deletion), and the fading figures above are the first measured that way.
 
 The old benchmark's figures (−22.92 dB realistic, −24.58 dB genie-aided, mid-latitude
 −21.4 dB) describe the retired oracle receiver and old channel model. They are not quoted as

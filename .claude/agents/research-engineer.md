@@ -38,7 +38,7 @@ proposal, and keep the old result.
 - Regenerate each `SUMMARY.md` with `python research/summarize_suite.py <dir> --write`. Never
   edit a result JSON or a summary by hand.
 - Check an unchanged benchmark is unchanged with
-  `audit/2026-09-24-corrective-remediation/evidence/scripts/compare_results.py`.
+  `research/compare_results.py`.
 
 ## Deliverable — the results note
 

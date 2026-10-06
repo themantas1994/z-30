@@ -17,4 +17,3 @@ rustfft.workspace = true
 [dev-dependencies]
 z30-channel.workspace = true
 serde_json.workspace = true
-toml.workspace = true

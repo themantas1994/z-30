@@ -1,0 +1,13 @@
+start 09:37:58 load 2.43 4.93 4.86
+decode_slot performance, 10 slots per K, seeded bands (-20..0 dB, 200-2750 Hz), 4 threads vs 1
+  K  threads |   p50 ms   p95 ms   p99 ms   max ms |  slots/s cpu s/sl |  alloc/sl     decoded     found
+  1        4 |      219      278      278      278 |     4.63     0.55 |     20938          10     10/10
+  1        1 |      577      624      624      624 |     1.84     0.53 |      2990          10     10/10
+  5        4 |      292      324      324      324 |     3.35     0.91 |     28106          50     50/50
+  5        1 |      935     1046     1046     1046 |     1.05     0.94 |      4418          50     50/50
+ 20        4 |      426      468      468      468 |     2.33     1.29 |     30732         200   200/200
+ 20        1 |     1336     1376     1376     1376 |     0.75     1.30 |      7156         200   200/200
+ 50        4 |      791      990      990      990 |     1.22     2.48 |     48233         500   500/500
+ 50        1 |     2302     2642     2642     2642 |     0.42     2.33 |     14381         500   500/500
+Budget: the window closes at slot + 25.5 s and the next slot starts at + 30 s, so a decode must finish in 4.5 s.
+exit 0 end 09:39:12

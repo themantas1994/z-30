@@ -14,8 +14,9 @@ and every reason the transmit gate would refuse to transmit.
 ## FAQ
 
 ### Has z-30 been tested on the air?
-No. The protocol is validated against the frozen reference oracle: the Rust implementation
-reproduces its golden vectors (codec, CRC, LDPC encoder and symbol map bit for bit, the waveform
+No. The protocol is validated against the reference oracle: the Rust implementation
+reproduces the golden vectors it generated (frozen since the oracle's deletion in the 2026-10-06
+cleanup) (codec, CRC, LDPC encoder and symbol map bit for bit, the waveform
 within 1e-6 per sample), checked in CI. The receiver is measured in seeded software simulation. No radio, audio interface, PTT interface or
 RF path has been used, and there is no on-air recording. See
 [`docs/hardware-validation.md`](../docs/hardware-validation.md) for how that will be done.

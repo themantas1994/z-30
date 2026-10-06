@@ -1,6 +1,6 @@
-//! `decode_slot`: the receiver's single entry point. The desktop engine, the CLI and the Python
-//! research harness (through `z30-py`) all call this function, so the receiver that is
-//! benchmarked is the receiver that ships by construction rather than by policy.
+//! `decode_slot`: the receiver's single entry point. The desktop engine, the CLI station and the
+//! benchmark suite all call this function, so the receiver that is benchmarked is the receiver
+//! that ships by construction rather than by policy.
 
 use crate::ap::{build_ladder, decode_with_ap, ApContext};
 use crate::baseband::{Plans, SlotSpectrum, BB_DECIMATION, SLOT_SAMPLES, SLOT_ZERO_INDEX};
@@ -312,7 +312,6 @@ impl Receiver {
         report
     }
 
-    #[cfg(feature = "parallel")]
     fn plan_subtractions(&self, residual: &[f32], new: &[Attempt], cfg: &RxConfig) -> Vec<sic::Planned> {
         use rayon::prelude::*;
         new.par_iter()
@@ -320,25 +319,11 @@ impl Receiver {
             .collect()
     }
 
-    #[cfg(not(feature = "parallel"))]
-    fn plan_subtractions(&self, residual: &[f32], new: &[Attempt], cfg: &RxConfig) -> Vec<sic::Planned> {
-        new.iter()
-            .map(|a| sic::plan(residual, &self.modulator, &a.symbols, a.f0_abs, a.decode.drift_hz, a.start_sample, &cfg.sic))
-            .collect()
-    }
-
-    #[cfg(feature = "parallel")]
     fn run_candidates(&self, spec: &SlotSpectrum, cands: &[Candidate], cfg: &RxConfig, pass: u8) -> Vec<(Option<Attempt>, usize)> {
         use rayon::prelude::*;
         // Order is preserved by collect(), and each candidate is a pure function of its input, so
         // the report is identical at any thread count.
         cands.par_iter().map_init(Decoder::new, |dec, c| self.try_candidate(spec, c, cfg, pass, dec)).collect()
-    }
-
-    #[cfg(not(feature = "parallel"))]
-    fn run_candidates(&self, spec: &SlotSpectrum, cands: &[Candidate], cfg: &RxConfig, pass: u8) -> Vec<(Option<Attempt>, usize)> {
-        let mut dec = Decoder::new();
-        cands.iter().map(|c| self.try_candidate(spec, c, cfg, pass, &mut dec)).collect()
     }
 }
 

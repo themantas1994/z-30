@@ -81,11 +81,6 @@ impl Region {
             _ => &[LicenseClass::Full],
         }
     }
-
-    /// When the region's table was last checked against the regulator's published allocation.
-    pub fn verified_on(self) -> &'static str {
-        "2026-08-30"
-    }
 }
 
 impl LicenseClass {

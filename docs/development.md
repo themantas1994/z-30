@@ -10,11 +10,9 @@
   it on stable only (post-remediation audit N-02).
 - **Linux system libraries** (the GUI and audio): `libasound2-dev libudev-dev libxkbcommon-dev
   libwayland-dev libx11-dev libxcursor-dev libxrandr-dev libxi-dev libgl1-mesa-dev`.
-- **Python 3.10+** with `legacy/python-oracle/requirements.txt`, only for the frozen oracle, the
-  golden generator and `research/`. `maturin` builds the bindings. The application needs no
-  Python.
-- **Node 22**, only for the TypeScript golden check and the retired browser runtime's reference
-  tests (`legacy/browser-runtime`). The application needs no Node.
+- **Python 3.11+** (standard library, plus `pytest` for their tests), only for the research tools
+  in `research/`. The application needs no Python and no Node: the Python oracle, the browser
+  runtime and the PyO3 bindings that needed them were deleted in the 2026-10-06 cleanup.
 
 ## Build and run
 
@@ -22,7 +20,7 @@
 cargo build --release -p z30-cli -p z30-gui --features z30-cli/cm108,z30-gui/cm108
 ./target/release/z30 --help
 ./target/release/z30 --devices
-./target/release/z30 --migrate                    # import the legacy config and logbook
+./target/release/z30 --migrate                    # import the retired app's config and logbook
 ./target/release/z30 --receive --capture-slots slots/
 ./target/release/z30 --decode slots/<slot>.wav
 ./target/release/z30-gui
@@ -36,14 +34,16 @@ That is the directory the retired browser/Python app used, so migration finds it
 
 ```bash
 cargo fmt --all --check
-cargo clippy --workspace --all-targets --exclude z30-py -- -D warnings
-cargo test --workspace --exclude z30-py            # debug
-cargo test --workspace --exclude z30-py --release  # what CI also runs; the DSP tests are much faster here
+cargo clippy --workspace --all-targets -- -D warnings
+cargo test --workspace            # debug
+cargo test --workspace --release  # what CI also runs; the DSP tests are much faster here
 ```
 
 | Suite | Where | What |
 | :--- | :--- | :--- |
-| Golden | `z30-protocol/tests/golden.rs`, `z30-dsp/tests/golden_ldpc.rs`, `golden_demod.rs` | parity with the frozen oracle ([protocol-v1.md](protocol-v1.md), [ldpc.md](ldpc.md), [demodulation.md](demodulation.md)) |
+| Golden | `z30-protocol/tests/golden.rs`, `z30-dsp/tests/golden_ldpc.rs`, `golden_demod.rs` | parity with the frozen golden vectors the oracle generated ([protocol-v1.md](protocol-v1.md), [ldpc.md](ldpc.md), [demodulation.md](demodulation.md)) |
+| Shared vectors | `z30-protocol/tests/shared_vectors.rs`, `golden_ldpc.rs::dither_matches_the_shared_vector`, `z30-engine/tests/safety.rs` | the known answers in `tests/vectors/` (CRC-14, callsign packing, dither, callsign syntax) |
+| Spectrum | `z30-dsp/tests/modulator_spectrum.rs` | the production modulator's 99% and −40 dB bandwidth budgets, and that a per-symbol-gated reference fails them (ported from the deleted oracle's spectrum tests) |
 | Property | `z30-protocol/tests/properties.rs` | codec round-trip and refusal over generated inputs |
 | Round trip | `z30-protocol/tests/round_trip.rs` | every square, report and 40,000 sampled callsigns: sent exactly or refused |
 | Channel | `z30-dsp/tests/channel_scenarios.rs` | `decode_slot` on seeded bands ([receiver.md](receiver.md)) |
@@ -59,31 +59,29 @@ cargo test --workspace --exclude z30-py --release  # what CI also runs; the DSP 
 
 ## Golden vectors
 
-`fixtures/golden/` is generated from the frozen oracle and committed:
+`fixtures/golden/` was generated from the Python oracle (`messages.json` from the retired
+TypeScript codec). Both generators were deleted with the oracle in the 2026-10-06 cleanup
+(recoverable from commit `acfce5e`), so the vectors can no longer be regenerated: they are frozen
+evidence, and `fixtures/golden/FROZEN.sha256` pins every byte:
 
 ```bash
-pip install -r legacy/python-oracle/requirements.txt
-python reference/golden/generate.py            # regenerate
-python reference/golden/generate.py --check    # CI: byte-identical or fail
-(cd legacy/browser-runtime && npm ci)
-npx --prefix legacy/browser-runtime tsx reference/golden/generate_messages.mts --check
+(cd fixtures/golden && sha256sum --check --strict FROZEN.sha256)   # CI's hygiene job runs this
 ```
 
 Never edit a vector by hand. If the Rust side disagrees with a vector, the Rust side is wrong,
-unless the oracle itself is the defect, as it was for OSD (M1). In that case the oracle's
+unless the oracle itself was the defect, as it was for OSD (M1). In that case the oracle's
 behaviour stays in the vectors, a test-only transcription of it proves the rest of the decoder
 exact, and the deviation is documented in `SPEC.md`.
 
-## Research harness
+## Comparing receivers
 
-```bash
-(cd crates/z30-py && maturin build --release) && pip install --force-reinstall target/wheels/z30-*.whl
-python research/paired_receiver.py --min-snr -28 --max-snr -17 --frames 200 --workers 4 --out out.json
-python research/paired_receiver.py ... --vnext-only --arm-b '{"whiten": false}'   # A/B a receiver change
-```
-
-The harness calls `z30.Receiver.decode_slot`, the function the station runs, on buffers the
-oracle's own benchmark produces. See [benchmarking.md](benchmarking.md) for the rules.
+`research/paired_receiver.py`, which decoded the same buffers with the oracle and with
+`decode_slot` through the PyO3 bindings, was removed with them; its results
+(`research/results/awgn_paired_200.*`, `whitening_ab_200.*`) stay as historical evidence. A change
+to the receiver is now compared baseline build against candidate build, both through
+`decode_slot`: `z30 --benchmark suite` on each commit, then `research/compare_results.py` and
+`research/paired_mcnemar.py` ([research-process.md](research-process.md),
+[benchmarking.md](benchmarking.md)).
 
 ## Benchmarks
 
@@ -99,17 +97,20 @@ tied to source. See [benchmarking.md](benchmarking.md).
 ## CI
 
 `.github/workflows/rust.yml`, the production application, on Linux, Windows and macOS: fmt,
-clippy with warnings as errors, debug and release tests, release binaries with CM108, a check
+clippy with warnings as errors, tests (test profile, opt-level 3) on every platform and
+release-profile tests on Linux in the MSRV job and on every platform in `release.yml` (version
+tags and release-path pull requests), release binaries with CM108, a check
 that each binary reports the commit it was built from (not a dirty tree) and its CM108 feature,
 a scan of the release binaries for the old W1AW default, a CLI encode → decode round trip and a
-refusal check. Then: the whole workspace on the declared MSRV (build, clippy, tests); the benchmark suite at
-exploratory size with a provenance check on every result file; the golden vectors regenerated
-from both oracles and compared byte for byte; and a paired oracle-vs-vNext run through the
-bindings.
+refusal check. Then: the whole workspace on the declared MSRV (build, clippy, tests); and the
+benchmark suite at exploratory size with a provenance check on every result file.
 
-`.github/workflows/ci.yml`: the Python oracle's tests on the Python versions it declares, the
-retired browser runtime's reference tests, a pip-audit, and the hygiene checks that keep the
-retired runtime, the web bundle and the old installers out of the tree.
+`.github/workflows/ci.yml`: `cargo audit` of `Cargo.lock` against the RustSec database; the
+hygiene checks that keep the retired runtime, the web bundle, the old installers and the deleted
+stacks (`legacy/`, the PyO3 bindings, the golden generators, package-manager files, Python
+outside `research/` and `audit/`, JS/TS outside `audit/`) out of the tree, and that
+`fixtures/golden/` (and any version subdirectory) and `tests/vectors/` match their
+`FROZEN.sha256`, every file pinned; and the research tools' tests.
 
 `.github/workflows/release.yml`: per-platform release archives from a `v*` tag
 ([install.md](install.md)).

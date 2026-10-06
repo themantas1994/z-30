@@ -8,7 +8,7 @@ both native programs built from the Rust workspace in `crates/`.
 >
 > | State | Status |
 > | :--- | :--- |
-> | Protocol validated | **Yes, against the reference** — the Rust implementation reproduces the frozen oracle's golden vectors: codec, CRC, LDPC encoder and symbol map bit for bit, the waveform within 1e-6 per sample (an independent re-implementation from `SPEC.md` was reported by the original audit, E007, whose evidence is not in this repository) |
+> | Protocol validated | **Yes, against the reference** — the Rust implementation reproduces the golden vectors the reference oracle generated (frozen and hash-pinned; the oracle itself was deleted in the 2026-10-06 cleanup): codec, CRC, LDPC encoder and symbol map bit for bit, the waveform within 1e-6 per sample (an independent re-implementation from `SPEC.md` was reported by the original audit, E007, whose evidence is not in this repository) |
 > | Software simulation validated | **Yes** — the receiver's performance is measured through its production entry point in seeded simulation ([16](16-Benchmarking-Testing-&-CI.md)) |
 > | Hardware validated | **No** — no radio, audio interface or PTT interface has been used with z-30 |
 > | On-air validated | **No** — no z-30 frame has been decoded over a real radio path |
@@ -103,5 +103,6 @@ grid, licence data, rig and PTT settings and your logbook, and tells you exactly
 import and why. It sets **no TX level**, and it skips any value equal to the old apps' own
 default (the default callsign, PTT method, dial and power), because the old apps saved those
 whether or not you chose them; so after migrating, set the TX level and whatever else the gate
-lists before transmitting. The old program is retired;
-see [08](08-Web-&-PWA-Architecture.md).
+lists before transmitting. The old program is retired and its code has been removed from the
+repository; the migration reads its files, not its code. Why it was retired is in the
+[2026-09-23 audit](../audit/2026-09-23-vnext/README.md).

@@ -239,8 +239,12 @@ pub fn placed_replica(
     symbols: &[u8; TOTAL_SYMBOLS],
     offset_6k: i64,
 ) -> (Vec<Complex32>, i64) {
+    // The waveform does not depend on the placement; only its sampling does. Recomputing it
+    // for each of the seven or more placements the descent evaluates was a fifth of
+    // decode_slot's time (audit/2026-10-06-codebase-cleanup/PERFORMANCE.md).
+    let waveform = ReplicaWaveform::new(modulator_6k, symbols);
     let eval = |off: i64| {
-        let r = replica_spectra(fft, modulator_6k, symbols, off);
+        let r = waveform.spectra(fft, off);
         (spectra.fit_residual_energy(&r), r)
     };
     let (mut best_e, mut best_r) = eval(offset_6k);
@@ -291,31 +295,51 @@ pub fn replica_spectra(
     symbols: &[u8; TOTAL_SYMBOLS],
     offset_6k: i64,
 ) -> Vec<Complex32> {
-    let fs = modulator_6k.sample_rate();
-    let decim = (fs / crate::baseband::BB_RATE_HZ).round() as i64;
-    let f = modulator_6k.instantaneous_frequency(symbols, 0.0);
-    let env = modulator_6k.envelope(f.len());
-    let mut phase = Vec::with_capacity(f.len());
-    let mut acc = 0.0f64;
-    for &x in &f {
-        acc += x;
-        if acc >= fs {
-            acc -= fs;
+    ReplicaWaveform::new(modulator_6k, symbols).spectra(fft, offset_6k)
+}
+
+/// The decoded frame's carrier phase (derotated to tone 0 at 0 Hz) and envelope at the
+/// modulator's rate: everything in `replica_spectra` that does not depend on the placement.
+struct ReplicaWaveform {
+    phase: Vec<f64>,
+    env: Vec<f64>,
+    decim: i64,
+}
+
+impl ReplicaWaveform {
+    fn new(modulator_6k: &z30_protocol::gfsk::Modulator, symbols: &[u8; TOTAL_SYMBOLS]) -> Self {
+        let fs = modulator_6k.sample_rate();
+        let decim = (fs / crate::baseband::BB_RATE_HZ).round() as i64;
+        let f = modulator_6k.instantaneous_frequency(symbols, 0.0);
+        let env = modulator_6k.envelope(f.len());
+        let mut phase = Vec::with_capacity(f.len());
+        let mut acc = 0.0f64;
+        for &x in &f {
+            acc += x;
+            if acc >= fs {
+                acc -= fs;
+            }
+            phase.push(2.0 * std::f64::consts::PI * acc / fs);
         }
-        phase.push(2.0 * std::f64::consts::PI * acc / fs);
+        ReplicaWaveform { phase, env, decim }
     }
-    let mut bins = vec![Complex32::new(0.0, 0.0); TOTAL_SYMBOLS * BB_NSPS];
-    for (m, b) in bins.iter_mut().enumerate() {
-        let i = m as i64 * decim - offset_6k;
-        if i >= 0 && (i as usize) < phase.len() {
-            let (sn, cs) = phase[i as usize].sin_cos();
-            *b = Complex32::new((env[i as usize] * cs) as f32, (env[i as usize] * sn) as f32);
+
+    /// The symbol spectra of the waveform starting `offset_6k` samples after the grid's first
+    /// symbol.
+    fn spectra(&self, fft: &SymbolFft, offset_6k: i64) -> Vec<Complex32> {
+        let mut bins = vec![Complex32::new(0.0, 0.0); TOTAL_SYMBOLS * BB_NSPS];
+        for (m, b) in bins.iter_mut().enumerate() {
+            let i = m as i64 * self.decim - offset_6k;
+            if i >= 0 && (i as usize) < self.phase.len() {
+                let (sn, cs) = self.phase[i as usize].sin_cos();
+                *b = Complex32::new((self.env[i as usize] * cs) as f32, (self.env[i as usize] * sn) as f32);
+            }
         }
+        for s in 0..TOTAL_SYMBOLS {
+            fft.fft.process(&mut bins[s * BB_NSPS..(s + 1) * BB_NSPS]);
+        }
+        bins
     }
-    for s in 0..TOTAL_SYMBOLS {
-        fft.fft.process(&mut bins[s * BB_NSPS..(s + 1) * BB_NSPS]);
-    }
-    bins
 }
 
 #[cfg(test)]

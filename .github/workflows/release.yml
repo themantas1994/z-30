@@ -72,7 +72,7 @@ jobs:
         shell: bash
         run: echo "SOURCE_DATE_EPOCH=$(git log -1 --format=%ct)" >> "$GITHUB_ENV"
       - name: Test on this platform first
-        run: cargo test --workspace --exclude z30-py --release --locked
+        run: cargo test --workspace --release --locked
       - name: A new installation cannot transmit (named, so a release run shows the evidence)
         shell: bash
         run: |

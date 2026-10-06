@@ -56,11 +56,17 @@ Host for these runs: 4 vCPU Intel Xeon @ 2.80 GHz, 16 GB, Linux 6.18, Python 3.1
 NumPy 2.2.6; Rust 1.94.1 (awgn_paired_200) and 1.98.1 (the rest). 1.94.1 is below the MSRV declared
 later (1.95); that run predates the declaration and its wheel's compiler cannot be checked from the
 file, which records no wheel provenance (QA-06 / F-79, and F-34). The oracle harness imported
-the Python oracle, now at `legacy/python-oracle/`.
+the Python oracle, then at `legacy/python-oracle/`.
+
+**The paired harness was removed after `acfce5e`.** `research/paired_receiver.py`, the Python
+oracle it compared against and the `z30-py` bindings it loaded were deleted in the 2026-10-06
+cleanup (`audit/2026-10-06-codebase-cleanup/`); `acfce5e` is the last commit that contains them. The two
+`paired_receiver.py` commands below can be run only from a checkout of that commit. The result
+files are unchanged and stay as evidence of what was measured; nothing about them is withdrawn.
 
 | File | What | Command |
 | :--- | :--- | :--- |
-| `awgn_paired_200.txt` / `.json` | AWGN decode threshold, oracle vs vNext `decode_slot`, paired on the same buffers, seed 20260830, 200 frames/point, -28..-17 dB | `python research/paired_receiver.py --min-snr -28 --max-snr -17 --frames 200 --workers 4 --out research/results/awgn_paired_200.json` |
+| `awgn_paired_200.txt` / `.json` | AWGN decode rate, oracle (windowed) vs vNext `decode_slot` (blind), paired on the same buffers (oracle `--mode realistic` producer: carrier ±5 Hz, timing ±0.5 s), seed 20260830, 200 frames/point, -28..-17 dB | `python research/paired_receiver.py --min-snr -28 --max-snr -17 --frames 200 --workers 4 --out research/results/awgn_paired_200.json` |
 | `whitening_ab_200.txt` / `.json` | Per-tone interference whitening on (A) vs off (B), same buffers, AWGN, 200 frames/point, -25..-21 dB: 0 discordant of 1000 | `python research/paired_receiver.py --min-snr -25 --max-snr -21 --frames 200 --workers 4 --vnext-only --arm-b '{"whiten": false}' --out research/results/whitening_ab_200.json` |
 | `perf_k.txt` | `decode_slot` latency p50/p95/p99/max, throughput, process CPU and heap allocations per slot at K = 1, 5, 20, 50 stations, 20 seeded slots each, 4 threads and 1, on an idle host | `z30 --benchmark perf --frames 20` |
 | `false_decodes_2000.txt` | 2000 noise-only slots: 0 false decodes in 133,911 LDPC attempts with the fine-sync gate off (exact 95% upper bound 2.24e-5 per attempt); 0 in 2000 slots with the production config | `z30 --benchmark false-decodes --frames 2000` |
@@ -112,8 +118,9 @@ Provenance notes:
   (`0ab6cf0`) disagrees with the commit in each `.txt` header (`83b1b70`, `73ce0f9`) and with the
   notes above: the harness read `HEAD` when it wrote the file, and `HEAD` had moved while the run
   was in progress (post-remediation QA-C). The wheel's commit is the one in the `.txt` header.
-  The paired harness now records the wheel's own build provenance (F-34), so a new run cannot
-  disagree this way; these two files are left as they were written.
+  The paired harness later recorded the wheel's own build provenance (F-34), so a run made
+  with it from then until its removal could not disagree this way; these two files are left as
+  they were written.
 - `perf_k`: measured after the SIC fit rewrite (block gains walked incrementally between block
   centres). The same bands decoded 1000/1000 at K = 50 before and after it, and the SIC
   suppression scenario in `crates/z30-dsp/tests/channel_scenarios.rs` reports identical figures.

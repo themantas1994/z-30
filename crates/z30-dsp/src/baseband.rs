@@ -13,9 +13,7 @@ use rustfft::num_complex::Complex32;
 use rustfft::{Fft, FftPlanner};
 use std::sync::Arc;
 
-/// Slot window length in seconds: [slot - 1.5 s, slot + 25.5 s].
-pub const SLOT_WINDOW_SEC: f64 = 27.0;
-/// Samples in a slot window at the DSP rate.
+/// Samples in a slot window, [slot - 1.5 s, slot + 25.5 s] (27 s), at the DSP rate.
 pub const SLOT_SAMPLES: usize = 162_000;
 /// Slot-buffer index of DT = 0 (the slot boundary).
 pub const SLOT_ZERO_INDEX: usize = 9_000;

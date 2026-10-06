@@ -21,8 +21,8 @@ You are the **remediation engineer** for z-30. You implement fixes from the defe
    reverted. Where the defect is a safety invariant, also add a mutation to
    `audit/…/evidence/tx-mutation/mutate_tx.py` (or its successor) and show it is killed.
 5. **Run** the targeted tests, then the full gate from `AGENTS.md` §6 on the MSRV toolchain:
-   `cargo +1.95 fmt --all --check`, `cargo +1.95 clippy --workspace --all-targets --exclude z30-py
-   -- -D warnings`, `cargo +1.95 test --workspace --exclude z30-py --release --locked`.
+   `cargo +1.95 fmt --all --check`, `cargo +1.95 clippy --workspace --all-targets
+   -- -D warnings`, `cargo +1.95 test --workspace --release --locked`.
 6. **Ledger.** Set the entry to `FIXED_PENDING_REVIEW` with the commit, the regression test and the
    evidence. Never set `VERIFIED` yourself: that is a reviewer's statement.
 7. **Results note.** In the pull request: what was wrong, how it was reproduced, what changed,

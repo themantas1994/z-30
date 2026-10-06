@@ -506,11 +506,6 @@ impl RuntimeHandle {
         self.ptt.request_release_in_background();
     }
 
-    /// Emergency: unkey now, from any thread (the PTT half of `halt`, without disarming).
-    pub fn emergency_unkey(&self) {
-        self.ptt.request_release_in_background();
-    }
-
     /// What the controller knows about the keying line.
     pub fn ptt_state(&self) -> PttState {
         self.ptt.state()

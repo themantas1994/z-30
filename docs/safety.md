@@ -12,8 +12,8 @@ otherwise.
 
 There is one check in front of every transmit path: the sequencer, manual TX and tune. It
 **fails closed** and returns **every** violation, never a partial "allowed" (`g4`). It is a
-port of `canTransmit()` from the retired browser runtime
-(`legacy/browser-runtime/src/dsp/catController.ts`), with every rule kept and some added, each
+port of `canTransmit()` from the retired browser runtime (its `src/dsp/catController.ts`,
+deleted with it in the 2026-10-06 cleanup), with every rule kept and some added, each
 only ever adding a refusal.
 
 | Violation | Refuses when | Test |
@@ -61,8 +61,8 @@ count and frame length are fixed by type (`[u8; 75]`) and checked on the audio. 
 also writes only verified frames, because a WAV file can be played into a radio.
 
 Callsign syntax is checked against the shared vectors in
-`tests/vectors/callsign_vectors.json`, the same file the TypeScript and Python validators are
-tested against.
+`tests/vectors/callsign_vectors.json`, the same file the retired TypeScript and Python
+validators were tested against.
 
 ### The band plan (`bandplan.rs`)
 

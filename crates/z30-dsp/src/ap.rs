@@ -93,19 +93,6 @@ pub struct ApHypothesis {
     pub bits: [u8; PAYLOAD_BITS],
 }
 
-/// Human label for an AP type.
-pub fn ap_label(ap_type: u8) -> &'static str {
-    match ap_type {
-        1 => "CQ ??? ???",
-        2 => "MyCall ??? ???",
-        3 => "MyCall DxCall ???",
-        4 => "MyCall DxCall RRR",
-        5 => "MyCall DxCall 73",
-        6 => "MyCall DxCall RR73",
-        _ => "",
-    }
-}
-
 fn assert_field(h: &mut ApHypothesis, offset: usize, width: usize, value: u64) {
     for i in 0..width {
         h.mask[offset + i] = true;

@@ -1,11 +1,11 @@
 {
   "_comment": [
-    "Shared known-answer vectors for the deterministic schedule-4 (DITHER) LLR perturbation.",
-    "z30_dsp/ldpc.py and src/dsp/ldpcCodec.ts derive this from the channel LLRs themselves so",
-    "that the decoder is a pure function of its input in both languages - see the docstring on",
-    "dither_seed_from_llrs(). If these two implementations drift, a frame that decodes in the",
-    "browser stops decoding in Python at the same SNR, silently and only near threshold.",
-    "Regenerate with: python -c 'import tests.gen_dither_vectors'"
+    "Known-answer vector for the deterministic schedule-4 (DITHER) LLR perturbation, which makes",
+    "the LDPC decoder a pure function of its input (FNV-1a over 1/64-LLR quanta seeds mulberry32).",
+    "Generated from the retired Python oracle and asserted by both the Python and TypeScript",
+    "decoders until those were removed (2026-10-06 cleanup, last present at acfce5e). Kept because",
+    "it was produced independently of the Rust code; it cannot be regenerated and must not be edited.",
+    "Asserted by crates/z30-dsp/tests/golden_ldpc.rs (dither_matches_the_shared_vector)."
   ],
   "amplitude": 0.45,
   "llrs": [

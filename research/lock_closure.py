@@ -4,7 +4,7 @@
 Why this exists: `docs/research-process.md` section 7 lets a dependency update skip the
 experiment only when the benchmark suite is left bit-identical, and requires the pull request to
 *show* it. The direct proof is to run `z30 --benchmark suite` on both commits and compare with
-`audit/2026-09-24-corrective-remediation/evidence/scripts/compare_results.py`. That takes about
+`research/compare_results.py`. That takes about
 an hour of compute per commit and it cannot run at all when the candidate does not build.
 
 This script proves the *precondition* instead, and only that: if no crate in the resolved closure

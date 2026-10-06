@@ -116,7 +116,6 @@ pub struct RigStateTracker {
     offline_reason: Option<String>,
     commanded_dial: Option<f64>,
     commanded_ptt: Option<bool>,
-    commanded_mode: Option<String>,
     reported_dial: Option<f64>,
     reported_ptt: Option<bool>,
     reported_mode: Option<String>,
@@ -153,14 +152,6 @@ impl RigStateTracker {
     pub fn note_requested_dial(&mut self, hz: f64) {
         if self.commanded_dial != Some(hz) {
             self.commanded_dial = Some(hz);
-            self.polls_remaining = POLLS_TO_STABILIZE;
-        }
-    }
-
-    /// A mode was commanded.
-    pub fn note_requested_mode(&mut self, mode: &str) {
-        if self.commanded_mode.as_deref() != Some(mode) {
-            self.commanded_mode = Some(mode.to_string());
             self.polls_remaining = POLLS_TO_STABILIZE;
         }
     }
@@ -242,7 +233,6 @@ impl RigStateTracker {
         self.go_offline("rig control stopped");
         self.commanded_dial = None;
         self.commanded_ptt = None;
-        self.commanded_mode = None;
         self.last_ptt_change_ms = None;
         self.resolution = 0;
     }

@@ -29,7 +29,6 @@
 - [09. Build & Packaging](09-Cross-Platform-Build-&-Packaging)
 - [12. Updates & Releases](12-Software-Updates-&-GitHub-Sync)
 - [16. Benchmarking, Testing & CI](16-Benchmarking-Testing-&-CI)
-- [08. Retired browser runtime](08-Web-&-PWA-Architecture)
 
 ---
 

@@ -5,8 +5,6 @@
 //! Kaiser-windowed sinc prototype designed for >= 80 dB stopband with the transition band
 //! placed at the edge of the output band, so aliases land above the z-30 passband.
 
-use z30_protocol::samples_per_symbol;
-
 fn gcd(a: u64, b: u64) -> u64 {
     if b == 0 {
         a
@@ -123,12 +121,6 @@ impl Resampler {
             self.phase_acc -= (consumed as u64) * self.up as u64;
         }
     }
-}
-
-/// Whether `rate` gives a whole number of samples per z-30 symbol (the modulator needs it).
-pub fn rate_supports_symbols(rate: f64) -> bool {
-    let n = rate * 0.32;
-    (n - n.round()).abs() < 1e-6 && samples_per_symbol(rate) > 0
 }
 
 #[cfg(test)]

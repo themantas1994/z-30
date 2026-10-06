@@ -1,0 +1,9 @@
+check before #1        rc=0   145.8 s  target   830 MB
+check after #1         rc=0   144.9 s  target   830 MB
+check before #2        rc=0   144.4 s  target   830 MB
+check after #2         rc=0   143.4 s  target   830 MB
+testbuild V0 #1        rc=0   509.4 s  target  5685 MB
+testbuild V1 #1        rc=0   432.9 s  target  3969 MB
+testbuild V0 #2        rc=0   527.2 s  target  5685 MB
+testbuild V1 #2        rc=0   455.5 s  target  3969 MB
+done
