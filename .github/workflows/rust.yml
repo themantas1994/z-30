@@ -5,9 +5,11 @@ name: vNext (Rust)
 # as current stable, against the frozen golden vectors, and through the benchmark suite that
 # produces every published figure - so the receiver that is benchmarked is the one that ships.
 
+# Pushes to main, and pull requests. A push to a pull request's branch used to start this
+# workflow twice - once for the push, once for the pull request - on the same commit.
 on:
   push:
-    branches: ['**']
+    branches: [main]
   pull_request:
   workflow_dispatch:
 
@@ -45,8 +47,11 @@ jobs:
         run: cargo clippy --workspace --all-targets -- -D warnings
       - name: Tests (golden vectors, property tests, safety, channel scenarios, SNR accuracy, SIC, live runtime, virtual-clock soak)
         run: cargo test --workspace --locked
-      - name: Tests, release profile
-        run: cargo test --workspace --release --locked
+      # The release-profile test run is in the msrv job (Linux) and, on every platform, in
+      # release.yml before anything is packaged. Running it here as well tested the same code a
+      # second time: the test profile is already opt-level 3, and Rust's floating point does not
+      # change with the optimisation level, so the release run differed only by having fewer
+      # checks (no debug assertions, no overflow checks). It cost 9-12 minutes per platform.
       - name: Release binaries, with CM108 GPIO PTT (the release configuration)
         run: cargo build --release --locked -p z30-cli -p z30-gui --features z30-cli/cm108,z30-gui/cm108
       - name: The binary is the commit it claims to be, and says what it contains

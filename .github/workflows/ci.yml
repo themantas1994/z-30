@@ -3,9 +3,11 @@ name: CI
 # Repository hygiene, dependency advisories and the research tools. The application (the Rust
 # workspace in crates/) is built, tested and benchmarked by rust.yml.
 
+# Pushes to main, and pull requests. A push to a pull request's branch used to start this
+# workflow twice - once for the push, once for the pull request - on the same commit.
 on:
   push:
-    branches: ['**']
+    branches: [main]
   pull_request:
   workflow_dispatch:
 
@@ -26,7 +28,10 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
-      - run: cargo install cargo-audit --locked
+      # A prebuilt binary: building cargo-audit from source took 2 min 44 s of this job's 3.
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-audit
       - name: cargo audit
         # Vulnerabilities fail the job; informational warnings (unmaintained, yanked) are printed.
         # The two pyo3 ignores (RUSTSEC-2026-0176/-0177) went with crates/z30-py, the only crate
