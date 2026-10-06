@@ -4399,7 +4399,6 @@ dependencies = [
  "hound",
  "rtrb",
  "rusqlite",
- "serde",
  "serde_json",
  "serialport",
  "toml",

@@ -1,0 +1,61 @@
+   Compiling num-traits v0.2.19
+   Compiling libc v0.2.189
+   Compiling crossbeam-utils v0.8.23
+   Compiling crossbeam-epoch v0.9.21
+   Compiling strength_reduce v0.2.4
+   Compiling crossbeam-deque v0.8.8
+   Compiling ppv-lite86 v0.2.21
+   Compiling num-integer v0.1.47
+   Compiling num-complex v0.4.6
+   Compiling primal-check v0.3.4
+   Compiling getrandom v0.2.17
+   Compiling transpose v0.2.3
+   Compiling rand_core v0.6.4
+   Compiling rayon-core v1.13.0
+   Compiling rustfft v6.4.1
+   Compiling either v1.18.0
+   Compiling rand_chacha v0.3.1
+   Compiling rand v0.8.8
+   Compiling rayon v1.12.0
+   Compiling rand_distr v0.4.3
+   Compiling realfft v3.5.0
+   Compiling z30-channel v0.1.0-experimental (/tmp/qa-head/crates/z30-channel)
+   Compiling z30-dsp v0.1.0-experimental (/tmp/qa-head/crates/z30-dsp)
+    Finished `release` profile [optimized + debuginfo] target(s) in 1m 43s
+     Running tests/golden_ldpc.rs (/tmp/qa-target-headtest/release/deps/golden_ldpc-64709dd0c4c3b276)
+
+running 8 tests
+test dither_matches_the_oracle ... ok
+test ap_ladders_match_the_oracle ... ok
+test dither_matches_the_shared_vector ... ok
+test legacy_osd_path_is_bit_exact_and_the_fixed_rule_agrees_on_it ... ok
+test ap_decode_is_bit_exact_on_the_corpus ... ok
+test ldpc_cascade_is_bit_exact_on_the_corpus ... ok
+test production_decoder_never_accepts_a_crc_failure_and_agrees_with_bp ... ok
+test an_empty_ap_mask_decodes_bit_identically_to_no_mask ... ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 11.44s
+
+     Running tests/modulator_spectrum.rs (/tmp/qa-target-headtest/release/deps/modulator_spectrum-c0b2e4495221e895)
+
+running 6 tests
+test instantaneous_frequency_hits_each_tone_at_the_symbol_centre ... ok
+test frame_edges_are_ramped_and_the_output_is_finite_and_normalised ... ok
+test the_per_symbol_gated_waveform_fails_the_budget ... ok
+test occupied_bandwidth_is_within_budget ... ok
+test minus_40_db_bandwidth_is_within_budget ... ok
+test the_envelope_is_constant_between_the_frame_edge_ramps ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.17s
+
+     Running tests/sic_regression.rs (/tmp/qa-target-headtest/release/deps/sic_regression-f8e8305336d06e98)
+
+running 4 tests
+test subtracting_a_frame_that_is_not_there_removes_only_the_noise_projection_and_creates_nothing ... ok
+test a_subtraction_never_adds_energy_and_removes_what_the_station_contributed ... ok
+test a_busy_band_decodes_identically_on_one_thread_and_on_many ... ok
+test random_overlapping_bands_sic_on_versus_off_paired ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 20.08s
+
+dsp exit 0

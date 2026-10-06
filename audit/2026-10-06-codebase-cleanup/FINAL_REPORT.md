@@ -80,9 +80,10 @@ pull request that does not touch the release files, Windows and macOS see them o
 ## 4. Runtime performance
 
 `decode_slot`, `z30 --benchmark perf --frames 20`, CPU per slot (`evidence/perf-acfce5e.txt`,
-`evidence/perf-cbbcb8b.txt`): K = 20, 4 threads 1.66 → 0.94 s; K = 50, 4 threads 2.57 → 1.62 s;
-K = 50, 1 thread 2.43 → 1.47 s; none at K = 1. Decoded and found counts identical. One run per
-commit, 20 slots per K, shared VM, simulation: indicative, not a published figure. The whole suite at exploratory size is IDENTICAL between
+`evidence/perf-cbbcb8b.txt`, and QA's independent alternating runs in `evidence/qa/`): −27 % to
+−43 % at K = 20 and K = 50 across both measurements and thread counts; small at K = 1 (−1 to
+−8 %, within noise). Decoded and found counts identical. Few runs, 10–20 slots per K, shared VM,
+simulation: indicative, not a published figure. The whole suite at exploratory size is IDENTICAL between
 `acfce5e` and `624fa9b` under `compare_results.py`, with the same instrument identity. Details,
 the profile and what was tried and not kept: `PERFORMANCE.md`.
 
@@ -130,4 +131,35 @@ Implemented by this session; reviewed independently, routed per area:
 
 ## 8. Final review round
 
-(Filled in from the final reviewers' reports.)
+Head at the end of the round: `251d7d2` plus `serde` removed from `z30-io` (the CTO's low
+finding), in the commit that adds this section. CI on `251d7d2` completed with no failed check
+suite (rust.yml on Linux, Windows, macOS and MSRV; ci.yml; release.yml dry run).
+
+| Reviewer | Verdict | Findings and disposition |
+| :--- | :--- | :--- |
+| `cto-code-reviewer` | APPROVE-RECOMMEND for the board | Medium: `tests/vectors` not pinned — fixed in `251d7d2`. Low: unused `serde` in `z30-io` — removed. Low: this section was empty — filled. Nothing obsolete left outside `audit/`; no production capability removed; CI has no silent pass; the lock file is consistent; release binaries and instrument unaffected by the profile change |
+| `qa-reproducer` | instrument identity, suite IDENTICAL (10 and 20 frames per point, `acfce5e` vs `4bd6811`), new tests, frozen checks: REPRODUCED. Performance: direction reproduced, size not at K = 20 / 4 threads | the claim restated as a range across both measurements (§4, `PERFORMANCE.md` §2); QA's logs in `evidence/qa/`. The first QA run was cut off by an API limit after its runs finished; a second QA agent assessed those artefacts |
+| `research-engineer` | every research-process step runs at head; no result changed | 4 medium, 4 low — all fixed in `251d7d2` (evidence committed, §6 generator path with CI `--check`, rand vs toml routing, frozen `tests/vectors`, subdirectory completeness, `lock_closure.py` test, stale pointers) |
+| `tx-safety-auditor` | no findings | the two transmit-adjacent removals were unreachable from any TX, HALT, watchdog, panic, signal or shutdown path; §4 tests unchanged and passing. Not re-run for the later commits: none touched transmit code |
+| `rf-dsp-reviewer` | sound | 4 low, fixed in `0bcf07e`. Not re-run: no receiver change after `624fa9b` |
+| `docs-honesty-auditor` | 9 findings | all fixed in `cbbcb8b`. The later doc edits (`251d7d2`) came from the research and CTO reviews |
+| `ceo-board-liaison` | see the board packet | |
+
+The final team's questions:
+
+- **Is anything obsolete still present?** Outside `audit/` (kept as history), no (CTO). The dead
+  items left inside the benchmark instrument's hashed files are listed in §6 with the reason.
+- **Did deletion remove a required production capability?** No: `crates/z30-cli`
+  has no diff at all; `z30-gui` and `z30-io` changed only in `Cargo.toml` (CTO).
+- **Did a safety invariant disappear?** No (tx-safety-auditor; safety tests byte-identical).
+- **Did performance improve?** `decode_slot` CPU per slot −27…−43 % at K = 20–50, bit-identical
+  output (QA reproduced direction and identity). Indicative, not a published figure.
+- **Did compile/test time improve?** Locally, clean dev/test builds −14 % (dependency debug info);
+  `cargo check` unchanged. CI: `rust.yml` 29 → 12 min wall, ~104 → ~40 job-minutes; `ci.yml`
+  3.3 → 0.4 min; one run per push instead of two (single runs, indicative).
+- **Did dependency count decrease?** Workspace graph 414 → 405 crates; the shipped binaries'
+  graph is unchanged (393).
+- **Did complexity decrease?** 92 legacy files and two implementation stacks gone; 7 crates
+  instead of 8; 3 Cargo features instead of 7; 8 CI jobs instead of 13; no Python outside the
+  research tools, no JS/TS outside audit evidence.
+- **Is the production architecture easier to understand?** CTO: yes.

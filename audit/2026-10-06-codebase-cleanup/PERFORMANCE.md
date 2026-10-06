@@ -71,9 +71,13 @@ run; its numbers agreed within the noise, e.g. K = 20 / 4 threads 1.02 against 0
 | 50 | 4 | 836 → 601 | 923 → 669 | 2.57 → 1.62 | 47 897 → 43 774 | 1000/1000 both |
 | 50 | 1 | 2465 → 1457 | 2738 → 1704 | 2.43 → 1.47 | 14 479 → 10 356 | 1000/1000 both |
 
-The saving grows with the number of decodes (it is per decode): none at K = 1; CPU per slot
-−29 % (K = 20) and −40 % (K = 50) on one thread, −43 % (K = 20) and −37 % (K = 50) on four
-threads. That is more than `replica_spectra`'s 20 % share of user self time in the profile
+The saving grows with the number of decodes (it is per decode): small at K = 1 (−1 to −8 %,
+within the noise of these runs); at K = 20 and K = 50 between −27 % and −43 % of CPU per slot.
+QA reproduced the direction independently (`evidence/qa/qa-perf-{1..4}-*.log`: `acfce5e` and
+`4bd6811` alternating, two runs each, 10 slots per K): −29 % (K = 20, 4 threads), −38 % (K = 50,
+4 threads), −27 % (K = 20, 1 thread), −35 % (K = 50, 1 thread). The −43 % of the single run
+above rests on one high baseline (1.66 s; QA's two baselines were 1.29 and 1.44 s), so the range,
+not the single figure, is what these measurements support. That is more than `replica_spectra`'s 20 % share of user self time in the profile
 accounts for. The difference is not attributed by any measurement here; the probable cause is
 the three ~1.15 MB `Vec<f64>` each evaluation allocated, whose page-fault and allocator cost is
 kernel time the self-time profile does not show, and which contends across threads.
