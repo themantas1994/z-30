@@ -1,6 +1,6 @@
 ### [🏠 Wiki Home](Home)
 
-*z-30 vNext — validated in simulation; not yet on real hardware.*
+*Experimental mode. Validated in simulation only; not yet on real hardware or on the air.*
 
 ---
 

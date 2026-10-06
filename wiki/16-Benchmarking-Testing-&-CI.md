@@ -1,8 +1,10 @@
 # 16. Benchmarking, Testing & CI
 
-How z-30's performance figures are produced, what they are, and what the test suites and CI
+How z-30's performance figures are produced, what they mean, and what the test suites and CI
 enforce. The developer-level account, with every table, is
-[`docs/benchmarking.md`](../docs/benchmarking.md).
+[`docs/benchmarking.md`](../docs/benchmarking.md). Operators who only want to know how deep the
+receiver decodes can read the table in the next section and the FT8 comparison on
+[11](11-Physics-&-Comparative-Analysis-z30-vs-FT8.md).
 
 > **Every figure on this page is software simulation.** No radio, sound card or RF path was
 > involved. Real-radio validation: not yet performed
@@ -25,7 +27,7 @@ false-decode criteria and the confidence method. `research/summarize_suite.py` r
 against the JSON), never retyped from memory. A binary built from a dirty tree labels its
 results `<commit>-dirty`, and they are not written as a published result.
 
-**Definitions used throughout.** SNR is the frame's signal power over the noise power in
+**Definitions.** SNR is the frame's signal power over the noise power in
 2500 Hz (SPEC §10). Success is a decode whose 63 payload bits equal the transmitted ones. A
 false decode is a CRC-valid decode of anything not transmitted. Intervals are Wilson 95%;
 paired comparisons use the exact two-sided McNemar test; a zero count is bounded with the exact
@@ -102,27 +104,24 @@ suite takes about an hour on 4 cores (the `elapsed_s` of the ten `672cef9b3cdb` 
 
 | Suite | Command | What it covers |
 | :--- | :--- | :--- |
-| Rust workspace | `cargo test --workspace --release` | the frozen golden vectors the deleted oracle generated, and the shared known-answer vectors in `tests/vectors/`; the modulator's bandwidth budgets; protocol round trip of every grid, report and sampled callsign; the transmit gate and PTT fail-closed rules; the live runtime decoding a slot only from its complete window (virtual sound card and clock); QSO logging with missing values and non-UTC time zones; SNR accuracy (and no estimate, not a floor, from silence); SIC; a sensitivity regression floor at −22 dB; migration idempotence and each legacy writer's defaults; dial-frequency provenance through the engine and the runtime; every kind of corrupted frame refused by the round trip and by the transmit gate, and the transmitted audio decoding back to the verified frame; the Watterson model's measured Doppler spread; the software loopback through the resampler, and that it reaches only an allowlist of crates and items (no audio/PTT/rig code); the production transmit loop on fake PTT, output, rig and clock (HALT before and while keyed and behind a blocked control thread, the watchdog, refused keys, unconfirmed releases, output failure and recovery, late keys, partial frames, the rig poll interval and settle window); PTT release confirmation and panicking line drivers; the gate's hardware, level and band-plan-edge refusals; system-clock steps; migration writing no transmit level and no legacy defaults; the playback callback allocating nothing |
+| Rust workspace | `cargo test --workspace --release` | the frozen golden vectors in `fixtures/golden/` and the shared known-answer vectors in `tests/vectors/`; the modulator's bandwidth budgets; protocol round trip of every grid, report and sampled callsign; the transmit gate and PTT fail-closed rules; the live runtime decoding a slot only from its complete window (virtual sound card and clock); QSO logging with missing values and non-UTC time zones; SNR accuracy (and no estimate, not a floor, from silence); SIC; a sensitivity regression floor at −22 dB; migration idempotence and each legacy writer's defaults; dial-frequency provenance through the engine and the runtime; every kind of corrupted frame refused by the round trip and by the transmit gate, and the transmitted audio decoding back to the verified frame; the Watterson model's measured Doppler spread; the software loopback through the resampler, and that it reaches only an allowlist of crates and items (no audio/PTT/rig code); the production transmit loop on fake PTT, output, rig and clock (HALT before and while keyed and behind a blocked control thread, the watchdog, refused keys, unconfirmed releases, output failure and recovery, late keys, partial frames, the rig poll interval and settle window); PTT release confirmation and panicking line drivers; the gate's hardware, level and band-plan-edge refusals; system-clock steps; migration writing no transmit level and no legacy defaults; the playback callback allocating nothing |
 | Formatting and lints | `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D warnings` (as CI runs them) | |
-| Frozen golden vectors and shared vectors | `(cd fixtures/golden && sha256sum --check --strict FROZEN.sha256)`, `(cd tests/vectors && sha256sum --check --strict FROZEN.sha256)` (`ci.yml` also refuses an unpinned file) | no byte of `fixtures/golden/` or `tests/vectors/` has changed; their generators were deleted with the oracle and the TypeScript codec, so they can be kept but not regenerated |
+| Frozen golden vectors and shared vectors | `(cd fixtures/golden && sha256sum --check --strict FROZEN.sha256)`, `(cd tests/vectors && sha256sum --check --strict FROZEN.sha256)` (`ci.yml` also refuses an unpinned file) | no byte of `fixtures/golden/` or `tests/vectors/` has changed. Their generators no longer exist, so the files can be kept but not regenerated; a failing golden test means the code is wrong, not the fixture |
 | Research tools | `python -m pytest research/tests -q` | the summarise, compare, pairing and lock-closure tools fail closed |
 
 ## What CI enforces
 
-- **`rust.yml`** — formatting, clippy, tests (test profile, opt-level 3) on Linux, Windows and
-  macOS, and release-profile tests on Linux in the MSRV job;
-  the release binaries with CM108 PTT; `--version` names the commit and features; no real
-  callsign in a binary; a CLI decode round trip; a message v1 cannot carry is refused; the
-  **declared MSRV (1.95) builds, passes clippy -D warnings and passes the tests**; every suite benchmark runs through the shipped
-  binary at exploratory size and records its provenance.
-- **`ci.yml`** — `cargo audit` of `Cargo.lock`; hygiene: no build artefacts, no `web_dist`, no
-  launcher or installer for the retired runtime, none of the deleted stacks (the Python oracle,
-  the browser runtime, the PyO3 bindings, the golden generators), no package-manager files and a
-  single `Cargo.lock`, no Python outside `research/` and `audit/`, no JS/TS outside `audit/`, the
-  frozen golden vectors and shared vectors (`fixtures/golden/` and any version subdirectory,
-  `tests/vectors/`) unchanged against their `FROZEN.sha256`, every file pinned; and the research tools' tests. The
-  oracle, browser runtime, golden-regeneration and paired-harness jobs went with what they
-  tested in the 2026-10-06 cleanup.
+- **`rust.yml`**: formatting, clippy and tests on Linux, Windows and macOS (test profile,
+  opt-level 3); the release binaries with CM108 PTT; `--version` naming the commit and features;
+  no real callsign in a binary; a CLI decode round trip; refusal of a message v1 cannot carry;
+  every suite benchmark run through the shipped binary at exploratory size, recording its
+  provenance. The MSRV job builds with the declared **Rust 1.95**, runs clippy with
+  `-D warnings` and runs the release-profile tests.
+- **`ci.yml`**: `cargo audit` of `Cargo.lock`; repository hygiene (no build artefacts, no
+  package-manager files, a single `Cargo.lock`, no Python outside `research/` and `audit/`, no
+  JS/TS outside `audit/`, no unpublished suite result committed as the record); the frozen
+  golden and shared vectors checked against their `FROZEN.sha256`, with every file pinned; and
+  the research tools' tests.
 - **`release.yml`** — on a version tag (and as a dry run on pull requests that touch the release
   files): release-profile tests on each platform, builds `z30` and `z30-gui`
   with CM108, writes `BUILDINFO.txt` from `--version`, refuses a dirty or mismatched build, and
@@ -130,10 +129,6 @@ suite takes about an hour on 4 cores (the `elapsed_s` of the ten `672cef9b3cdb` 
 
 ## History
 
-The earlier Python benchmark (`--mode realistic` / `ideal`, the in-browser Monte Carlo
-engine, `--ap`, `--compare-demod`) measured the retired oracle receiver; both were deleted in
-the 2026-10-06 cleanup. Its findings — the
-coherence-weight defect, the browser engine's analytic receive path, the four-schedule cascade
-— are recorded in the git history of this page up to commit `224b2fc` and in
-[`docs/benchmarking.md`](../docs/benchmarking.md#history). Its figures describe a receiver
-nobody installs any more and are not quoted as z-30's performance.
+Earlier benchmarks measured a different receiver implementation that has since been removed, so
+their figures are not quoted as z-30's performance. Their findings are summarised in
+[`docs/benchmarking.md`](../docs/benchmarking.md#history).

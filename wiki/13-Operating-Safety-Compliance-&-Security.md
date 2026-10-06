@@ -3,7 +3,9 @@
 z-30 keys real transmitters. A defect here does not produce an error message; it produces an
 out-of-band, wrongly identified or stuck transmission on somebody's licence. Every rule on this
 page has a test behind it (`crates/z30-engine/tests/safety.rs` unless stated), and the full
-engineering reference is [`docs/safety.md`](../docs/safety.md).
+engineering reference is [`docs/safety.md`](../docs/safety.md). Identifiers such as C-06 or N-03
+refer to findings in the historical reports under [`audit/`](../audit/README.md); they are given
+as provenance, and each rule is explained here without needing the report.
 
 > **None of this has been exercised against a real radio.** The rules are tested against
 > simulated lines and scripted `rigctld` servers. Transmit into a dummy load first and follow
@@ -23,7 +25,7 @@ partial "allowed". The GUI shows its verdict before you enable TX and again at e
 | the **radiated** emission — dial + audio offset, across the tone span, at the measured −40 dB width (66 Hz) — is not wholly inside a permitted segment (US: a data segment, or on 60 m a channel; IARU regions: an amateur band, see below) | the radiated frequency is not the dial frequency |
 | tone 0 below 200 Hz or tone 15 above 2800 Hz | outside the audio range the transmitter uses |
 | the radio, read back through `rigctld`, has settled on a different dial | the band-plan check was about a frequency the transmitter is not on |
-| the frame does not read back — symbols, parity, CRC, every field, text — as exactly the requested message | never transmit a different partner call, grid or report than the one shown (audit C-06) |
+| the frame does not read back — symbols, parity, CRC, every field, text — as exactly the requested message | never transmit a different partner call, grid or report than the one shown (historical audit finding C-06) |
 | the frame is not sent from this station's callsign | |
 | no PTT method configured, or the audio output / keying line could not be opened or has failed since | a gate that passes a station that cannot key is uncertainty reported as permission |
 | the last PTT release was not confirmed by the hardware | the transmitter may still be keyed; z-30 keeps retrying the release |
@@ -40,12 +42,12 @@ watched during a frame: a settled dial contradiction or a non-USB mode read whil
 stops the transmission and raises a TX fault.
 
 **No default callsign.** A new installation has no callsign, region, licence class, PTT
-method, dial or transmit level, and the gate refuses until all are set. The retired browser app
-shipped the real station W1AW as its default (audit C-04); CI now scans every release binary for
-it. `z30 --migrate` invents nothing either: it writes no transmit level, and does not import a
-legacy app's own defaults (that callsign, the default PTT method, dial or power), because the
-old apps saved them whether or not you chose them. A migrated station cannot transmit until you
-set a transmit level and whatever else the gate lists.
+method, dial or transmit level, and the gate refuses until all are set. An earlier application
+shipped a real station's callsign (W1AW) as its default (audit C-04); CI now scans every release
+binary for it. `z30 --migrate` invents nothing either: it writes no transmit level and does not
+import the old application's own defaults (callsign, PTT method, dial or power), because that
+application saved them whether or not you had chosen them. A migrated station cannot transmit
+until you set a transmit level and whatever else the gate lists.
 
 **USB only.** The emission is computed as dial + audio (upper sideband). z-30 does not set the
 radio's mode; operating in LSB would put the signal somewhere the gate did not check. When rig
@@ -54,12 +56,12 @@ without rig control the mode cannot be checked.
 
 **What is checked is what is sent.** The frame the gate verifies (symbols, parity, CRC, fields,
 text, and a symbol-for-symbol rebuild from the message) is the very object the transmitter
-modulates: nothing else can be transmitted, by construction (`VerifiedFrame`; post-remediation
-audit N-03). A transmit level of 0 is refused, as is a missing dial frequency.
+modulates: nothing else can be transmitted, by construction (`VerifiedFrame`; historical audit
+finding N-03). A transmit level of 0 is refused, as is a missing dial frequency.
 
 **Loopback tests do not transmit.** `z30 --loopback-test` runs entirely in memory. The sound-card
 test, `z30 --audio-loopback-test`, needs `--confirm-no-transmitter` and refuses any configuration
-with a PTT method (VOX included) or rig control (post-remediation audit N-04).
+with a PTT method (VOX included) or rig control (historical audit finding N-04).
 
 The band plans are compile-time data, not configuration, and the two kinds are different:
 
@@ -121,42 +123,41 @@ same limitation.
 
 z-30 never changes the system clock, applies no offset of its own, and has no RF or network time
 source. It reports the operating system's own synchronisation status and never claims
-"synchronised" when it cannot ask. The legacy RF time sync reported success on noise and
-persisted the result (audit C-03); it is gone, and its offsets are never migrated
+"synchronised" when it cannot ask. An RF time-sync feature in an earlier application reported
+success on noise (audit C-03); it no longer exists and its offsets are never migrated
 ([07](07-RF-Time-Synchronization-Engine.md)).
 
 ## The logbook records only what happened
 
 A log record holds what was received, measured, sent, reported by the radio, commanded,
-configured or entered — and each field says which. A field nothing supplied is left empty:
+configured or entered, and each field says which. A field nothing supplied is left empty:
 
-- no grid received → no grid logged (the retired logger wrote `FN31`);
-- no report received → none logged (it wrote `-16`);
-- no distance field at all (it computed one from the default grid `EM00`);
-- times are UTC, computed from slot numbers, independent of the computer's time zone (it wrote
-  local time labelled UTC);
+- no grid received → no grid logged;
+- no report received → no report logged;
+- no distance field at all, since there is no default grid to compute one from;
+- times are UTC, computed from slot numbers, independent of the computer's time zone;
 - the dial is `reported_by_rig` when a fresh CAT reading gave it (the radio's value), `commanded`
   only when z-30 sent the radio that exact frequency **and the radio acknowledged it**,
   `configured` when it is only your setting, and absent when there is none. There is no default
   dial: until 2026-09-24 a default 14.076 MHz could be logged as "commanded" on a station with
-  no rig control (post-remediation audit N-05);
+  no rig control (historical audit finding N-05);
 - power is the power you *configured*, labelled as configuration; forward power and SWR are "not
   measured" because nothing measures them.
 
 A record with no partner callsign or no plausible UTC time is refused, not written. ADIF exports
-carry the provenance in `APP_Z30_PROVENANCE`. Imported legacy records are marked `legacy_import`,
-and each legacy writer's own defaults are dropped from the entries it wrote because they cannot
-be told apart from its fabrications: the auto-logger's FN31, −16 and dial-plus-audio-offset
-"frequency", the manual form's FN31 and band default dial, the legacy importer's −15 and
-14.076 MHz (`crates/z30-io/tests/logbook_integrity.rs`, `crates/z30-engine/tests/qso_logging.rs`,
-`crates/z30-engine/tests/dial_provenance.rs`, `z30-io` `migrate::tests`).
+carry the provenance in `APP_Z30_PROVENANCE`. Records imported by `z30 --migrate` are marked
+`legacy_import`, and the old application's own default values (grid `FN31`, report −16, −15,
+the 14.076 MHz default dial, a "frequency" computed as dial plus audio offset) are dropped from
+them, because they cannot be told apart from values the old application made up. Tests:
+`crates/z30-io/tests/logbook_integrity.rs`, `crates/z30-engine/tests/qso_logging.rs`,
+`crates/z30-engine/tests/dial_provenance.rs` and `migrate::tests` in `z30-io`.
 
 ## Reports you send
 
 The report in your `-NN` message is this receiver's measurement of the other station, rounded
 and limited to v1's −30…+30 dB. The estimator is measured against the truth from −22 to +30 dB
 ([16](16-Benchmarking-Testing-&-CI.md)); its predecessor saturated near +6.6 dB and sent a +20 dB
-station "+07" (audit M-07). With no signal estimate, no report is sent.
+station "+07" (historical audit finding M-07). With no signal estimate, no report is sent.
 
 v1 carries a plain number, so the limits are not visible in what you send: **`+30` means "+30 dB
 or stronger"**, and **`-30` means "−30 dB or weaker"**. Anything below −22 dB (down to −30) is
@@ -167,9 +168,7 @@ shows `<-22`. The logbook records the report exactly as sent.
 
 z-30 is a native program. It listens on no port, serves no files, needs no token, makes no
 network request at startup and checks for no updates. Its only network connection is the
-outbound one to the `rigctld` you configure. (The retired runtime ran a loopback HTTP server
-with token, Origin and Host checks, contacted GitHub and Google Fonts at every launch, and
-served `./dist` from the working directory; all deleted.)
+outbound one to the `rigctld` you configure.
 
 ## What is still on you
 

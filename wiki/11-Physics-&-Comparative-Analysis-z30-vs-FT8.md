@@ -1,9 +1,9 @@
 # 11. Physics & Comparative Analysis: z-30 vs FT8
 
-This page compares z-30 with FT8, the mode most operators will judge it against. Every row
-says what kind of evidence stands behind it, because an earlier version of this page mixed
-measured figures, arithmetic, published figures for another mode and numbers nobody had
-measured. Two of those claims had to be withdrawn (see the end of this page).
+This page compares z-30 with FT8, the mode most operators will judge it against. Each row is
+tagged with the kind of evidence behind it, so that measured figures, arithmetic, published
+figures for another mode and gaps are never mixed up. Claims that did not survive that
+discipline are listed in section 7.
 
 **Evidence classes**
 
@@ -56,8 +56,8 @@ Eb/N0 = SNR<sub>2500</sub> + 10 log<sub>10</sub>(2500 / R<sub>b</sub>). For z-30
 **Read the three together.** z-30 decodes about 2 dB deeper per transmission. It does so by
 transmitting 1.9 times as long (2.78 dB) and carrying 14 fewer message bits. Per message bit it
 is **less** energy-efficient than FT8, by about 1.6 dB, and it sits further from its own
-Shannon limit. The extra depth is bought, not gained. Quoting the −23 dB figure without the
-airtime and the bit count is the error this page used to make.
+Shannon limit. The extra depth is bought, not gained, and the −23 dB figure should not be
+quoted without the airtime and the bit count.
 
 ## 3. Fading
 
@@ -86,13 +86,11 @@ standard deviation σ_D = spread / 2 (the ITU-R F.1487 2σ spread), normalised t
 the ensemble (so an individual frame fades as the channel dictates); SNR is the average SNR;
 200 frames per point; seed 20260830. Software simulation, no hardware. [M]
 
-**Previous figures corrected.** The fading rows published before 2026-09-24 (−20.79 / −21.31 /
-−21.07 dB) were measured with a channel model whose taps had 1/√2 of the labelled Doppler
-spread (both the Rust model and the Python oracle; post-remediation audit N-01). They described
-0.071 / 0.35 / 0.71 / 7.1 Hz channels, not the presets named, and are withdrawn. The corrected
-model's spread is measured by tests that fail on the old one (`z30-channel`'s
-`generated_taps_have_the_labelled_doppler_spread`; the oracle's `test_watterson_doppler.py` did
-the same until the oracle was deleted in the 2026-10-06 cleanup).
+**Withdrawn fading figures.** Fading rows published before 2026-09-24 (−20.79 / −21.31 /
+−21.07 dB) came from a channel model whose taps had 1/√2 of the labelled Doppler spread
+(historical audit finding N-01). They described 0.071 / 0.35 / 0.71 / 7.1 Hz channels, not the
+presets named. The corrected model's spread is checked by
+`generated_taps_have_the_labelled_doppler_spread` in `z30-channel`, which fails on the old one.
 
 **On a path with 10 Hz of Doppler spread z-30 does not decode at any SNR.** The spread is wider
 than the 3.125 Hz tone spacing, so the tones are no longer separable; the long, narrow symbol
@@ -118,9 +116,8 @@ reference ([07](07-RF-Time-Synchronization-Engine.md)).
 | Two-station collisions, SIC on vs off | table in [05](05-Successive-Interference-Cancellation-(SIC).md) | [N] | [M] `sic.json` |
 | False decodes | 0 in 2000 slots of five kinds of non-z-30 audio (white noise, CW carriers, 16-FSK without Costas, FT8-like 8-FSK, impulses) | [N] | [M] `false.json` |
 
-Both modes subtract decoded signals and search again. The claim this page used to make — that
-FT8 "fails" on collisions and z-30 alone recovers them — was wrong on the FT8 side and
-unmeasured on the z-30 side.
+Both modes subtract decoded signals and search again. FT8 does recover collisions (WSJT-X runs
+three passes with subtraction), and no FT8 collision rate was measured here.
 
 ## 6. What z-30 cannot do that FT8 can
 
@@ -136,21 +133,20 @@ unmeasured on the z-30 side.
 
 ## 7. Withdrawn claims
 
-These appeared on this page or elsewhere in the project and are withdrawn. None is replaced by
-anything but the measured figures above.
+These appeared in earlier project documentation and are withdrawn. Nothing replaces them except
+the measured figures above.
 
 - **"+4.0 dB advantage over FT8."** It subtracted FT8's published figure from z-30's
   genie-aided bound (a receiver told the frequency, timing and noise level). A bound is not a
   threshold.
-- **"z-30 is level with FT8"** (2026-08-31), from a legacy benchmark that applied a
-  demodulator term the receiver does not use. Superseded by the vNext measurement above.
+- **"z-30 is level with FT8"** (2026-08-31), from an earlier benchmark that applied a
+  demodulator term the receiver does not use. Superseded by the measurement in section 2.
 - **"FT8: no collision recovery"** and the SIC decode-rate table (98.7 / 95.2 / 91.4 / 84.6 %),
   "Pass 3 reaches −27.5 dB", "recovery down to −31.5 dB". No instrument produced them.
 - **"50 QSOs per 2.7 kHz"** and similar spectral-density figures, and the FT4/WSPR/JS8Call
   comparison table, whose figures were not sourced.
-- **"Resists polar and auroral flutter"**, "tracks Doppler ±1.5 Hz" and "zero-admin RF time
-  calibration". The measurement above shows the opposite on high-Doppler paths, and the RF time
-  receiver was retired with the browser runtime.
+- **"Resists polar and auroral flutter"** and "tracks Doppler ±1.5 Hz". The measurement in
+  section 3 shows the opposite on high-Doppler paths.
 - **"+2.4 dB coding gain" and "+3 dB predetection gain"** as net advantages. They are real
   properties of the parameters, but the Eb/N0 row in section 2 is what the whole chain delivers
   per message bit, and it is behind FT8.
