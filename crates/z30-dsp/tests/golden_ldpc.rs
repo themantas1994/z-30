@@ -92,6 +92,23 @@ fn dither_matches_the_oracle() {
     }
 }
 
+/// `tests/vectors/dither_vectors.json`: the shared vector the retired Python and TypeScript
+/// decoders agreed on, independent of `fixtures/golden/dither.json`. Before the 2026-10-06
+/// cleanup only those two implementations read it.
+#[test]
+fn dither_matches_the_shared_vector() {
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/vectors/dither_vectors.json");
+    let v: Value = serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
+    assert_eq!(v["amplitude"].as_f64().unwrap(), z30_dsp::ldpc::DITHER_AMPLITUDE);
+    let llr: Vec<f32> = v["llrs"].as_array().unwrap().iter().map(|x| x.as_f64().unwrap() as f32).collect();
+    let d = dither_vector(&llr.try_into().unwrap());
+    let want = v["dither"].as_array().unwrap();
+    assert_eq!(want.len(), N);
+    for (i, (a, b)) in d.iter().zip(want).enumerate() {
+        assert!((a - b.as_f64().unwrap()).abs() < 1e-12, "dither[{i}] = {a}, expected {b}");
+    }
+}
+
 #[test]
 fn ldpc_cascade_is_bit_exact_on_the_corpus() {
     let doc = load("ldpc_corpus.json");
@@ -246,34 +263,4 @@ fn ap_decode_is_bit_exact_on_the_corpus() {
     }
     assert!(ap_hits > 0, "the AP corpus never exercised a hypothesis");
     let _ = build_hypothesis(1, None, None);
-}
-
-/// Screening helper for reference/golden/generate.py's OSD corpus: prints the indices of a pool
-/// of LLR vectors on which BP fails and either OSD rule succeeds. Run with
-/// `Z30_POOL=<file.f32> cargo test -p z30-dsp --test golden_ldpc screen_osd_pool -- --ignored --nocapture`.
-#[test]
-#[ignore]
-fn screen_osd_pool() {
-    let path = std::env::var("Z30_POOL").expect("Z30_POOL");
-    let raw: Vec<f32> = std::fs::read(path).unwrap().as_chunks::<4>().0.iter().map(|b| f32::from_le_bytes(*b)).collect();
-    let mut dec = Decoder::new();
-    let (mut legacy, mut fixed, mut both, mut failures) = (vec![], vec![], 0, 0);
-    for (i, c) in raw.as_chunks::<N>().0.iter().enumerate() {
-        let llr: Llrs = *c;
-        if let BpOutcome::Failure(f) = dec.decode_bp(&llr, None) {
-            failures += 1;
-            let l = legacy_osd(&f, &llr, None).is_some();
-            let n = Decoder::osd(&f, &llr, None).is_some();
-            if l {
-                legacy.push(i)
-            }
-            if n {
-                fixed.push(i)
-            }
-            both += (l && n) as usize;
-        }
-    }
-    println!("pool {} bp_failures {failures} legacy_osd {} fixed_osd {} both {both}", raw.len() / N, legacy.len(), fixed.len());
-    println!("LEGACY {:?}", legacy);
-    println!("FIXED {:?}", fixed);
 }

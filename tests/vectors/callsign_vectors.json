@@ -1,17 +1,16 @@
 {
   "_comment": [
-    "Shared callsign validation vectors, asserted from both languages.",
+    "Callsign validation vectors.",
     "",
-    "The browser transmit gate (isValidCallsign in src/dsp/bandPlan.ts) decides whether a",
-    "station may key up. Three other implementations - both React settings modals and the",
-    "Python setup wizard - used to carry a LOOSER pattern, so the wizard showed a green",
-    "'Valid ITU Callsign' for callsigns the gate refuses at slot start, and a red 'Invalid'",
-    "for ones it permits. An operator who trusts the wizard and then cannot transmit has been",
-    "told two different things by one program.",
+    "The retired browser transmit gate and three other implementations (two React settings modals",
+    "and the Python setup wizard) disagreed on which callsigns were valid, so the wizard showed",
+    "'Valid ITU Callsign' for callsigns the gate refused at slot start, and 'Invalid' for ones it",
+    "permitted. The three disagreements the audit measured are the first three 'divergence' cases.",
     "",
-    "The three disagreements the audit measured are the first three 'divergence' cases below.",
-    "",
-    "Asserted by tests/frontend.test.mjs (TypeScript) and tests/test_config_wizard.py (Python)."
+    "Asserted by the retired TypeScript and Python implementations until they were removed",
+    "(2026-10-06 cleanup, last present at acfce5e). Kept because it was produced independently of",
+    "the Rust code; it must not be edited.",
+    "Asserted by crates/z30-engine/tests/safety.rs (callsign_syntax_matches_the_shared_vectors)."
   ],
   "pattern": "^(?:[A-Z0-9]{1,3}/)?[A-Z0-9]{1,3}[0-9][A-Z]{1,4}(?:/[A-Z0-9]{1,4})?$",
   "extra_rule": "The base prefix (the part before any trailing '/suffix') must contain a letter.",

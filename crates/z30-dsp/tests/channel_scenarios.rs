@@ -1,7 +1,7 @@
 //! Seeded channel scenarios through the production entry point (`decode_slot`), with pass
 //! criteria from the audit (I.9 item 4). Sample sizes here are regression-sized, not
-//! publication-sized: the published thresholds come from research/paired_receiver.py at
-//! 200 frames per point. These catch a receiver that has stopped working.
+//! publication-sized: the published thresholds come from `z30 --benchmark suite` at 200
+//! frames per point. These catch a receiver that has stopped working.
 
 use z30_channel::*;
 use z30_dsp::sic::{subtract, SicParams};

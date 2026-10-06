@@ -1,14 +1,7 @@
 name: CI
 
-# Reference code and repository hygiene. The production application (the Rust workspace in
-# crates/) is built, tested and benchmarked by rust.yml; this workflow covers what surrounds it:
-#
-# - the frozen Python protocol oracle (legacy/python-oracle), which generates the golden vectors
-#   the Rust code is tested against;
-# - the retired browser runtime's reference tests (legacy/browser-runtime), kept because its
-#   TypeScript codec is the reference for whole-message packing;
-# - the separation itself: no legacy runtime, bundle or installer may reappear in the
-#   production path (2026-09-24 audit, C-04 and section 5 of the remediation brief).
+# Repository hygiene, dependency advisories and the research tools. The application (the Rust
+# workspace in crates/) is built, tested and benchmarked by rust.yml.
 
 on:
   push:
@@ -25,94 +18,9 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  oracle:
-    name: Python oracle (${{ matrix.python-version }})
-    runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        # Exactly the versions legacy/python-oracle/pyproject.toml declares (>=3.10): the pinned
-        # NumPy 2.2 / SciPy 1.15 need 3.10. The old CI tested 3.10/3.12/3.13 against a declared
-        # floor of 3.9 (2026-09-24 audit, L-04).
-        python-version: ['3.10', '3.11', '3.12', '3.13']
-    defaults:
-      run:
-        working-directory: legacy/python-oracle
-    steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-python@v7
-        with:
-          python-version: ${{ matrix.python-version }}
-          cache: pip
-          cache-dependency-path: legacy/python-oracle/requirements.txt
-      - name: Install the pinned dependencies
-        run: |
-          python -m pip install --upgrade pip
-          python -m pip install -r requirements.txt pytest 'ruff==0.16.5'
-      - name: Lint
-        run: ruff check z30_dsp tests
-      - name: Oracle test suite (includes the freeze check)
-        run: python -m pytest tests -q
-      - name: The oracle reference benchmark stays reproducible across runs and worker counts
-        # A short seeded sweep straddling the threshold, so the dithered fourth schedule runs.
-        run: |
-          python - <<'PY'
-          from z30_dsp.benchmark import run_monte_carlo_snr_sweep
-
-          def curve(rows):
-              return [{k: v for k, v in r.items() if k not in ("elapsed_sec", "workers")} for r in rows]
-
-          for mode in ("ideal", "realistic"):
-              kwargs = dict(min_snr_db=-27, max_snr_db=-25, step_snr_db=2, frames_per_snr=3,
-                            mode=mode, fading="none", seed=1)
-              a = run_monte_carlo_snr_sweep(**kwargs)
-              b = run_monte_carlo_snr_sweep(**kwargs)
-              c = run_monte_carlo_snr_sweep(workers=2, **kwargs)
-              assert curve(a) == curve(b) == curve(c), mode
-              assert a[0]["avg_iters"] > 100, "the sweep no longer reaches the later schedules"
-              print(f"{mode}: reproducible serially and on 2 workers")
-          PY
-
-  legacy-browser:
-    name: Retired browser runtime (reference tests only)
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: legacy/browser-runtime
-    steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-node@v7
-        with:
-          node-version: '22'
-          cache: npm
-          cache-dependency-path: legacy/browser-runtime/package-lock.json
-      - run: npm ci
-      - name: Typecheck
-        run: npm run lint
-      - name: Reference tests (codec vectors, transmit-gate regressions, determinism)
-        run: npm run test:ts
-      - name: It is not buildable as an application
-        run: |
-          set -e
-          node -e 'const s=require("./package.json").scripts; for (const k of ["dev","build","preview","start"]) if (s[k]) { console.error("script " + k + " reintroduced"); process.exit(1) }'
-          echo "no dev/build/preview/start script"
-
-  dependency-audit:
-    name: Dependency audit (oracle)
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-python@v7
-        with:
-          python-version: '3.12'
-      - run: |
-          python -m pip install --upgrade pip pip-audit
-          pip-audit --requirement legacy/python-oracle/requirements.txt --strict
-
   rust-advisories:
-    # The shipped binaries bundle SQLite, hidapi, cpal and eframe; only the oracle's Python
-    # dependencies were scanned (2026-09-28 audit F-50 / CTO-13). This scans Cargo.lock against
-    # the RustSec database and fails on any vulnerability not listed below with its reason.
+    # The shipped binaries bundle SQLite, hidapi, cpal and eframe (2026-09-28 audit F-50 /
+    # CTO-13). This scans Cargo.lock against the RustSec database and fails on any vulnerability.
     name: Dependency audit (Rust, Cargo.lock)
     runs-on: ubuntu-latest
     steps:
@@ -120,13 +28,10 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - run: cargo install cargo-audit --locked
       - name: cargo audit
-        # RUSTSEC-2026-0176 / -0177: pyo3 0.25.1, reached only through crates/z30-py, the
-        # research bindings that are never shipped (`cargo tree -i pyo3`: z30-py alone). The
-        # bindings use neither PyList/PyTuple iterator nth nor PyCFunction::new_closure. The
-        # upgrade to pyo3 >= 0.29 needs a code migration (#40) and is tracked in
-        # audit/ACTIVE_DEFECT_LEDGER.md (F-50). Any other vulnerability fails this job.
         # Vulnerabilities fail the job; informational warnings (unmaintained, yanked) are printed.
-        run: cargo audit --ignore RUSTSEC-2026-0176 --ignore RUSTSEC-2026-0177
+        # The two pyo3 ignores (RUSTSEC-2026-0176/-0177) went with crates/z30-py, the only crate
+        # that used it (2026-10-06 cleanup).
+        run: cargo audit
 
   hygiene:
     name: Repository hygiene and production separation
@@ -155,13 +60,23 @@ jobs:
           if [ -n "$bad" ]; then echo "retired runtime files are back in the production tree:"; echo "$bad"; exit 1; fi
           echo "production tree is Rust-only"
 
-      - name: One lockfile per package manager, in the places that own them
+      - name: No retired implementation stack comes back
+        # The Python oracle, the browser runtime and the PyO3 bindings were deleted in the
+        # 2026-10-06 cleanup (audit/2026-10-06-codebase-cleanup/). Rust is the only
+        # implementation; the Python left is the stdlib-only research tools and audit evidence.
         run: |
           set -e
-          test "$(git ls-files | grep -cE '(^|/)(bun\.lockb?|yarn\.lock|pnpm-lock\.yaml)$' || true)" -eq 0
-          test "$(git ls-files | grep -cE '(^|/)package-lock\.json$')" -eq 1
-          git ls-files | grep -qx 'legacy/browser-runtime/package-lock.json'
-          git ls-files | grep -qx 'Cargo.lock'
+          bad=$(git ls-files | grep -E '^legacy/|^crates/z30-py/|^reference/|(^|/)(package(-lock)?\.json|bun\.lockb?|yarn\.lock|pnpm-lock\.yaml|requirements[^/]*\.txt|pyproject\.toml|setup\.py)$' || true)
+          if [ -n "$bad" ]; then echo "a retired stack is back:"; echo "$bad"; exit 1; fi
+          py=$(git ls-files '*.py' | grep -vE '^(research|audit)/' || true)
+          if [ -n "$py" ]; then echo "Python outside research/ and audit/:"; echo "$py"; exit 1; fi
+          if git ls-files | grep -E '\.(ts|tsx|mts|js|mjs|jsx)$' | grep -v '^audit/'; then echo "JS/TS outside audit/"; exit 1; fi
+          test "$(git ls-files '*Cargo.lock' | grep -v '^audit/')" = "Cargo.lock"
+
+      - name: The golden fixtures are frozen
+        # Their generators (the Python oracle and the TypeScript codec) are gone, so the
+        # fixtures can no longer be regenerated, only kept. Any byte that changes fails here.
+        run: cd fixtures/golden && sha256sum --check --strict FROZEN.sha256 && test "$(ls | wc -l)" -eq 20
 
       - name: No unpublished suite result is committed as if it were the record
         # z30 writes exploratory and dirty-build results under these two trees by default

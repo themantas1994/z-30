@@ -25,6 +25,6 @@ t release-bin-clean cargo build --release --locked -p z30-cli -p z30-gui --featu
 t test-rel-build cargo test --workspace --release --locked $EXCL --no-run
 t test-rel-run   cargo test --workspace --release --locked $EXCL
 ls -l target-c/release/z30 target-c/release/z30-gui | awk '{print "size", $5, $9}' >> $OUT
-strip -o $SP/z30s target-c/release/z30 && strip -o $SP/z30gs target-c/release/z30-gui && ls -l /tmp/z30s $SP/z30gs | awk '{print "stripped", $5, $9}' >> $OUT
+strip -o $SP/z30s target-c/release/z30 && strip -o $SP/z30gs target-c/release/z30-gui && ls -l $SP/z30s $SP/z30gs | awk '{print "stripped", $5, $9}' >> $OUT
 target-c/release/z30 --benchmark perf --frames 20 > $SP/perf-$LABEL.txt 2>&1
 echo done >> $OUT

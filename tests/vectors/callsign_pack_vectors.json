@@ -1,23 +1,20 @@
 {
   "_comment": [
-    "Shared 28-bit callsign PACKING vectors, asserted from both languages.",
+    "28-bit callsign PACKING vectors.",
     "",
     "Distinct from callsign_vectors.json, which pins the structural VALIDATION rule the",
     "transmit gate applies. This file pins the encoding: what integer a callsign occupies in",
     "the 28-bit field, and whether it survives a round trip.",
     "",
-    "It exists because a priori decoding asserts those 28 bits as certain. src/dsp/apDecode.ts",
-    "derives them by packing a message and reading its bits, and z30_dsp/ap_decode.py derives",
-    "them from z30_dsp/message_codec.py. If the two packers disagreed by one integer, the",
-    "Python benchmark would be measuring the gain of a hypothesis the browser never forms.",
+    "A priori decoding asserts those 28 bits as certain, so the packer must put an accepted call",
+    "exactly here. 'round_trips' decides whether a callsign may be used at all: a call that took",
+    "the retired packers' generic Base-37 fallback packs to an integer that does not unpack back",
+    "to it. v1 (crates/z30-protocol) refuses every such call instead of transmitting it.",
     "",
-    "'round_trips' is what decides whether a callsign may be used as a priori knowledge at all:",
-    "a call that takes the generic Base-37 fallback packs to an integer that does not unpack",
-    "back to it, so asserting those bits would assert a callsign nobody transmitted. This is",
-    "WSJT-X's ft8apset rule (pack a dummy message, unpack it, and refuse unless msg.eq.msgchk).",
-    "",
-    "Generated from src/dsp/z30Codec.ts, which shipped first. Asserted by",
-    "tests/apDecode.test.mjs (TypeScript) and tests/test_cross_language_parity.py (Python)."
+    "Generated from the retired TypeScript codec and asserted by it and by the retired Python",
+    "oracle until both were removed (2026-10-06 cleanup, last present at acfce5e). Kept because it",
+    "was produced independently of the Rust code; it cannot be regenerated and must not be edited.",
+    "Asserted by crates/z30-protocol/tests/shared_vectors.rs."
   ],
   "field_width_bits": 28,
   "vectors": [

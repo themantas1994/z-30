@@ -2,9 +2,8 @@ name: vNext (Rust)
 
 # The production application: the Rust workspace in crates/ (the `z30` and `z30-gui` binaries).
 # Built and tested on all three desktop platforms, on the declared minimum Rust version as well
-# as current stable, against the frozen oracle's golden vectors, and through the benchmark
-# suite that produces every published figure - so the receiver that is benchmarked is the one
-# that ships.
+# as current stable, against the frozen golden vectors, and through the benchmark suite that
+# produces every published figure - so the receiver that is benchmarked is the one that ships.
 
 on:
   push:
@@ -43,11 +42,11 @@ jobs:
         if: runner.os == 'Linux'
         run: cargo fmt --all --check
       - name: Clippy (warnings are errors)
-        run: cargo clippy --workspace --all-targets --exclude z30-py -- -D warnings
+        run: cargo clippy --workspace --all-targets -- -D warnings
       - name: Tests (golden vectors, property tests, safety, channel scenarios, SNR accuracy, SIC, live runtime, virtual-clock soak)
-        run: cargo test --workspace --exclude z30-py --locked
+        run: cargo test --workspace --locked
       - name: Tests, release profile
-        run: cargo test --workspace --exclude z30-py --release --locked
+        run: cargo test --workspace --release --locked
       - name: Release binaries, with CM108 GPIO PTT (the release configuration)
         run: cargo build --release --locked -p z30-cli -p z30-gui --features z30-cli/cm108,z30-gui/cm108
       - name: The binary is the commit it claims to be, and says what it contains
@@ -104,14 +103,14 @@ jobs:
       - run: sudo apt-get update && sudo apt-get install -y libasound2-dev libudev-dev libxkbcommon-dev libwayland-dev libx11-dev libxcursor-dev libxrandr-dev libxi-dev libgl1-mesa-dev
       - uses: Swatinem/rust-cache@v2
       - name: Build everything on ${{ steps.msrv.outputs.version }}
-        run: cargo build --workspace --exclude z30-py --all-targets --locked --features z30-cli/cm108,z30-gui/cm108
+        run: cargo build --workspace --all-targets --locked --features z30-cli/cm108,z30-gui/cm108
       - name: Clippy on ${{ steps.msrv.outputs.version }} (warnings are errors)
         # A supported toolchain passes every quality gate a contributor runs, not only the build:
         # 1.95's deny-by-default overly_complex_bool_expr failed here while CI ran clippy on
         # stable only (2026-09-24 post-remediation audit, N-02).
-        run: cargo clippy --workspace --all-targets --exclude z30-py --locked --features z30-cli/cm108,z30-gui/cm108 -- -D warnings
+        run: cargo clippy --workspace --all-targets --locked --features z30-cli/cm108,z30-gui/cm108 -- -D warnings
       - name: Test on ${{ steps.msrv.outputs.version }}
-        run: cargo test --workspace --exclude z30-py --release --locked
+        run: cargo test --workspace --release --locked
       - name: CM108 unit tests (feature-gated, so the workspace test above never compiles them; F-43, review L-2)
         run: cargo test -p z30-io --features cm108 --lib --release --locked cm108
 
@@ -142,61 +141,4 @@ jobs:
               assert "snr" in d["definitions"] and "success" in d["definitions"], n
               assert d.get("exploratory"), n
               print(n, "ok")
-          PY
-
-  golden:
-    name: Golden vectors reproduce from the oracle
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-python@v7
-        with:
-          python-version: '3.11'
-          cache: pip
-          cache-dependency-path: legacy/python-oracle/requirements.txt
-      - uses: actions/setup-node@v7
-        with:
-          node-version: '22'
-          cache: npm
-          cache-dependency-path: legacy/browser-runtime/package-lock.json
-      - run: python -m pip install -r legacy/python-oracle/requirements.txt
-      - run: npm ci
-        working-directory: legacy/browser-runtime
-      - name: Python oracle vectors are byte-identical to fixtures/golden
-        run: python reference/golden/generate.py --check
-      - name: TypeScript codec vectors are identical to fixtures/golden/messages.json
-        run: npx --prefix legacy/browser-runtime tsx reference/golden/generate_messages.mts --check
-
-  harness:
-    name: Paired oracle-vs-production harness drives the shipped decode_slot
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-      - uses: actions/setup-python@v7
-        with:
-          python-version: '3.11'
-          cache: pip
-          cache-dependency-path: legacy/python-oracle/requirements.txt
-      - run: python -m pip install -r legacy/python-oracle/requirements.txt maturin
-      - name: Build and install the bindings
-        run: |
-          cd crates/z30-py && maturin build --release -o ../../wheels
-          python -m pip install ../../wheels/z30-*.whl
-      - name: Paired oracle-vs-vNext smoke run (exploratory size)
-        run: |
-          python research/paired_receiver.py --min-snr -20 --max-snr -20 --frames 4 --workers 2 --out smoke.json
-          python - <<'PY'
-          import json
-          s = json.load(open("smoke.json"))
-          row = s["rows"][0]
-          assert row["vnext"] == 4 and row["oracle"] == 4, row
-          assert row["vnext_false"] == 0, row
-          # The record must say which build produced it (F-34): the wheel built here, from this
-          # clean checkout. Asserting only the counts left a provenance regression green (QA 05b).
-          p = s["provenance"]
-          assert p["status"] == "attributable" and p["status_reasons"] == [], p
-          assert p["wheel"]["commit"] == p["checkout"] and p["wheel"]["rustc"].startswith("rustc "), p
-          print("harness drives the production receiver:", row, "built from", p["wheel"]["commit"])
           PY
