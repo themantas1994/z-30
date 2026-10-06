@@ -49,5 +49,11 @@ debug = 1
 [profile.test]
 opt-level = 3
 
+# Dependencies are optimised (the DSP tests run real frame sizes) but carry no debug info: nobody
+# steps through rustfft or eframe, and it cost 14 % of a clean `cargo test` build (mean 444 s against
+# 518 s, two runs each) and 30 % of target/ (4.0 GB against 5.7 GB) on 4 cores
+# (audit/2026-10-06-codebase-cleanup/FINAL_REPORT.md). The workspace's own crates keep full
+# debug info; the release profile is unchanged.
 [profile.dev.package."*"]
 opt-level = 3
+debug = false
