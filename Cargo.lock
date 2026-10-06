@@ -4373,7 +4373,6 @@ dependencies = [
  "rustfft",
  "serde",
  "serde_json",
- "toml",
  "z30-channel",
  "z30-dsp",
  "z30-protocol",
@@ -4383,12 +4382,9 @@ dependencies = [
 name = "z30-gui"
 version = "0.1.0-experimental"
 dependencies = [
- "arc-swap",
- "crossbeam-channel",
  "ctrlc",
  "eframe",
  "egui",
- "z30-dsp",
  "z30-engine",
  "z30-io",
  "z30-protocol",
@@ -4407,8 +4403,6 @@ dependencies = [
  "serde_json",
  "serialport",
  "toml",
- "z30-channel",
- "z30-dsp",
  "z30-engine",
  "z30-protocol",
 ]

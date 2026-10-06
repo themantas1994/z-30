@@ -119,7 +119,6 @@ fn random_overlapping_bands_sic_on_versus_off_paired() {
     assert!(on as f64 >= 0.9 * total as f64, "{on}/{total} with SIC");
 }
 
-#[cfg(feature = "parallel")]
 #[test]
 fn a_busy_band_decodes_identically_on_one_thread_and_on_many() {
     let rx = Receiver::new();
