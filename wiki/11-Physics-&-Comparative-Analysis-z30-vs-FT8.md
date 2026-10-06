@@ -90,8 +90,9 @@ the ensemble (so an individual frame fades as the channel dictates); SNR is the 
 −21.07 dB) were measured with a channel model whose taps had 1/√2 of the labelled Doppler
 spread (both the Rust model and the Python oracle; post-remediation audit N-01). They described
 0.071 / 0.35 / 0.71 / 7.1 Hz channels, not the presets named, and are withdrawn. The corrected
-model's spread is measured by tests that fail on the old one (`z30-channel`,
-`legacy/python-oracle/tests/test_watterson_doppler.py`).
+model's spread is measured by tests that fail on the old one (`z30-channel`'s
+`generated_taps_have_the_labelled_doppler_spread`; the oracle's `test_watterson_doppler.py` did
+the same until the oracle was deleted in the 2026-10-06 cleanup).
 
 **On a path with 10 Hz of Doppler spread z-30 does not decode at any SNR.** The spread is wider
 than the 3.125 Hz tone spacing, so the tones are no longer separable; the long, narrow symbol

@@ -130,5 +130,6 @@ it writes no transmit level, and skips values equal to the old apps' own default
 method, dial, power), so a migrated station cannot transmit until you configure it
 ([troubleshooting.md](troubleshooting.md#migration)).
 
-The old program itself is retired and is not installed by anything; see
-[`legacy/README.md`](../legacy/README.md).
+The old program itself is retired, is not installed by anything, and its code was deleted from
+this repository in the 2026-10-06 cleanup (recoverable from commit `acfce5e`). `z30 --migrate`
+reads its files, not its code, so the migration does not depend on it.

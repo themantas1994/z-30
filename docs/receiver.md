@@ -48,8 +48,11 @@ record why none of those blocks belongs here.
 | `sic` | window 0.4 s, timing ±16 samples | SIC tuning |
 
 All defaults are the values the paired measurements in [benchmarking.md](benchmarking.md) were
-taken with. Changing one changes the receiver. Only a paired comparison
-(`research/paired_receiver.py --arm-b`) can say whether it helped.
+taken with. Changing one changes the receiver. Only a paired comparison can say whether it
+helped: the baseline and the candidate build through `z30 --benchmark suite`, compared frame by
+frame with `research/paired_mcnemar.py` ([research-process.md](research-process.md)). The
+measurements in [benchmarking.md](benchmarking.md) that used the since-removed
+`research/paired_receiver.py` are historical.
 
 ## Passes
 

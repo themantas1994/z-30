@@ -15,22 +15,22 @@ crates/                     THE APPLICATION (Rust)
   z30-cli                   `z30`: receive-only station, decode, encode, diagnostics, benchmark suite
   z30-gui                   `z30-gui`: the desktop station (egui)
   z30-channel               seeded channel models for tests and benchmarks (never in the receive path)
-  z30-py                    Python bindings of decode_slot, for research/ only (never shipped)
 docs/                       developer documentation of crates/ (describes the code as it is)
 wiki/                       operator documentation (this wiki)
 SPEC.md                     the normative v1 protocol specification
-fixtures/golden/            golden vectors generated from the frozen oracle (never hand-edited)
-reference/golden/           the generators that produce them
-research/                   paired oracle-vs-production harness and every published result file
-tests/vectors/              shared known-answer vectors (CRC, callsigns, dither)
-legacy/python-oracle/       FROZEN Python reference implementation - not production
-legacy/browser-runtime/     RETIRED browser transceiver - reference only, never built or shipped
-audit/                      the audits and this remediation's evidence
+fixtures/golden/            golden vectors from the deleted oracle: FROZEN, hash-pinned, never hand-edited
+research/                   result tools (summarise, compare, pair; stdlib Python) and every published result file
+tests/vectors/              shared known-answer vectors (CRC, callsigns, dither), asserted by Rust tests
+audit/                      the audits and the remediation evidence (historical)
 hardware-validation/        records of hardware tests (none yet)
 ```
 
-Nothing in `crates/` depends on `legacy/`; the dependency runs the other way, through golden
-vectors and paired comparisons.
+Rust is the only implementation. The frozen Python oracle, the retired browser transceiver, the
+generators of the golden vectors and the Python bindings of `decode_slot` were deleted in the
+2026-10-06 cleanup ([audit](../audit/2026-10-06-codebase-cleanup/REMOVAL_PLAN.md); recoverable
+from commit `acfce5e`). What they established about the Rust code stays as data: the golden
+vectors, which can no longer be regenerated and are pinned by `fixtures/golden/FROZEN.sha256`,
+and the shared vectors in `tests/vectors/`.
 
 ## Build and test
 
@@ -38,18 +38,15 @@ vectors and paired comparisons.
 # Rust 1.95+, plus on Linux: libasound2-dev libudev-dev and the X11/Wayland dev packages
 cargo build --release -p z30-cli -p z30-gui --features z30-cli/cm108,z30-gui/cm108
 cargo fmt --all --check
-cargo clippy --workspace --all-targets --exclude z30-py -- -D warnings
-cargo test --workspace --exclude z30-py --release
+cargo clippy --workspace --all-targets -- -D warnings
+cargo test --workspace --release
 ```
 
-Reference code, only when you touch what it guards:
+The research tools and the frozen fixtures, only when you touch them:
 
 ```bash
-pip install -r legacy/python-oracle/requirements.txt pytest
-(cd legacy/python-oracle && python -m pytest tests -q)
-python reference/golden/generate.py --check
-(cd legacy/browser-runtime && npm ci && npm run lint && npm run test:ts)
-npx --prefix legacy/browser-runtime tsx reference/golden/generate_messages.mts --check
+python -m pip install pytest && python -m pytest research/tests -q   # Python 3.11+, stdlib otherwise
+(cd fixtures/golden && sha256sum --check --strict FROZEN.sha256)
 ```
 
 ## Contribution rules
@@ -70,8 +67,9 @@ rules that matter most:
 - **Numbers need provenance.** A figure in documentation names its result file in
   `research/results/<commit>/`, its seed, frame count, channel and interval, and says it is a
   simulation until hardware says otherwise.
-- **The oracle is frozen.** Changing `legacy/python-oracle/z30_dsp` means updating
-  `FROZEN.sha256` in the same commit and saying why.
+- **The golden vectors are frozen.** Their generator is gone, so `fixtures/golden/` is never
+  edited or regenerated; CI checks every byte against `fixtures/golden/FROZEN.sha256`. If the
+  Rust side disagrees with a vector, the Rust side is wrong.
 - Conventional commits: `feat(dsp):`, `fix(engine):`, `docs(wiki):`.
 
 ## Documentation
@@ -82,4 +80,4 @@ rules that matter most:
 - A benchmark or test result that contradicts documentation wins, once it is a controlled,
   seeded, paired measurement with a stated confidence figure; the documentation is then fixed.
 - The wiki is plain markdown in the repository, edited by pull request. The retired browser
-  app's in-app copy of the wiki is frozen and no longer regenerated.
+  app's in-app copy of the wiki was deleted with it.

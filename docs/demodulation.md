@@ -49,7 +49,8 @@ LLRs match the reference bit for bit.
 the demodulator, because it is a property of the receiver and not of any benchmark (AGENTS.md
 section 4). Measured paired in the reference, the pilot-aided coherent term is worth +1.29 dB
 when the timing is exact and costs 1.77 dB when the receiver has to find the frame itself
-(`legacy/python-oracle/z30_dsp/benchmark.py`). A test pins the value.
+(the oracle's `z30_dsp/benchmark.py`, deleted with the oracle in the 2026-10-06 cleanup; a
+historical measurement of the reference, not of `decode_slot`). A test pins the value.
 
 ## Per-tone interference whitening
 
@@ -66,7 +67,8 @@ per tone, keeping the −a²/(2σ_k²) term. With equal variances that term is c
 and drops out, so on a clean channel this is the reference metric exactly.
 
 Measured paired on 1000 AWGN frames (200 per point, −25…−21 dB): whitening on vs off,
-**0 discordant**, McNemar p = 1 (`research/results/whitening_ab_200.txt`). It costs nothing where
+**0 discordant**, McNemar p = 1 (`research/results/whitening_ab_200.txt`; produced by
+`research/paired_receiver.py`, since removed, so historical). It costs nothing where
 there is nothing to whiten. `a_strong_cw_carrier_inside_the_signal_does_not_stop_the_decode` is
 the case it exists for.
 

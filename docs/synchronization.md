@@ -21,7 +21,7 @@ median, so `sync_threshold = 1.5` means the same thing on a quiet band and a bus
 Candidates are the map's local maxima above the threshold, sorted strongest first, with ties
 broken deterministically. Non-maximum suppression keeps the strongest within 2 bins (1.6 Hz)
 and 2 hops (80 ms), and the list is truncated to `max_candidates` (50). This is WSJT-X's
-`sync8` structure applied to `acquisition.py`'s metric. The oracle searched one global peak in
+`sync8` structure applied to the oracle's `acquisition.py` metric. The oracle searched one global peak in
 a ±12 Hz, ±0.55 s window around a carrier it was told. The audit measured whole-band search
 with this metric against that window: 200 paired frames, 0 discordant.
 
@@ -60,7 +60,7 @@ metric beats zero-drift by `drift_gain` (1.05). The audit's H9 finding was that 
 
 The audit proposed a linear fit over the seven Costas clusters instead. At −23 dB each cluster
 has about 1 dB of Eₛ/N₀, and a fit over seven such estimates is unreliable, so the joint
-search was chosen instead (`VNEXT_IMPLEMENTATION_PLAN.md` section 1).
+search was chosen instead (`audit/2026-09-23-vnext/VNEXT_IMPLEMENTATION_PLAN.md` section 1).
 
 ## No tracking loops
 

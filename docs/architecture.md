@@ -17,21 +17,20 @@ crates/
                  watchdog, QSO sequencer, log-record provenance, configuration model,
                  Command -> Engine -> Event / EngineSnapshot. Every port is a trait.
   z30-io         The adapters: cpal audio, WAV, rigctld, serial RTS/DTR, CM108 (feature),
-                 SQLite + ADIF logbook, paths, TOML config, legacy migration, system clock.
+                 SQLite + ADIF logbook, paths, TOML config, migration of the retired app's
+                 files, system clock.
   z30-cli        The headless `z30` binary. Receive-only by construction.
   z30-gui        The egui/eframe desktop binary `z30-gui`.
-  z30-py         PyO3 bindings for research/ (not shipped to operators).
 ```
 
 Dependency direction: `z30-protocol` <- `z30-dsp` <- `z30-engine` <- `z30-io` <- (`z30-cli`,
-`z30-gui`). `z30-channel` is used by tests, the CLI benchmark and `z30-py`. The crate graph
+`z30-gui`). `z30-channel` is used by tests and the CLI benchmark. The crate graph
 enforces the direction: the DSP cannot open a device, and the engine cannot touch a file.
 
 ## One receiver
 
 `z30_dsp::slot::Receiver::decode_slot` is the only receive entry point. The engine's decode
-thread, `z30 --decode`, `z30 --benchmark` and the Python research harness (through `z30-py`)
-all call it with the same `RxConfig` defaults. A figure measured by any of them is a figure
+thread, `z30 --decode` and `z30 --benchmark` all call it with the same `RxConfig` defaults. A figure measured by any of them is a figure
 about the receiver an operator runs. That is the structural answer to the failure recorded
 in `AGENTS.md` section 4, where the benchmark and the live-receive decoder had different
 demodulators for months.
@@ -97,19 +96,20 @@ start something else in its place. The GUI keeps receiving if it can, and refuse
 (`HardwareUnavailable`) while the output or keying line is unavailable; a logbook that cannot be opened is a persistent
 red banner and every contact is reported "not logged", never kept in memory in its place.
 
-`legacy/` holds, outside it:
-
-- `legacy/python-oracle/`: the frozen Python implementation of v1 and its reference receiver.
-  Golden vectors are generated from it and `research/paired_receiver.py` measures
-  `decode_slot` against it. No crate depends on it; it has no entry points.
-- `legacy/browser-runtime/`: the retired browser/PWA transceiver, kept as a reference (its
-  TypeScript codec defines `fixtures/golden/messages.json`) and for reproducing the audits'
-  findings. Not built, served or installed.
+Nor is there a second implementation beside it. Until the 2026-10-06 cleanup the repository
+also held the frozen Python oracle (the reference implementation of v1 and its receiver), the
+retired browser/PWA transceiver (whose TypeScript codec produced `fixtures/golden/messages.json`)
+and `z30-py`, PyO3 bindings through which `research/paired_receiver.py` measured `decode_slot`
+against the oracle. No crate depended on any of them. All of them were deleted
+([`audit/2026-10-06-codebase-cleanup/`](../audit/2026-10-06-codebase-cleanup/REMOVAL_PLAN.md);
+recoverable from commit `acfce5e`), because a second implementation that nothing ships can only
+diverge from the first. What they established is kept as data:
 
 ```text
-legacy/python-oracle --golden vectors--> fixtures/golden --tests--> crates/
-legacy/python-oracle <--paired comparison (research/, via z30-py bindings)--> decode_slot
+(deleted oracle and TS codec) --generated, once--> fixtures/golden (frozen, FROZEN.sha256) --tests--> crates/
+tests/vectors/*.json (shared known answers) --tests--> crates/
 ```
 
-Never the other way round: nothing in `crates/` reads, calls or falls back to anything in
-`legacy/`. See [`legacy/README.md`](../legacy/README.md).
+The fixtures cannot be regenerated, so the check on them is that they do not change
+(`sha256sum --check` in CI's `hygiene` job). The paired comparison's result stays in
+`research/results/` as evidence ([benchmarking.md](benchmarking.md)).

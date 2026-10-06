@@ -37,8 +37,9 @@ message text -> v1 codec (refuses anything it cannot carry exactly) -> 63 bits
 ```
 
 The modulator is `z30_protocol::gfsk::Modulator`; the same one generates the SIC replica and
-the benchmark's test signals. It matches the frozen Python oracle's golden waveforms at 6, 12
-and 48 kHz within 1e-6 per stored sample (numerically equivalent within that tolerance, not
+the benchmark's test signals. It matches the golden waveforms the Python oracle generated
+(frozen in `fixtures/golden/`; the oracle was deleted in the 2026-10-06 cleanup) at 6, 12 and
+48 kHz within 1e-6 per stored sample (numerically equivalent within that tolerance, not
 bit-identical; `crates/z30-protocol/tests/golden.rs`, checked in CI). The original 2026-09-24 audit reported that an
 independent re-implementation from `SPEC.md` alone reproduced it exactly (E007); that evidence
 is not in this repository.

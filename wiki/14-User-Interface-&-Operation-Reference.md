@@ -124,4 +124,6 @@ health, the transmit gate's verdict, and "Forward power / SWR: not measured".
 Band manager presets, auto-reply priority strategies, Cabrillo export, an in-app wiki and
 Python source viewer, a rig console, a Hamlib catalogue, RF time sync, a self-test signal
 generator, a Monte Carlo benchmark panel and an update button. Several of those displayed
-fabricated values and were among the reasons it was retired ([08](08-Web-&-PWA-Architecture.md)).
+fabricated values and were among the reasons it was retired (the
+[2026-09-23 audit](../audit/2026-09-23-vnext/README.md); its code was removed from the repository
+in the 2026-10-06 cleanup).

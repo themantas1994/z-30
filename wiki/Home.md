@@ -8,7 +8,7 @@ radio, and for the software that operates it: **`z30-gui`** (desktop station) an
 >
 > | | |
 > | :--- | :--- |
-> | Protocol validated | **yes, against the reference** — the Rust implementation reproduces the frozen oracle's golden vectors: codec, CRC, LDPC encoder and symbol map bit for bit, the waveform within 1e-6 per sample (an independent re-implementation from `SPEC.md` was reported by the original audit, E007, whose evidence is not in this repository) |
+> | Protocol validated | **yes, against the reference** — the Rust implementation reproduces the golden vectors the reference oracle generated (frozen and hash-pinned; the oracle itself was deleted in the 2026-10-06 cleanup): codec, CRC, LDPC encoder and symbol map bit for bit, the waveform within 1e-6 per sample (an independent re-implementation from `SPEC.md` was reported by the original audit, E007, whose evidence is not in this repository) |
 > | Software simulation validated | **yes** — seeded measurements through the production receiver ([16](16-Benchmarking-Testing-&-CI.md)) |
 > | Hardware validated | **no** — no radio, audio interface or PTT interface has been used |
 > | On-air validated | **no** — no frame has been decoded over a real radio path; nobody else runs z-30 |
@@ -65,7 +65,10 @@ subtraction). Details and every other condition: [16](16-Benchmarking-Testing-&-
 - [16. Benchmarking, Testing & CI](16-Benchmarking-Testing-&-CI.md)
 
 ### History
-- [08. The retired browser runtime](08-Web-&-PWA-Architecture.md)
+
+Page 08 described the retired browser runtime. It was deleted with that runtime's code in the
+2026-10-06 cleanup ([audit](../audit/2026-10-06-codebase-cleanup/REMOVAL_PLAN.md)); why the
+runtime was retired is recorded in the [2026-09-23 audit](../audit/2026-09-23-vnext/README.md).
 
 ## Editing this wiki
 

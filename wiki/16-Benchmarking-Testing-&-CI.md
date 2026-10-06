@@ -102,12 +102,10 @@ suite takes about an hour on 4 cores (the `elapsed_s` of the ten `672cef9b3cdb` 
 
 | Suite | Command | What it covers |
 | :--- | :--- | :--- |
-| Rust workspace | `cargo test --workspace --exclude z30-py --release` | golden vectors from the frozen oracle; protocol round trip of every grid, report and sampled callsign; the transmit gate and PTT fail-closed rules; the live runtime decoding a slot only from its complete window (virtual sound card and clock); QSO logging with missing values and non-UTC time zones; SNR accuracy (and no estimate, not a floor, from silence); SIC; a sensitivity regression floor at −22 dB; migration idempotence and each legacy writer's defaults; dial-frequency provenance through the engine and the runtime; every kind of corrupted frame refused by the round trip and by the transmit gate, and the transmitted audio decoding back to the verified frame; the Watterson model's measured Doppler spread; the software loopback through the resampler, and that it reaches only an allowlist of crates and items (no audio/PTT/rig code); the production transmit loop on fake PTT, output, rig and clock (HALT before and while keyed and behind a blocked control thread, the watchdog, refused keys, unconfirmed releases, output failure and recovery, late keys, partial frames, the rig poll interval and settle window); PTT release confirmation and panicking line drivers; the gate's hardware, level and band-plan-edge refusals; system-clock steps; migration writing no transmit level and no legacy defaults; the playback callback allocating nothing |
-| Python oracle Doppler | `cd legacy/python-oracle && python -m pytest tests/test_watterson_doppler.py` | the oracle's fading model has its labelled Doppler spread |
-| Formatting and lints | `cargo fmt --all --check`, `cargo clippy --workspace --all-targets --exclude z30-py -- -D warnings` (as CI runs them; without `--exclude z30-py` clippy also builds the research bindings, which need a Python interpreter) | |
-| Python oracle (non-production) | `cd legacy/python-oracle && python -m pytest tests` | the reference implementation, and that its source still matches `FROZEN.sha256` |
-| Golden vectors | `python reference/golden/generate.py --check` | the oracle still produces `fixtures/golden/` byte for byte |
-| Retired browser runtime (reference only) | `cd legacy/browser-runtime && npm ci && npm run lint && npm run test:ts` (as `ci.yml` runs it) | the codec vectors, its transmit-gate regressions, and that its retired features stay retired |
+| Rust workspace | `cargo test --workspace --release` | the frozen golden vectors the deleted oracle generated, and the shared known-answer vectors in `tests/vectors/`; the modulator's bandwidth budgets; protocol round trip of every grid, report and sampled callsign; the transmit gate and PTT fail-closed rules; the live runtime decoding a slot only from its complete window (virtual sound card and clock); QSO logging with missing values and non-UTC time zones; SNR accuracy (and no estimate, not a floor, from silence); SIC; a sensitivity regression floor at −22 dB; migration idempotence and each legacy writer's defaults; dial-frequency provenance through the engine and the runtime; every kind of corrupted frame refused by the round trip and by the transmit gate, and the transmitted audio decoding back to the verified frame; the Watterson model's measured Doppler spread; the software loopback through the resampler, and that it reaches only an allowlist of crates and items (no audio/PTT/rig code); the production transmit loop on fake PTT, output, rig and clock (HALT before and while keyed and behind a blocked control thread, the watchdog, refused keys, unconfirmed releases, output failure and recovery, late keys, partial frames, the rig poll interval and settle window); PTT release confirmation and panicking line drivers; the gate's hardware, level and band-plan-edge refusals; system-clock steps; migration writing no transmit level and no legacy defaults; the playback callback allocating nothing |
+| Formatting and lints | `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D warnings` (as CI runs them) | |
+| Frozen golden vectors | `cd fixtures/golden && sha256sum --check --strict FROZEN.sha256` (as `ci.yml` runs it) | no byte of `fixtures/golden/` has changed; their generators were deleted with the oracle, so they can be kept but not regenerated |
+| Research tools | `python -m pytest research/tests -q` | the summarise, compare and pairing tools fail closed |
 
 ## What CI enforces
 
@@ -115,12 +113,14 @@ suite takes about an hour on 4 cores (the `elapsed_s` of the ten `672cef9b3cdb` 
   the release binaries with CM108 PTT; `--version` names the commit and features; no real
   callsign in a binary; a CLI decode round trip; a message v1 cannot carry is refused; the
   **declared MSRV (1.95) builds, passes clippy -D warnings and passes the tests**; every suite benchmark runs through the shipped
-  binary at exploratory size and records its provenance; the golden vectors reproduce; the
-  paired oracle-vs-`decode_slot` harness runs.
-- **`ci.yml`** — the oracle on Python 3.10–3.13 including its freeze check, the retired
-  browser runtime's reference tests, a dependency audit, and hygiene: no build artefacts, no
-  `web_dist`, no launcher or installer for the retired runtime, one lockfile per package
-  manager.
+  binary at exploratory size and records its provenance.
+- **`ci.yml`** — `cargo audit` of `Cargo.lock`; hygiene: no build artefacts, no `web_dist`, no
+  launcher or installer for the retired runtime, none of the deleted stacks (the Python oracle,
+  the browser runtime, the PyO3 bindings, the golden generators), no package-manager files and a
+  single `Cargo.lock`, no Python outside `research/` and `audit/`, no JS/TS outside `audit/`, the
+  frozen golden vectors unchanged against `FROZEN.sha256`; and the research tools' tests. The
+  oracle, browser runtime, golden-regeneration and paired-harness jobs went with what they
+  tested in the 2026-10-06 cleanup.
 - **`release.yml`** — on a version tag: tests on each platform, builds `z30` and `z30-gui`
   with CM108, writes `BUILDINFO.txt` from `--version`, refuses a dirty or mismatched build, and
   publishes archives with checksums.
@@ -128,7 +128,8 @@ suite takes about an hour on 4 cores (the `elapsed_s` of the ten `672cef9b3cdb` 
 ## History
 
 The earlier Python benchmark (`--mode realistic` / `ideal`, the in-browser Monte Carlo
-engine, `--ap`, `--compare-demod`) measured the retired oracle receiver. Its findings — the
+engine, `--ap`, `--compare-demod`) measured the retired oracle receiver; both were deleted in
+the 2026-10-06 cleanup. Its findings — the
 coherence-weight defect, the browser engine's analytic receive path, the four-schedule cascade
 — are recorded in the git history of this page up to commit `224b2fc` and in
 [`docs/benchmarking.md`](../docs/benchmarking.md#history). Its figures describe a receiver

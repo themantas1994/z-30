@@ -22,9 +22,12 @@ four-schedule belief-propagation cascade and a corrected OSD, and runs up to thr
 least-squares successive interference cancellation.
 
 **The application is the Rust workspace in `crates/`** — `z30-gui` (desktop station) and `z30`
-(command-line station and toolbox). There is no other runtime and no fallback. `legacy/` holds a
-frozen Python protocol oracle and a retired browser runtime, neither of which anything in
-`crates/` uses.
+(command-line station and toolbox). There is no other runtime, no other implementation and no
+fallback. The frozen Python protocol oracle, the retired browser runtime and the PyO3 research
+bindings that used to sit beside it were deleted in the 2026-10-06 cleanup
+([`audit/2026-10-06-codebase-cleanup/`](audit/2026-10-06-codebase-cleanup/REMOVAL_PLAN.md);
+recoverable from commit `acfce5e`). What they proved about the Rust code is kept as frozen golden
+fixtures and shared vectors that Rust tests assert (section 3).
 
 **This software keys real transmitters.** A defect here does not produce a stack trace; it
 produces an out-of-band, misidentified or stuck transmission on somebody's licence. Section 4 is
@@ -49,7 +52,8 @@ crates/                      THE APPLICATION
                              (threads), engine.rs, qso.rs (sequencer + provenance-tagged records),
                              txgate.rs (the transmit gate), rig.rs, ptt.rs, bandplan.rs, config.rs.
   z30-io/                    cpal audio, rigctld, serial RTS/DTR, CM108 (feature), SQLite+ADIF
-                             logbook, migration from the legacy app, paths, OS clock status.
+                             logbook, migration from the retired app's files (--migrate), paths,
+                             OS clock status.
   z30-cli/                   `z30`: receive-only station, decode, encode, diagnostics, migrate,
                              ADIF, --loopback-test (software, in memory), --audio-loopback-test
                              (sound card; refuses PTT/rig configs), --benchmark (suite.rs: every
@@ -57,23 +61,22 @@ crates/                      THE APPLICATION
   z30-gui/                   `z30-gui` (egui). Renders snapshots, sends commands, runs no DSP.
   z30-channel/               seeded channel models (AWGN, drift, clock error, Watterson, CW, bands).
                              Test/benchmark tooling only; never in the receive path.
-  z30-py/                    PyO3 bindings of decode_slot for research/ only. Never shipped.
-SPEC.md                      normative v1 protocol, derived from the oracle, pinned by fixtures/golden/
+SPEC.md                      normative v1 protocol, derived from the (deleted) oracle, pinned by
+                             fixtures/golden/
 docs/                        developer docs for crates/ (install, architecture, receiver, safety,
                              benchmarking, hardware, hardware-validation, ...)
 wiki/                        operator docs
-fixtures/golden/             golden vectors. Generated; NEVER edited by hand.
-reference/golden/            their generators (Python oracle; TS codec for messages.json)
-research/                    paired_receiver.py (oracle vs decode_slot), summarize_suite.py,
-                             compare_results.py, paired_mcnemar.py (all fail closed; tests/),
+fixtures/golden/             golden vectors from the deleted oracle and TS codec. FROZEN: they
+                             cannot be regenerated; FROZEN.sha256 pins every byte. Never edited.
+research/                    summarize_suite.py, suite_results.py, compare_results.py,
+                             paired_mcnemar.py, lock_closure.py (stdlib only, fail closed; tests/),
                              results/<commit>/ (machine-readable results; never hand-edited)
-tests/vectors/               shared known-answer vectors (CRC, callsigns, dither)
+tests/vectors/               shared known-answer vectors (CRC, callsigns, dither), asserted by Rust
 hardware-validation/         records of hardware tests (none yet)
 packaging/linux/             desktop entry and icon
-legacy/python-oracle/        FROZEN Python oracle (sources pinned by FROZEN.sha256). Non-production.
-legacy/browser-runtime/      RETIRED browser transceiver. Reference only; not built or shipped.
-audit/                       audits and remediation evidence
-VNEXT_IMPLEMENTATION_PLAN.md the rebuild plan and the operator decisions it recorded
+audit/                       audits and remediation evidence (historical; never rewritten), including
+                             audit/2026-09-23-vnext/VNEXT_IMPLEMENTATION_PLAN.md, the rebuild plan
+                             and the operator decisions it recorded
 .claude/agents/              Claude Code review agents for docs/research-process.md (section 9)
 ```
 
@@ -83,11 +86,9 @@ VNEXT_IMPLEMENTATION_PLAN.md the rebuild plan and the operator decisions it reco
 
 | File | Produced by | Check |
 | :--- | :--- | :--- |
-| `fixtures/golden/*` | `python reference/golden/generate.py` (oracle); `messages.json` by `reference/golden/generate_messages.mts` (legacy TS codec) | `--check` modes, CI job `golden` |
+| `fixtures/golden/*` | frozen: generated by the Python oracle (`messages.json` by the retired TypeScript codec), both deleted in the 2026-10-06 cleanup, so they can no longer be regenerated, only kept | `fixtures/golden/FROZEN.sha256` (`sha256sum --check`, CI job `hygiene`) and the Rust golden tests that read them |
 | `research/results/<commit>/*.json` | `z30 --benchmark suite` built from that commit, clean tree | provenance fields; never edited |
 | `research/results/<commit>/SUMMARY.md` | `python research/summarize_suite.py research/results/<commit> --write` | regenerate, do not edit |
-| `legacy/python-oracle/z30_dsp/*.py` | frozen | `FROZEN.sha256` + `test_oracle_is_frozen.py`; a deliberate change updates the manifest in the same commit, with the reason |
-| `legacy/browser-runtime/src/data/*.ts` | frozen snapshots of the retired app's in-app wiki / source viewer | not regenerated; the wiki no longer feeds the retired app |
 
 ---
 
@@ -193,8 +194,8 @@ the test to match. Full rationale: [`docs/safety.md`](docs/safety.md).
   binary symbol map: **protocol constants**. Changing any is a protocol break.
 
 **One receiver, one modulator**
-- `decode_slot` is the only receive path: the GUI, the CLI station, `--decode`, the benchmark
-  suite and the research bindings all call it. Never add a second demodulator, a benchmark-only
+- `decode_slot` is the only receive path: the GUI, the CLI station, `--decode` and the
+  benchmark suite all call it. Never add a second demodulator, a benchmark-only
   decoder, or anything in the receive path that knows it is being benchmarked or knows the
   expected answer. Receiver constants live beside the receiver (`RECEIVER_PILOT_COHERENCE` in
   `demod.rs`), never in a benchmark.
@@ -215,14 +216,16 @@ the test to match. Full rationale: [`docs/safety.md`](docs/safety.md).
   bit-identically; the CRC bits are never asserted. AP is off by default.
 
 **Fading model**
-- Watterson taps are normalised to unit **ensemble** power (both `z30-channel` and the oracle's
-  `channel.py`). Per-realisation normalisation deleted slow-fading power variation and made
-  fading results optimistic (audit H-10); do not restore it.
+- Watterson taps are normalised to unit **ensemble** power in `z30-channel` (as they were in the
+  deleted oracle's `channel.py`;
+  `watterson_preserves_power_over_the_ensemble_and_not_per_frame`). Per-realisation
+  normalisation deleted slow-fading power variation and made fading results optimistic (audit
+  H-10); do not restore it.
 - `doppler_hz` is the ITU-R F.1487 **2σ spread of the Doppler POWER spectrum** (σ_D =
   doppler_hz / 2); the tap's AMPLITUDE response is its square root, exp(−f²/(4σ_D²)). Both
   implementations used the power formula as the amplitude, running every preset at 1/√2 of its
-  label (post-remediation audit N-01); the spectral tests in `z30-channel` and the oracle's
-  `test_watterson_doppler.py` fail on that.
+  label (post-remediation audit N-01); the spectral tests in `z30-channel`
+  (`generated_taps_have_the_labelled_doppler_spread`) fail on that.
 
 ---
 
@@ -258,8 +261,9 @@ purpose. Every published figure follows these rules:
   per-realisation model (including the retired "−21.4 dB mid-latitude") and from the 1/√2-Doppler
   model (`d8983eeef66e/fading.json`, −20.79 / −21.31 / −21.07 dB) are withdrawn.
 - **Busy-band figures state the placement** (random, overlapping) and the SNR range.
-- **The oracle's figures are the oracle's.** `legacy/python-oracle` results describe that
-  reference receiver, never "z-30" or "the decoder that ships".
+- **The oracle's figures are the oracle's.** Results from the Python oracle (deleted in the
+  2026-10-06 cleanup; its results stay in `research/results/` and `audit/` as evidence) describe
+  that reference receiver, never "z-30" or "the decoder that ships".
 - The legacy browser receiver never achieved any published figure (audit C-01/C-02).
 - Minimum 200 frames per point behind a published sensitivity crossing; fewer is exploratory and
   the suite marks it so (`status: exploratory`; each result records its `publishable_size`).
@@ -294,25 +298,19 @@ usually by naming the failure it prevents — match that voice.
 # The application
 cargo build --release -p z30-cli -p z30-gui --features z30-cli/cm108,z30-gui/cm108
 cargo fmt --all --check
-cargo clippy --workspace --all-targets --exclude z30-py -- -D warnings
-cargo test --workspace --exclude z30-py --release
+cargo clippy --workspace --all-targets -- -D warnings
+cargo test --workspace --release
 ./target/release/z30 --version
 ./target/release/z30 --benchmark suite                 # ~1 h on 4 cores; writes research/results/<commit>/
 python research/summarize_suite.py research/results/<commit> --write
 python -m pytest research/tests -q                     # research tools (stdlib + pytest)
-
-# Reference code (only when touching what it guards)
-pip install -r legacy/python-oracle/requirements.txt pytest
-(cd legacy/python-oracle && python -m pytest tests -q)
-python reference/golden/generate.py --check
-(cd legacy/browser-runtime && npm ci && npm run lint && npm run test:ts)
-npx --prefix legacy/browser-runtime tsx reference/golden/generate_messages.mts --check
+(cd fixtures/golden && sha256sum --check --strict FROZEN.sha256)   # the frozen fixtures are unchanged
 ```
 
 CI: `.github/workflows/rust.yml` (the application on Linux/Windows/macOS, the declared MSRV,
-the benchmark suite's provenance, golden vectors, the paired harness), `ci.yml` (oracle tests,
-legacy reference tests, repository hygiene and the production/legacy separation) and
-`release.yml` (release archives).
+the benchmark suite's provenance), `ci.yml` (the RustSec audit of `Cargo.lock`, repository
+hygiene — including the frozen-fixture hash check and the refusal of the deleted stacks — and the
+research tools) and `release.yml` (release archives).
 
 ---
 
@@ -321,8 +319,11 @@ legacy reference tests, repository hygiene and the production/legacy separation)
 - **Rust MSRV is 1.95** (`Cargo.toml`): CI builds, runs clippy `-D warnings` and tests on it.
   `z30-protocol`, `z30-dsp` and `z30-engine` are `#![forbid(unsafe_code)]`. Clippy warnings are
   errors.
-- **Nothing in `crates/` may depend on `legacy/`**, and no fallback to anything else may be
-  added: a failure is reported, not worked around.
+- **Rust is the only implementation.** No second implementation of the protocol or the receiver
+  may come back beside `crates/` — two implementations can diverge, and the one that ships is the
+  one that counts (CI's `hygiene` job refuses the deleted stacks' directories, package-manager
+  files, Python outside `research/` and `audit/`, and JS/TS outside `audit/`). No fallback to
+  anything else may be added: a failure is reported, not worked around.
 - **The audio callback does not allocate** (`z30-io/tests/callback_alloc.rs`).
 - **Comments explain why, not what.** When you fix something subtle, leave the note naming the
   failure it prevents.
@@ -331,8 +332,9 @@ legacy reference tests, repository hygiene and the production/legacy separation)
   `.env`, a personal config. CI rejects the retired runtime's files if they reappear.
 - **Do not "fix" a failing safety test by weakening it.** Change the code, or explain in the pull
   request why the guarantee still holds.
-- **Python is not part of the application.** The oracle is frozen; research scripts may use it
-  and must label its results as the oracle's.
+- **Python is not part of the application.** It exists only in the stdlib-only research tools
+  under `research/` and as evidence under `audit/` (CI refuses it anywhere else). Results the
+  deleted oracle produced stay labelled as the oracle's.
 
 ---
 

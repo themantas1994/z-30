@@ -12,13 +12,15 @@ different message layout, what it was measured to be worth, and what it costs.
 Implementation in z-30: [`crates/z30-dsp/src/ap.rs`](../crates/z30-dsp/src/ap.rs), on top of the
 AP mask path in [`crates/z30-dsp/src/ldpc.rs`](../crates/z30-dsp/src/ldpc.rs), called from
 `decode_slot` when `ap_enabled` is set (off by default). It is a port of the oracle's
-[`ap_decode.py`](../legacy/python-oracle/z30_dsp/ap_decode.py) (twin:
-[`apDecode.ts`](../legacy/browser-runtime/src/dsp/apDecode.ts)).
+`ap_decode.py` (twin: the retired browser runtime's `apDecode.ts`). Both were deleted with the
+oracle and the browser runtime in the 2026-10-06 cleanup and are recoverable from commit
+`acfce5e`; the Python oracle's AP ladders and decodes stay frozen in `fixtures/golden/ap.json`.
 
 > **Whose measurements these are.** The figures in "Measured effect" below were measured on the
-> frozen Python oracle's reference receiver (`legacy/python-oracle`, `benchmark.py --ap`), not on
-> the production `decode_slot`. The Rust port is tested bit-exact against the oracle instead: the
-> hypothesis ladders match the oracle's, AP decoding on the recorded corpus gives the oracle's
+> frozen Python oracle's reference receiver (`benchmark.py --ap`; the oracle was deleted in the
+> 2026-10-06 cleanup), not on the production `decode_slot`. The Rust port is tested bit-exact
+> against the oracle's recorded outputs instead: the hypothesis ladders match the oracle's, AP
+> decoding on the recorded corpus gives the oracle's
 > results bit for bit, an empty mask decodes bit-identically to no mask
 > (`crates/z30-dsp/tests/golden_ldpc.rs`), the CRC bits are never asserted and the deep types are
 > frequency-gated (`ap.rs` unit tests). Its paired AP effect has **not** been re-measured through
@@ -89,9 +91,12 @@ While you are calling CQ, the likely frames are other CQs and answers to you. On
 exchanging reports, the likely frames are the closing messages of the QSO you are in. At the 73
 the ladder falls back towards the general cases as the QSO winds down.
 
-`legacy/python-oracle/tests/test_cross_language_parity.py` pins this table across both implementations, and pins that
-**every** stage in the `QsoStage` union has a ladder — so a stage added to the state machine
-cannot silently fall through to "no AP" without someone deciding that.
+`golden_ldpc.rs::ap_ladders_match_the_oracle` pins this table — membership and order — against
+the ladders the oracle recorded in `fixtures/golden/ap.json`. Every stage has a ladder because
+`ApStage::ladder` is an exhaustive `match`: a stage added to the state machine is a compile
+error until someone decides its ladder, rather than a silent fall-through to "no AP". (The
+deleted oracle's `test_cross_language_parity.py` pinned the same table across the Python and
+TypeScript implementations.)
 
 ---
 
@@ -113,7 +118,9 @@ than the most certain thing the demodulator measured, whatever the signal level.
 decision is `llr < 0 → 1`; WSJT-X's `bpdecode174_91` reads the opposite sign and its
 `apsym = 2*bit-1` term carries the flip. Transcribing that expression rather than re-deriving it
 would assert every AP bit inverted, and every hypothesis would fail its CRC — a silent, total
-failure with no error message anywhere. `legacy/python-oracle/tests/test_ap_decode.py` pins the convention directly.
+failure with no error message anywhere. `ap_decode_is_bit_exact_on_the_corpus` would fail on it
+(every AP decode the oracle recorded in the corpus would fail its CRC), as the deleted oracle's
+`test_ap_decode.py` did directly.
 
 ### 2. Asserted bits are pinned, not merely biased
 
@@ -221,7 +228,8 @@ entitled to see which they are looking at.
 
 ## 📊 Measured effect
 
-The oracle's `benchmark.py --ap` (in `legacy/python-oracle`) was the instrument. It does not produce another decode curve — it
+The oracle's `benchmark.py --ap` (deleted with the oracle in the 2026-10-06 cleanup) was the
+instrument. It does not produce another decode curve — it
 produces a **paired comparison**: every frame goes through the channel once, is demodulated
 once, and the resulting 216 LLRs are decoded twice, once by the ordinary decoder and once with
 the ladder behind it. Both arms therefore see bit-identical channel evidence, and any difference
@@ -341,6 +349,9 @@ insists on quoting both.
 
 ## 🔁 Reproducing it
 
+Not from this tree: the oracle was deleted in the 2026-10-06 cleanup. From a checkout of commit
+`acfce5e` (the last that contains it), the sweep was:
+
 ```bash
 cd legacy/python-oracle
 python -m z30_dsp.benchmark --ap --mode realistic --fading none \
@@ -357,10 +368,13 @@ and one more place for the two arms to diverge.
 
 | File | What it pins |
 | :--- | :--- |
-| `crates/z30-dsp/tests/golden_ldpc.rs`, `crates/z30-dsp/src/ap.rs` | The Rust port: ladders identical to the oracle's, AP decoding bit-exact on the corpus, empty mask bit-identical to no mask, CRC bits never asserted, deep types frequency-gated. |
-| `legacy/python-oracle/tests/test_ap_decode.py` | The mechanism (pinning survives every iteration, sign convention, magnitude), the gates (callsign round-trip, frequency window, unknown stage), that AP never loses a frame the ordinary decoder found, that a wrong hypothesis is always rejected, determinism through the rewritten LLR vector, and that the pre-AP decode path is bit-identical with an empty mask. |
-| `legacy/browser-runtime/tests/apDecode.test.mjs` | The same, plus the packing vectors and the closing-modifier branch order that `packZ30Message` depends on. |
-| `legacy/python-oracle/tests/test_cross_language_parity.py` | `AP_LLR_MARGIN`, `AP_FREQ_WINDOW_HZ`, `AP_DEEP_TYPE`, the type catalogue, the stage ladder (membership **and** order), the closing-modifier codes, and the shared callsign packing vectors. |
+| `crates/z30-dsp/tests/golden_ldpc.rs`, `crates/z30-dsp/src/ap.rs` | The Rust port: ladders identical to the oracle's (membership and order), AP decoding bit-exact on the corpus, empty mask bit-identical to no mask, CRC bits never asserted, deep types frequency-gated. |
+| `crates/z30-dsp/tests/ap_production.rs` | Through `decode_slot`: AP adds decodes and never changes or loses one, a wrong assumption cannot produce the assumed call, AP does not manufacture decodes from noise, and in a busy band AP never loses a decode the plain decoder made. |
+| `crates/z30-protocol/tests/golden.rs`, `shared_vectors.rs` | The packing the ladders assume: whole messages (including `73`) against the frozen `messages.json`, and the shared callsign packing vectors. |
+
+Until the 2026-10-06 cleanup the oracle's `test_ap_decode.py` and `test_cross_language_parity.py`
+and the browser runtime's `apDecode.test.mjs` also pinned the mechanism, the constants and the
+packer's branch order in those two implementations; they were deleted with them.
 
 Every expectation in those files is computed from the data the test itself generates. There are
 no recorded "expected" decode counts — a count written down once and asserted forever passes
@@ -379,9 +393,11 @@ faithfully rendered it back as `+30`.
 
 The 7-bit allocation always reserved 62 for `73` and the unpacker has always decoded 62 as `73`;
 only the packer never emitted it. Emitting it now is a fix rather than a wire-format change — an
-existing receiver already understands the value. The legacy `apDecode.test.mjs` guards the branch
-order, and the oracle's `test_cross_language_parity.py` guards it a second way by asserting the
-positions of the two branches in the source.
+existing receiver already understands the value. The retired runtime's `apDecode.test.mjs`
+guarded the branch order, and the oracle's `test_cross_language_parity.py` guarded it a second
+way by asserting the positions of the two branches in the source; both were deleted in the
+2026-10-06 cleanup. The Rust codec has no such branch order (it parses `73` as its own token),
+and `golden.rs` checks its packing against the frozen `messages.json`.
 
 ### A related limitation: no roger bit
 

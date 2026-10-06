@@ -56,7 +56,13 @@ Host for these runs: 4 vCPU Intel Xeon @ 2.80 GHz, 16 GB, Linux 6.18, Python 3.1
 NumPy 2.2.6; Rust 1.94.1 (awgn_paired_200) and 1.98.1 (the rest). 1.94.1 is below the MSRV declared
 later (1.95); that run predates the declaration and its wheel's compiler cannot be checked from the
 file, which records no wheel provenance (QA-06 / F-79, and F-34). The oracle harness imported
-the Python oracle, now at `legacy/python-oracle/`.
+the Python oracle, then at `legacy/python-oracle/`.
+
+**The paired harness was removed after `acfce5e`.** `research/paired_receiver.py`, the Python
+oracle it compared against and the `z30-py` bindings it loaded were deleted in the 2026-10-06
+cleanup (`audit/2026-10-06-codebase-cleanup/`); `acfce5e` is the last commit that contains them. The two
+`paired_receiver.py` commands below can be run only from a checkout of that commit. The result
+files are unchanged and stay as evidence of what was measured; nothing about them is withdrawn.
 
 | File | What | Command |
 | :--- | :--- | :--- |
@@ -112,8 +118,9 @@ Provenance notes:
   (`0ab6cf0`) disagrees with the commit in each `.txt` header (`83b1b70`, `73ce0f9`) and with the
   notes above: the harness read `HEAD` when it wrote the file, and `HEAD` had moved while the run
   was in progress (post-remediation QA-C). The wheel's commit is the one in the `.txt` header.
-  The paired harness now records the wheel's own build provenance (F-34), so a new run cannot
-  disagree this way; these two files are left as they were written.
+  The paired harness later recorded the wheel's own build provenance (F-34), so a run made
+  with it from then until its removal could not disagree this way; these two files are left as
+  they were written.
 - `perf_k`: measured after the SIC fit rewrite (block gains walked incrementally between block
   centres). The same bands decoded 1000/1000 at K = 50 before and after it, and the SIC
   suppression scenario in `crates/z30-dsp/tests/channel_scenarios.rs` reports identical figures.

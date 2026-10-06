@@ -44,9 +44,8 @@ Binaries are not code-signed or notarised.
 - No distribution packages (`.deb`, AUR, Homebrew, MSI). The old `PKGBUILD`, install scripts,
   Windows batch launcher and PyInstaller spec installed the retired Python/browser runtime and
   are deleted.
-- No Python wheel: there is no Python component in the application. The frozen protocol oracle
-  in `legacy/python-oracle` has its own `pyproject.toml` for research use only, with no entry
-  points.
+- No Python wheel: there is no Python component in the application. The Python protocol oracle,
+  which had its own `pyproject.toml` for research use, was deleted in the 2026-10-06 cleanup.
 - No automatic updates ([12](12-Software-Updates-&-GitHub-Sync.md)).
 
 ## Building

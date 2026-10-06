@@ -3,18 +3,22 @@
 **Status:** frozen. **Derived from the code**, not from the wiki: `z30_dsp/modem.py`,
 `z30_dsp/ldpc.py`, `z30_dsp/message_codec.py`, `z30_dsp/benchmark.py` (demodulator) and
 `src/dsp/z30Codec.ts` (the text tokenizer and grid table, which exist only there), at the
-audited commit `7661caa`. Those files now live, frozen, in `legacy/python-oracle/z30_dsp/` and
-`legacy/browser-runtime/src/dsp/`; they are the reference, not the implementation, which is
-`crates/`. Where the wiki says something else, this document is right and the wiki is the bug
-(`audit/2026-09-23-vnext` §B.7 lists the known cases).
+audited commit `7661caa`. Those files were kept frozen as a reference (the Python oracle and the
+retired browser runtime) until the 2026-10-06 cleanup deleted them; they are recoverable from
+commit `acfce5e`. They were the reference, never the implementation, which is `crates/`. Where the
+wiki says something else, this document is right and the wiki is the bug
+(`audit/2026-09-23-vnext` §B.7 lists the known cases). Where this document says "the reference",
+it means that oracle; what it computed survives in the golden vectors below.
 
 **Terminology.** A frame carries **63 message bits** (two 28-bit call fields and a 7-bit extra
 field) plus a 14-bit CRC: **77 information bits**, LDPC-encoded to 216. Older text calling this
 a "77-bit QSO exchange" overstated the message: FT8 carries 77 *message* bits (91 with its CRC).
 
 The executable form of this specification is the golden-vector set in `fixtures/golden/`,
-generated from those files by `reference/golden/`. The Rust implementation in `crates/z30-protocol`
-and `crates/z30-dsp` is tested against it.
+generated from those files by generators that were deleted with them. The vectors can no longer
+be regenerated; they are frozen evidence, pinned byte for byte by `fixtures/golden/FROZEN.sha256`
+(checked in CI). The Rust implementation in `crates/z30-protocol` and `crates/z30-dsp` is tested
+against them, and against the shared vectors in `tests/vectors/`.
 
 Conventions: bit strings are MSB-first; "bit *i*" of a field is its *i*-th transmitted bit.
 
@@ -167,7 +171,7 @@ Grid table (index 0 … 62):
 - **63 grids.** The shipped packer hashed any other grid onto the table (`FN42` → `RE78`,
   `EM12` → `JN48`), so a *different real grid* was transmitted and logged. vNext refuses a grid
   not in the table. There is no "no grid" code; assigning 127 would be a wire-format change and is
-  an operator decision (`VNEXT_IMPLEMENTATION_PLAN.md` §8).
+  an operator decision (`audit/2026-09-23-vnext/VNEXT_IMPLEMENTATION_PLAN.md` §8).
 - **Reports outside −30 … +30** were clamped by the shipped packer; vNext refuses them.
 - **Free text** was silently turned into callsign fields (`HELLO` → a grid of `FN31`); vNext
   refuses it.
@@ -191,7 +195,8 @@ packer's behaviour on representable messages.
 ## 7. LDPC (216, 77)
 
 - **Code:** systematic IRA. H = [H_info (139 × 77) | H_parity (139 × 139)]. Row *p* of H_info
-  has ones at the five indices `Z30_CHECK_TO_INFO[p]` (`legacy/python-oracle/z30_dsp/ldpc.py`, `crates/z30-protocol/src/ldpc.rs`; degree 5, girth 6).
+  has ones at the five indices `CHECK_TO_INFO[p]` (`crates/z30-protocol/src/ldpc.rs`,
+  transcribed from the reference's `Z30_CHECK_TO_INFO` in `z30_dsp/ldpc.py`; degree 5, girth 6).
   H_parity is dual-diagonal: `H[p, 77+p] = 1`, `H[p, 77+p−1] = 1` for p ≥ 1.
 - **Encoder:** `c[0:77] = info`; `acc = 0`; for p in 0 … 138: `acc ^= XOR_{j in row p} info[j]`;
   `c[77+p] = acc`.
@@ -221,9 +226,9 @@ packer's behaviour on representable messages.
 - **OSD (changed in vNext, §7.1).** Invoked only when no schedule succeeded **and** the minimum
   syndrome weight reached by any BP iteration, over all four schedules, is ≤ 14; it starts from
   that iteration's hard decision. With a larger minimum syndrome weight the frame fails without
-  OSD. Both implementations apply this condition (`legacy/python-oracle/z30_dsp/ldpc.py`,
-  `if min_syndrome_weight <= 14`; `crates/z30-dsp/src/ldpc.rs`, `OSD_MAX_SYNDROME`), and it
-  bounds how often OSD's candidates are offered to the CRC.
+  OSD. The reference applied this condition (`z30_dsp/ldpc.py`, `if min_syndrome_weight <= 14`)
+  and `crates/z30-dsp/src/ldpc.rs` applies it (`OSD_MAX_SYNDROME`); it bounds how often OSD's
+  candidates are offered to the CRC.
 
 ### 7.1 OSD: the reference defect and the vNext rule
 
@@ -274,8 +279,9 @@ bandwidth, for real white noise of per-sample variance σ² at sample rate fs.
 Fading results (not part of the protocol, but quoted against it) use the ITU-R F.1487 Watterson
 convention: a path's **Doppler spread** is `2σ_D`, where σ_D is the standard deviation of the
 path tap's Gaussian Doppler **power** spectral density; the SNR is the average over the fading
-ensemble. `z30_channel::Watterson` and the reference oracle's `channel.py` implement exactly this
-(before 2026-09-24 both ran at 1/√2 of the stated spread; see `docs/benchmarking.md#fading`).
+ensemble. `z30_channel::Watterson` implements exactly this, as the deleted reference oracle's
+`channel.py` did (before 2026-09-24 both ran at 1/√2 of the stated spread; see
+`docs/benchmarking.md#fading`).
 
 ## 11. Numeric semantics summary
 
