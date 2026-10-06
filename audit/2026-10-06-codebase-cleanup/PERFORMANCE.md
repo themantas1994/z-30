@@ -35,17 +35,19 @@ samples per decode, with the same operations in the same order, so the output ca
 **Change.** `demod::ReplicaWaveform` (offset-independent part), built once in `placed_replica`;
 `replica_spectra` keeps its signature and wraps it. Commit `624fa9b`.
 
-**Bit identity.** A temporary harness (not committed) dumped every field of every decode as raw
+**Bit identity.** A harness (`evidence/bitcheck.rs`, with how to rerun it) dumped every field of every decode as raw
 bits (info, message, DT, frequency, SNR, drift, sync, iterations, method, AP type, pass) and
 every pass's candidates, LDPC attempts, duplicates and SIC suppression values, over 42 seeded
 bands (K = 1, 2, 5, 12, 20, 35, 50; six seeds each; −24…+1 dB): 669 decodes, byte-identical
-before and after. The whole `z30-dsp` test suite (golden LDPC/demod, SIC and thread-count
+before and after (`evidence/bitcheck-output.txt`; both runs' SHA-256 in
+`evidence/bitcheck-output.sha256`). The whole `z30-dsp` test suite (golden LDPC/demod, SIC and thread-count
 determinism, SNR accuracy, channel scenarios, AP) passes. The suite comparison in §4 checks it
 again through the measurement instrument.
 
 **Result.**
 
-`perf stat -r 5/7 -e task-clock`, `stages 20 1` (two K = 20 decodes plus band synthesis):
+`perf stat -r 5/7 -e task-clock`, `stages 20 1` (two K = 20 decodes plus band synthesis; these
+figures were read from the terminal and the raw `perf stat` output is not kept):
 
 | Build | task-clock |
 | :--- | ---: |
@@ -53,25 +55,35 @@ again through the measurement instrument.
 | after (`624fa9b`) | 2095 ms ± 1.3 % |
 
 `z30 --benchmark perf --frames 20` (seeded bands, −20…0 dB, 200–2750 Hz; the same slots
-before and after):
+before and after). Before: `acfce5e`, `evidence/perf-acfce5e.txt`. After: `cbbcb8b`,
+`evidence/perf-cbbcb8b.txt`, whose receiver and instrument sources are identical to `624fa9b`'s.
+(The first after-run, at `624fa9b`, quoted in that commit's message, was overwritten by the later
+run; its numbers agreed within the noise, e.g. K = 20 / 4 threads 1.02 against 0.94 CPU s/slot.)
 
 | K | threads | p50 ms before → after | p95 ms before → after | CPU s/slot before → after | alloc/slot before → after | found |
 | ---: | ---: | :--- | :--- | :--- | :--- | :--- |
-| 1 | 4 | 211 → 212 | 254 → 235 | 0.53 → 0.50 | 20 404 → 20 438 | 20/20 both |
-| 1 | 1 | 512 → 509 | 635 → 600 | 0.50 → 0.47 | 2 960 → 2 882 | 20/20 both |
-| 5 | 4 | 307 → 303 | 352 → 322 | 0.95 → 0.88 | 27 944 → 27 246 | 100/100 both |
-| 5 | 1 | 969 → 879 | 1095 → 994 | 0.95 → 0.88 | 4 410 → 3 992 | 100/100 both |
-| 20 | 4 | 571 → 351 | 669 → 384 | 1.66 → 1.02 | 30 764 → 28 968 | 400/400 both |
-| 20 | 1 | 1351 → 957 | 1534 → 1022 | 1.34 → 0.95 | 7 132 → 5 504 | 400/400 both |
-| 50 | 4 | 836 → 588 | 923 → 620 | 2.57 → 1.58 | 47 897 → 43 774 | 1000/1000 both |
-| 50 | 1 | 2465 → 1485 | 2738 → 1579 | 2.43 → 1.45 | 14 479 → 10 356 | 1000/1000 both |
+| 1 | 4 | 211 → 196 | 254 → 213 | 0.53 → 0.49 | 20 404 → 20 438 | 20/20 both |
+| 1 | 1 | 512 → 497 | 635 → 573 | 0.50 → 0.47 | 2 960 → 2 882 | 20/20 both |
+| 5 | 4 | 307 → 306 | 352 → 351 | 0.95 → 0.91 | 27 944 → 27 344 | 100/100 both |
+| 5 | 1 | 969 → 876 | 1095 → 987 | 0.95 → 0.87 | 4 410 → 3 992 | 100/100 both |
+| 20 | 4 | 571 → 327 | 669 → 363 | 1.66 → 0.94 | 30 764 → 28 772 | 400/400 both |
+| 20 | 1 | 1351 → 962 | 1534 → 1054 | 1.34 → 0.95 | 7 132 → 5 504 | 400/400 both |
+| 50 | 4 | 836 → 601 | 923 → 669 | 2.57 → 1.62 | 47 897 → 43 774 | 1000/1000 both |
+| 50 | 1 | 2465 → 1457 | 2738 → 1704 | 2.43 → 1.47 | 14 479 → 10 356 | 1000/1000 both |
 
 The saving grows with the number of decodes (it is per decode): none at K = 1; CPU per slot
-−29 % (K = 20) and −40 % (K = 50) on one thread, −39 % (K = 20) and −39 % (K = 50) on four
+−29 % (K = 20) and −40 % (K = 50) on one thread, −43 % (K = 20) and −37 % (K = 50) on four
 threads. That is more than `replica_spectra`'s 20 % share of user self time in the profile
 accounts for. The difference is not attributed by any measurement here; the probable cause is
 the three ~1.15 MB `Vec<f64>` each evaluation allocated, whose page-fault and allocator cost is
-kernel time the self-time profile does not show, and which contends across threads. Latency on a shared VM is indicative; CPU per slot and the
+kernel time the self-time profile does not show, and which contends across threads.
+
+**Status of these numbers:** one run per commit, 20 slots per K, on a shared VM, author-run with
+no pre-registered rule: indicative, simulation, not a published figure. `docs/benchmarking.md`
+keeps its performance table marked historical; a publishable `perf` comparison needs both
+commits on an idle host under `docs/research-process.md` §2.
+
+Latency on a shared VM is indicative; CPU per slot and the
 task-clock spread are the firmer numbers. The decode budget is 4.5 s per slot.
 
 ## 3. Tried and not kept
@@ -100,7 +112,8 @@ task-clock spread are the firmer numbers. The decode budget is 4.5 s per slot.
 ## 5. Through the measurement instrument
 
 Both binaries ran the whole suite at exploratory size (`z30 --benchmark suite --frames 20 --out
-…`, suite seed 20260830): `acfce5e` (before the cleanup) and `624fa9b` (after this change), each
+…`, suite seed 20260830; result files in `evidence/suite-acfce5e/` and `evidence/suite-624fa9b/`,
+the tool's output in `evidence/compare_results.txt`): `acfce5e` (before the cleanup) and `624fa9b` (after this change), each
 built from a clean tree. `python research/compare_results.py <acfce5e> <624fa9b>`:
 
 ```
@@ -114,3 +127,8 @@ differ, so this also shows the instrument identity is unchanged
 (`424e6f0385e112e48a2adbcda5456e62fbad5995be73d3624982f5b8e0e0be90` on both). Suite CPU time:
 27 min 6 s → 25 min 48 s user (−5 %; the suite is mostly one-station frames, where the saving is
 small). Wall time is not compared: the second run shared the machine with other work.
+
+Identity of output is a deterministic property, not an estimate, so the frame count bounds only
+how much of the input space was exercised, not a confidence level; it is not a figure and is not
+published. If the board wants identity shown at the publishable size, the same two commands at
+`--frames 200` (about an hour each on 4 cores) settle it.

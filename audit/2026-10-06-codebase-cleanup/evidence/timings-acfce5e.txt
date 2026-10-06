@@ -1,0 +1,14 @@
+rev acfce5e5d1e2 nproc 4 rustc 1.97.0 (2d8144b78 2026-07-07)
+check-clean    rc=0    137.9 s   cargo check --workspace --all-targets --locked --exclude z30-py
+clippy-warm    rc=0      4.8 s   cargo clippy --workspace --all-targets --locked --exclude z30-py -- -D warnings
+check-incr     rc=0      1.1 s   cargo check --workspace --all-targets --locked --exclude z30-py
+test-dev-build rc=0    471.4 s   cargo test --workspace --locked --exclude z30-py --no-run
+test-dev-run   rc=0    204.2 s   cargo test --workspace --locked --exclude z30-py
+release-bin-clean rc=0    232.8 s   cargo build --release --locked -p z30-cli -p z30-gui --features z30-cli/cm108,z30-gui/cm108
+test-rel-build rc=0    290.4 s   cargo test --workspace --release --locked --exclude z30-py --no-run
+test-rel-run   rc=0    180.4 s   cargo test --workspace --release --locked --exclude z30-py
+size 58086864 target-c/release/z30
+size 111665896 target-c/release/z30-gui
+stripped 17797680 /tmp/z30gs
+stripped 8469832 /tmp/z30s
+done

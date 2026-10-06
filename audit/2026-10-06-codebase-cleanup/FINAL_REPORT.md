@@ -45,8 +45,9 @@ simulation validated, **hardware not validated, on-air not validated**.
 
 ## 3. Build, test and CI time
 
-Local: 4 vCPU VM, rustc 1.97.0, clean target directory per command (`measure.sh`). The
-"before" commands exclude `z30-py`, as CI and `AGENTS.md` did.
+Local: 4 vCPU VM, rustc 1.97.0, clean target directory per command (`measure.sh`;
+`evidence/timings-acfce5e.txt`, `evidence/timings-cbbcb8b.txt`, `evidence/ab-build-timings.txt`).
+The "before" commands exclude `z30-py`, as CI and `AGENTS.md` did.
 
 | Command | Before | After | |
 | :--- | ---: | ---: | :--- |
@@ -78,9 +79,10 @@ pull request that does not touch the release files, Windows and macOS see them o
 
 ## 4. Runtime performance
 
-`decode_slot`, `z30 --benchmark perf --frames 20`, CPU per slot: K = 20, 4 threads 1.66 →
-1.02 s; K = 50, 4 threads 2.57 → 1.58 s; K = 50, 1 thread 2.43 → 1.45 s; none at K = 1.
-Decoded and found counts identical. The whole suite at exploratory size is IDENTICAL between
+`decode_slot`, `z30 --benchmark perf --frames 20`, CPU per slot (`evidence/perf-acfce5e.txt`,
+`evidence/perf-cbbcb8b.txt`): K = 20, 4 threads 1.66 → 0.94 s; K = 50, 4 threads 2.57 → 1.62 s;
+K = 50, 1 thread 2.43 → 1.47 s; none at K = 1. Decoded and found counts identical. One run per
+commit, 20 slots per K, shared VM, simulation: indicative, not a published figure. The whole suite at exploratory size is IDENTICAL between
 `acfce5e` and `624fa9b` under `compare_results.py`, with the same instrument identity. Details,
 the profile and what was tried and not kept: `PERFORMANCE.md`.
 
@@ -106,7 +108,8 @@ head, so every published result stays comparable without a new baseline.
 | Delete `z30_channel::sigma_for`, `z30_protocol::OCCUPIED_BANDWIDTH_HZ`; merge `suite.rs::percentile` with `bench.rs::pct`; drop `bench.rs`'s exploratory `sweep` | dead or duplicate, but inside the instrument's hashed files: changing them changes the instrument identity and blocks comparison with the published results. Do them together in the next deliberate instrument change |
 | Port `research/*.py` to Rust | active, documented, stdlib-only, fail closed, outside the Cargo graph; a port changes the measurement instrument and its byte-for-byte `SUMMARY.md` regeneration, so it needs its own reviewed pull request |
 | A cheaper `ln_1p(exp(x))` in the LDPC check node (12–16 % of decode time) | changes the decoder's arithmetic: breaks golden bit-exactness and moves every figure; a receiver change for the research process |
-| `rand` 0.9 / `rand_chacha` 0.9 / `rand_distr` 0.6 / `toml` 1 (PR #49) | `rand*` drive every seeded frame; a major version changes the streams and every published figure, so `docs/research-process.md` §7 requires the suite on both commits. `pyo3` from #49 is moot (removed) |
+| `rand` 0.9 / `rand_chacha` 0.9 / `rand_distr` 0.6 (PR #49) | they are dependencies of `z30-channel`, so they are part of the benchmark instrument's identity: a bump is an instrument change, which `compare_results.py` and `paired_mcnemar.py` refuse to compare across. It needs its own proposal, `suite`/`false`/`perf` on both commits and a deliberate re-baseline (`docs/research-process.md` §5 and §7), not a routine merge |
+| `toml` 1 (PR #49) | in `z30-cli`'s closure through `z30-io` but not in the instrument: the §7 route applies (`lock_closure.py` will report the closure change; run the suite on both commits and show `compare_results.py` IDENTICAL). Better split from the `rand` bumps. `pyo3` from #49 is moot (removed) |
 | PR #48 (`source-map-js` in `legacy/browser-runtime`) | moot: the subsystem is deleted. It should be closed, not merged |
 | Release profile (`lto = "thin"`, `codegen-units = 1`, `debug = 1`) | it built every published figure's binary; `debug = 1` keeps backtraces from an experimental radio program useful. No measured problem |
 | Locks, channels and traits in the runtime | every trait has 3–16 implementations (hardware plus test fakes); the locks are the transmit-safety runtime's. No measured contention |

@@ -1,0 +1,11 @@
+awgn: IDENTICAL (every count, rate, interval, error statistic)
+snr: IDENTICAL (every count, rate, interval, error statistic)
+drift: IDENTICAL (every count, rate, interval, error statistic)
+timing: IDENTICAL (every count, rate, interval, error statistic)
+clock: IDENTICAL (every count, rate, interval, error statistic)
+impair: IDENTICAL (every count, rate, interval, error statistic)
+busy: IDENTICAL (every count, rate, interval, error statistic)
+false: IDENTICAL (every count, rate, interval, error statistic)
+sic: IDENTICAL (every count, rate, interval, error statistic)
+fading: IDENTICAL (every count, rate, interval, error statistic)
+exit 0

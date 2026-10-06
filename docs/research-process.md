@@ -182,11 +182,13 @@ interoperability with every existing station. On top of sections 1–5 it requir
    regenerated and are pinned byte for byte by `fixtures/golden/FROZEN.sha256`. They are never
    edited by hand or replaced. A new version's vectors come from a reviewed generator committed
    with them under `research/golden/` (outside the application, where CI's hygiene job allows
-   Python), are written to their own directory beside the v1 set (`fixtures/golden/v2/`, with
-   its own `FROZEN.sha256`), and are hash-pinned in the same commit with the reason. The
-   generator should be independent of `crates/` - that independence is what the v1 oracle gave
-   and what a copy of the Rust code would not. The v1 vectors remain for as long as v1 is
-   supported.
+   Python and a pinned `research/golden/requirements.txt`), are written to their own directory
+   beside the v1 set (`fixtures/golden/v2/`, with its own `FROZEN.sha256`, which CI checks), and
+   are hash-pinned in the same commit with the reason. The same pull request adds a CI step
+   that runs the generator's `--check` mode (regenerate into a temporary directory and compare
+   byte for byte), so the new vectors are reproduced, not only pinned. The generator should be
+   independent of `crates/` - that independence is what the v1 oracle gave and what a copy of
+   the Rust code would not. The v1 vectors remain for as long as v1 is supported.
 3. **A version bump**: `z30_protocol::PROTOCOL_VERSION` (`crates/z30-protocol/src/lib.rs`,
    reported by `z30 --version` and the GUI), the workspace version in `Cargo.toml`, and a
    release note stating that the change is not compatible with earlier versions.
@@ -220,11 +222,15 @@ measured figure can move — that is sufficient, and the update is a section 7 c
 toolchain and no hour of compute, so a reviewer can always produce it.
 
 It proves one direction only. When a closure **does** change, section 7 does not apply on this
-evidence: the update reaches the measurement and needs section 2 in full, with
-`research/results/<commit>/` for baseline and candidate compared by `compare_results.py`. A bump
-to `rand`, `rand_chacha` or `rand_distr` is always in this class — they generate every seeded
-channel realisation (`crates/z30-channel/src/lib.rs`), so those figures are re-baselined
-deliberately, never absorbed quietly into a routine bump.
+evidence: the update reaches the measurement and needs the suite on both commits. For a crate
+outside the benchmark instrument (a `toml` or `serde` bump in `z30-cli`'s closure) that means
+`compare_results.py` on the two result directories, which must say IDENTICAL. A bump to `rand`,
+`rand_chacha` or `rand_distr` is different in kind: they generate every seeded channel
+realisation (`crates/z30-channel/src/lib.rs`) and are part of the instrument identity, so
+`compare_results.py` and `paired_mcnemar.py` refuse to compare across it. Such a bump is an
+instrument change: its own proposal, `suite`, `false` and `perf` on both commits, and a
+deliberate re-baseline under section 5 (the old results superseded and kept), never absorbed
+quietly into a routine bump.
 
 Section 3 still applies either way. A section 7 change whose CI is red does not land, however
 sound its bit-identical proof is.

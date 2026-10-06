@@ -71,27 +71,33 @@ jobs:
         # implementation; the Python left is the stdlib-only research tools and audit evidence.
         run: |
           set -e
-          bad=$(git ls-files | grep -E '^legacy/|^crates/z30-py/|^reference/|(^|/)(package(-lock)?\.json|bun\.lockb?|yarn\.lock|pnpm-lock\.yaml|requirements[^/]*\.txt|pyproject\.toml|setup\.py)$' || true)
+          # research/golden/ may pin a future protocol version's reference generator's
+          # dependencies (docs/research-process.md section 6); nothing else may.
+          bad=$(git ls-files | grep -E '^legacy/|^crates/z30-py/|^reference/|(^|/)(package(-lock)?\.json|bun\.lockb?|yarn\.lock|pnpm-lock\.yaml|requirements[^/]*\.txt|pyproject\.toml|setup\.py)$' | grep -vE '^research/golden/requirements[^/]*\.txt$' || true)
           if [ -n "$bad" ]; then echo "a retired stack is back:"; echo "$bad"; exit 1; fi
           py=$(git ls-files '*.py' | grep -vE '^(research|audit)/' || true)
           if [ -n "$py" ]; then echo "Python outside research/ and audit/:"; echo "$py"; exit 1; fi
           if git ls-files | grep -E '\.(ts|tsx|mts|js|mjs|jsx)$' | grep -v '^audit/'; then echo "JS/TS outside audit/"; exit 1; fi
           test "$(git ls-files '*Cargo.lock' | grep -v '^audit/')" = "Cargo.lock"
 
-      - name: The golden fixtures are frozen
-        # Their generators (the Python oracle and the TypeScript codec) are gone, so the
-        # fixtures can no longer be regenerated, only kept. Any byte that changes fails here.
-        # A new protocol version's vectors go in a subdirectory with their own FROZEN.sha256
-        # (docs/research-process.md section 6); every file at this level must be pinned here.
+      - name: The golden fixtures and shared vectors are frozen
+        # Their generators (the Python oracle and the TypeScript codec) are gone, so they can no
+        # longer be regenerated, only kept. Any byte that changes fails here, and so does a file
+        # nobody pinned. A new protocol version's vectors go in a subdirectory of
+        # fixtures/golden with their own FROZEN.sha256 (docs/research-process.md section 6).
         run: |
           set -e
-          cd fixtures/golden
-          sha256sum --check --strict FROZEN.sha256
-          for f in *; do
-            [ -f "$f" ] && [ "$f" != FROZEN.sha256 ] || continue
-            grep -q "  $f\$" FROZEN.sha256 || { echo "fixtures/golden/$f is not pinned"; exit 1; }
-          done
-          for d in */; do [ -d "$d" ] || continue; (cd "$d" && sha256sum --check --strict FROZEN.sha256); done
+          frozen() {
+            (cd "$1" && sha256sum --check --strict --quiet FROZEN.sha256)
+            for f in "$1"/*; do
+              [ -f "$f" ] && [ "$(basename "$f")" != FROZEN.sha256 ] || continue
+              grep -q "  $(basename "$f")\$" "$1/FROZEN.sha256" || { echo "$f is not pinned"; exit 1; }
+            done
+          }
+          frozen tests/vectors
+          frozen fixtures/golden
+          for d in fixtures/golden/*/; do [ -d "$d" ] && frozen "${d%/}"; done
+          echo "fixtures/golden and tests/vectors match their FROZEN.sha256"
 
       - name: No unpublished suite result is committed as if it were the record
         # z30 writes exploratory and dirty-build results under these two trees by default
