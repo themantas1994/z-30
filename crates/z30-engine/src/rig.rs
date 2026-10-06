@@ -2,7 +2,7 @@
 //! `src/dsp/rigStateTracker.ts`, itself a port of WSJT-X's PollingTransceiver/TransceiverBase
 //! model. Transport-free and clock-injected, so every rule is testable without a radio.
 //!
-//! Three exclusions keep the dial check from grounding stations that work (AGENTS.md section 4):
+//! Three exclusions keep the dial check from grounding stations that work (docs/safety.md):
 //! no readback is "unverified", not "wrong"; an unsettled QSY (three polls) is not a refusal;
 //! a difference inside the rig's measured tuning resolution is not a refusal.
 

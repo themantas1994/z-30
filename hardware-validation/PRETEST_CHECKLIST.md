@@ -9,12 +9,12 @@ decision, recorded on a pull request, is (board packet 2026-09-28, blocker B14).
 on-air not validated.** Everything below marked "software" was shown with fake PTT lines, fake
 audio devices and virtual clocks. Nothing was keyed.
 
-Candidate commit: the head of the remediation pull request (branch
-`claude/nice-archimedes-epwg4o`). Any later push invalidates the review items for the changed part.
+Candidate commit: the head of the remediation pull request (the remediation
+branch). Any later push invalidates the review items for the changed part.
 
 | # | Item | State | Evidence | Still needed |
 | :--- | :--- | :--- | :--- | :--- |
-| 1 | Transmit-safety findings closed (F-01, F-03…F-09, F-15…F-19, F-21, F-22, F-43…F-46; F-02 is item 5; board blockers B1–B11) | **FIXED, PENDING REVIEW** | `audit/ACTIVE_DEFECT_LEDGER.md` rows; tests named there | `tx-safety-auditor` and `cto-code-reviewer` on the candidate commit; rows set to `VERIFIED` by them, not by the implementer |
+| 1 | Transmit-safety findings closed (F-01, F-03…F-09, F-15…F-19, F-21, F-22, F-43…F-46; F-02 is item 5; board blockers B1–B11) | **FIXED, PENDING REVIEW** | the finding list in `audit/2026-09-28-agent-team-review/07-board-packet.md` §4; tests named there | `tx-safety-auditor` and `cto-code-reviewer` on the candidate commit; rows set to `VERIFIED` by them, not by the implementer |
 | 2 | CI green on the candidate commit, including the paired production-decoder harness (B12) | **PENDING** | local: fmt, clippy (both feature sets), 218+ tests pass on rustc 1.95; paired harness smoke run passes locally with the PEP 440 version fix | GitHub CI on the pull request (Linux/Windows/macOS, MSRV, paired harness, golden, research tests) |
 | 3 | Mutation tests reviewed | **RUN, PENDING REVIEW** | `audit/2026-09-28-remediation/evidence/tx-mutation/` (82 mutants: the audit's set re-targeted plus one per new guarantee) | the auditor's independent re-run and review; any survivor is a defect |
 | 4 | Dummy-load procedure reviewed | **PENDING** | `docs/hardware-validation.md` §R | add, and have the board accept, the tests the remediation made possible (below) |

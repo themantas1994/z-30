@@ -1,6 +1,6 @@
 //! Panics while keyed. Its own test binary because it installs the process-wide panic hook.
 //!
-//! 2026-09-28 agent-team audit F-15 (CTO-02 = TX-11): the line mutex was held across
+//! 2026-09-28 audit F-15 (CTO-02 = TX-11): the line mutex was held across
 //! `PttLine::set`, and the panic hook runs on the panicking thread BEFORE unwinding releases
 //! that guard. The hook's `emergency_release_all` then blocked on the same mutex while holding
 //! the PTT registry lock, so the keying thread never returned, the watchdog (which had already

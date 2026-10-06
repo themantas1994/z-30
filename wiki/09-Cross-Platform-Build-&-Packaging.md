@@ -12,8 +12,8 @@ support actually rests on.
 | Windows 10/11 x86-64 | CI builds and tests on `windows-latest`; release archive | **Builds and passes tests in CI. Not operated with a sound card or radio.** |
 | macOS (Apple Silicon, Intel) | CI builds and tests on `macos-latest`; release archives built on `macos-15` (arm64) and `macos-15-intel` (x86-64) | **Builds and passes tests in CI. Not operated with a sound card or radio.** |
 | Wayland / X11 / PipeWire / ALSA / PulseAudio | egui/winit support both display servers; cpal uses ALSA (PipeWire and PulseAudio through their ALSA plugins) | **Not tested** |
-| Raspberry Pi / ARM Linux | nothing | **Not tested.** Earlier versions of this page said "Tested on Raspberry Pi 3B+, 4B, 5, Zero 2W"; there was no evidence of any such test (audit §20). A source build may work on 64-bit Raspberry Pi OS; nobody has tried |
-| Android | nothing | **Not supported.** The retired PWA was the only Android path, and its receiver did not work |
+| Raspberry Pi / ARM Linux | nothing | **Not tested.** A source build may work on 64-bit Raspberry Pi OS; nobody has tried |
+| Android | nothing | **Not supported.** |
 
 ## Release archives
 
@@ -41,11 +41,7 @@ Binaries are not code-signed or notarised.
 
 ## What is not provided
 
-- No distribution packages (`.deb`, AUR, Homebrew, MSI). The old `PKGBUILD`, install scripts,
-  Windows batch launcher and PyInstaller spec installed the retired Python/browser runtime and
-  are deleted.
-- No Python wheel: there is no Python component in the application. The Python protocol oracle,
-  which had its own `pyproject.toml` for research use, was deleted in the 2026-10-06 cleanup.
+- No distribution packages (`.deb`, AUR, Homebrew, MSI) and no Python component.
 - No automatic updates ([12](12-Software-Updates-&-GitHub-Sync.md)).
 
 ## Building

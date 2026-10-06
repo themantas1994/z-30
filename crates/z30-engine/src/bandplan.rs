@@ -11,8 +11,9 @@
 //!   data emission must be centred on the channel centre, within
 //!   `US_60M_CENTRE_TOLERANCE_HZ`, and inside the channel's 2.8 kHz. This is the reading
 //!   implemented; whether the regulations require "centred on" or only "inside" the channel is
-//!   the licensed operator's (the board's) decision, recorded in `audit/ACTIVE_DEFECT_LEDGER.md`
-//!   (F-02). The stricter reading is implemented until then: it can only refuse more.
+//!   the licensed operator's (the board's) decision (F-02 in
+//!   `audit/2026-09-28-agent-team-review/07-board-packet.md`). The stricter reading is
+//!   implemented until then: it can only refuse more.
 //! - **IARU Regions 1-3:** whole-band amateur allocations. They are NOT data sub-bands: the IARU
 //!   band plans are recommendations that vary by country, and none is modelled. In those regions
 //!   the gate checks only that the emission is inside an amateur band available to the station;

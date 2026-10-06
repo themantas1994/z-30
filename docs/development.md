@@ -117,7 +117,8 @@ outside `research/` and `audit/`, JS/TS outside `audit/`) out of the tree, and t
 
 ## House rules for the workspace
 
-`AGENTS.md` applies in full. The ones that bite most often here:
+The ones that bite most often here (the transmit rules are in [safety.md](safety.md), the
+reporting rules in [benchmarking.md](benchmarking.md#reporting-rules)):
 
 - **`z30-protocol` changes are protocol changes.** Constants, the Costas array, CRC, LDPC and
   codec need an operator decision and a version change, not a commit.

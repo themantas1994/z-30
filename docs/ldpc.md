@@ -42,8 +42,7 @@ transcribes:
 - correlations use NumPy's pairwise f32 summation.
 
 Schedule 4's dither is mulberry32, seeded by FNV-1a over the quantised LLRs. The decoder is
-therefore a pure function of its input, which is the determinism rule in `AGENTS.md`
-section 4.
+therefore a pure function of its input, which is the receiver determinism rule (identical output at any thread count).
 
 Tests (`crates/z30-dsp/tests/golden_ldpc.rs`):
 

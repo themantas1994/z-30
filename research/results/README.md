@@ -71,7 +71,7 @@ files are unchanged and stay as evidence of what was measured; nothing about the
 | `perf_k.txt` | `decode_slot` latency p50/p95/p99/max, throughput, process CPU and heap allocations per slot at K = 1, 5, 20, 50 stations, 20 seeded slots each, 4 threads and 1, on an idle host | `z30 --benchmark perf --frames 20` |
 | `false_decodes_2000.txt` | 2000 noise-only slots: 0 false decodes in 133,911 LDPC attempts with the fine-sync gate off (exact 95% upper bound 2.24e-5 per attempt); 0 in 2000 slots with the production config | `z30 --benchmark false-decodes --frames 2000` |
 
-Status of these files (2026-09-28 agent-team audit, record hygiene; the files themselves are
+Status of these files (2026-09-28 audit, record hygiene; the files themselves are
 not edited):
 
 - **`perf_k.txt` is historical, not current (F-35).** It was measured before the replica fit
@@ -94,7 +94,7 @@ not edited):
 - **`18fbd78d8fb8/SUMMARY.md` (F-67)** was generated on 2026-09-28 with
   `python3 research/summarize_suite.py research/results/18fbd78d8fb8 --partial --write`; it
   covers only `awgn.json` (the directory holds no other benchmark) and says so. The pooled
-  figure over 2200 frames per point (AGENTS.md §5) is computed from the replicate files by
+  figure over 2200 frames per point (docs/benchmarking.md) is computed from the replicate files by
   `audit/2026-09-24-corrective-remediation/evidence/awgn_investigation/analyse_awgn.py` (output
   `awgn_replicate_analysis.json`, key `pooled`); no script in `research/` produces it yet.
 

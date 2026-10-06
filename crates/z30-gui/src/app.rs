@@ -563,7 +563,7 @@ impl eframe::App for App {
                         if resp.double_clicked() && r.is_cq {
                             self.send(Command::Answer(r.id));
                         }
-                        // AP-assisted decodes are labelled, never hidden (AGENTS.md section 4).
+                        // AP-assisted decodes are labelled, never hidden (docs/ldpc.md).
                         ui.monospace(if r.ap_type > 0 { format!("a{}", r.ap_type) } else { String::new() });
                         ui.end_row();
                     }

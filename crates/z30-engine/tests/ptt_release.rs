@@ -1,6 +1,6 @@
 //! A release is not a release until the hardware confirms it.
 //!
-//! 2026-09-28 agent-team audit F-01 (TX-01 = CTO-01): `PttController` marked the line unkeyed
+//! 2026-09-28 audit F-01 (TX-01 = CTO-01): `PttController` marked the line unkeyed
 //! BEFORE driving it, so a release the hardware refused (a rigctld `T 0` that timed out, a CM108
 //! HID write error) left the controller, the watchdog and Drop all believing the transmitter was
 //! released while the radio stayed keyed until its own time-out timer. F-44 (TX-15): a second

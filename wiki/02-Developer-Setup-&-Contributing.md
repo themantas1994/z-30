@@ -21,7 +21,7 @@ SPEC.md                     the normative v1 protocol specification
 fixtures/golden/            golden vectors from the deleted oracle: FROZEN, hash-pinned, never hand-edited
 research/                   result tools (summarise, compare, pair; stdlib Python) and every published result file
 tests/vectors/              shared known-answer vectors (CRC, callsigns, dither), asserted by Rust tests
-audit/                      the audits and the remediation evidence (historical)
+audit/                      historical audits and remediation evidence (a record, not current guidance)
 hardware-validation/        records of hardware tests (none yet)
 ```
 
@@ -51,8 +51,8 @@ python -m pip install pytest && python -m pytest research/tests -q   # Python 3.
 
 ## Contribution rules
 
-`AGENTS.md` at the repository root is the working context for human and AI contributors. The
-rules that matter most:
+The rules that matter most (transmit safety in [`docs/safety.md`](../docs/safety.md), published
+figures in [`docs/benchmarking.md`](../docs/benchmarking.md#reporting-rules)):
 
 - **One receiver, one modulator.** `decode_slot` and `z30_protocol::gfsk::Modulator` are the
   only ones. No second demodulator "for benchmarking"; no receive path may know it is being
@@ -81,5 +81,4 @@ rules that matter most:
   a contradiction is a bug to fix, not a preference to choose between.
 - A benchmark or test result that contradicts documentation wins, once it is a controlled,
   seeded, paired measurement with a stated confidence figure; the documentation is then fixed.
-- The wiki is plain markdown in the repository, edited by pull request. The retired browser
-  app's in-app copy of the wiki was deleted with it.
+- The wiki is plain markdown in the repository, edited by pull request.

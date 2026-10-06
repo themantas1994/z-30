@@ -444,7 +444,7 @@ fn capture_slot(dir: &Path, when: Result<i64, usize>, window: &[f32], rep: &z30_
         })).collect::<Vec<_>>(),
         "passes": rep.passes.iter().map(|p| serde_json::json!({"candidates": p.candidates, "decoded": p.decoded,
             "duplicates": p.duplicates, "suppression_db": p.suppression_db, "elapsed_ms": p.elapsed_ms})).collect::<Vec<_>>(),
-        // AGENTS.md §4: the per-pass figure is not physical suppression; the file says so itself.
+        // docs/sic.md: the per-pass figure is not physical suppression; the file says so itself.
         "suppression_db_note": "receiver-internal fit ratio, not physical suppression (overstates it by 9-16 dB)",
     });
     std::fs::write(base.with_extension("json"), serde_json::to_string_pretty(&json).unwrap()).map_err(|e| e.to_string())

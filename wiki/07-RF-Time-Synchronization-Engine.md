@@ -3,26 +3,6 @@
 > **The RF time synchronisation engine has been removed.** This page kept its old file name so
 > links still work. What z-30 does about time now is below.
 
-## Why it was removed
-
-The legacy RF time sync (`rf_time_sync.py`, `rfTimeSyncEngine.ts`) claimed to set the clock from
-WWV/WWVH/CHU/DCF77/MSF/WWVB/JJY "with sub-millisecond precision". The 2026-09-23 and 2026-09-24
-audits found (C-03, F-01) that it never decoded a time code at all:
-
-- its "RF timestamp" was the computer's own clock rounded to the minute — it measured the clock
-  against itself;
-- it reported success unconditionally once a crude pre-check passed, and the pre-check passed on
-  pure noise (20 of 20 noise dwells "succeeded");
-- its SNR was floored (`max(snr, 6.5)` and similar) and its confidence was a constant;
-- with no audio device it silently used its own simulator, reported
-  `SYNC OK … Offset: +29666.24 ms`, and **persisted that offset**, which could then step the OS
-  clock.
-
-The sample output this page used to show (correlation 0.942, ±0.8 ms) was not a measurement
-either. Nothing of it remains in z-30. The retired browser snapshot's copy now always fails and
-stores nothing. The network time query ("atomic UTC, sub-millisecond" from one HTTP round trip,
-and a time-zone parsing error) is removed too.
-
 ## What z-30 does
 
 - It uses the **operating system's UTC clock** and never changes it or applies an offset of its

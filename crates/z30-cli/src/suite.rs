@@ -59,7 +59,7 @@ fn run_seed() -> u64 {
 
 const BENCHMARKS: [&str; 10] = ["awgn", "snr", "drift", "timing", "clock", "impair", "busy", "false", "sic", "fading"];
 
-/// Frames per point behind any sensitivity crossing (`AGENTS.md` section 5, research-process
+/// Frames per point behind any sensitivity crossing (`docs/benchmarking.md`, research-process
 /// section 2). The suite used to mark a run exploratory only below 100, so a 150-frame AWGN
 /// crossing was written unmarked (audit DOC-08 / RES-05 / F-32).
 pub const CROSSING_MIN_FRAMES: usize = 200;
@@ -1132,7 +1132,7 @@ pub fn run(what: &str, opts: &Options) -> Result<(), String> {
         v["status_reasons"] = json!(reasons);
         v["publishable_size"] = json!(publishable_size(name));
         v["frames_policy"] = json!(format!(
-            "a sensitivity crossing needs at least {CROSSING_MIN_FRAMES} frames per point (AGENTS.md section 5); a benchmark below its publishable size is exploratory"
+            "a sensitivity crossing needs at least {CROSSING_MIN_FRAMES} frames per point (docs/benchmarking.md); a benchmark below its publishable size is exploratory"
         ));
         if run_seed() != SUITE_SEED {
             v["not_the_published_run"] = json!(format!(

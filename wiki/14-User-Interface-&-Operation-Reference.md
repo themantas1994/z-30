@@ -29,7 +29,7 @@ the frame. CQs are green, messages addressed to you red. Double-click a CQ to an
 - A field of a received message that is not the valid encoding of anything is shown as
   unrepresentable (`<?…>`), never as a plausible callsign or grid.
 - There is **no confidence column**: the decoder has no calibrated per-decode confidence, and
-  none is invented. (The retired app showed the constant 99 on every decode.)
+  none is invented.
 - Every row is a reception by this receiver. There is no self-test or synthetic-signal mode.
 
 **QSO panel.** The sequencer state, the next message to be sent, **Call CQ**, **Enable TX**,
@@ -118,12 +118,3 @@ in z-30 measures them. See [13](13-Operating-Safety-Compliance-&-Security.md#the
 
 Build (version, commit), configuration path, GUI frame time, the rig tracker's state, audio
 health, the transmit gate's verdict, and "Forward power / SWR: not measured".
-
-## What the retired app had that z-30 does not
-
-Band manager presets, auto-reply priority strategies, Cabrillo export, an in-app wiki and
-Python source viewer, a rig console, a Hamlib catalogue, RF time sync, a self-test signal
-generator, a Monte Carlo benchmark panel and an update button. Several of those displayed
-fabricated values and were among the reasons it was retired (the
-[2026-09-23 audit](../audit/2026-09-23-vnext/README.md); its code was removed from the repository
-in the 2026-10-06 cleanup).

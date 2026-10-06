@@ -1,7 +1,7 @@
 # Research process: how a change reaches `main`
 
 Every change to z-30, from a one-line receiver tweak to a protocol revision, follows the same
-path. It exists because the project has retracted sensitivity claims before (`AGENTS.md` §5,
+path. It exists because the project has retracted sensitivity claims before (see [benchmarking.md](benchmarking.md),
 `audit/`), and each retraction traced back to a change that was measured once, by its author,
 on conditions that favoured it.
 
@@ -31,10 +31,10 @@ It states:
 | **Benchmarks** | Which `z30 --benchmark` runs decide it, at which points, how many frames per point |
 | **Decision rule** | Written down **before** the run: the effect size and confidence that would accept it, and what would reject it |
 | **Costs to watch** | False-decode rate, CPU per slot, latency, allocations, any regression in the other nine benchmarks |
-| **Safety surface** | Whether it touches `txgate`, PTT, the transmit path, the audio callback or `unsafe`; if so, which tests in `AGENTS.md` §4 guard it |
+| **Safety surface** | Whether it touches `txgate`, PTT, the transmit path, the audio callback or `unsafe`; if so, which tests in [safety.md](safety.md) guard it |
 
 Fixing the decision rule in advance is the point of this step. Moving seeds, sample sizes, SNR
-points or exit conditions after seeing a result is prohibited (`AGENTS.md` §5).
+points or exit conditions after seeing a result is prohibited ([benchmarking.md](benchmarking.md)).
 
 ## 2. Experiment against the `main` baseline
 
@@ -46,7 +46,7 @@ Requirements:
 
 - **Same instrument.** Both sides run `z30 --benchmark …` (`crates/z30-cli/src/suite.rs`), which
   calls `decode_slot` and nothing else. No benchmark-only decoder, no receiver code that knows it
-  is being measured (`AGENTS.md` §4, "One receiver, one modulator").
+  is being measured ([architecture.md](architecture.md#one-receiver)).
 - **Same seeds.** Both sides use the suite seed (20260830) and the same `--frames`. Additional
   statistical power comes from `--replicate 1…n`, never from a different base seed (replicates
   are disjoint by construction; small base seeds reused published frames — corrective audit §D).
@@ -163,7 +163,7 @@ After acceptance, the pull request is merged as reviewed. The same pull request 
 carries:
 
 - the `research/results/<commit>/` directories for baseline and candidate;
-- updated [benchmarking.md](benchmarking.md) and `AGENTS.md` §5 figures, pasted from
+- updated [benchmarking.md](benchmarking.md) figures, pasted from
   `SUMMARY.md`, when a published figure moves; superseded figures are marked withdrawn and kept in
   the history, not silently replaced;
 - updated `docs/`, `wiki/` and `SPEC.md` wherever they describe the changed behaviour.

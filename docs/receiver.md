@@ -151,8 +151,7 @@ independent, so the report is identical at any thread count. Two tests pin this:
   requires the same payload and iteration count and bit-identical DT and frequency: run-to-run
   repeatability, not thread count.
 
-The LDPC dither is derived from the LLRs themselves, the pattern `AGENTS.md` section 4
-prescribes.
+The LDPC dither is derived from the LLRs themselves, the determinism rule in [ldpc.md](ldpc.md).
 
 ## Scenario tests (`crates/z30-dsp/tests/channel_scenarios.rs`)
 
