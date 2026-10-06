@@ -4,6 +4,10 @@
 //! `if false` passed every test (confirmation re-review, finding 1). `/dev/null` is a character
 //! device like a tty, and harmless to open, so it stands in for one here.
 
+// clippy.toml's disallowed lists are for src/loopback.rs alone (it forbids them); tests run
+// the binary and use temporary files.
+#![allow(clippy::disallowed_methods, clippy::disallowed_types)]
+
 #[cfg(unix)]
 #[test]
 fn the_software_loopback_refuses_a_character_device_as_its_report_file() {

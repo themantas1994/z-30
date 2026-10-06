@@ -25,6 +25,11 @@
 //! The result says `source: software-loopback`. It is software evidence about the transmit
 //! synthesis and receive chain, not about any sound card, cable or radio: NOT HARDWARE VALIDATED.
 
+// Network, file system, processes, audio devices, PTT and the live runtime, by resolved name
+// (clippy.toml): no alias, glob, macro or trait call can reach them from here. `forbid`, so no
+// `allow` below can lift it; tests/loopback_isolation.rs checks it stays.
+#![forbid(clippy::disallowed_methods, clippy::disallowed_types)]
+
 use rand::Rng;
 use rustfft::num_complex::Complex32;
 use rustfft::FftPlanner;

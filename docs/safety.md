@@ -114,8 +114,14 @@ transmission is enabled, and again at each slot. The CLI never transmits at all.
 
 `z30 --loopback-test` is a **software** loopback: the frame goes from the transmit synthesis to
 the receive chain as samples in memory. The code that runs it has no audio output, PTT line or
-rig control in it, and `crates/z30-cli/tests/loopback_isolation.rs` fails if one is added or if
-the flag is routed to the sound-card test. Until 2026-09-24 this flag played the frame through
+rig control in it, held there by two layers. `src/loopback.rs` forbids clippy's
+`disallowed_methods` and `disallowed_types`, and `crates/z30-cli/clippy.toml` lists the network,
+file system, processes, audio devices, PTT and the live runtime: clippy resolves names, so no
+alias, glob, macro or trait call reaches them, and CI runs clippy with `-D warnings`.
+`crates/z30-cli/tests/loopback_isolation.rs` parses the file and holds it to an allowlist of what
+it may name, checks the forbid and the list are in place, and fails if the flag is routed to the
+sound-card test. Four syntax-level guards in a row were got round before the semantic layer was
+added (transmit-safety reviews 02c-02f). Until 2026-09-24 this flag played the frame through
 the configured sound card with no transmit gate in front of it, so a VOX radio on that output
 would have radiated it (post-remediation audit N-04).
 

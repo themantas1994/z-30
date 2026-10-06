@@ -3,6 +3,10 @@
 //! that keep a replicate, exploratory or dirty run from replacing a published result (audit
 //! 2026-09-28 F-11, F-12, F-13, F-14, F-32, F-37).
 
+// clippy.toml's disallowed lists are for src/loopback.rs alone (it forbids them); tests run
+// the binary and use temporary files.
+#![allow(clippy::disallowed_methods, clippy::disallowed_types)]
+
 use serde_json::Value;
 use std::path::{Path, PathBuf};
 use std::process::Command;

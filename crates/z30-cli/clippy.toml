@@ -1,0 +1,54 @@
+# What the SOFTWARE loopback (`src/loopback.rs`) may never reach, enforced by name resolution:
+# that file carries `#![forbid(clippy::disallowed_methods, clippy::disallowed_types)]`, and CI runs
+# clippy with `-D warnings` on every platform. The rest of the crate allows these (main.rs writes
+# files; the station opens devices). Resolved names cannot be hidden by aliases, globs, macros or
+# trait dispatch, which got round four syntax-level guards in a row (transmit-safety 02c-02f).
+# `tests/loopback_isolation.rs` checks the forbid is in place and keeps its allowlist as a second
+# layer. Paths that exist only on one platform or with a feature are `allow-invalid`.
+
+disallowed-types = [
+  { path = "std::net::TcpStream", reason = "rigctld: `T 1` keys a CAT radio" },
+  { path = "std::net::TcpListener", reason = "network" },
+  { path = "std::net::UdpSocket", reason = "network" },
+  { path = "std::fs::File", reason = "opening a tty asserts DTR/RTS (serial PTT)" },
+  { path = "std::fs::OpenOptions", reason = "opening a tty asserts DTR/RTS (serial PTT)" },
+  { path = "std::fs::DirBuilder", reason = "file system" },
+  { path = "std::process::Command", reason = "rigctl, aplay" },
+  { path = "std::process::Child", reason = "processes" },
+  { path = "std::os::unix::net::UnixStream", reason = "sockets", allow-invalid = true },
+  { path = "std::os::unix::net::UnixListener", reason = "sockets", allow-invalid = true },
+  { path = "std::os::unix::net::UnixDatagram", reason = "sockets", allow-invalid = true },
+  { path = "z30_io::audio::CpalOutput", reason = "audio output: a VOX radio transmits it" },
+  { path = "z30_io::audio::CpalInput", reason = "audio device" },
+  { path = "z30_io::serial_ptt::SerialPtt", reason = "PTT" },
+  { path = "z30_io::rigctld::Rigctld", reason = "rig control" },
+  { path = "z30_io::rigctld::RigctldPtt", reason = "PTT" },
+  { path = "z30_io::cm108::Cm108Ptt", reason = "PTT", allow-invalid = true },
+  { path = "z30_engine::ptt::PttController", reason = "PTT" },
+  { path = "z30_engine::ptt::VoxPtt", reason = "PTT" },
+  { path = "z30_engine::runtime::RuntimeParts", reason = "the live runtime" },
+]
+
+disallowed-methods = [
+  { path = "std::fs::write", reason = "opening a tty asserts DTR/RTS (serial PTT)" },
+  { path = "std::fs::read", reason = "file system" },
+  { path = "std::fs::read_to_string", reason = "file system" },
+  { path = "std::fs::read_dir", reason = "file system" },
+  { path = "std::fs::create_dir", reason = "file system" },
+  { path = "std::fs::create_dir_all", reason = "file system" },
+  { path = "std::fs::remove_file", reason = "file system" },
+  { path = "std::fs::remove_dir", reason = "file system" },
+  { path = "std::fs::remove_dir_all", reason = "file system" },
+  { path = "std::fs::rename", reason = "file system" },
+  { path = "std::fs::copy", reason = "file system" },
+  { path = "std::fs::hard_link", reason = "file system" },
+  { path = "std::fs::metadata", reason = "file system" },
+  { path = "std::fs::symlink_metadata", reason = "file system" },
+  { path = "std::fs::canonicalize", reason = "file system" },
+  { path = "std::fs::read_link", reason = "file system" },
+  { path = "std::fs::set_permissions", reason = "file system" },
+  { path = "std::net::ToSocketAddrs::to_socket_addrs", reason = "network" },
+  { path = "z30_io::open_ptt", reason = "PTT" },
+  { path = "z30_engine::runtime::start", reason = "the live runtime: audio output, PTT and rig" },
+  { path = "z30_engine::ptt::emergency_release_all", reason = "PTT" },
+]

@@ -3,6 +3,10 @@
 //! Receive-only by design: this binary never keys a transmitter. Transmitting is done from the
 //! GUI, where the operator sees the gate's verdict before every transmission.
 
+// The disallowed lists in clippy.toml are for the software loopback, which forbids them
+// (src/loopback.rs); the station and the toolbox open devices and write files.
+#![allow(clippy::disallowed_methods, clippy::disallowed_types)]
+
 mod audio_loopback;
 mod bench;
 mod loopback;

@@ -9,6 +9,10 @@
 //! produce sound, key a line or talk to a rig). The hardware test is `src/audio_loopback.rs`, which refuses any
 //! configuration with a PTT method or rig control (its own unit tests).
 
+// clippy.toml's disallowed lists are for src/loopback.rs alone (it forbids them); tests run
+// the binary and use temporary files.
+#![allow(clippy::disallowed_methods, clippy::disallowed_types)]
+
 const FORBIDDEN: [&str; 15] = [
     "audio_loopback",
     "z30_io",
@@ -378,6 +382,29 @@ fn the_software_loopback_reaches_only_an_allowlist_of_crates_and_items() {
     let src = std::fs::read_to_string(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/loopback.rs")).unwrap();
     let bad = violations(&src);
     assert!(bad.is_empty(), "src/loopback.rs:\n  {}", bad.join("\n  "));
+    // The semantic layer: clippy resolves names, so what clippy.toml disallows cannot be reached
+    // by any alias, glob, macro or trait call, and CI runs clippy with -D warnings. It holds only
+    // while loopback.rs forbids those lints and clippy.toml still lists the hazards (02f).
+    let file = syn::parse_file(&src).unwrap();
+    let forbids = file.attrs.iter().any(|a| {
+        a.path().is_ident("forbid") && {
+            let t = a.meta.require_list().map(|l| l.tokens.to_string().replace(' ', "")).unwrap_or_default();
+            t.contains("clippy::disallowed_methods") && t.contains("clippy::disallowed_types")
+        }
+    });
+    assert!(forbids, "src/loopback.rs must carry #![forbid(clippy::disallowed_methods, clippy::disallowed_types)]");
+    let conf = std::fs::read_to_string(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("clippy.toml")).unwrap();
+    for hazard in [
+        "std::net::TcpStream",
+        "std::fs::File",
+        "std::fs::OpenOptions",
+        "std::fs::write",
+        "std::process::Command",
+        "z30_io::audio::CpalOutput",
+        "z30_engine::runtime::start",
+    ] {
+        assert!(conf.contains(&format!("\"{hazard}\"")), "clippy.toml no longer disallows {hazard}");
+    }
     // The check must see the imports (it would pass vacuously on an empty file).
     let mut g = Guard::default();
     syn::visit::Visit::visit_file(&mut g, &syn::parse_file(&src).unwrap());
