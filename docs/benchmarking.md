@@ -14,7 +14,9 @@ paired and quotes the exact McNemar p-value, and nothing unmeasured is reported 
 binary. For every frame it:
 
 1. draws a station — payload, tone-0 frequency, DT, carrier phase — from a generator seeded
-   with `SUITE_SEED (20260830) ^ (benchmark << 40) ^ (point << 20) ^ frame` (ChaCha8);
+   with `SUITE_SEED (20260830) ^ (benchmark << 40) ^ (point << 20) ^ frame` (ChaCha8). The
+   frame index has 20 bits, so `--frames` of 2²⁰ (1 048 576) or more is refused: past that,
+   frame 2²⁰ + i of point p would reuse frame i of point p ^ 1 (2026-09-28 audit RES-14 / F-74);
 2. synthesises the 27 s receive window with `z30_channel::synthesize` (the transmitter's own
    modulator, real white Gaussian noise with σ = 1 at 6 kHz, and the benchmark's impairment);
 3. calls **`Receiver::decode_slot(&audio, &RxConfig::default())`** — the station's receive
@@ -45,10 +47,55 @@ uniform over ±1.4 s, carrier phase uniform, payload uniform over 63 bits, no dr
 
 **Provenance.** Each JSON records the commit, build profile, `rustc`, target, OS, CPU and
 logical CPUs, rayon threads, start time, elapsed time, the full `RxConfig`, the channel, the
-placement, the seed rule and the definitions. A binary built from a dirty tree warns that its
-results are not publishable, and fewer than 100 frames per point is marked exploratory.
-`research/summarize_suite.py <dir> --write` renders the directory as `SUMMARY.md`; the tables
-below are pasted from it.
+placement, the seed rule and the definitions. Results written since 2026-09-28 also record
+whether the tree was dirty and a sha256 of the difference, `RUSTFLAGS`, the compiled target
+features, the ISA features detected at run time (rustfft picks its SIMD kernels from them), the
+`Cargo.lock` sha256, and the **instrument identity**: a sha256 over `suite.rs`, `bench.rs`,
+`z30-channel` and all of `z30-protocol` (which encodes and modulates the test frames; results
+built before the post-remediation QA review hashed only its `gfsk.rs`), and `z30-channel`'s
+resolved dependencies, as `Cargo.lock` lists them (dev-dependencies included, which can only make
+a comparison refuse, never pass wrongly). The build
+script recomputes the commit label whenever any crate the binary is built from changes, so an
+unstaged edit gives `<commit>-dirty` (before 2026-09-28 it could keep the clean label: audit
+F-13). `research/summarize_suite.py <dir> --write` renders the directory as `SUMMARY.md`. The
+tables below are **reformatted from** that output, not pasted verbatim: labels shortened,
+Unicode minus signs, the latency column dropped from the AWGN table, and the drift matrix and the
+fading crossings (with their "Withdrawn" column) arranged as views of their own. Every value in
+them was checked against the JSON by the 2026-09-28 documentation audit (DOC-33) and none is
+retyped from memory; a regenerated `SUMMARY.md` is the authority where the two differ.
+
+**Status and where results go.** Every result carries a `status`, and only a published one is
+written to `research/results/<commit>/`:
+
+| `status` | When | Default directory (without `--out`) |
+| :--- | :--- | :--- |
+| `published` | clean build, suite seed 20260830 (replicate 0), at least the benchmark's publishable size | `research/results/<commit>/` |
+| `replicate` | as published, but `--replicate r` with r ≥ 1 | `research/results/<commit>/replicates/r<r>/` |
+| `exploratory` | below the benchmark's publishable size | `research/results/exploratory/<commit>/` |
+| `dirty` | built from a tree that is not its commit | `research/results/unpublished/<commit>-dirty-<diff>/` |
+| `not_the_published_run` | would be `published`, but written elsewhere with `--out` | wherever `--out` says |
+
+The publishable size is each benchmark's default, recorded as `publishable_size`: **200 frames
+per point behind every crossing** (`awgn`, `fading`; also `drift`, `timing`, `clock`, `impair`),
+100 for `snr` and per `sic` cell (neither is a crossing), 50 slots per `busy` point and 400 per
+`false` kind. (Until 2026-09-28 only runs below 100 frames were marked, so a 150-frame crossing
+was written unmarked: F-32. No committed result changes status under the new rule.) The
+`exploratory/` and `unpublished/` trees are git-ignored. `--out` into a published commit
+directory is refused unless it is exactly what the default would write, every destination is
+checked before the first frame is decoded, an existing file is replaced only with
+`--overwrite`, and a published result, or anything inside a published directory, never.
+`summarize_suite.py` refuses a directory that lacks a benchmark (unless `--partial`) or mixes
+runs, and puts a **NOT THE PUBLISHED RUN** banner over anything that is not `published`.
+
+**Comparing two runs.** `research/compare_results.py <baseline> <candidate>` reports each
+benchmark IDENTICAL or DIFFERENT, and refuses (exit 2) a missing benchmark, a different seed,
+replicate, frame count, status, build profile or instrument (results older than the instrument
+field need `--legacy-provenance`, and are bannered). `z30 --benchmark <name> --per-frame` also
+writes `<name>.frames.jsonl` (per frame: point, index, generator seed, condition, decoded,
+correct); `research/paired_mcnemar.py <baseline.frames.jsonl> <candidate.frames.jsonl>` pairs
+two of them frame by frame, refuses differing frame sets, and gives the exact McNemar p-value
+per point (with Holm) and pooled, and optionally a seeded paired bootstrap of the crossing
+delta ([research-process.md §2a](research-process.md#2a-comparing-sensitivity-crossings-between-two-commits)).
 
 ## Current results: `research/results/672cef9b3cdb/`
 
@@ -84,9 +131,15 @@ are withdrawn. `research/results/d8983eeef66e/` is kept as the record of that ru
 
 **How much this moves from run to run.** Ten further runs, each on 200 frames per point that no
 other run uses (`z30 --benchmark awgn --replicate 1…10`, `research/results/18fbd78d8fb8/`):
-the 50% point ranged from −23.07 to −22.93 dB, mean −23.00, **standard deviation 0.048 dB**
-(90%: sd 0.068 dB). Pooled over the 11 runs, 2200 frames per point: **50% at −23.00 dB
-[−23.04, −22.96], 90% at −22.09 dB [−22.12, −22.05]**. The post-remediation audit's independent
+the 50% point ranged from −23.07 to −22.93 dB, mean −23.00. Its **standard deviation is
+0.048 dB over 11 runs** (the published run and the ten disjoint replicates; 0.0496 dB over the
+ten replicates alone); for the 90% point, 0.068 dB over the 11 runs (0.072 dB over the ten
+alone). Pooled over the 11 runs, 2200 frames per point: **50% at −23.00 dB [−23.04, −22.96],
+90% at −22.09 dB [−22.12, −22.05]**. These run-to-run and pooled statistics are computed outside
+`summarize_suite.py`, by
+`audit/2026-09-24-corrective-remediation/evidence/awgn_investigation/analyse_awgn.py`
+(`awgn_replicate_analysis.json` beside it); `18fbd78d8fb8/SUMMARY.md` (generated with
+`--partial`: awgn only, with the not-the-published-run banner) does not contain these statistics. The post-remediation audit's independent
 harness (its own noise generator and seeds) measured −22.94 dB; the corrective remediation found
 no methodological or implementation difference behind that 0.09 dB (the harness reproduces its
 own figure exactly at the corrected commit, the two SNR normalisations agree to 0.00001 dB, and
@@ -149,6 +202,10 @@ quickly. Near threshold (−22 dB), ±4 Hz costs about 14 points against no drif
 scale 4× RMS), and 0.5 s and 2 s dropouts mid-frame. **36.5% [30.1, 43.4] with 200 impulses at
 50× RMS**: there is no impulse blanker.
 
+The impairments are applied to the 6 kHz noisy slot **after resampling, not at the device
+rate**. A real clipper or ADC acts before the anti-alias resampler, where its intermodulation
+products alias differently, so these figures do not describe a clipping sound card.
+
 ### Busy band
 
 `busy.json`, stations placed uniformly at random over the band and ±1.4 s, overlapping freely
@@ -166,17 +223,30 @@ scale 4× RMS), and 0.5 s and 2 s dropouts mid-frame. **36.5% [30.1, 43.4] with 
 
 `false.json`, 400 slots of each kind of content, no z-30 frame present.
 
-| Content | Slots | False | LDPC attempts |
-| :--- | ---: | ---: | ---: |
-| white noise only | 400 | 0 | 250 |
-| 20 CW carriers, −10…+20 dB | 400 | 0 | 2394 |
-| 8 random 16-FSK signals without the Costas pattern, 0 dB | 400 | 0 | 25 976 |
-| 8 FT8-like 8-FSK signals, 0 dB | 400 | 0 | 27 536 |
-| 500 impulses up to 40 σ | 400 | 0 | 331 |
-| **Pooled** | 2000 | **0** | — |
+| Content | Slots | False | LDPC attempts | 95% upper bound per slot |
+| :--- | ---: | ---: | ---: | ---: |
+| white noise only | 400 | 0 | 250 | 7.46 × 10⁻³ |
+| 20 CW carriers, −10…+20 dB | 400 | 0 | 2394 | 7.46 × 10⁻³ |
+| 8 random 16-FSK signals without the Costas pattern, **−3 dB** each ¹ | 400 | 0 | 25 976 | 7.46 × 10⁻³ |
+| 8 FT8-like 8-FSK signals, 0 dB | 400 | 0 | 27 536 | 7.46 × 10⁻³ |
+| 500 impulses up to 40 σ | 400 | 0 | 331 | 7.46 × 10⁻³ |
+| **Pooled** | 2000 | **0** | — | 1.50 × 10⁻³ |
 
-Pooled 95% upper bound: 1.5 × 10⁻³ false decodes per slot. Real recorded non-z-30 audio
-(speech, real FT8 or RTTY, real QRN) has not been tried: no recordings exist yet.
+¹ The result file labels this row "0 dB". The harness has always generated these signals at
+−3 dB (a 0 dB amplitude divided again by √2; audit DSP-07 / F-53). The suite now labels them
+−3 dB; the signal and seeds are unchanged, so the counts reproduce. Result files are not
+edited, so `672cef9b3cdb/false.json` and its `SUMMARY.md` keep the old label.
+
+Pooled 95% upper bound: 1.5 × 10⁻³ false decodes per slot (exact one-sided Clopper–Pearson; a
+zero count is always reported as its bound). **What this run can and cannot exclude** (F-36):
+1.5 × 10⁻³ per slot is about 4.3 false decodes per day of continuous monitoring (2880 slots).
+A receiver with a true rate of 5 × 10⁻⁴ per slot, a third of the bound, still shows zero in
+2000 slots about 37% of the time, so this benchmark cannot tell it from a perfect one. Bounding
+the rate at 10⁻⁴ per slot with zero observed needs 29 956 slots; at 10⁻⁵, 299 572. A change
+that can affect acceptance (OSD, AP, sync thresholds, candidate limits) therefore needs its own,
+pre-registered, larger false-decode run; the suite's `false.json` now records these figures in
+its `power` field. Real recorded non-z-30 audio (speech, real FT8 or RTTY, real QRN) has not
+been tried: no recordings exist yet.
 
 ### Collisions: SIC on versus off
 
@@ -220,10 +290,22 @@ default 3 passes (SIC) and with 1 pass. 100 trials per cell.
 - **Why exact co-location fails** (read from the code, not separately measured): the two
   frames' Costas symbols coincide in tone and time. The least-squares gain fit for the strong
   station therefore absorbs the weak station's sync symbols, and subtracting it leaves no sync
-  pattern for the weak station to be acquired from. The boundary between this case and 5 Hz or
-  0.4 s separation has not been mapped.
+  pattern for the weak station to be acquired from. Separately, by design: in passes 2 and 3 a
+  candidate within 1.6 Hz and 0.1 s of a decoded station is dropped as its residue (`slot.rs`,
+  the residue filter), and in every pass acquisition keeps only the strongest peak within 2 bins
+  (1.6 Hz) and 2 hops (80 ms) (`sync.rs`, non-maximum suppression). A second station inside that
+  NMS neighbourhood of a stronger one is never a candidate, and one inside the residue window
+  that pass 1 missed is never retried. The 2026-09-28 DSP review (DSP-05: exploratory, 20 trials
+  per cell, weak at −18 dB; no seed, script or result file committed, the audit report is the
+  only record) never decoded the weak station at 0 Hz or 1 Hz separation, even decoding the
+  residual afresh without the residue filter, which supports the fit-absorption explanation; it
+  decoded it at 5 Hz in 20/20 and at 0.08 s in 12/20 trials, through `decode_slot` as well as
+  afresh (DSP-05 gives no mechanism for the 0.08 s cell; 0.08 s is exactly two 40 ms hops, the
+  edge of the NMS neighbourhood, and also inside the ±0.1 s residue window, so which gate decides
+  it is not known). The boundary
+  between 1 and 5 Hz, and between 0 and 0.4 s, has not been mapped at benchmark size.
 - `PassStats::suppression_db` is not reported: it is a receiver-internal fit ratio, which the
-  audit measured overstating the true suppression by 9–12 dB. Physical suppression measured
+  2026-09-24 audits measured overstating the true suppression by 9–16 dB. Physical suppression measured
   against the true waveform is in [sic.md](sic.md).
 - Not measured: three or more colliding stations as a function of power (see the busy band),
   fading channels, real recordings.
@@ -338,6 +420,11 @@ frames: 0 discordant (measured during the 2026-09-23 rebuild; the fixed rule is 
 
 ### Performance (gate G2.7)
 
+**Historical, not current (F-35).** Measured at `83b1b70`, before the replica fit every decode
+now runs (`d8983ee`); 20 slots per row, so "p99" is the maximum; the 4-thread allocation column
+is not deterministic; the file has no provenance. No latency figure is current until
+`z30 --benchmark perf` is re-run on an idle host ([research/results/README.md](../research/results/README.md)).
+
 `z30 --benchmark perf --frames 20` (`perf_k.txt`): 20 seeded slots per K, stations at −20…0 dB
 spread over 200–2750 Hz (evenly spaced: this is a latency measurement, not a decode-rate one),
 idle 4-vCPU Xeon @ 2.80 GHz.
@@ -353,7 +440,7 @@ idle 4-vCPU Xeon @ 2.80 GHz.
 | 50 | 4 | 793 | 834 | 863 | 863 | 2.09 | 43 480 | 1000/1000 |
 | 50 | 1 | 2079 | 2324 | 2525 | 2525 | 2.06 | 10 440 | 1000/1000 |
 
-K = 50 on 4 threads: p99 863 ms, under the < 1 s target. On one thread: p99 2525 ms, **over**
+At that commit, K = 50 on 4 threads: p99 863 ms, under the < 1 s target. On one thread: p99 2525 ms, **over**
 the ≤ 2 s target, but inside the real-time budget of 4.5 s (the window closes at slot + 25.5 s;
 the next slot starts at + 30 s).
 
@@ -364,8 +451,8 @@ Monte Carlo engine measured the oracle receiver, not the one that ships. Three f
 that period shaped the current instrument:
 
 - **The coherence weight.** Both old benchmarks passed a pilot coherence weight of 0.0 while
-  both on-air decoders applied 0.35–0.85. The published threshold described a receiver nobody
-  ran; measured paired, the difference was 1.77 dB on AWGN (p = 2.9 × 10⁻³⁶).
+  both live-receive decoders applied 0.35–0.85. The published figure described a receiver
+  nobody ran; measured paired, the difference was 1.77 dB on AWGN (p = 2.9 × 10⁻³⁶).
 - **The browser engine's analytic receive path.** It drew per-tone Gaussians against an
   assumed signalling model instead of synthesising and demodulating a waveform, and read about
   2 dB optimistic.
@@ -385,13 +472,27 @@ Stated so that nobody fills the gap with a plausible number:
 - **Any hardware.** Real sound cards (timing, clock error, levels), every PTT adapter against a
   real radio, the GUI's frame rate on a real display, and any on-air path. See
   [hardware-validation.md](hardware-validation.md).
+- **The capture → resampler → sample clock → scheduler chain.** Suite audio is synthesised at
+  6 kHz and handed to `decode_slot` directly, so no published figure goes through the live
+  receive path in front of it (post-remediation audit N-12). Only the software loopback
+  (`z30 --loopback-test`, 48 and 44.1 kHz, in memory) and the pipeline tests exercise that chain,
+  and none of them produces a published figure.
+- **Input level.** Every benchmark feeds noise of unit variance at 6 kHz; no figure varies the
+  absolute input level a sound card would deliver, so scale invariance of the receiver is
+  expected (its sync metric is median-normalised) but not measured (2026-09-28 audit RES-15).
+- **What a serial port does to DTR/RTS when it is opened**, before z-30 drives the PTT line
+  released ([hardware.md](hardware.md#serial-ports-and-devices)), and **a real rig's tuning
+  resolution** (the probe is not wired in; the readback tolerance is a strict 1 Hz).
 - **Real recordings** of non-z-30 signals for false decodes.
 - **Collisions of three or more stations** as a function of power difference; only the
   random busy band covers many-station overlap.
 - **FT8 on the same channels.** Every FT8 figure in the documentation is published, not
   reproduced.
-- **Gray against natural-binary symbol mapping** (audit L-05).
-- **Single-thread K = 50 latency** misses its target (above).
+- **Gray against natural-binary symbol mapping** (audit L-05). On AWGN the
+  loss is zero for ideal orthogonal FSK by symmetry (SPEC §3); z-30's GFSK is not exactly
+  orthogonal, and on AWGN and fading only an exploratory genie-coarse run exists (2026-09-28 DSP-09).
+- **Latency at the current commit.** Single-thread K = 50 missed its target when last measured,
+  before the replica fit (historical, above); it has not been re-measured.
 - **Windows and macOS** are verified by CI build and test, not by operating a station.
 - **Protocol v2.** Its measured half needs a candidate v2 code, which is a protocol decision
   reserved for the operator.

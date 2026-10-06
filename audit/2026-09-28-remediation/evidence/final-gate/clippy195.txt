@@ -1,0 +1,8 @@
+   Compiling z30-cli v0.1.0-experimental (/home/user/z-30/crates/z30-cli)
+   Compiling z30-gui v0.1.0-experimental (/home/user/z-30/crates/z30-gui)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 1.02s
+    Checking z30-io v0.1.0-experimental (/home/user/z-30/crates/z30-io)
+   Compiling z30-cli v0.1.0-experimental (/home/user/z-30/crates/z30-cli)
+   Compiling z30-gui v0.1.0-experimental (/home/user/z-30/crates/z30-gui)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 2.41s
+CLIPPY195_OK

@@ -122,6 +122,13 @@ pub struct RigStateTracker {
     reported_mode: Option<String>,
     polls_remaining: u32,
     last_reading_ms: Option<u64>,
+    /// When each field was last actually reported. A poll that could not read a field (a failed
+    /// `m` query) says nothing about it, so its last value must not be re-dated by that poll:
+    /// with one timestamp for the whole reading a mode read arbitrarily long ago counted as
+    /// fresh (2026-09-28 audit F-18 / TX-19).
+    dial_ms: Option<u64>,
+    ptt_ms: Option<u64>,
+    mode_ms: Option<u64>,
     resolution: Resolution,
     last_ptt_change_ms: Option<u64>,
 }
@@ -184,12 +191,15 @@ impl RigStateTracker {
         self.last_reading_ms = Some(now_ms);
         if let Some(d) = r.dial_hz.filter(|d| d.is_finite()) {
             self.reported_dial = Some(d);
+            self.dial_ms = Some(now_ms);
         }
         if let Some(p) = r.ptt {
             self.reported_ptt = Some(p);
+            self.ptt_ms = Some(now_ms);
         }
         if let Some(m) = r.mode.as_ref().filter(|m| !m.is_empty()) {
             self.reported_mode = Some(m.clone());
+            self.mode_ms = Some(now_ms);
         }
         if self.polls_remaining > 0 {
             self.polls_remaining -= 1;
@@ -221,6 +231,9 @@ impl RigStateTracker {
         self.reported_ptt = None;
         self.reported_mode = None;
         self.last_reading_ms = None;
+        self.dial_ms = None;
+        self.ptt_ms = None;
+        self.mode_ms = None;
         self.polls_remaining = 0;
     }
 
@@ -246,21 +259,25 @@ impl RigStateTracker {
 
     /// A reading no older than READING_STALE_AFTER_MS.
     pub fn has_fresh_reading(&self, now_ms: u64) -> bool {
-        self.online && self.last_reading_ms.is_some_and(|t| now_ms.saturating_sub(t) <= READING_STALE_AFTER_MS)
+        self.online && Self::fresh(self.last_reading_ms, now_ms)
     }
 
-    /// The dial the radio vouches for, if any.
+    fn fresh(t: Option<u64>, now_ms: u64) -> bool {
+        t.is_some_and(|t| now_ms.saturating_sub(t) <= READING_STALE_AFTER_MS)
+    }
+
+    /// The dial the radio vouches for, if any: its own report, no older than the stale limit.
     pub fn verified_dial_hz(&self, now_ms: u64) -> Option<f64> {
-        if self.has_fresh_reading(now_ms) {
+        if self.online && Self::fresh(self.dial_ms, now_ms) {
             self.reported_dial
         } else {
             None
         }
     }
 
-    /// The operating mode the radio reported, while that report is fresh.
+    /// The operating mode the radio reported, while that report itself is fresh.
     pub fn fresh_reported_mode(&self, now_ms: u64) -> Option<&str> {
-        if self.has_fresh_reading(now_ms) {
+        if self.online && Self::fresh(self.mode_ms, now_ms) {
             self.reported_mode.as_deref()
         } else {
             None
@@ -270,10 +287,10 @@ impl RigStateTracker {
     /// A settled, fresh disagreement with `commanded_hz`, or None. Only positive evidence of a
     /// mismatch is returned; everything uncertain is None.
     pub fn dial_disagreement(&self, commanded_hz: f64, now_ms: u64) -> Option<DialDisagreement> {
-        if !commanded_hz.is_finite() || !self.has_fresh_reading(now_ms) || !self.is_stable() {
+        let reported = self.verified_dial_hz(now_ms)?;
+        if !commanded_hz.is_finite() || !self.is_stable() {
             return None;
         }
-        let reported = self.reported_dial?;
         if dial_agrees(commanded_hz, reported, self.resolution) {
             return None;
         }
@@ -281,7 +298,7 @@ impl RigStateTracker {
             commanded_hz,
             reported_hz: reported,
             error_hz: reported - commanded_hz,
-            age_ms: now_ms.saturating_sub(self.last_reading_ms.unwrap_or(now_ms)),
+            age_ms: now_ms.saturating_sub(self.dial_ms.unwrap_or(now_ms)),
         })
     }
 

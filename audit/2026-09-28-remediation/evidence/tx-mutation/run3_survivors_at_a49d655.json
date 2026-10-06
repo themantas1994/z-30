@@ -1,0 +1,34 @@
+{
+  "commit": "a49d6558e1dab0c37028ddc88c0323f8b839aa4a",
+  "toolchain": "rustc 1.95.0, cargo test --release --locked",
+  "mutations": [
+    {
+      "id": "G-plan",
+      "mutation": "plan_tx trusts only the violation list (a frame request with no frame passes)",
+      "file": "crates/z30-engine/src/engine.rs:530",
+      "occurrences": 1,
+      "result": "SURVIVED",
+      "failing": [],
+      "tests_run": [
+        "-p z30-engine --test safety",
+        "-p z30-engine --test gate_contract",
+        "-p z30-engine --lib",
+        "-p z30-engine --test dial_provenance"
+      ]
+    },
+    {
+      "id": "RT-relfault",
+      "mutation": "an unconfirmed release is not reported or refused by the runtime",
+      "file": "crates/z30-engine/src/runtime.rs:753",
+      "occurrences": 1,
+      "result": "SURVIVED",
+      "failing": [],
+      "tests_run": [
+        "-p z30-engine --test tx_runtime",
+        "-p z30-engine --test safety",
+        "-p z30-engine --test dial_provenance",
+        "-p z30-engine --test live_runtime"
+      ]
+    }
+  ]
+}

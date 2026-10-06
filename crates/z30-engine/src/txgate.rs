@@ -11,12 +11,17 @@
 //! - a radio that reports an operating mode other than USB is refused: the emission check
 //!   assumes the audio is transmitted as upper sideband (2026-09-24 audit, L-07);
 //! - the emission is checked at its measured -40 dB width around the real tone span, not as a
-//!   50 Hz block centred on tone 0.
+//!   50 Hz block centred on tone 0;
+//! - the transmit hardware is part of the request: a PTT method configured, the output and
+//!   keying hardware open and healthy, no unconfirmed PTT release, and a transmit level in
+//!   (0, 1]. These used to be appended by `plan_tx` after the gate had already said
+//!   `allowed: true`, so any other caller that trusted `allowed` would have keyed a station with
+//!   no PTT, no output device or a zero level (2026-09-28 audit F-22).
 //!
 //! It fails closed and returns every violation, never a partial `allowed`.
 
 use crate::bandplan::{find_permitted_segment, is_valid_callsign, nearest_permitted_segment};
-use crate::config::StationConfig;
+use crate::config::{PttConfig, StationConfig};
 use crate::rig::{DialDisagreement, RigStateTracker};
 use std::fmt;
 use z30_protocol::codec::{CallField, Callsign, CodecError, EncodedMessage, Message, VerifiedFrame};
@@ -75,6 +80,13 @@ pub enum Violation {
     HardwareUnavailable(String),
     /// The transmit audio level is zero: the transmitter would be keyed with no signal.
     TxAudioLevelZero,
+    /// The transmit audio level is above full scale (or not a number): the output would clip
+    /// and the emission would be wider than the one checked.
+    TxAudioLevelOutOfRange(f32),
+    /// A PTT release was not confirmed by the hardware: the transmitter may still be keyed.
+    PttReleaseUnconfirmed(String),
+    /// The radio refused the last set-frequency command and no reading has confirmed the dial.
+    RigRefusedDial(u64),
 }
 
 impl fmt::Display for Violation {
@@ -91,7 +103,7 @@ impl fmt::Display for Violation {
             FrequencyUndetermined => write!(f, "The transmit frequency could not be determined: no dial frequency is set (Settings: dial), or the dial or audio offset is not a usable number."),
             AudioOffsetOutOfRange(hz) => write!(f, "Transmit audio frequency {hz:.0} Hz is outside {MIN_TX_AUDIO_HZ:.0}-{MAX_TX_AUDIO_TOP_HZ:.0} Hz."),
             OutOfBand { low_hz, high_hz, nearest } => {
-                write!(f, "{:.6}-{:.6} MHz is not inside any data segment available to this licence.", low_hz / 1e6, high_hz / 1e6)?;
+                write!(f, "{:.6}-{:.6} MHz is not inside any segment z-30's band plan permits a data emission for this region and licence.", low_hz / 1e6, high_hz / 1e6)?;
                 if let Some((band, d)) = nearest {
                     if *d == 0.0 {
                         write!(f, " The emission straddles the edge of {band}.")
@@ -116,6 +128,9 @@ impl fmt::Display for Violation {
             PttNotConfigured => write!(f, "No PTT method is configured (Settings: PTT)."),
             HardwareUnavailable(why) => write!(f, "Transmit hardware unavailable: {why}"),
             TxAudioLevelZero => write!(f, "The transmit audio level is 0 (Settings: TX level): the radio would be keyed with no signal."),
+            TxAudioLevelOutOfRange(l) => write!(f, "The transmit audio level {l} is not between 0 and 1 (full scale): the output would clip and radiate wider than the emission checked."),
+            PttReleaseUnconfirmed(why) => write!(f, "The last PTT release was not confirmed by the hardware ({why}); the transmitter may still be keyed. z-30 keeps retrying the release; check the radio."),
+            RigRefusedDial(hz) => write!(f, "The radio did not accept the dial {:.6} MHz and has not reported it since; the frequency the emission would be on is unknown.", *hz as f64 / 1e6),
         }
     }
 }
@@ -138,6 +153,21 @@ pub struct Permission {
     pub segment: Option<&'static str>,
 }
 
+/// The transmit hardware as the station has it now. Part of every gate request.
+#[derive(Clone, Debug)]
+pub struct TxHardware<'a> {
+    /// The configured keying method.
+    pub ptt: &'a PttConfig,
+    /// Why the output or keying hardware cannot be used (could not be opened, has failed).
+    pub problems: &'a [String],
+    /// The transmit level, 0..=1 of full scale.
+    pub tx_level: f32,
+    /// A PTT release the hardware has not confirmed, if any.
+    pub ptt_release_unconfirmed: Option<&'a str>,
+    /// The radio refused a set-frequency for this dial and nothing has confirmed it since.
+    pub dial_refused: Option<u64>,
+}
+
 /// What is about to be transmitted.
 pub struct TxRequest<'a> {
     /// Station identity and licence.
@@ -148,6 +178,8 @@ pub struct TxRequest<'a> {
     pub tx_audio_hz: f64,
     /// The frame, or None for a tune carrier (at tone 0... the whole span is checked anyway).
     pub message: Option<&'a Message>,
+    /// The transmit hardware.
+    pub hardware: &'a TxHardware<'a>,
 }
 
 /// Upper-sideband mode names as Hamlib reports them. The emission is dial + audio only in these.
@@ -227,6 +259,30 @@ pub fn can_transmit_encoded(
         if !USB_MODES.contains(&mode.trim().to_ascii_uppercase().as_str()) {
             v.push(Violation::RigModeNotUsb(mode.to_string()));
         }
+    }
+
+    // The hardware that would carry it. Uncertainty is a refusal: an unconfirmed release, an
+    // unopened or failed device, no keying method, a level that is not a real level.
+    let hw = req.hardware;
+    if *hw.ptt == PttConfig::None {
+        v.push(Violation::PttNotConfigured);
+    }
+    for p in hw.problems {
+        v.push(Violation::HardwareUnavailable(p.clone()));
+    }
+    if let Some(why) = hw.ptt_release_unconfirmed {
+        v.push(Violation::PttReleaseUnconfirmed(why.to_string()));
+    }
+    if let Some(hz) = hw.dial_refused {
+        v.push(Violation::RigRefusedDial(hz));
+    }
+    // A new installation's level is 0.0: keying with it puts a silent carrier-less TX on the
+    // air under the operator's name (2026-09-24 post-remediation audit, N-09). NaN and levels
+    // above full scale are refused, not clamped: a clamped level is not the configured one.
+    if hw.tx_level.is_nan() || hw.tx_level > 1.0 {
+        v.push(Violation::TxAudioLevelOutOfRange(hw.tx_level));
+    } else if hw.tx_level <= 0.0 {
+        v.push(Violation::TxAudioLevelZero);
     }
 
     let mut frame = None;

@@ -1,0 +1,35 @@
+PROBE3 unmutated rc 0 ['test audit_probe_a_completed_tune_in_place_of_rr73_does_not_complete_the_contact ... ok', 'test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 13 filtered out; finished in 0.00s']
+PROBE3 with A-LOG-tune rc 101 ['test audit_probe_a_completed_tune_in_place_of_rr73_does_not_complete_the_contact ... FAILED', 'test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 13 filtered out; finished in 0.08s']
+PROBE2 unmutated rc 0 ['test audit_probe_a_clock_step_between_plan_and_key_abandons_the_plan ... ok', 'test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 25 filtered out; finished in 0.65s']
+PROBE2 with A-CLK-keyedonly rc 101 ['test audit_probe_a_clock_step_between_plan_and_key_abandons_the_plan ... FAILED', 'test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 25 filtered out; finished in 0.75s']
+_abandons_the_plan ... FAILED
+
+failures:
+
+---- audit_probe_a_clock_step_between_plan_and_key_abandons_the_plan stdout ----
+
+thread 'audit_probe_a_clock_step_between_plan_and_key_abandons_the_plan' (26469) panicked at crates/z30-engine/tests/tx_runtime.rs:997:5:
+keyed a plan accepted before the clock step: [(4950, true)]
+stack backtrace:
+   0: __rustc::rust_begin_unwind
+             at /rustc/59807616e1fa2540724bfbac14d7976d7e4a3860/library/std/src/panicking.rs:689:5
+   1: core::panicking::panic_fmt
+             at /rustc/59807616e1fa2540724bfbac14d7976d7e4a3860/library/core/src/panicking.rs:80:14
+   2: tx_runtime::audit_probe_a_clock_step_between_plan_and_key_abandons_the_plan
+             at ./tests/tx_runtime.rs:997:5
+   3: tx_runtime::audit_probe_a_clock_step_between_plan_and_key_abandons_the_plan::{{closure}}
+             at ./tests/tx_runtime.rs:978:69
+   4: core::ops::function::FnOnce::call_once
+             at /rustc/59807616e1fa2540724bfbac14d7976d7e4a3860/library/core/src/ops/function.rs:250:5
+   5: <fn() -> core::result::Result<(), alloc::string::String> as core::ops::function::FnOnce<()>>::call_once
+             at /rustc/59807616e1fa2540724bfbac14d7976d7e4a3860/library/core/src/ops/function.rs:250:5
+note: Some details are omitted, run with `RUST_BACKTRACE=full` for a verbose backtrace.
+
+
+failures:
+    audit_probe_a_clock_step_between_plan_and_key_abandons_the_plan
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 25 filtered out; finished in 0.75s
+
+ 
+A-COMBO-relreport (RT-relfault + A-CHK-pending) -p z30-engine --test tx_runtime rc 101 ['rt_an_unconfirmed_release_is_reported_blocks_transmission_and_is_retried_until_confirmed', 'rt_an_unconfirmed_release_is_a_gate_refusal_while_it_lasts'] 49s

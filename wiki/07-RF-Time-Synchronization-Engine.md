@@ -29,11 +29,19 @@ and a time-zone parsing error) is removed too.
   own.
 - It reports the operating system's own synchronisation status: on Linux,
   "NTP-synchronised" only when `timedatectl` says so, "NOT synchronised" when it says not,
-  "unavailable" when it cannot be asked; on Windows and macOS, "not checked". It never says
+  "unavailable" when it cannot be asked; on Windows and macOS, "not checked"; "not yet checked"
+  until the first query (which runs on a thread of its own) has answered. It never says
   "OK" by default.
 - The GUI shows the **median DT** of recent decodes: a clock that is off shows up as every
   station appearing early or late by the same amount. It is a diagnostic hint, not a correction.
 - `z30 --migrate` never imports a legacy clock offset.
+- **If the system clock jumps** by more than about a slot (a manual change, or NTP stepping a
+  badly wrong clock), the receiver re-seats itself on the new time and says so: "The system clock
+  stepped ±N s; the receiver moved from slot A to slot B" in the GUI, and a `--` line from
+  `z30 --receive`. After a backward jump the slots that come round again are decoded again; after
+  a forward jump the skipped slots are not decoded. Small corrections (a slew, or a step of a
+  second or two) are absorbed without a message. Before this, a backward jump silenced the
+  receiver for as long as the jump.
 
 ## What you need to do
 

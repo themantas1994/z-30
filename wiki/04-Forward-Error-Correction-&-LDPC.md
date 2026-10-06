@@ -22,7 +22,7 @@ exchange"; the message is 63 bits. FT8 carries 77 message bits.)
 
 A callsign v1 can carry is a 1–2 character prefix, one digit and a 1–3 letter suffix, packed as
 
-$$N = ig( (p \cdot 37 + p') \cdot 10 + d ig) \cdot 27^3 + (s_0 \cdot 27^2 + s_1 \cdot 27 + s_2) + 100$$
+$$N = \big( (p \cdot 37 + p') \cdot 10 + d \big) \cdot 27^3 + (s_0 \cdot 27^2 + s_1 \cdot 27 + s_2) + 100$$
 
 ($p, p'$ over `[ 0-9A-Z]`, $s_i$ over `[ A-Z]`). The full space exceeds $2^{28}$, so prefixes from
 `ZV` upward would wrap onto other callsigns. **z-30 refuses them**, and refuses portable (`/P`),
@@ -99,8 +99,9 @@ The receiver performs iterative message passing between Variable Nodes ($V_n$) a
 > (240 frames across SNR −24/−25/−26 dB, same frame and channel noise decoded by both the real
 > cascade and a from-scratch reimplementation of the single-schedule description this page used
 > to carry) found the cascade decodes strictly more frames at every point tested — 23 of 23
-> disagreements went to the cascade, 0 to the single schedule (exact McNemar test, p ≈ 4×10⁻⁷,
-> i.e. **>99.9999% confidence**). Per the benchmark-integrity rule in `AGENTS.md` §5, that clears
+> disagreements went to the cascade, 0 to the single schedule (exact two-sided McNemar
+> p = 2 × 2⁻²³ ≈ 2.4 × 10⁻⁷; measured on the oracle's decoders in 2026-08, and no result file is
+> kept). Per the benchmark-integrity rule in `AGENTS.md` §5, that clears
 > the bar to correct the documentation rather than the code. See
 > [16. Benchmarking, Testing & CI](16-Benchmarking-Testing-&-CI.md) for the method.
 
@@ -146,21 +147,24 @@ dithered passes from oscillating.
 4. **Hard Decision & CRC Parity Check**:
    $$\hat{c}_n = \begin{cases} 0 & \text{if } \text{LLR}_n + \sum_{m \in M(n)} L_{m \to n} \ge 0 \\ 1 & \text{if } \text{LLR}_n + \sum_{m \in M(n)} L_{m \to n} < 0 \end{cases}$$
    If $H \cdot \hat{\mathbf{c}}^T = \mathbf{0} \pmod 2$ and the 14-bit CRC matches, decoding terminates with **SUCCESS** immediately (often in single digits of iterations for a clean frame).
-5. **Trellis-IRA re-check**: independently of the syndrome, whenever a candidate's *payload* CRC
-   already matches its received CRC, the 139 parity bits are re-derived from those 77 information
-   bits directly (the same forward-substitution the encoder uses) and checked against the
-   syndrome — this catches a codeword whose information bits are already correct but whose noisy
-   parity bits haven't converged, without spending more iterations on them.
+5. **Trellis-IRA re-check**: independently of the syndrome, whenever the hard decision's
+   payload CRC matches its received CRC field, its 77 information bits are re-encoded (the same
+   forward-substitution the encoder uses), and the result is accepted if that codeword correlates
+   positively with the channel LLRs **and** differs from the hard decision in at most 12 bits
+   (SPEC §7) — this catches a codeword whose information bits are already correct but whose
+   noisy parity bits haven't converged, without spending more iterations on them.
 6. **Escalation**: if a schedule's iteration cap is reached without success, the next schedule in
    the table runs on a fresh copy of the channel LLRs.
-7. **OSD**: if all four fail, ordered-statistics post-processing (up to 2 bit flips on the most
-   reliable basis) proposes codewords. In z-30 a proposal is accepted only if its CRC field
-   matches the **received** CRC bits as well as its own payload — the legacy check compared a
-   codeword's CRC with the CRC computed from that same codeword, which is always true (a
-   tautology; audit H-09 / M1), so the legacy OSD's only real test was the syndrome. The union
-   bound on a false OSD accept is about $106 \times 2^{-14} \approx 6.5 \times 10^{-3}$ per
-   invocation *before* the fine-sync gate and the CRC-field match, and 0 false decodes have been
-   observed in any measured run (`docs/ldpc.md`).
+7. **OSD**: if all four fail, and only if the best BP iteration reached a syndrome weight of at
+   most 14 (SPEC §7), ordered-statistics post-processing flips up to two of the 14 least
+   reliable of all 77 information bits (payload **and** CRC field) of that iteration's hard
+   decision, re-encodes, and accepts a candidate only if its CRC field equals the CRC of its own
+   payload, then applies the correlation (> 20) and distance (≤ 16 bits) gates (SPEC §7.1). The
+   legacy OSD flipped payload bits only and *recomputed* the CRC from the flipped payload, so its
+   CRC check compared a CRC with itself and was always true (a tautology; audit H-09 / M1). The
+   union bound on a random CRC pass is $106 \times 2^{-14} \approx 6.5 \times 10^{-3}$ per
+   invocation *before* the correlation and distance gates; the measured false-decode figures are
+   in `docs/ldpc.md` and [16](16-Benchmarking-Testing-&-CI.md).
 8. Otherwise the candidate fails. A failed candidate is **not** passed to SIC: SIC subtracts only
    frames that decoded ([05](05-Successive-Interference-Cancellation-(SIC).md)).
 
@@ -174,7 +178,8 @@ not answering you. **A priori (AP) decoding** asserts those bits instead of meas
 lets the CRC-14 decide whether the assertion was right.
 
 The whole cascade above runs first and unchanged — AP is only attempted on a frame that has
-already failed every schedule, so it can add decodes but cannot change or lose one. An asserted
+already failed every schedule, so for that frame it can add a decode but cannot change or lose one
+(across SIC passes the guarantee is weaker; see [17](17-A-Priori-(AP)-Decoding.md)). An asserted
 bit is *pinned*: its belief is held at the asserted value for every iteration rather than merely
 initialised there, so no run of confident check messages can walk it back.
 

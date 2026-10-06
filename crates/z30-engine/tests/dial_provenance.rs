@@ -11,7 +11,7 @@
 
 use z30_dsp::ldpc::DecodeMethod;
 use z30_dsp::slot::{Decode, SlotReport};
-use z30_engine::api::{Command, Event};
+use z30_engine::api::{Command, Event, TxOutcome};
 use z30_engine::bandplan::{LicenseClass, Region};
 use z30_engine::config::{Config, PttConfig};
 use z30_engine::engine::Engine;
@@ -62,7 +62,7 @@ fn contact(e: &mut Engine, now_ms: u64, before_log: impl FnOnce(&mut Engine)) ->
     e.on_slot_report(SLOT, &rep("G4XYZ K1ABC FN31"), slot_start(SLOT) + 26.0, now_ms);
     if let Some(p) = e.plan_tx(SLOT + 1, now_ms) {
         e.tx_started(&p);
-        e.tx_finished(SLOT + 1, true, now_ms);
+        e.tx_finished(SLOT + 1, &TxOutcome::Complete, now_ms);
     }
     e.on_slot_report(SLOT + 2, &rep("G4XYZ K1ABC -08"), slot_start(SLOT + 2) + 26.0, now_ms);
     let _ = e.take_events();
@@ -71,8 +71,8 @@ fn contact(e: &mut Engine, now_ms: u64, before_log: impl FnOnce(&mut Engine)) ->
         e.tx_started(p);
     }
     before_log(e);
-    e.tx_finished(SLOT + 3, true, now_ms);
-    e.take_events().into_iter().find_map(|ev| if let Event::Logged(r) = ev { Some(*r) } else { None })
+    e.tx_finished(SLOT + 3, &TxOutcome::Complete, now_ms);
+    e.take_events().into_iter().find_map(|ev| if let Event::ContactComplete(r) = ev { Some(*r) } else { None })
 }
 
 #[test]
@@ -91,7 +91,7 @@ fn p1_no_dial_and_no_radio_logs_no_frequency_and_refuses_to_transmit() {
     let rep = |text: &str| SlotReport { decodes: vec![decode(text)], ..Default::default() };
     e.on_slot_report(SLOT, &rep("G4XYZ K1ABC -05"), slot_start(SLOT) + 26.0, 0);
     e.on_slot_report(SLOT + 2, &rep("G4XYZ K1ABC 73"), slot_start(SLOT + 2) + 26.0, 0);
-    let rec = e.take_events().into_iter().find_map(|ev| if let Event::Logged(r) = ev { Some(*r) } else { None }).expect("logged");
+    let rec = e.take_events().into_iter().find_map(|ev| if let Event::ContactComplete(r) = ev { Some(*r) } else { None }).expect("logged");
     assert_eq!(rec.dial_hz, None);
     assert_eq!(rec.band, None);
     assert_eq!(rec.tx_audio_hz, None, "we never transmitted in this exchange");
@@ -135,7 +135,21 @@ fn p5_a_command_the_radio_refused_is_not_commanded() {
     e.on_dial_command_result(7_076_000, Err("RPRT -1".into()));
     assert!(!e.dial_commanded());
     assert!(e.take_events().iter().any(|ev| matches!(ev, Event::Rig(m) if m.contains("did not accept"))));
-    let rec = contact(&mut e, 0, |_| {}).expect("logged");
+    // The refusal is positive evidence that the radio is not on the dial the gate would check:
+    // nothing is transmitted until a reading confirms it (2026-09-28 audit F-45). This test used
+    // to complete a contact straight after the refusal; that contact is now refused.
+    assert!(contact(&mut e, 0, |_| {}).is_none(), "no contact is transmitted on a dial the radio refused");
+    assert!(e.snapshot(0).tx_blockers.iter().any(|b| b.contains("did not accept the dial")));
+    // A reading that confirms the dial lifts the refusal. Once that reading is stale, the logged
+    // dial is still only configuration: the refused command never became "commanded" (N-05).
+    let mut e = Engine::new(config(None));
+    e.apply(Command::SetDial(7_076_000), 0);
+    let _ = e.take_dial_command();
+    e.on_dial_command_result(7_076_000, Err("RPRT -1".into()));
+    e.on_rig_reading(&Reading { dial_hz: Some(7_076_000.0), ..Default::default() }, 0);
+    assert!(!e.snapshot(0).tx_blockers.iter().any(|b| b.contains("did not accept the dial")));
+    let rec = contact(&mut e, READING_STALE_AFTER_MS + 1, |_| {}).expect("logged");
+    assert!(!e.dial_commanded());
     assert_eq!(rec.dial_hz, Some(Sourced::new(7_076_000.0, Provenance::Configured)));
 }
 
@@ -260,7 +274,7 @@ mod runtime_path {
         std::thread::sleep(Duration::from_millis(300));
         let snap = handle.snapshot.load();
         let out = (snap.dial_commanded, snap.dial_hz);
-        handle.shutdown();
+        assert!(handle.shutdown().release_confirmed());
         out
     }
 

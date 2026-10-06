@@ -5,18 +5,58 @@
 //! status shown is the operating system's own, and "not checked" where there is no cheap,
 //! reliable way to ask.
 
-use std::sync::Mutex;
-use std::time::{Instant, SystemTime, UNIX_EPOCH};
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use z30_engine::runtime::WallClock;
 
 /// UTC from `SystemTime`, with a cached OS synchronisation status.
+///
+/// The status is refreshed on a thread of its own and `status()` only reads the cache: it used
+/// to run `timedatectl` (a D-Bus call with no timeout) on the engine's control thread once a
+/// minute, which could stall the transmit timeline and HALT (2026-09-28 audit F-16).
 pub struct SystemWallClock {
-    cache: Mutex<(Option<Instant>, String)>,
+    cache: Arc<Mutex<Cache>>,
+    query: fn() -> String,
+    refresh_after: Duration,
+    stale_after: Duration,
 }
+
+struct Cache {
+    checked: Option<Instant>,
+    text: String,
+    /// When the query still outstanding was started.
+    refreshing: Option<Instant>,
+}
+
+/// A query that has not answered for this long makes the status "unknown" instead of showing
+/// the last answer as current: a hung `timedatectl` left an old "NTP-synchronised" on screen
+/// for ever, with no age (post-remediation review L-4).
+pub const STATUS_QUERY_STALE_AFTER: Duration = Duration::from_secs(30);
+
+/// What `status()` says before the first query has answered.
+pub const STATUS_NOT_YET_CHECKED: &str = "system clock (synchronisation status not yet checked)";
 
 impl Default for SystemWallClock {
     fn default() -> Self {
-        SystemWallClock { cache: Mutex::new((None, String::new())) }
+        Self::with_query(query_status)
+    }
+}
+
+impl SystemWallClock {
+    /// A clock whose status comes from `query` (tests inject a slow one).
+    pub fn with_query(query: fn() -> String) -> Self {
+        Self::with_query_and_intervals(query, Duration::from_secs(60), STATUS_QUERY_STALE_AFTER)
+    }
+
+    /// As `with_query`, re-asking after `refresh_after` and calling an unanswered query stale
+    /// after `stale_after` (tests shorten both).
+    pub fn with_query_and_intervals(query: fn() -> String, refresh_after: Duration, stale_after: Duration) -> Self {
+        SystemWallClock {
+            cache: Arc::new(Mutex::new(Cache { checked: None, text: STATUS_NOT_YET_CHECKED.into(), refreshing: None })),
+            query,
+            refresh_after,
+            stale_after,
+        }
     }
 }
 
@@ -65,16 +105,31 @@ impl WallClock for SystemWallClock {
 
     fn status(&self) -> String {
         let mut c = self.cache.lock().unwrap_or_else(|p| p.into_inner());
-        if c.0.is_none_or(|t| t.elapsed().as_secs() >= 60) {
-            *c = (Some(Instant::now()), query_status());
+        if c.refreshing.is_none() && c.checked.is_none_or(|t| t.elapsed() >= self.refresh_after) {
+            c.refreshing = Some(Instant::now());
+            let (cache, query) = (self.cache.clone(), self.query);
+            let spawned = std::thread::Builder::new().name("z30-clock-status".into()).spawn(move || {
+                let text = query();
+                let mut c = cache.lock().unwrap_or_else(|p| p.into_inner());
+                *c = Cache { checked: Some(Instant::now()), text, refreshing: None };
+            });
+            if spawned.is_err() {
+                c.refreshing = None;
+            }
         }
-        c.1.clone()
+        match c.refreshing {
+            Some(since) if since.elapsed() >= self.stale_after => {
+                format!("system clock (synchronisation status unknown: the OS has not answered for {} s)", since.elapsed().as_secs())
+            }
+            _ => c.text.clone(),
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
 
     #[test]
     fn synchronised_is_claimed_only_when_the_os_says_so() {
@@ -82,6 +137,53 @@ mod tests {
         for other in [Some("no"), Some(""), Some("maybe"), Some("YES please"), None] {
             let s = status_from_timedatectl(other);
             assert!(!s.contains("NTP-synchronised"), "{other:?} -> {s}");
+        }
+    }
+
+    #[test]
+    fn f16_the_status_never_blocks_on_the_os_query() {
+        fn slow() -> String {
+            std::thread::sleep(std::time::Duration::from_millis(500));
+            "system clock NTP-synchronised (timedatectl)".into()
+        }
+        let c = SystemWallClock::with_query(slow);
+        let t = Instant::now();
+        assert_eq!(c.status(), STATUS_NOT_YET_CHECKED, "nothing is claimed before the OS answered");
+        assert_eq!(c.status(), STATUS_NOT_YET_CHECKED);
+        assert!(t.elapsed().as_millis() < 100, "status() waited {:?} for the query", t.elapsed());
+        let t = Instant::now();
+        while c.status() == STATUS_NOT_YET_CHECKED && t.elapsed().as_secs() < 5 {
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        assert!(c.status().contains("NTP-synchronised"));
+    }
+
+    #[test]
+    fn l4_a_query_that_stops_answering_turns_an_old_synchronised_into_unknown() {
+        static CALLS: AtomicUsize = AtomicUsize::new(0);
+        fn first_answers_then_hangs() -> String {
+            if CALLS.fetch_add(1, Ordering::SeqCst) > 0 {
+                std::thread::sleep(Duration::from_secs(3));
+            }
+            "system clock NTP-synchronised (timedatectl)".into()
+        }
+        let c = SystemWallClock::with_query_and_intervals(first_answers_then_hangs, Duration::ZERO, Duration::from_millis(200));
+        let t = Instant::now();
+        while !c.status().contains("NTP-synchronised") {
+            assert!(t.elapsed().as_secs() < 5, "the first query never answered");
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        // The next status starts the second query, which hangs; once it is overdue the old
+        // answer is no longer shown as current.
+        let t = Instant::now();
+        loop {
+            let s = c.status();
+            if s.contains("unknown") {
+                assert!(!s.contains("NTP-synchronised"), "{s}");
+                break;
+            }
+            assert!(t.elapsed().as_secs() < 2, "still showing {s:?} with the query overdue");
+            std::thread::sleep(Duration::from_millis(20));
         }
     }
 

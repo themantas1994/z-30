@@ -90,11 +90,14 @@ This is WSJT-X's `ft8b.f90` ladder, a twin of `legacy/python-oracle/z30_dsp/ap_d
 an assumption can become a logged QSO. Three rules keep it honest:
 
 - **AP never runs first.** `decode_with_ap` attempts the ordinary decode and returns it
-  untouched when it succeeds. AP may add decodes, never change or lose one.
+  untouched when it succeeds. AP may add decodes, never change or lose one: by construction per
+  candidate. Across SIC passes (an AP decode is subtracted and changes what passes 2–3 see) it is
+  **not guaranteed and not yet exercised by any test**; the busy-band test in `ap_production.rs`
+  is a regression guard that never puts a plain decode at risk (2026-10-05 DSP re-review).
 - **A frame recovered by AP is labelled.** `ap_type` travels into `Decode` and the GUI's band
-  activity shows `a1`…`a6`. (The logbook does not yet carry the tag: a QSO is a sequence of
-  decodes, and which of them were AP-assisted is not stored per record. Listed in
-  [benchmarking.md](benchmarking.md#not-measured).)
+  activity shows `a1`…`a6`. The logbook records, per contact, whether any message of the
+  exchange was AP-assisted (`QsoRecord::ap_assisted`, the SQLite column `ap_assisted`, `AP=1` in
+  ADIF `APP_Z30_PROVENANCE`, ", AP" in the GUI logbook), but not which AP type or which message.
 - **The gates only narrow.** Callsigns in a hypothesis must round-trip (the `Callsign` type
   cannot hold one that does not). Types 3 and up are confined to ±75 Hz of the frequencies
   being worked (`AP_FREQ_WINDOW_HZ`). AP is off unless the caller supplies an `ApContext`,

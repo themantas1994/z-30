@@ -99,6 +99,39 @@ fn str_of<'a>(v: &'a Value, k: &str) -> Option<&'a str> {
 
 const PLACEHOLDERS: [&str; 2] = ["NOCAL", "N0CALL"];
 
+/// 64-bit FNV-1a, for comparing against a callsign without writing it into the binary.
+const fn fnv1a(b: &[u8]) -> u64 {
+    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+    let mut i = 0;
+    while i < b.len() {
+        h ^= b[i] as u64;
+        h = h.wrapping_mul(0x0000_0100_0000_01b3);
+        i += 1;
+    }
+    h
+}
+
+/// The real station the stale legacy bundle shipped as its default callsign (audit C-04). A
+/// legacy config that still carries it cannot be told apart from one saved without changing
+/// the default, so it is not imported (2026-09-28 audit F-21). Compared by hash: the release
+/// workflow checks that the call itself appears nowhere in the shipped binaries.
+const LEGACY_DEFAULT_CALL_FNV: u64 = fnv1a(b"W1AW");
+
+fn is_legacy_default_call(c: &str) -> bool {
+    fnv1a(c.trim().to_ascii_uppercase().as_bytes()) == LEGACY_DEFAULT_CALL_FNV
+}
+
+/// The legacy apps saved every field, defaults included, so a saved value equal to its writer's
+/// default is indistinguishable from a default the operator never chose. For the fields that
+/// enable or shape a transmission such a value stays unknown: the web UI's `DEFAULT_STATION_CONFIG`
+/// (`pttMethod: 'CAT'`, `txPowerWatts: 25`) and the Tk wizard's `StationConfig` (`ptt_method:
+/// "CAT Command"`, `dial_freq_hz: 14076000`, `tx_power_watts: 50`).
+const WEB_DEFAULT_PTT: &str = "CAT";
+const TK_DEFAULT_PTT: &str = "CAT Command";
+const WEB_DEFAULT_TX_POWER_W: f64 = 25.0;
+const TK_DEFAULT_TX_POWER_W: f64 = 50.0;
+const TK_DEFAULT_DIAL_HZ: u64 = 14_076_000;
+
 /// How the legacy auto-logger began the notes of every entry it wrote.
 const LEGACY_AUTOLOG_NOTE: &str = "z-30 16-MFSK LDPC";
 /// The grid it logged when none had been received.
@@ -161,6 +194,10 @@ pub fn migrate_config(dir: &Path) -> (Config, Report) {
         Some(c) if PLACEHOLDERS.contains(&c.to_ascii_uppercase().as_str()) => {
             rep.fields.push(Outcome::Skipped("callsign".into(), format!("\"{c}\" is the unconfigured placeholder")))
         }
+        Some(c) if is_legacy_default_call(c) => rep.fields.push(Outcome::Skipped(
+            "callsign".into(),
+            format!("\"{c}\" was the stale legacy bundle's default callsign (a real station's, audit C-04); it cannot be told apart from a settings file saved without changing it. Enter your own callsign in Settings"),
+        )),
         Some(c) => {
             cfg.station.callsign = c.to_ascii_uppercase();
             if z30_protocol::codec::Callsign::new(c).is_err() {
@@ -204,17 +241,36 @@ pub fn migrate_config(dir: &Path) -> (Config, Report) {
         }
         None => rep.fields.push(Outcome::Skipped("licence class".into(), "not set; transmit is refused until it is".into())),
     }
-    if let Some(p) = web.get("txPowerWatts").or_else(|| tk.get("tx_power_watts")).and_then(|v| v.as_f64()) {
-        cfg.station.configured_tx_power_w = Some(p);
-        rep.fields.push(Outcome::Changed(
+    let power = match (web.get("txPowerWatts").and_then(|v| v.as_f64()), tk.get("tx_power_watts").and_then(|v| v.as_f64())) {
+        (Some(p), _) => Some((p, p == WEB_DEFAULT_TX_POWER_W)),
+        (None, Some(p)) => Some((p, p == TK_DEFAULT_TX_POWER_W)),
+        _ => None,
+    };
+    match power {
+        Some((p, true)) => rep.fields.push(Outcome::Skipped(
             "tx power".into(),
-            format!("{p} W kept as CONFIGURED power; it is never shown as measured (audit M13)"),
-        ));
+            format!("{p} W is the legacy app's default, saved whether or not it was set; no power is configured (set it in Settings)"),
+        )),
+        Some((p, false)) => {
+            cfg.station.configured_tx_power_w = Some(p);
+            rep.fields.push(Outcome::Changed(
+                "tx power".into(),
+                format!("{p} W kept as CONFIGURED power; it is never shown as measured (audit M13)"),
+            ));
+        }
+        None => {}
     }
-    if let Some(d) = tk.get("dial_freq_hz").and_then(|v| v.as_u64()) {
-        // Configuration: the operator's setting in the old app, nothing a radio confirmed.
-        cfg.operating.dial_hz = Some(d);
-        rep.fields.push(Outcome::Migrated(format!("dial = {d} Hz (configuration)")));
+    match tk.get("dial_freq_hz").and_then(|v| v.as_u64()) {
+        Some(d) if d == TK_DEFAULT_DIAL_HZ => rep.fields.push(Outcome::Skipped(
+            "dial".into(),
+            format!("{d} Hz is the legacy wizard's default dial, saved whether or not it was set; no dial is configured (N-05)"),
+        )),
+        Some(d) => {
+            // Configuration: the operator's setting in the old app, nothing a radio confirmed.
+            cfg.operating.dial_hz = Some(d);
+            rep.fields.push(Outcome::Migrated(format!("dial = {d} Hz (configuration)")));
+        }
+        None => {}
     }
     if let Some(f) = tk.get("tx_audio_freq_hz").and_then(|v| v.as_f64()) {
         cfg.operating.tx_audio_hz = f;
@@ -259,8 +315,15 @@ pub fn migrate_config(dir: &Path) -> (Config, Report) {
         .or_else(|| str_of(&tk, "ptt_port"))
         .or_else(|| str_of(&web, "serialPort"))
         .or_else(|| str_of(&tk, "serial_port"));
-    let ptt_method = str_of(&web, "pttMethod").map(str::to_string).or_else(|| {
-        str_of(&tk, "ptt_method").map(|m| match m {
+    let web_ptt = str_of(&web, "pttMethod");
+    let tk_ptt = str_of(&tk, "ptt_method");
+    let ptt_is_default = match (web_ptt, tk_ptt) {
+        (Some(m), _) => m == WEB_DEFAULT_PTT,
+        (None, Some(m)) => m == TK_DEFAULT_PTT,
+        _ => false,
+    };
+    let ptt_method = web_ptt.map(str::to_string).or_else(|| {
+        tk_ptt.map(|m| match m {
             "CAT Command" => "CAT".into(),
             "RTS Pin" => "RTS".into(),
             "DTR Pin" => "DTR".into(),
@@ -268,6 +331,10 @@ pub fn migrate_config(dir: &Path) -> (Config, Report) {
         })
     });
     match ptt_method.as_deref() {
+        Some(m) if ptt_is_default => rep.fields.push(Outcome::Skipped(
+            "PTT".into(),
+            format!("{m} is the legacy app's default keying method, saved whether or not it was chosen; no PTT method is configured and transmit is refused until one is set in Settings"),
+        )),
         Some("CAT") => {
             cfg.ptt = PttConfig::Cat;
             rep.fields.push(Outcome::Migrated("PTT = CAT via rigctld".into()));
@@ -283,11 +350,18 @@ pub fn migrate_config(dir: &Path) -> (Config, Report) {
             }
             None => rep.fields.push(Outcome::Skipped("PTT".into(), format!("{m} keying had no port configured"))),
         },
-        Some("CM108_GPIO") => {
-            let pin = web.get("cm108GpioPin").and_then(|v| v.as_u64()).unwrap_or(3) as u8;
-            cfg.ptt = PttConfig::Cm108 { device: String::new(), pin, active_high: polarity_high };
-            rep.fields.push(Outcome::Migrated(format!("PTT = CM108 GPIO{pin} (first C-Media device)")));
-        }
+        Some("CM108_GPIO") => match web.get("cm108GpioPin").and_then(|v| v.as_u64()) {
+            // No pin recorded: not the default pin 3 - an unknown pin.
+            None => rep.fields.push(Outcome::Skipped("PTT".into(), "CM108 keying had no GPIO pin recorded; set it in Settings".into())),
+            Some(pin) => {
+                let pin = pin.min(255) as u8;
+                cfg.ptt = PttConfig::Cm108 { device: String::new(), pin, active_high: polarity_high };
+                rep.fields.push(Outcome::Changed(
+                    format!("PTT = CM108 GPIO{pin}"),
+                    "the legacy app recorded no device path: z-30 uses the C-Media device only if exactly one is present, and refuses to key if there are several (set the path in Settings)".into(),
+                ));
+            }
+        },
         Some(other) => rep.fields.push(Outcome::Skipped(
             "PTT".into(),
             format!("{other} keying is not supported by vNext yet (supported: CAT via rigctld, RTS/DTR, CM108, VOX); transmit is refused until PTT is configured"),
@@ -297,7 +371,8 @@ pub fn migrate_config(dir: &Path) -> (Config, Report) {
 
     // Audio: the browser stored device ids the native layer cannot use; names carry over.
     for (k, dst) in [("audioInputDevice", 0), ("audioOutputDevice", 1)] {
-        if let Some(name) = str_of(&web, k).filter(|n| !n.starts_with("default") && n.len() < 64) {
+        // "Default System Audio Device" is the legacy default's placeholder, not a device name.
+        if let Some(name) = str_of(&web, k).filter(|n| !n.to_ascii_lowercase().starts_with("default") && n.len() < 64) {
             if dst == 0 {
                 cfg.audio.input_device = Some(name.into());
             } else {
@@ -334,8 +409,14 @@ pub fn migrate_config(dir: &Path) -> (Config, Report) {
             rep.fields.push(Outcome::Skipped(what.into(), format!("{why} ({})", found.join(", "))));
         }
     }
-    // Configuration, not a measurement: the TX drive level vNext starts from.
-    cfg.audio.tx_level = 0.5;
+    // No transmit level: the legacy app had none to migrate, and vNext does not invent one. It
+    // used to write 0.5 here, which (with a migrated callsign, PTT and dial) made a station the
+    // gate would clear at a drive level nobody chose (2026-09-28 audit F-21). The gate refuses 0.
+    cfg.audio.tx_level = 0.0;
+    rep.fields.push(Outcome::Skipped(
+        "TX level".into(),
+        "the legacy app has no transmit level to carry over; set it in Settings (transmit is refused at 0)".into(),
+    ));
     (cfg, rep)
 }
 
@@ -560,6 +641,81 @@ mod tests {
         assert_eq!(r.rst_rcvd.as_ref().unwrap().value, -18);
         assert!(!rep.text().is_empty());
         std::fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn f21_legacy_defaults_are_not_migrated_into_a_transmit_capable_station() {
+        use z30_engine::api::{Command, Event};
+        use z30_engine::engine::Engine;
+        use z30_engine::txgate::Violation;
+        // A web-UI settings file saved without changing the stale bundle's defaults: the real
+        // station's callsign, CAT PTT, 25 W, with a region and class the operator did set.
+        let dir = std::env::temp_dir().join(format!("z30-mig-f21-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let call = ["W", "1", "A", "W"].concat();
+        std::fs::write(
+            dir.join("station_config.json"),
+            format!(r#"{{"myCall":"{call}","myGrid":"FN31pr","regulatoryRegion":"US","licenseClass":"US_GENERAL","txPowerWatts":25,
+                "catMethod":"Hamlib","catEnabled":true,"hamlibHost":"127.0.0.1","hamlibPort":4532,"pttMethod":"CAT","pttPolarity":"ACTIVE_HIGH",
+                "audioOutputDevice":"Default System Audio Device"}}"#),
+        )
+        .unwrap();
+        std::fs::write(dir.join("config.json"), r#"{"ptt_method":"CAT Command","dial_freq_hz":14076000,"tx_power_watts":50}"#).unwrap();
+        let (cfg, rep) = migrate_config(&dir);
+        assert_eq!(cfg.station.callsign, "", "the legacy default callsign is not imported");
+        assert_eq!(cfg.audio.tx_level, 0.0, "no transmit level is invented");
+        assert_eq!(cfg.ptt, PttConfig::None, "the default keying method is not a choice");
+        assert_eq!(cfg.operating.dial_hz, None, "the default dial is not a dial");
+        assert_eq!(cfg.station.configured_tx_power_w, None, "the default power is not configured power");
+        assert_eq!(cfg.audio.output_device, None, "the placeholder is not a device name");
+        // What the operator did set is kept.
+        assert_eq!(cfg.station.region, Some(Region::Us));
+        assert_eq!(cfg.station.license_class, Some(LicenseClass::UsGeneral));
+        for f in ["callsign", "TX level", "PTT", "dial", "tx power"] {
+            assert!(rep.fields.iter().any(|o| matches!(o, Outcome::Skipped(n, _) if n == f)), "{f} not reported: {}", rep.text());
+        }
+        // And the result cannot transmit.
+        let mut e = Engine::new(cfg);
+        e.apply(Command::Tune, 0);
+        assert!(e.plan_tx(2, 0).is_none());
+        let refused: Vec<Violation> =
+            e.take_events().into_iter().find_map(|x| if let Event::TxRefused(v) = x { Some(v) } else { None }).unwrap();
+        for v in [Violation::NoCallsign, Violation::PttNotConfigured, Violation::FrequencyUndetermined, Violation::TxAudioLevelZero] {
+            assert!(refused.contains(&v), "{v:?} missing from {refused:?}");
+        }
+        std::fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn f21_a_tk_only_install_and_a_cm108_without_a_pin_bring_no_invented_settings() {
+        // Transmit-safety audit T-4: the Tk-only path (no web settings file) and a CM108 entry with
+        // no GPIO pin were untested; mutants importing the Tk defaults or inventing GPIO 3 survived.
+        let base = std::env::temp_dir().join(format!("z30-mig-t4-{}", std::process::id()));
+        let tk = base.join("tk");
+        std::fs::create_dir_all(&tk).unwrap();
+        std::fs::write(tk.join("config.json"), r#"{"ptt_method":"CAT Command","dial_freq_hz":14076000,"tx_power_watts":50}"#).unwrap();
+        let (cfg, rep) = migrate_config(&tk);
+        assert_eq!(cfg.ptt, PttConfig::None, "the Tk wizard's default keying method is not a choice");
+        assert_eq!(cfg.station.configured_tx_power_w, None, "the Tk wizard's default 50 W is not configured power");
+        assert_eq!(cfg.operating.dial_hz, None);
+        for f in ["PTT", "tx power", "dial"] {
+            assert!(rep.fields.iter().any(|o| matches!(o, Outcome::Skipped(n, _) if n == f)), "{f} not reported: {}", rep.text());
+        }
+        let cm = base.join("cm108");
+        std::fs::create_dir_all(&cm).unwrap();
+        std::fs::write(cm.join("station_config.json"), r#"{"myCall":"G4XYZ","pttMethod":"CM108_GPIO"}"#).unwrap();
+        let (cfg, rep) = migrate_config(&cm);
+        assert_eq!(cfg.ptt, PttConfig::None, "no pin recorded is an unknown pin, not GPIO 3");
+        assert!(
+            rep.fields.iter().any(|o| matches!(o, Outcome::Skipped(n, m) if n == "PTT" && m.contains("no GPIO pin"))),
+            "{}",
+            rep.text()
+        );
+        // A recorded pin is carried over (with no device path: chosen only if one C-Media device exists).
+        std::fs::write(cm.join("station_config.json"), r#"{"myCall":"G4XYZ","pttMethod":"CM108_GPIO","cm108GpioPin":4}"#).unwrap();
+        let (cfg, _) = migrate_config(&cm);
+        assert!(matches!(cfg.ptt, PttConfig::Cm108 { pin: 4, ref device, .. } if device.is_empty()), "{:?}", cfg.ptt);
+        std::fs::remove_dir_all(base).ok();
     }
 
     #[test]

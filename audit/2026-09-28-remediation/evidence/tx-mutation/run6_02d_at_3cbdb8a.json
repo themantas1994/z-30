@@ -1,0 +1,47 @@
+{
+ "commit": "3cbdb8a7ea89",
+ "toolchain": "1.95.0",
+ "harness": "mut_f08b.py",
+ "results": [
+  [
+   "G3-extern-crate-as",
+   "KILLED by the_software_loopback_reaches_only_an_allowlist_of_crates_and_items"
+  ],
+  [
+   "G4-macro-metavar",
+   "KILLED by the_software_loopback_reaches_only_an_allowlist_of_crates_and_items"
+  ],
+  [
+   "G2-rename-in-block",
+   "KILLED by the_software_loopback_reaches_only_an_allowlist_of_crates_and_items"
+  ],
+  [
+   "G5-spaced",
+   "KILLED by the_software_loopback_reaches_only_an_allowlist_of_crates_and_items"
+  ],
+  [
+   "G6-include-space",
+   "KILLED by the_software_loopback_reaches_only_an_allowlist_of_crates_and_items (as include_str !; the first form, include ! of the file itself, did not compile)"
+  ],
+  [
+   "G1-cr-raw",
+   "KILLED by the_software_loopback_reaches_only_an_allowlist_of_crates_and_items"
+  ],
+  [
+   "B4-writer-skips-check",
+   "KILLED by report_target_tests::the_report_writer_refuses_a_character_device_by_itself"
+  ],
+  [
+   "B5-hw-plain-fs-write",
+   "KILLED by the_cli_runs_the_software_loopback_for_loopback_test_and_the_hardware_one_only_for_its_own_flag"
+  ],
+  [
+   "B9-hw-early-check-removed",
+   "KILLED by the_hardware_loopback_refuses_a_character_device_as_its_report_file_before_anything_else"
+  ],
+  [
+   "N0-shutdown-no-close",
+   "SURVIVED (Low): shutdown's call to PttController::close removed. No test can hold a control thread between its HALT check and key(); the latch's checks in key() are pinned by ptt_release::f84_*, the call site is by inspection, and the post-join re-read stays behind it."
+  ]
+ ]
+}

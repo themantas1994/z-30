@@ -33,14 +33,17 @@ enforces the direction: the DSP cannot open a device, and the engine cannot touc
 thread, `z30 --decode`, `z30 --benchmark` and the Python research harness (through `z30-py`)
 all call it with the same `RxConfig` defaults. A figure measured by any of them is a figure
 about the receiver an operator runs. That is the structural answer to the failure recorded
-in `AGENTS.md` section 4, where the benchmark and the on-air decoder had different
+in `AGENTS.md` section 4, where the benchmark and the live-receive decoder had different
 demodulators for months.
 
 ## One modulator
 
 `z30_protocol::gfsk::Modulator` produces the transmitted waveform, the SIC replica and the
 test channels' signals. The audit found the shipped SIC subtracting a waveform the transmitter
-no longer sent (C3). With one modulator that cannot recur.
+no longer sent (C3). With one modulator that cannot recur. Tune is the same modulator's frame
+with one constant symbol at the centre of the tone span (`runtime::tx_audio`); it used to be a
+separately generated sine with linear ramps (2026-09-28 audit F-49), the one exception, now
+gone (`gate_contract.rs::f49_tune_is_the_one_modulators_unmodulated_carrier_at_the_span_centre`).
 `gfsk::tests::the_analytic_replica_is_the_transmitted_waveform` pins the replica to the
 transmitted samples within 1e-6.
 
@@ -51,10 +54,18 @@ audio callback (z30-io)  --SPSC ring (rtrb)-->  AudioInput::next_block
 DSP thread       RxPipeline: resample to 6 kHz, file by absolute sample index,
                  clock model, scheduler, waterfall rows            -> SlotJob
 decode thread    Receiver::decode_slot (rayon inside)              -> SlotReport
-rig thread       RigControl polls, respecting the PTT settle window -> Reading
+rig thread       RigControl polls every poll_interval_ms, never inside
+                 the PTT settle window                              -> Reading
 control thread   Engine (commands, sequencing, gate) + TxScheduler -> PTT, audio out
-PTT watchdog     independent deadline on the keyed line
+log thread       LogSink (SQLite)                                   -> Logged / LogFailed
+PTT watchdog     independent deadline on the keyed line; retries an unconfirmed release
+clock status     the OS synchronisation query (timedatectl), cached
+HALT             RuntimeHandle::halt, on the caller's thread: output stop + PTT release + flag
 ```
+
+Nothing that can block for long runs on the control thread: the SQLite logbook has its own
+thread, and the OS clock-status query runs on a thread of its own and is read from a cache. The
+GUI's HALT does not go through the command queue at all (see [safety.md](safety.md#ptt-one-keying-implementation-and-what-releases-it)).
 
 Every channel is bounded. A full decode queue reports the slot as missed with
 `MissReason::DecoderBusy`; it never blocks the DSP thread. The audio callback copies,
@@ -76,13 +87,15 @@ of it (see [safety.md](safety.md)).
 The audio sample counter is the master clock. UTC is a model fitted to it: a least-squares line
 over a 120 s sliding window of (sample index, capture UTC) observations. A slot is decoded when
 the store holds every sample of its window, not when a UI timer fires. See
-[synchronization.md](synchronization.md#the-slot-clock).
+[synchronization.md](synchronization.md#the-slot-clock-z30-engine-clockrs-slotsrs-pipeliners).
 
 ## What is not part of this graph
 
 z-30's production application is the graph above and nothing else. There is no fallback path:
 if audio, rig control or PTT cannot be opened, the program reports the failure and does not
-start something else in its place.
+start something else in its place. The GUI keeps receiving if it can, and refuses to transmit
+(`HardwareUnavailable`) while the output or keying line is unavailable; a logbook that cannot be opened is a persistent
+red banner and every contact is reported "not logged", never kept in memory in its place.
 
 `legacy/` holds, outside it:
 

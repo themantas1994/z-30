@@ -1,0 +1,135 @@
+{
+ "commit": "6ebb1271917c",
+ "toolchain": "1.95.0",
+ "harness": "mut_v7_auditor.py (the tx-safety auditor's 02e harness, unchanged; N0K-* omitted, its test is now in the tree)",
+ "results": [
+  [
+   "G1",
+   "KILLED by the_software_loopback_reaches_only_an_allowlist_of_crates_and_items"
+  ],
+  [
+   "G2",
+   "KILLED by the_software_loopback_reaches_only_an_allowlist_of_crates_and_items"
+  ],
+  [
+   "G3",
+   "KILLED by the_software_loopback_reaches_only_an_allowlist_of_crates_and_items"
+  ],
+  [
+   "G4",
+   "INVALID (does not compile: the macro_rules! is placed after its use in run(); the compiling form was killed in run 6 and is a case in every_way_round_the_allowlist_a_review_found_is_refused)"
+  ],
+  [
+   "G5",
+   "KILLED by the_software_loopback_reaches_only_an_allowlist_of_crates_and_items"
+  ],
+  [
+   "G6",
+   "KILLED by the_software_loopback_reaches_only_an_allowlist_of_crates_and_items"
+  ],
+  [
+   "G7",
+   "KILLED by the_software_loopback_reaches_only_an_allowlist_of_crates_and_items"
+  ],
+  [
+   "G8",
+   "KILLED by the_software_loopback_reaches_only_an_allowlist_of_crates_and_items"
+  ],
+  [
+   "G9",
+   "KILLED by the_software_loopback_reaches_only_an_allowlist_of_crates_and_items"
+  ],
+  [
+   "G10",
+   "KILLED by the_software_loopback_reaches_only_an_allowlist_of_crates_and_items"
+  ],
+  [
+   "G11",
+   "KILLED by the_software_loopback_reaches_only_an_allowlist_of_crates_and_items"
+  ],
+  [
+   "G12",
+   "KILLED by the_software_loopback_reaches_only_an_allowlist_of_crates_and_items"
+  ],
+  [
+   "G13",
+   "INVALID (does not compile here; refused as a case in every_way_round_the_allowlist_a_review_found_is_refused)"
+  ],
+  [
+   "G14",
+   "KILLED by the_software_loopback_reaches_only_an_allowlist_of_crates_and_items"
+  ],
+  [
+   "S1-turbofish-in-macro",
+   "KILLED by the_software_loopback_reaches_only_an_allowlist_of_crates_and_items"
+  ],
+  [
+   "S2-use-group-rename-in-macro",
+   "KILLED by the_software_loopback_reaches_only_an_allowlist_of_crates_and_items"
+  ],
+  [
+   "S3-use-group-qself-in-macro",
+   "KILLED by the_software_loopback_reaches_only_an_allowlist_of_crates_and_items"
+  ],
+  [
+   "S4-glob-fs-write-in-macro",
+   "KILLED by the_software_loopback_reaches_only_an_allowlist_of_crates_and_items"
+  ],
+  [
+   "S5-turbofish-process-in-macro",
+   "KILLED by the_software_loopback_reaches_only_an_allowlist_of_crates_and_items"
+  ],
+  [
+   "S6-value-item-named-as-crate",
+   "KILLED by the_software_loopback_reaches_only_an_allowlist_of_crates_and_items"
+  ],
+  [
+   "S9-cfg_attr-tokens",
+   "KILLED by the_software_loopback_reaches_only_an_allowlist_of_crates_and_items"
+  ],
+  [
+   "S11-macro_rules-in-fn",
+   "KILLED by the_software_loopback_reaches_only_an_allowlist_of_crates_and_items"
+  ],
+  [
+   "S13-leading-colons",
+   "KILLED by the_software_loopback_reaches_only_an_allowlist_of_crates_and_items"
+  ],
+  [
+   "S15-type-alias",
+   "KILLED by the_software_loopback_reaches_only_an_allowlist_of_crates_and_items"
+  ],
+  [
+   "S16-nested-fn-use",
+   "KILLED by the_software_loopback_reaches_only_an_allowlist_of_crates_and_items"
+  ],
+  [
+   "B4",
+   "KILLED by report_target_tests::the_report_writer_refuses_a_character_device_by_itself"
+  ],
+  [
+   "B5",
+   "KILLED by the_cli_runs_the_software_loopback_for_loopback_test_and_the_hardware_one_only_for_its_own_flag"
+  ],
+  [
+   "B5b",
+   "KILLED by the_cli_runs_the_software_loopback_for_loopback_test_and_the_hardware_one_only_for_its_own_flag"
+  ],
+  [
+   "B9",
+   "KILLED by the_hardware_loopback_refuses_a_character_device_as_its_report_file_before_anything_else"
+  ],
+  [
+   "N0",
+   "KILLED by runtime::tests::f84_shutdown_closes_the_controller_before_its_halt"
+  ],
+  [
+   "N3-key-ignores-closed-first-check",
+   "KILLED by runtime::tests::f84_shutdown_closes_the_controller_before_its_halt"
+  ],
+  [
+   "N4-key-ignores-closed-after-drive",
+   "KILLED by f84_a_key_in_its_driver_when_the_controller_closes_is_released_before_it_returns"
+  ]
+ ]
+}

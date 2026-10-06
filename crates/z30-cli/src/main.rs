@@ -3,10 +3,19 @@
 //! Receive-only by design: this binary never keys a transmitter. Transmitting is done from the
 //! GUI, where the operator sees the gate's verdict before every transmission.
 
+// The disallowed lists in clippy.toml are for the software loopback, which forbids them
+// (src/loopback.rs); the station and the toolbox open devices and write files.
+#![allow(clippy::disallowed_methods, clippy::disallowed_types)]
+
 mod audio_loopback;
 mod bench;
 mod loopback;
 mod suite;
+
+// The build script's provenance code, compiled here only so its unit tests run with the crate's.
+#[cfg(test)]
+#[path = "../build_support.rs"]
+mod build_support;
 
 use clap::Parser;
 use std::path::{Path, PathBuf};
@@ -76,7 +85,8 @@ struct Cli {
     #[arg(long, value_name = "WHAT", num_args = 0..=1, default_missing_value = "perf")]
     benchmark: Option<String>,
     /// Frames/slots per point for --benchmark (default: 20 for perf/false-decodes/sweep; each
-    /// suite benchmark's own publishable size otherwise).
+    /// suite benchmark's own publishable size otherwise). A suite run below its benchmark's
+    /// publishable size (200 frames per point for every crossing) is exploratory.
     #[arg(long)]
     frames: Option<usize>,
     /// Suite replicate number (default 0: the published seed 20260830). Replicate r >= 1 runs
@@ -84,10 +94,20 @@ struct Cli {
     /// variability; its results say they are not the published run.
     #[arg(long)]
     replicate: Option<u16>,
-    /// Output directory for suite results (default: research/results/<commit>), or the JSON
-    /// file for --loopback-test / --audio-loopback-test.
+    /// Output directory for suite results, or the JSON file for --loopback-test /
+    /// --audio-loopback-test. Suite default: research/results/<commit>/ for a clean,
+    /// full-size, published-seed run; <commit>/replicates/r<N>/, exploratory/<commit>/ or
+    /// unpublished/<commit>-dirty-<diff>/ under research/results/ otherwise.
     #[arg(long, value_name = "DIR")]
     out: Option<PathBuf>,
+    /// Suite: also write <benchmark>.frames.jsonl, one line per frame (point, frame index,
+    /// seed, condition, outcome), so two commits can be paired frame by frame.
+    #[arg(long)]
+    per_frame: bool,
+    /// Suite: replace existing result files that are not published results. A published
+    /// result is never overwritten.
+    #[arg(long)]
+    overwrite: bool,
     /// Report configuration, clock, audio, rig and transmit-gate status.
     #[arg(long)]
     diagnostics: bool,
@@ -136,7 +156,8 @@ struct Cli {
 /// What this binary is: every field a release artefact must carry (version, commit, build
 /// date, target platform and architecture, profile, optional features, protocol).
 pub(crate) fn version_text() -> String {
-    format!(
+    let diff = env!("Z30_BUILD_DIRTY_DIFF_SHA256");
+    let mut text = format!(
         "z30 {} (z-30 vNext, Rust)\ncommit:       {}\nbuilt:        {} with {}\ntarget:       {}\narchitecture: {} ({})\nprofile:      {}\nfeatures:     {}\nprotocol:     v{}\nruntime:      native; no Python, Node or browser component",
         env!("CARGO_PKG_VERSION"),
         env!("Z30_BUILD_COMMIT"),
@@ -148,7 +169,13 @@ pub(crate) fn version_text() -> String {
         env!("Z30_BUILD_PROFILE"),
         if cfg!(feature = "cm108") { "cm108 (CM108/CM119 GPIO PTT)" } else { "none (CM108 GPIO PTT not built in)" },
         z30_protocol::PROTOCOL_VERSION,
-    )
+    );
+    if !diff.is_empty() {
+        // Which uncommitted difference a -dirty binary was built from (sha256 of the tracked
+        // diff against HEAD plus untracked crate sources), so two dirty builds can be told apart.
+        text.push_str(&format!("\ndirty diff:   sha256 {diff}"));
+    }
+    text
 }
 
 fn main() {
@@ -209,11 +236,35 @@ fn run(cli: &Cli, config_path: &Path) -> Result<(), String> {
         return Ok(());
     }
     if let Some(what) = &cli.benchmark {
-        return bench::run(what, cli.frames, cli.out.as_deref(), cli.replicate);
+        let opts = suite::Options {
+            frames: cli.frames,
+            out: cli.out.clone(),
+            replicate: cli.replicate,
+            per_frame: cli.per_frame,
+            overwrite: cli.overwrite,
+        };
+        return bench::run(what, &opts);
     }
     if cli.loopback_test {
         // No configuration is read: nothing in it could matter to a test that touches no device.
-        return loopback::run(cli.out.as_deref());
+        if let Some(p) = cli.out.as_deref() {
+            check_report_target(p)?;
+        }
+        let (text, pass) = loopback::run()?;
+        println!("{text}");
+        if let Some(p) = cli.out.as_deref() {
+            write_report_file(p, &text)?;
+        }
+        return if pass { Ok(()) } else { Err("software loopback FAILED (see the criteria above)".into()) };
+    }
+    // A device as the hardware loopback's report target is refused before anything else: before
+    // its refusals and before it opens a device, so the test plays nothing only to fail at the
+    // end (CTO re-review N-11), and a test of the refusal cannot reach a sound card if the check
+    // is removed - the run then stops at the refusals instead (transmit-safety 02d finding 1).
+    if cli.audio_loopback_test {
+        if let Some(p) = cli.out.as_deref() {
+            check_report_target(p)?;
+        }
     }
     let cfg = paths::load_config(config_path)?;
     if cli.diagnostics {
@@ -253,11 +304,20 @@ fn diagnostics(cfg: &z30_engine::config::Config, config_path: &Path) -> Result<(
     println!("config:   {}{}", config_path.display(), if config_path.exists() { "" } else { " (not found: defaults, transmit refused)" });
     println!("data dir: {}", paths::data_dir().display());
     let wall = z30_io::wallclock::SystemWallClock::default();
+    // The status is queried on a thread of its own; give the OS a few seconds to answer.
+    let t = std::time::Instant::now();
+    while wall.status() == z30_io::wallclock::STATUS_NOT_YET_CHECKED && t.elapsed() < Duration::from_secs(5) {
+        std::thread::sleep(Duration::from_millis(20));
+    }
     println!("clock:    {}", wall.status());
     let engine = z30_engine::engine::Engine::new(cfg.clone());
     let snap = engine.snapshot(0);
     if snap.tx_blockers.is_empty() {
-        println!("transmit gate: would allow (callsign, licence, band plan)");
+        // The gate checks the hardware too; diagnostics open no audio device or keying line, so
+        // a device that cannot be opened shows up only when the station starts.
+        println!(
+            "transmit gate: would allow (callsign, licence, band plan, PTT method, level; devices are checked when the station opens them)"
+        );
     } else {
         println!("transmit gate: would REFUSE:");
         snap.tx_blockers.iter().for_each(|b| println!("  - {b}"));
@@ -277,6 +337,15 @@ fn diagnostics(cfg: &z30_engine::config::Config, config_path: &Path) -> Result<(
     }
     let (ins, outs) = z30_io::audio::list_devices();
     println!("audio:    {} inputs, {} outputs (see --devices)", ins.len(), outs.len());
+    // The device each direction would actually use; an ambiguous name is an error here too.
+    for (label, input, wanted) in
+        [("audio in: ", true, cfg.audio.input_device.as_deref()), ("audio out:", false, cfg.audio.output_device.as_deref())]
+    {
+        match z30_io::audio::resolve_device_name(input, wanted) {
+            Ok(name) => println!("{label} {name}{}", if wanted.is_none() { " (system default)" } else { "" }),
+            Err(e) => println!("{label} unavailable: {e}"),
+        }
+    }
     Ok(())
 }
 
@@ -375,6 +444,8 @@ fn capture_slot(dir: &Path, when: Result<i64, usize>, window: &[f32], rep: &z30_
         })).collect::<Vec<_>>(),
         "passes": rep.passes.iter().map(|p| serde_json::json!({"candidates": p.candidates, "decoded": p.decoded,
             "duplicates": p.duplicates, "suppression_db": p.suppression_db, "elapsed_ms": p.elapsed_ms})).collect::<Vec<_>>(),
+        // AGENTS.md §4: the per-pass figure is not physical suppression; the file says so itself.
+        "suppression_db_note": "receiver-internal fit ratio, not physical suppression (overstates it by 9-16 dB)",
     });
     std::fs::write(base.with_extension("json"), serde_json::to_string_pretty(&json).unwrap()).map_err(|e| e.to_string())
 }
@@ -450,6 +521,10 @@ fn receive(cfg: z30_engine::config::Config, capture: Option<PathBuf>) -> Result<
                 }
                 Event::SlotMissed(slot, why) => eprintln!("-- slot {slot} missed: {why:?}"),
                 Event::Audio(s) | Event::Rig(s) => eprintln!("-- {s}"),
+                Event::ClockStepped { from_slot, to_slot } => eprintln!(
+                    "-- the system clock stepped {:+} s: the receiver moved from slot {from_slot} to slot {to_slot}",
+                    (to_slot - from_slot) * 30
+                ),
                 _ => {}
             }
         }
@@ -463,6 +538,100 @@ fn receive(cfg: z30_engine::config::Config, capture: Option<PathBuf>) -> Result<
         }
         std::thread::sleep(Duration::from_millis(100));
     }
-    handle.shutdown();
+    let report = handle.shutdown();
+    if !report.release_confirmed() {
+        eprintln!("-- PTT release NOT confirmed at shutdown ({:?}): the radio may still be keyed", report.ptt);
+    }
     Ok(())
+}
+
+/// Writes a loopback test's report, only to a file. A device is refused, judged without
+/// opening it: on Linux, opening a serial tty asserts DTR and RTS, and on Windows opening a COM
+/// port usually raises DTR, so `--out /dev/ttyUSB0` or `--out COM3` would briefly key a
+/// serial-PTT radio from a test that must not be able to (transmit-safety re-review R-3, and its
+/// confirmation's finding 4 for Windows).
+pub(crate) fn write_report_file(p: &Path, text: &str) -> Result<(), String> {
+    check_report_target(p)?;
+    std::fs::write(p, text).map_err(|e| format!("{}: {e}", p.display()))
+}
+
+/// Refuses a report target that is not, or could not become, a regular file. Called before the
+/// test runs as well, so a wrong `--out` fails at once rather than after the test.
+pub(crate) fn check_report_target(p: &Path) -> Result<(), String> {
+    let refuse = || Err(format!("{}: not a regular file; the loopback report is written only to a file", p.display()));
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::FileTypeExt;
+        if let Ok(m) = std::fs::metadata(p) {
+            let t = m.file_type();
+            if t.is_char_device() || t.is_block_device() || t.is_fifo() || t.is_socket() {
+                return refuse();
+            }
+        }
+    }
+    #[cfg(windows)]
+    {
+        if is_windows_device_path(&p.to_string_lossy()) {
+            return refuse();
+        }
+    }
+    Ok(())
+}
+
+/// A Win32 device namespace path (`\\.\COM3`, `\\?\...`) or a reserved DOS device name (`COM3`,
+/// `nul.json`, `dir\LPT1.txt`): Windows opens the device for these, whatever the directory or
+/// extension. `metadata` cannot be trusted to say so, so the name decides.
+#[cfg_attr(not(windows), allow(dead_code))]
+fn is_windows_device_path(s: &str) -> bool {
+    if s.starts_with("\\\\.\\") || s.starts_with("\\\\?\\") || s.starts_with("\\??\\") || s.starts_with("//./") || s.starts_with("//?/") {
+        return true;
+    }
+    let name = s.rsplit(['\\', '/']).next().unwrap_or(s);
+    let stem = name.split('.').next().unwrap_or(name).trim_end_matches([' ', ':']).to_ascii_uppercase();
+    matches!(stem.as_str(), "CON" | "PRN" | "AUX" | "NUL" | "CONIN$" | "CONOUT$")
+        || ["COM", "LPT"].iter().any(|d| {
+            stem.strip_prefix(d)
+                .is_some_and(|n| matches!(n, "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9" | "\u{b9}" | "\u{b2}" | "\u{b3}"))
+        })
+}
+
+#[cfg(test)]
+mod report_target_tests {
+    use super::is_windows_device_path;
+
+    // The writer refuses a device itself, not only through the early checks in front of it: a
+    // later caller that forgets them is still refused (transmit-safety 02d, mutant B4).
+    // `/dev/null` is a character device like a tty, and harmless if the refusal is ever lost.
+    #[cfg(unix)]
+    #[test]
+    fn the_report_writer_refuses_a_character_device_by_itself() {
+        let e = super::write_report_file(std::path::Path::new("/dev/null"), "report").unwrap_err();
+        assert!(e.contains("not a regular file"), "{e}");
+    }
+
+    // Pure name test, so it runs on every CI platform, not only on Windows where it is used.
+    #[test]
+    fn windows_device_names_and_namespace_paths_are_refused_and_ordinary_files_are_not() {
+        for d in [
+            "COM3",
+            "com1",
+            "LPT2",
+            "NUL",
+            "nul.json",
+            "CON",
+            "AUX.txt",
+            r"C:\tmp\COM4.json",
+            "out/COM9",
+            r"\\.\COM12",
+            r"\??\GLOBALROOT\Device\Serial0",
+            r"\\?\C:\x",
+            "//./COM3",
+            "COM3:",
+        ] {
+            assert!(is_windows_device_path(d), "{d} must be refused");
+        }
+        for f in ["report.json", "COM10x.json", "COMMIT.json", r"C:\tmp\loopback.json", "console.json", "LPT.json", "/tmp/com.json"] {
+            assert!(!is_windows_device_path(f), "{f} is an ordinary file name");
+        }
+    }
 }

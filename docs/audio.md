@@ -7,7 +7,11 @@
 
 cpal gives native audio on each OS: ALSA on Linux (which PipeWire and PulseAudio also serve),
 WASAPI on Windows, CoreAudio on macOS. `z30 --devices` lists input and output devices and
-serial ports. A device is chosen by a substring of its name; none means the system default.
+serial ports. A device is chosen by its name: an exact match (case ignored), or a substring
+that exactly one device's name contains. A name that several devices match is an error listing
+them, never the first one found (`audio::select_device`; 2026-09-28 audit F-43). No name means
+the system default. `z30 --diagnostics` prints the device each direction would use
+(`audio in:` / `audio out:`).
 Streams open at the device's **default** configuration with **f32** samples. A device that
 cannot provide f32 at its default configuration fails to open, and the error says so (see
 [troubleshooting.md](troubleshooting.md)). Capture takes channel 0 of an interleaved stream.
@@ -30,6 +34,9 @@ new clock epoch; it is never spliced over.
 
 `crates/z30-io/tests/callback_alloc.rs` runs that body under a counting global allocator. It
 asserts **zero allocations** across callbacks, and that an overrun is reported as a gap. The
+playback callback's body (`OutputCallbackState::on_data`: honour a flush request, then pop from
+the ring into the device buffer) is under the same test
+(`the_playback_callback_never_allocates_and_plays_what_was_queued`). The
 `z30 --benchmark perf` counter reports allocations *per decoded slot*. Those happen on the
 decode thread, which may allocate; the audio thread may not.
 
@@ -69,19 +76,32 @@ the decoder or the GUI.
 
 ## Transmit audio
 
-`tx_audio` synthesises the frame at the **output device's** rate through the one modulator:
-constant envelope, a 20 ms ramp at each end, peak-normalised, scaled by the configured level.
-It pushes it into a 30 s SPSC ring the output callback drains, so `play` never blocks. `stop`
-(on halt, or at the end of a frame) flushes the ring from inside the callback.
+`tx_audio` synthesises the plan's frame at the **output device's** rate through the one
+modulator: constant envelope, a 20 ms ramp at each end, peak-normalised, scaled by the level the gate checked
+(carried in the plan, not re-read from the configuration). Tune is the same modulator's frame
+with one constant symbol at the centre of the tone span: an unmodulated carrier with the frame's
+raised-cosine ramps, one frame long (it used to be a separately generated sine with linear
+ramps, a second waveform generator; audit F-49). The audio is pushed into a 30 s SPSC ring the
+output callback drains, so `play` never blocks. `stop` (on halt, at the end of a frame, or after
+a failed `play`) flushes the ring from inside the callback, so a partly queued frame never plays
+unkeyed.
+
+A device error on the output stream is recorded and reported (`AudioOutput::failure`) instead of
+being discarded. The runtime stops a transmission in progress, releases PTT, and refuses to
+transmit until the output reopens; it retries every 5 s while idle
+([safety.md](safety.md#audio-output-failure)).
 
 The transmit timeline is a pure function of UTC (`TxScheduler`):
 
-- plan and gate check 0.6 s before the slot;
+- plan and gate check 0.6 s before the slot, reading the output latency the device reports at
+  that moment;
 - key 50 ms before the audio;
-- audio timed to leave the device at the slot boundary, allowing for the output latency the
-  device reported when the station started;
+- audio timed to leave the device at the slot boundary, allowing for that latency; the frame's
+  end is set from the moment the audio actually starts;
+- a key more than 0.5 s late abandons the slot; audio that cannot start within 0.5 s of its time
+  is not started;
 - unkey 50 ms after the frame.
 
-This has been verified under the virtual clock. On real hardware it is not yet verified: the
-latency cpal reports differs between drivers, and the closing check of any installation is a
-received frame showing DT ≈ 0 at another station.
+This has been verified under the virtual clock (`crates/z30-engine/tests/tx_runtime.rs`). On
+real hardware it is not yet verified: the latency cpal reports differs between drivers, and the
+closing check of any installation is a received frame showing DT ≈ 0 at another station.

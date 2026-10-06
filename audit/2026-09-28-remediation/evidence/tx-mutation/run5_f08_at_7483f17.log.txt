@@ -1,0 +1,8 @@
+F08-dev-iffalse KILLED by the_software_loopback_refuses_a_character_device_as_its_report_file
+F08-dev-earlycheck-removed KILLED by the_software_loopback_refuses_a_character_device_as_its_report_file
+F08-brace-literals KILLED by the_software_loopback_reaches_only_an_allowlist_of_crates_and_items
+F08-url-slashes KILLED by the_software_loopback_reaches_only_an_allowlist_of_crates_and_items
+F08-mod-decl KILLED by the_software_loopback_reaches_only_an_allowlist_of_crates_and_items
+F08-macro-use BUILD-FAIL
+F08-block-comment-hide KILLED by the_software_loopback_reaches_only_an_allowlist_of_crates_and_items
+EXIT 0

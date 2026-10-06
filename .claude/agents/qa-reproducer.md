@@ -40,9 +40,13 @@ Never key a radio, drive PTT or run `--audio-loopback-test` with any radio confi
 4. **Compare** your output with the published files, ignoring only what is not a receiver
    measurement (latency, provenance, descriptive text):
    ```bash
-   python3 audit/2026-09-24-corrective-remediation/evidence/scripts/compare_results.py \
-     <published dir> <your dir> [benchmark...]
+   python3 research/compare_results.py <published dir> <your dir> [benchmark...] \
+     --reproduction [--legacy-provenance]
    ```
+   Your rerun is written with `--out`, so it is labelled `not_the_published_run`;
+   `--reproduction` accepts exactly that pair of statuses and checks everything else (seed,
+   frames, profile, instrument, every count). `--legacy-provenance` only for published files
+   written before the instrument identity was recorded, and say so in your report.
    Check provenance too: commit, dirty flag, toolchain, `RxConfig`, seed rule.
 5. **Summaries.** Regenerate `SUMMARY.md` from your run with
    `python research/summarize_suite.py <dir>` (without `--write` into the published directory)

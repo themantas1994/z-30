@@ -195,5 +195,5 @@ fn c01_a_slot_is_decoded_only_from_its_complete_window_through_the_production_ru
     assert_eq!(snap.decodes.iter().filter(|d| d.slot == slot).count(), 2, "no duplicate or false decodes");
     // The decode finished after the window closed, on the card's own timeline.
     assert!(snap.stats.last_done_after_slot_sec >= 25.5 - 1e-6, "decode done at slot + {:.2} s", snap.stats.last_done_after_slot_sec);
-    handle.shutdown();
+    assert!(handle.shutdown().release_confirmed());
 }

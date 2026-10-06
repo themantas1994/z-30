@@ -84,9 +84,37 @@ impl RigControl for Rigctld {
 /// CAT PTT through rigctld (`T 1` / `T 0`), on its own connection.
 pub struct RigctldPtt(pub Rigctld);
 
+impl RigctldPtt {
+    /// Connects now, when the line is created, not at the first key: a first-use TCP connect
+    /// (and name resolution) inside `key()` consumed the 50 ms PTT lead and truncated the frame
+    /// (2026-09-28 audit F-17). A rigctld that is not running is reported at start-up, as a
+    /// transmit hardware problem, instead of as a failed key mid-slot. A connection lost later
+    /// is re-established on demand, as before.
+    pub fn connect(host: &str, port: u16) -> Result<Self, String> {
+        let mut r = Rigctld::new(host, port);
+        r.connect()?;
+        // Released at open, as the serial and CM108 lines are: a runtime restarted after an
+        // unconfirmed release would otherwise start `Released` without ever commanding T 0
+        // (post-remediation review M-2). A refusal here is an error, not a working PTT.
+        let mut ptt = RigctldPtt(r);
+        ptt.set(false).map_err(|e| format!("rigctld at {host}:{port} did not accept the release at start-up: {}", e.0))?;
+        Ok(ptt)
+    }
+}
+
 impl PttLine for RigctldPtt {
     fn set(&mut self, keyed: bool) -> Result<PttAck, PttError> {
-        self.0.command(if keyed { "T 1" } else { "T 0" }, 1).map(|_| PttAck::Confirmed).map_err(PttError)
+        let cmd = if keyed { "T 1" } else { "T 0" };
+        let reply = self.0.command(cmd, 1).map_err(PttError)?;
+        // Only rigctld's success report confirms a key or release. Any other line (a frequency
+        // left over from a poll, noise, a different protocol on that port) used to count as
+        // confirmed (transmit-safety audit D-6).
+        if reply.first().map(String::as_str) == Some("RPRT 0") {
+            Ok(PttAck::Confirmed)
+        } else {
+            self.0.conn = None;
+            Err(PttError(format!("rigctld answered \"{cmd}\" with {:?}, not RPRT 0", reply.first().map(String::as_str).unwrap_or(""))))
+        }
     }
 
     fn describe(&self) -> String {
@@ -160,5 +188,57 @@ mod tests {
         assert_eq!(h.join().unwrap(), vec!["T 1", "T 0"]);
         let mut dead = RigctldPtt(Rigctld::new("127.0.0.1", 1));
         assert!(dead.set(true).is_err());
+    }
+
+    #[test]
+    fn f17_the_cat_ptt_connection_is_open_and_released_before_the_first_key() {
+        // F-17: connected at creation, so the first key does not pay for the connection. M-2:
+        // and released there, so a restarted runtime never assumes a line it did not command.
+        let (port, h) = fake_rigctld();
+        let mut ptt = RigctldPtt::connect("127.0.0.1", port).unwrap();
+        assert!(ptt.0.conn.is_some(), "connected at creation");
+        assert_eq!(ptt.set(true).unwrap(), PttAck::Confirmed);
+        drop(ptt);
+        assert_eq!(h.join().unwrap(), vec!["T 0", "T 1"], "T 0 at start-up, before the first key");
+        assert!(RigctldPtt::connect("127.0.0.1", 1).is_err(), "no rigctld: an error at start-up, not at the first key");
+    }
+
+    #[test]
+    fn d6_only_rprt_0_confirms_a_cat_key_or_release() {
+        let l = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = l.local_addr().unwrap().port();
+        let h = std::thread::spawn(move || {
+            let (s, _) = l.accept().unwrap();
+            let mut r = BufReader::new(s.try_clone().unwrap());
+            let mut w = s;
+            // T 0 at open: confirmed. T 1: answered with a stray frequency line, not RPRT 0.
+            for reply in ["RPRT 0\n", "14076000\n"] {
+                let mut line = String::new();
+                r.read_line(&mut line).unwrap();
+                w.write_all(reply.as_bytes()).unwrap();
+            }
+        });
+        let mut ptt = RigctldPtt::connect("127.0.0.1", port).unwrap();
+        let e = ptt.set(true).unwrap_err();
+        assert!(e.0.contains("not RPRT 0"), "{}", e.0);
+        h.join().unwrap();
+    }
+
+    #[test]
+    fn m2_a_rigctld_that_refuses_the_start_up_release_is_not_a_working_ptt() {
+        let l = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = l.local_addr().unwrap().port();
+        let h = std::thread::spawn(move || {
+            let (s, _) = l.accept().unwrap();
+            let mut r = BufReader::new(s.try_clone().unwrap());
+            let mut w = s;
+            let mut line = String::new();
+            r.read_line(&mut line).unwrap();
+            w.write_all(b"RPRT -9\n").unwrap();
+            line
+        });
+        let e = RigctldPtt::connect("127.0.0.1", port).err().expect("a refused release at start-up is an error");
+        assert!(e.contains("did not accept the release"), "{e}");
+        assert_eq!(h.join().unwrap().trim(), "T 0");
     }
 }

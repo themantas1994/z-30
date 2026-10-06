@@ -2,6 +2,8 @@
 //! and CM108 PTT, the logbook, paths, configuration, legacy migration and the system clock.
 //! Everything platform-specific lives here, behind the traits in `z30_engine::runtime` and
 //! `z30_engine::ptt`.
+// No unsafe code here; the compiler holds it to that (2026-09-28 audit F-77).
+#![forbid(unsafe_code)]
 
 pub mod audio;
 #[cfg(feature = "cm108")]
@@ -27,7 +29,7 @@ pub fn open_ptt(cfg: &Config) -> Result<Box<dyn PttLine>, String> {
             if cfg.rig.rigctld_host.is_empty() {
                 return Err("CAT PTT needs rigctld configured".into());
             }
-            Ok(Box::new(rigctld::RigctldPtt(rigctld::Rigctld::new(&cfg.rig.rigctld_host, cfg.rig.rigctld_port))))
+            Ok(Box::new(rigctld::RigctldPtt::connect(&cfg.rig.rigctld_host, cfg.rig.rigctld_port)?))
         }
         PttConfig::Serial { port, line, active_high } => Ok(Box::new(serial_ptt::SerialPtt::open(port, *line, *active_high)?)),
         #[cfg(feature = "cm108")]

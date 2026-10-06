@@ -1,0 +1,33 @@
+# Output of f13_toy_dirty_label.sh, 2026-09-29, rustc/cargo 1.95.0. The commit hashes are the toy
+# repositories', not z-30's. "answer=4" is the edited dependency. Before the fix the edited binary keeps
+# the clean label (the C-1 defect); after it the label is -dirty until the edit is reverted or committed.
+# The AFTER run used build.rs + build_support.rs at 48f73bc, identical to the files at the head of
+# remediation/research-instrument.
+=== BEFORE the fix: build.rs at 78db463
+097c293791d6 answer=3
+097c293791d6 answer=3
+097c293791d6 answer=3
+--- unstaged edit in dsp (answer 3 -> 4), no git command in between
+097c293791d6 answer=4
+097c293791d6 answer=4
+--- git status says:
+ M crates/dsp/src/lib.rs
+097c293791d6 answer=4
+--- edit reverted
+097c293791d6 answer=3
+--- edit committed
+5d21621d1842 answer=4
+=== AFTER the fix: build.rs + build_support.rs at 48f73bc1d9ea
+379d8858cffb answer=3
+379d8858cffb answer=3
+379d8858cffb answer=3
+--- unstaged edit in dsp (answer 3 -> 4), no git command in between
+379d8858cffb-dirty answer=4
+379d8858cffb-dirty answer=4
+--- git status says:
+ M crates/dsp/src/lib.rs
+379d8858cffb-dirty answer=4
+--- edit reverted
+379d8858cffb answer=3
+--- edit committed
+75cba51cbcc8 answer=4

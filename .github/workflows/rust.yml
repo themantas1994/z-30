@@ -112,6 +112,8 @@ jobs:
         run: cargo clippy --workspace --all-targets --exclude z30-py --locked --features z30-cli/cm108,z30-gui/cm108 -- -D warnings
       - name: Test on ${{ steps.msrv.outputs.version }}
         run: cargo test --workspace --exclude z30-py --release --locked
+      - name: CM108 unit tests (feature-gated, so the workspace test above never compiles them; F-43, review L-2)
+        run: cargo test -p z30-io --features cm108 --lib --release --locked cm108
 
   benchmark-suite:
     name: Benchmark suite runs through the shipped binary and records provenance
@@ -191,5 +193,10 @@ jobs:
           row = s["rows"][0]
           assert row["vnext"] == 4 and row["oracle"] == 4, row
           assert row["vnext_false"] == 0, row
-          print("harness drives the production receiver:", row)
+          # The record must say which build produced it (F-34): the wheel built here, from this
+          # clean checkout. Asserting only the counts left a provenance regression green (QA 05b).
+          p = s["provenance"]
+          assert p["status"] == "attributable" and p["status_reasons"] == [], p
+          assert p["wheel"]["commit"] == p["checkout"] and p["wheel"]["rustc"].startswith("rustc "), p
+          print("harness drives the production receiver:", row, "built from", p["wheel"]["commit"])
           PY

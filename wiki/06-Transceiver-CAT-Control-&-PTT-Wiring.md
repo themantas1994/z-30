@@ -45,8 +45,12 @@ knowledge. A dial change is sent to the radio with rigctld's set-frequency; only
 acknowledgement of that command lets a contact log the dial as "commanded", and a fresh
 reading logs it as "reported by the radio".
 
-- The dial is polled once a second, never within 100 ms of a PTT change (some rigs cannot
-  process CAT while switching).
+- The radio is polled every `poll_interval_ms` (`[rig]`, 1000 ms by default, never faster than
+  250 ms), and no command at all, poll or set-frequency, goes out within 100 ms of a PTT change
+  (some rigs cannot process CAT while switching). Dial, PTT and mode each count as fresh only
+  for as long as the radio actually reported them.
+- **A refused set-frequency refuses transmission** (`RigRefusedDial`) until the radio reports
+  the dial.
 - **A settled disagreement refuses transmission** (`RigDialDisagrees`): if three consecutive
   polls (`POLLS_TO_STABILIZE`) after a QSY still report a different dial, the band-plan check
   would be about a frequency the transmitter is not on.
@@ -54,6 +58,8 @@ reading logs it as "reported by the radio".
   the other checks; the gate refuses only on positive evidence.
 - **An unsettled QSY is not a disagreement**, and losing contact with the rig returns it to
   "unverified" rather than blocking it.
+- **The radio is watched during the frame too.** A settled dial contradiction or a non-USB mode
+  read while transmitting stops the transmission (reported as aborted, with a TX fault).
 
 **Known limitation:** the tuning-resolution rules (a rig that truncates to 10/20/100 Hz is not
 "wrong" by the remainder) are implemented, but the probe that *measures* a rig's resolution is
@@ -71,23 +77,45 @@ therefore be refused on an odd frequency; choose a dial that is a multiple of it
 | `vox` | the transmit audio itself | **no**, and says so | yes — the audio stops |
 
 "Confirms" means the hardware or daemon accepted the command, not that the radio is
-transmitting. **If you key by CAT or CM108, enable the radio's transmit time-out timer**: z-30's
-watchdog (40 s, independent thread), panic hook and signal handlers release PTT on a crash,
-hang or normal exit, but nothing in software can after SIGKILL or a power cut. WSJT-X has the
-same limitation.
+transmitting. A **release** counts only when it is confirmed: if the hardware does not confirm
+an unkey, z-30 shows a TX fault ("PTT release NOT confirmed"), refuses to transmit, retries the
+release every 50 ms and tells you when it finally succeeds. Check the radio when you see that.
 
-A serial PTT port is opened once and held for the whole session, so opening it cannot itself
-key a radio, and the OS releases it when the process ends. On Linux you need to be in the port's
-group (`dialout` / `uucp`); CM108 needs access to the hidraw node (a udev rule; see
-[`docs/troubleshooting.md`](../docs/troubleshooting.md)).
+**If you key by CAT or CM108, enable the radio's transmit time-out timer**: z-30's watchdog
+(40 s, independent thread, which also retries a refused release), panic hook and signal handlers
+release PTT on a crash, hang or normal exit, but nothing in software can after SIGKILL or a power
+cut. WSJT-X has the same limitation. With **VOX** the watchdog has nothing to release; the audio
+queued for one frame is the only bound if the engine hangs.
+
+**CAT PTT connects when the station starts.** The PTT connection to `rigctld` is opened then, not
+at the first key, so start `rigctld` before `z30-gui`: if it is not running, the station starts
+with transmission refused ("transmit hardware unavailable") instead of failing a key mid-slot.
+
+A serial PTT port is opened once and held for the whole session, and the OS releases it when the
+process ends. **Opening it may briefly key the radio**: between opening the port and driving the
+line released, many USB-serial drivers assert DTR and RTS. That can happen when `z30-gui` starts
+(or restarts the station after an audio, PTT or rig settings change) and during
+`z30 --diagnostics`, which opens the PTT line to check it. It has not been measured on any
+hardware; check it into a dummy load (test R8 of
+[`docs/hardware-validation.md`](../docs/hardware-validation.md)) before connecting an antenna. On
+Linux you need to be in the port's group (`dialout` / `uucp`); CM108 needs access to the hidraw
+node (a udev rule; see [`docs/troubleshooting.md`](../docs/troubleshooting.md)).
+
+**Pick devices unambiguously.** An audio device name must be the device's full name or a part of
+it that no other device's name contains; a CM108 device path may be left empty only when exactly
+one C-Media device is attached. Anything ambiguous is refused with the list of candidates, never
+resolved to the first one found. `z30 --diagnostics` prints the audio device each direction
+would use.
 
 ## The transmit gate
 
 Every transmission — sequencer, manual and tune — passes one check first, and it fails closed:
 callsign (set, not the placeholder, one v1 carries exactly), region and licence class, the
-radiated emission inside a permitted data segment at its measured −40 dB width, the radio not
-contradicting the dial, the whole frame reading back as the exact message, a PTT method
-configured and the transmit hardware open. See [13](13-Operating-Safety-Compliance-&-Security.md).
+radiated emission inside a permitted segment at its measured −40 dB width (US data segments and
+60 m channels; whole amateur bands for IARU regions), the radio not contradicting or refusing the
+dial, the whole frame reading back as the exact message, a PTT method configured, the transmit
+hardware open and working, no unconfirmed PTT release, and a transmit level above 0 and no more
+than full scale. See [13](13-Operating-Safety-Compliance-&-Security.md).
 
 ## Wiring notes that do not depend on software
 
