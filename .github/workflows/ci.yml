@@ -85,18 +85,22 @@ jobs:
         # longer be regenerated, only kept. Any byte that changes fails here, and so does a file
         # nobody pinned. A new protocol version's vectors go in a subdirectory of
         # fixtures/golden with their own FROZEN.sha256 (docs/research-process.md section 6).
+        # Checked at every depth, dotfiles included (research-engineer confirmation review, N1).
         run: |
-          set -e
-          frozen() {
-            (cd "$1" && sha256sum --check --strict --quiet FROZEN.sha256)
-            for f in "$1"/*; do
-              [ -f "$f" ] && [ "$(basename "$f")" != FROZEN.sha256 ] || continue
-              grep -q "  $(basename "$f")\$" "$1/FROZEN.sha256" || { echo "$f is not pinned"; exit 1; }
-            done
-          }
-          frozen tests/vectors
-          frozen fixtures/golden
-          for d in fixtures/golden/*/; do [ -d "$d" ] && frozen "${d%/}"; done
+          set -eo pipefail
+          # Only fixtures/golden/<version>/ may hold a subdirectory; no links anywhere.
+          odd=$(find fixtures/golden tests/vectors -mindepth 1 \( -type l -o \( -type d \( -path 'fixtures/golden/*/*' -o -path 'tests/vectors/*' \) \) \) -print)
+          if [ -n "$odd" ]; then echo "unexpected link or nested directory:"; echo "$odd"; exit 1; fi
+          # Every file, dotfiles included, is pinned by the FROZEN.sha256 of its own directory.
+          unpinned=$(find fixtures/golden tests/vectors -type f ! -name FROZEN.sha256 | while read -r f; do
+            awk -v b="${f##*/}" '$2 == b { found = 1 } END { exit !found }' "${f%/*}/FROZEN.sha256" 2>/dev/null || echo "$f"
+          done)
+          if [ -n "$unpinned" ]; then echo "not pinned:"; echo "$unpinned"; exit 1; fi
+          # And every pinned byte is unchanged.
+          for d in tests/vectors fixtures/golden fixtures/golden/*/; do
+            [ -d "$d" ] || continue
+            (cd "$d" && sha256sum --check --strict --quiet FROZEN.sha256)
+          done
           echo "fixtures/golden and tests/vectors match their FROZEN.sha256"
 
       - name: No unpublished suite result is committed as if it were the record
