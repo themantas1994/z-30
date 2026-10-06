@@ -5,6 +5,10 @@
 //! stale that nothing noticed; a binary that names its commit can be checked against the commit
 //! it claims to be - but only if the label is recomputed whenever the source changes, which
 //! `build_support.rs` explains (F-13).
+
+// clippy.toml's disallowed lists are for src/loopback.rs alone; this script runs git and reads files.
+#![allow(clippy::disallowed_methods, clippy::disallowed_types)]
+
 #[path = "build_support.rs"]
 mod build_support;
 
