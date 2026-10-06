@@ -66,8 +66,12 @@ before and after):
 | 50 | 4 | 836 → 588 | 923 → 620 | 2.57 → 1.58 | 47 897 → 43 774 | 1000/1000 both |
 | 50 | 1 | 2465 → 1485 | 2738 → 1579 | 2.43 → 1.45 | 14 479 → 10 356 | 1000/1000 both |
 
-The saving grows with the number of decodes (it is per decode): none at K = 1, about 40 % of
-CPU per slot at K = 20 and K = 50. Latency on a shared VM is indicative; CPU per slot and the
+The saving grows with the number of decodes (it is per decode): none at K = 1; CPU per slot
+−29 % (K = 20) and −40 % (K = 50) on one thread, −39 % (K = 20) and −39 % (K = 50) on four
+threads. That is more than `replica_spectra`'s 20 % share of user self time in the profile
+accounts for. The difference is not attributed by any measurement here; the probable cause is
+the three ~1.15 MB `Vec<f64>` each evaluation allocated, whose page-fault and allocator cost is
+kernel time the self-time profile does not show, and which contends across threads. Latency on a shared VM is indicative; CPU per slot and the
 task-clock spread are the firmer numbers. The decode budget is 4.5 s per slot.
 
 ## 3. Tried and not kept

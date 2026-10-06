@@ -6,8 +6,12 @@
 //! oracle (`test_modem_spectrum.py`, removed in the 2026-10-06 cleanup) while the production
 //! modulator was only checked against it sample by sample (`golden.rs`) and on one noisy frame
 //! (`z30-cli` loopback). They are asserted here on the production `Modulator`, with the same
-//! budgets, the same measurement and the same deliberately broken reference waveform that must
-//! fail them - so the test shows it can tell the difference rather than merely passing.
+//! budgets, the same measurement (Welch, Hann, 2^15 points, 50 % overlap, mean removed per
+//! segment; unscaled and without the one-sided x2, which peak-relative widths and cumulative
+//! fractions do not need) and the same construction of the deliberately broken reference waveform
+//! that must fail them - so the test shows it can tell the difference rather than merely passing.
+//! The payloads are seeded here (splitmix64), not the oracle's NumPy draws, so the oracle's
+//! recorded widths (the gated waveform's "over 200 Hz") describe other frames.
 //!
 //! It lives in z30-dsp rather than beside the modulator because it needs an FFT, and adding a
 //! dev-dependency to z30-protocol's Cargo.toml would change the benchmark instrument identity
@@ -20,6 +24,7 @@
 use rustfft::num_complex::Complex64;
 use rustfft::FftPlanner;
 use z30_protocol::gfsk::Modulator;
+use z30_protocol::gfsk::FRAME_RAMP_SEC;
 use z30_protocol::{NUM_TONES, TONE_SPACING_HZ, TOTAL_SYMBOLS};
 
 /// ITU-style 99 % occupied bandwidth budget: the tones span 15 x 3.125 = 46.875 Hz, so this is
@@ -176,5 +181,37 @@ fn instantaneous_frequency_hits_each_tone_at_the_symbol_centre() {
         let want = F0 + tone as f64 * TONE_SPACING_HZ;
         let got = f[i * sps + sps / 2];
         assert!((got - want).abs() < 0.5, "symbol {i}: {got:.2} Hz at the centre, expected {want:.2} Hz");
+    }
+}
+
+/// No per-symbol amplitude gating: away from the one ramp at each end, the transmitted
+/// waveform's envelope (its analytic-signal magnitude) never dips. This is the property that keeps
+/// the sidebands where they belong. `gfsk.rs` checks the envelope function and ties `synthesize`
+/// to `analytic`; this checks `synthesize` itself, on random payloads, as the oracle did.
+#[test]
+fn the_envelope_is_constant_between_the_frame_edge_ramps() {
+    for seed in SEEDS {
+        let w = transmitted(seed);
+        let n = w.len();
+        // Hilbert transform: keep DC and Nyquist, double the positive frequencies, drop the rest.
+        let mut buf: Vec<Complex64> = w.iter().map(|&v| Complex64::new(v, 0.0)).collect();
+        let mut planner = FftPlanner::<f64>::new();
+        planner.plan_fft_forward(n).process(&mut buf);
+        for (k, z) in buf.iter_mut().enumerate() {
+            if k > 0 && k < n / 2 {
+                *z *= 2.0;
+            } else if k > n / 2 {
+                *z = Complex64::new(0.0, 0.0);
+            }
+        }
+        planner.plan_fft_inverse(n).process(&mut buf);
+        let ramp = (FRAME_RAMP_SEC * FS) as usize;
+        let interior = &buf[2 * ramp..n - 2 * ramp];
+        // The transform rings at the edges of the interval by construction; skip 2 % each side.
+        let edge = interior.len() / 50;
+        for z in &interior[edge..interior.len() - edge] {
+            let a = z.norm() / n as f64;
+            assert!((0.9..1.1).contains(&a), "seed {seed}: envelope {a:.3} inside the frame");
+        }
     }
 }
