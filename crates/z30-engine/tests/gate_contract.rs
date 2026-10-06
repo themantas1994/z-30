@@ -1,5 +1,5 @@
 //! Guarantees of the transmit gate and the transmit plan that no test pinned before the
-//! 2026-09-28 agent-team audit: the emission-edge arithmetic (F-05: G-bw, G-centre, G-top), the
+//! 2026-09-28 audit: the emission-edge arithmetic (F-05: G-bw, G-centre, G-top), the
 //! transmit level (F-07: G-nan, N3-level), configured power provenance (F-09: PWR-a), the gate
 //! as one contract that includes the hardware (F-22), the corrected US band plan at the gate
 //! (F-02), only a complete frame advancing the QSO (F-17), Tune through the one modulator

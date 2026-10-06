@@ -15,7 +15,7 @@ import os
 BENCHMARKS = ["awgn", "snr", "drift", "timing", "clock", "impair", "busy", "false", "sic", "fading"]
 SUITE_SEED = 20260830
 
-# Frames per point behind any sensitivity crossing (AGENTS.md section 5; crates/z30-cli/src/suite.rs
+# Frames per point behind any sensitivity crossing (docs/benchmarking.md; crates/z30-cli/src/suite.rs
 # CROSSING_MIN_FRAMES). The size each benchmark is published at, in its own unit (frames per
 # point; slots per point for busy and false; trials per cell for sic), mirrors
 # `suite::publishable_size`; below it a result is exploratory.

@@ -16,9 +16,6 @@ config.json
 # Benchmark smoke output (published results live in research/results/<commit>/)
 /smoke/
 
-# Agent worktrees (Claude Code isolation); never part of the repository.
-/.claude/worktrees/
-
 # Audit evidence logs are evidence, not build noise: `*.log` above silently dropped the 19 logs
 # the 2026-09-24 corrective audit cites (RES-13 / F-39). Policy: audit/EVIDENCE_POLICY.md.
 !audit/**/evidence/**/*.log

@@ -5,7 +5,7 @@ produces an out-of-band or stuck transmission on somebody's licence. The rule th
 everything on this page: **if anything is uncertain, refuse to transmit.**
 
 Every rule below has a test, and a failing test means the change is wrong, not the test
-(`AGENTS.md` section 4). Test names are from `crates/z30-engine/tests/safety.rs` unless stated
+. Test names are from `crates/z30-engine/tests/safety.rs` unless stated
 otherwise.
 
 ## The transmit gate (`z30_engine::txgate::can_transmit`)

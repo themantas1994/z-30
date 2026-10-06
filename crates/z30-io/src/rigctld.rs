@@ -1,7 +1,7 @@
 //! Hamlib `rigctld` over TCP: dial readback and control (`RigControl`), and CAT PTT (`PttLine`).
 //!
 //! Two separate connections, deliberately: the poller's reads must never queue a PTT release
-//! behind them (AGENTS.md: "an unkey queued behind a slow read is a transmitter still
+//! behind them (docs/safety.md: "an unkey queued behind a slow read is a transmitter still
 //! radiating"). Every socket operation has a timeout, so neither can hang the engine or the
 //! watchdog. A command whose reply is not `RPRT 0` is a failure, never a success.
 

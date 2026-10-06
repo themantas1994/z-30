@@ -6,7 +6,7 @@
 //! give an unbiased noise estimate. The metric is the exact Rician one, ln I0(|r| a / sigma^2),
 //! with the reference's pilot-mean amplitude estimate and Log-MAP bit demapping. The coherence
 //! weight is zero: RECEIVER_PILOT_COHERENCE, declared here beside the demodulator because it
-//! is the receiver's constant (AGENTS.md section 4), not a benchmark's.
+//! is the receiver's constant (docs/demodulation.md), not a benchmark's.
 
 use crate::baseband::BB_NSPS;
 use crate::ldpc::Llrs;

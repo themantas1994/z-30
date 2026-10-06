@@ -25,7 +25,7 @@ Hamlib's own rig model and serial settings rather than reimplementing CAT.
 - **QSY** (`F <hz>`). A refused set-frequency refuses transmission (`RigRefusedDial`) until a
   reading confirms the dial.
 - **CAT PTT** (`T 1` / `T 0`) runs on a **separate connection** from the poller. An unkey
-  queued behind a slow read is a transmitter still radiating (AGENTS.md section 4). The PTT
+  queued behind a slow read is a transmitter still radiating (docs/safety.md). The PTT
   connection is opened when the line is created, at start-up, not at the first key: a `rigctld`
   that is not running is reported then, as a transmit hardware problem that refuses
   transmission, rather than as a failed key in the middle of a slot. A connection lost later is

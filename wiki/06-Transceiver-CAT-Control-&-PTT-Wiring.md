@@ -10,8 +10,7 @@
 z-30 controls the radio through **Hamlib's `rigctld`** and keys it by **CAT, a serial RTS/DTR
 line, a CM108/CM119 GPIO, or VOX**. That is all. Split operation, direct (non-Hamlib) CAT,
 Omni-Rig/Flrig/DX Lab/HRD, TCI, WinKeyer, Raspberry Pi GPIO and right-channel-tone PTT are not
-implemented. The retired browser app listed "9 PTT methods" and "139 STABLE rigs"; none of those
-was ever tested either, and neither claim carried over.
+implemented.
 
 ## Rig control: `rigctld`
 

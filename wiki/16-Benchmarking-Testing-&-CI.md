@@ -88,7 +88,7 @@ suite takes about an hour on 4 cores (the `elapsed_s` of the ten `672cef9b3cdb` 
 3. A comparison between two receivers or settings is **paired** (same audio, both arms) and
    quotes the exact McNemar p-value. Two independent sweeps differenced cannot resolve a
    fraction of a dB.
-4. Against FT8, all of it or none of it, as `AGENTS.md` §5 states it: about 2 dB deeper than
+4. Against FT8, all of it or none of it, as docs/benchmarking.md states it: about 2 dB deeper than
    FT8's published −21 dB (a simulation figure from Franke, Somerville & Taylor, QEX 2020,
    conditions not identical), bought with 1.9× the airtime (24.0 s vs 12.64 s) and 14 fewer
    message bits (63 vs 77); per message bit z-30 needs about 1.6 dB more Eb/N0 than FT8 (6.8 vs

@@ -260,7 +260,7 @@ every frame decoded twice off one demodulation. **Exploratory:** 60–80 frames 
 35–40 in-QSO frames per point), below the 200 frames per point a published crossing needs, and
 no file under `research/results/` holds these sweeps. The `moderate` row used the oracle's
 Watterson model as it was then, with per-realisation normalisation and 1/√2 of the labelled
-Doppler spread; results from that model are withdrawn (`AGENTS.md` §5), so that row is kept only
+Doppler spread; results from that model are withdrawn (`docs/benchmarking.md`), so that row is kept only
 as history. None of this has been re-measured through `decode_slot`.
 
 | Channel | Seed | Frames / point | Total frames (in-QSO) | Discordant (AP : plain) | Exact McNemar *p* |
@@ -302,7 +302,7 @@ band that is 10% its own QSO gets a tenth of the frames improved, not a 1.9 dB b
 The right sentence is *"On the frozen oracle's reference receiver, in simulation, AP recovered
 frames the ordinary decoder lost, and for the frames it describes moved the 50% point by
 1.8–1.9 dB on AWGN (exploratory: about 40 in-QSO frames per point; not re-measured through
-`decode_slot`)"* — the halves together or none, in the spirit of the rule `AGENTS.md` §5 applies
+`decode_slot`)"* — the halves together or none, in the spirit of the rule `docs/benchmarking.md` applies
 to the FT8 comparison.
 
 The plain arm's own in-QSO crossing (−22.88 dB) is the oracle receiver's, estimated from ~40
@@ -330,7 +330,7 @@ analysis, not a measured result, and a sweep large enough to test it has not bee
 
 ### Confidence
 
-`AGENTS.md` §5 asks a result that challenges the documentation for a controlled, seeded, paired
+`docs/benchmarking.md` asks a result that challenges the documentation for a controlled, seeded, paired
 measurement at a realistic operating point with a stated confidence figure (an exact p-value or
 interval): ≥ 95% to challenge, ≥ 99% before it is treated as settled. For the primary sweep: the
 comparison is paired at the LLR vector, so both arms see identical channel evidence, and the

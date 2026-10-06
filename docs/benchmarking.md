@@ -1,12 +1,50 @@
 # Benchmarking and measured results
 
-Every figure here names the result file it came from. The standard is `AGENTS.md` section 5:
-a figure carries its conditions and interval, a comparison between two receivers or settings is
-paired and quotes the exact McNemar p-value, and nothing unmeasured is reported as if it were.
+Every figure here names the result file it came from. The rules for what may be published
+are in [Reporting rules](#reporting-rules).
 
 > **All of this is software simulation.** No radio, sound card or RF path was involved in any
 > figure on this page. Real-radio validation: not yet performed
 > ([hardware-validation.md](hardware-validation.md)).
+
+## Reporting rules
+
+The project has retracted sensitivity claims before, and the retractions are kept on record.
+Every published figure follows these rules.
+
+- **Source.** It comes from `z30 --benchmark suite` (or another benchmark that calls
+  `decode_slot`), built from a clean tree. The file under `research/results/<commit>/` is the
+  authority; tables in the documentation are reformatted from `research/summarize_suite.py`
+  output and every value is checked against the JSON, never retyped from memory.
+- **Conditions.** Quote the implementation, the measurement type, the channel, the SNR
+  definition (2500 Hz, SPEC §10), the sample count, the seed, the success criterion, the
+  interval, and that it is a simulation with no hardware involved. A bare "−23 dB" is not a
+  z-30 figure. Run-to-run spread is quoted from `--replicate` runs, never from another base
+  seed.
+- **Sample size.** At least 200 frames per point behind a published sensitivity crossing.
+  Fewer is exploratory, and the suite marks it (`status: exploratory`).
+- **Where results land.** Only the published run goes in `research/results/<commit>/`. Every
+  result carries a `status` (`published`, `replicate`, `exploratory`, `dirty`,
+  `not_the_published_run`); `z30` routes the others to labelled directories and never
+  overwrites a published file. `compare_results.py` and `paired_mcnemar.py` refuse results that
+  differ in seed, frames, status or instrument.
+- **Comparisons are paired.** Two decoders or two configurations are compared on the same audio,
+  with the exact McNemar p-value over the discordant frames (the `sic` benchmark does this).
+- **"Threshold"** is reserved for blind-acquisition results through `decode_slot`. A genie-aided
+  result is a bound, and no z-30-versus-other-mode delta is computed from one.
+- **Against FT8, all of it or none of it:** about 2 dB deeper than FT8's published −21 dB (a
+  simulation figure from Franke, Somerville & Taylor, *QEX* 2020, conditions not identical),
+  bought with 1.9× the airtime and 14 fewer message bits; per message bit z-30 needs about
+  1.6 dB more Eb/N0 (6.8 against 5.1 dB); on ITU-R F.1487 high-latitude moderate z-30 does not
+  decode at any SNR; and FT8 does recover collisions (WSJT-X runs three passes with
+  subtraction).
+- **Withdrawn figures** (the per-realisation fading model, the 1/√2-Doppler fading figures, the
+  legacy collision table, anything the retired browser receiver or the deleted Python reference
+  produced) are not quoted as z-30 results.
+- **A result overturns a documented claim** only when it is a controlled, seeded, paired
+  measurement at a realistic operating point with a stated confidence figure: 95% to challenge,
+  99% before it is treated as settled. Nothing may be altered, in thresholds, seeds, sample
+  sizes, SNR ranges or exit conditions, to manufacture a result.
 
 ## The instrument is the receiver
 

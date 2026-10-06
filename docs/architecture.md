@@ -32,7 +32,7 @@ enforces the direction: the DSP cannot open a device, and the engine cannot touc
 `z30_dsp::slot::Receiver::decode_slot` is the only receive entry point. The engine's decode
 thread, `z30 --decode` and `z30 --benchmark` all call it with the same `RxConfig` defaults. A figure measured by any of them is a figure
 about the receiver an operator runs. That is the structural answer to the failure recorded
-in `AGENTS.md` section 4, where the benchmark and the live-receive decoder had different
+in [safety.md](safety.md), where the benchmark and the live-receive decoder had different
 demodulators for months.
 
 ## One modulator

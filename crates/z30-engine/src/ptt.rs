@@ -1,6 +1,6 @@
 //! PTT: one keying implementation, and the stuck-transmitter defences around it.
 //!
-//! Carried over from the TypeScript transmit path (AGENTS.md section 4), in native form:
+//! Carried over from the TypeScript transmit path (docs/safety.md), in native form:
 //!
 //! - **One keying implementation.** Every transmit path keys through `PttController::key`, which
 //!   returns whether the hardware accepted the command. A line that cannot confirm anything

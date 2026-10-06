@@ -46,8 +46,7 @@ where it is 1 minus the same over the 8 where it is 0, summed in NumPy's pairwis
 LLRs match the reference bit for bit.
 
 **Coherence weight: zero.** `RECEIVER_PILOT_COHERENCE = 0.0` is declared in `demod.rs`, beside
-the demodulator, because it is a property of the receiver and not of any benchmark (AGENTS.md
-section 4). Measured paired in the reference, the pilot-aided coherent term is worth +1.29 dB
+the demodulator, because it is a property of the receiver and not of any benchmark (docs/demodulation.md). Measured paired in the reference, the pilot-aided coherent term is worth +1.29 dB
 when the timing is exact and costs 1.77 dB when the receiver has to find the frame itself
 (the oracle's `z30_dsp/benchmark.py`, deleted with the oracle in the 2026-10-06 cleanup; a
 historical measurement of the reference, not of `decode_slot`). A test pins the value.

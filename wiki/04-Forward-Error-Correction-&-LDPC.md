@@ -101,7 +101,7 @@ The receiver performs iterative message passing between Variable Nodes ($V_n$) a
 > to carry) found the cascade decodes strictly more frames at every point tested — 23 of 23
 > disagreements went to the cascade, 0 to the single schedule (exact two-sided McNemar
 > p = 2 × 2⁻²³ ≈ 2.4 × 10⁻⁷; measured on the oracle's decoders in 2026-08, and no result file is
-> kept). Per the benchmark-integrity rule in `AGENTS.md` §5, that clears
+> kept). Per the benchmark-integrity rule in [docs/benchmarking.md](../docs/benchmarking.md#reporting-rules), that clears
 > the bar to correct the documentation rather than the code. See
 > [16. Benchmarking, Testing & CI](16-Benchmarking-Testing-&-CI.md) for the method.
 

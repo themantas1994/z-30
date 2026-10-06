@@ -16,7 +16,7 @@ rig control. `--loopback-test` plays nothing; it is a software loopback in memor
 | `z30 --receive [--capture-slots DIR]` | a live receive-only station on the configured input; with `--capture-slots`, every slot's 27 s window (WAV, 6 kHz) and decode report (JSON, `source: live-audio`) |
 | `z30 --decode FILE.wav [--start-utc T]` | decode a recording (any rate; resampled to 6 kHz); a 27 s 6 kHz file from `--capture-slots` is decoded as one slot. Without `--start-utc` the recording's time is unknown and decodes are labelled `window N (UTC unknown)`, not given a date |
 | `z30 --encode "CQ K1ABC FN31" --wav out.wav [--f0 1500] [--rate 48000]` | write a frame to a WAV file; refuses a message v1 cannot carry exactly, and writes only a frame that passed the same round-trip verification as a transmission |
-| `z30 --migrate [--force]` | import the retired app's configuration and logbook ([01](01-New-User-Guide-&-First-Steps.md#7-coming-from-the-old-browserpython-z-30)); writes no transmit level and skips values equal to the old apps' own defaults, so the result cannot transmit until you configure it ([`docs/troubleshooting.md`](../docs/troubleshooting.md#migration)) |
+| `z30 --migrate [--force]` | import the earlier browser/Python version's configuration and logbook ([01](01-New-User-Guide-&-First-Steps.md#7-coming-from-the-earlier-browserpython-version)); writes no transmit level and skips values equal to the old apps' own defaults, so the result cannot transmit until you configure it ([`docs/troubleshooting.md`](../docs/troubleshooting.md#migration)) |
 | `z30 --export-adif FILE` / `--import-adif FILE` | ADIF 3.1.4 export; import marks every field `legacy_import` |
 | `z30 --loopback-test [--out lb.json]` | software loopback: a known frame through the transmit synthesis and the receive chain (resampler, clock, scheduler, `decode_slot`) at 48 and 44.1 kHz, in memory; opens no device, cannot transmit. `--out` writes only to a file: a device (a serial port, or on Windows a name such as `COM3`) is refused, because opening one can key a serial-PTT radio |
 | `z30 --config loopback.toml --audio-loopback-test --confirm-no-transmitter [--out a1.json]` | hardware validation test A1 through a real sound card and cable ([`docs/hardware-validation.md`](../docs/hardware-validation.md)); refuses configurations with PTT or rig control, and a device as `--out` |
@@ -34,7 +34,7 @@ information as `z30 --version`.
 ## Where files live
 
 `$Z30_HOME` if set, else `$XDG_CONFIG_HOME/z30`, else `~/.z30` (on Windows `~` is
-`%USERPROFILE%`). This is the directory the retired app used, so `--migrate` finds its files.
+`%USERPROFILE%`). This is the directory the earlier version used, so `--migrate` finds its files.
 
 | File | Contents |
 | :--- | :--- |
