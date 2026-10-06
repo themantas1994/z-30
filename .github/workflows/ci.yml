@@ -81,7 +81,17 @@ jobs:
       - name: The golden fixtures are frozen
         # Their generators (the Python oracle and the TypeScript codec) are gone, so the
         # fixtures can no longer be regenerated, only kept. Any byte that changes fails here.
-        run: cd fixtures/golden && sha256sum --check --strict FROZEN.sha256 && test "$(ls | wc -l)" -eq 20
+        # A new protocol version's vectors go in a subdirectory with their own FROZEN.sha256
+        # (docs/research-process.md section 6); every file at this level must be pinned here.
+        run: |
+          set -e
+          cd fixtures/golden
+          sha256sum --check --strict FROZEN.sha256
+          for f in *; do
+            [ -f "$f" ] && [ "$f" != FROZEN.sha256 ] || continue
+            grep -q "  $f\$" FROZEN.sha256 || { echo "fixtures/golden/$f is not pinned"; exit 1; }
+          done
+          for d in */; do [ -d "$d" ] || continue; (cd "$d" && sha256sum --check --strict FROZEN.sha256); done
 
       - name: No unpublished suite result is committed as if it were the record
         # z30 writes exploratory and dirty-build results under these two trees by default

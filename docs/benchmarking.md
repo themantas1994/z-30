@@ -404,7 +404,7 @@ re-run at `83b1b70`, reproducing frame for frame.
 
 Discordant frames: 34 vNext-only against 17 oracle-only; exact McNemar p = 0.024. vNext's
 blind receiver is **not worse** than the oracle's windowed one. p = 0.024 does not reach the
-99% bar, so it does not establish that vNext is better. The oracle is told the nominal carrier
+99% bar, so it does not establish that vNext is better. The oracle was told the nominal carrier
 and timing and searches ±12 Hz / ±0.55 s. vNext is told nothing.
 
 ### Whitening A/B (`whitening_ab_200`)

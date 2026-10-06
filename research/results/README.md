@@ -66,7 +66,7 @@ files are unchanged and stay as evidence of what was measured; nothing about the
 
 | File | What | Command |
 | :--- | :--- | :--- |
-| `awgn_paired_200.txt` / `.json` | AWGN decode threshold, oracle vs vNext `decode_slot`, paired on the same buffers, seed 20260830, 200 frames/point, -28..-17 dB | `python research/paired_receiver.py --min-snr -28 --max-snr -17 --frames 200 --workers 4 --out research/results/awgn_paired_200.json` |
+| `awgn_paired_200.txt` / `.json` | AWGN decode rate, oracle (windowed) vs vNext `decode_slot` (blind), paired on the same buffers (oracle `--mode realistic` producer: carrier ±5 Hz, timing ±0.5 s), seed 20260830, 200 frames/point, -28..-17 dB | `python research/paired_receiver.py --min-snr -28 --max-snr -17 --frames 200 --workers 4 --out research/results/awgn_paired_200.json` |
 | `whitening_ab_200.txt` / `.json` | Per-tone interference whitening on (A) vs off (B), same buffers, AWGN, 200 frames/point, -25..-21 dB: 0 discordant of 1000 | `python research/paired_receiver.py --min-snr -25 --max-snr -21 --frames 200 --workers 4 --vnext-only --arm-b '{"whiten": false}' --out research/results/whitening_ab_200.json` |
 | `perf_k.txt` | `decode_slot` latency p50/p95/p99/max, throughput, process CPU and heap allocations per slot at K = 1, 5, 20, 50 stations, 20 seeded slots each, 4 threads and 1, on an idle host | `z30 --benchmark perf --frames 20` |
 | `false_decodes_2000.txt` | 2000 noise-only slots: 0 false decodes in 133,911 LDPC attempts with the fine-sync gate off (exact 95% upper bound 2.24e-5 per attempt); 0 in 2000 slots with the production config | `z30 --benchmark false-decodes --frames 2000` |

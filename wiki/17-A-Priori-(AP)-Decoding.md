@@ -336,8 +336,8 @@ interval): ≥ 95% to challenge, ≥ 99% before it is treated as settled. For th
 comparison is paired at the LLR vector, so both arms see identical channel evidence, and the
 exact two-sided McNemar test over 150 discordant pairs gives *p* = 1.4 × 10⁻⁴⁵, recomputable from
 `math.comb` in three lines. The replication at an independent seed lands within 0.06 dB. The
-instrument, though, is the oracle's `realistic` mode (blind acquisition and noise estimation in
-the **reference** receiver), not the shipped `decode_slot`; the sweep is below 200 frames per
+instrument, though, is the oracle's `realistic` mode (windowed acquisition, ±12 Hz / ±0.55 s
+around the nominal carrier and timing, and noise estimation in the **reference** receiver), not the shipped `decode_slot`; the sweep is below 200 frames per
 point; and no result file holds it. It is evidence about the oracle, not a published z-30 figure.
 
 The remaining threat to real-world comparability is the population model, not the statistics —
@@ -369,16 +369,17 @@ and one more place for the two arms to diverge.
 | File | What it pins |
 | :--- | :--- |
 | `crates/z30-dsp/tests/golden_ldpc.rs`, `crates/z30-dsp/src/ap.rs` | The Rust port: ladders identical to the oracle's (membership and order), AP decoding bit-exact on the corpus, empty mask bit-identical to no mask, CRC bits never asserted, deep types frequency-gated. |
-| `crates/z30-dsp/tests/ap_production.rs` | Through `decode_slot`: AP adds decodes and never changes or loses one, a wrong assumption cannot produce the assumed call, AP does not manufacture decodes from noise, and in a busy band AP never loses a decode the plain decoder made. |
+| `crates/z30-dsp/tests/ap_production.rs` | Through `decode_slot`, on the frames and bands it draws: every plain decode is still in the AP report, AP decodes are labelled and are the frame that was sent, a wrong assumption cannot produce the assumed call, AP does not decode noise, and the frequency gate narrows AP's attempts. It does not exercise the cross-pass case (section 3), which is untested and not guaranteed. |
 | `crates/z30-protocol/tests/golden.rs`, `shared_vectors.rs` | The packing the ladders assume: whole messages (including `73`) against the frozen `messages.json`, and the shared callsign packing vectors. |
 
 Until the 2026-10-06 cleanup the oracle's `test_ap_decode.py` and `test_cross_language_parity.py`
 and the browser runtime's `apDecode.test.mjs` also pinned the mechanism, the constants and the
 packer's branch order in those two implementations; they were deleted with them.
 
-Every expectation in those files is computed from the data the test itself generates. There are
-no recorded "expected" decode counts — a count written down once and asserted forever passes
-because it was copied, not because the decoder worked.
+The production tests (`ap_production.rs`) compute every expectation from the data they
+generate; there are no recorded "expected" decode counts there — a count written down once and
+asserted forever passes because it was copied, not because the decoder worked. The golden tests
+compare frame by frame against the oracle's recorded outputs, which is what bit-exactness means.
 
 ---
 
@@ -396,8 +397,8 @@ only the packer never emitted it. Emitting it now is a fix rather than a wire-fo
 existing receiver already understands the value. The retired runtime's `apDecode.test.mjs`
 guarded the branch order, and the oracle's `test_cross_language_parity.py` guarded it a second
 way by asserting the positions of the two branches in the source; both were deleted in the
-2026-10-06 cleanup. The Rust codec has no such branch order (it parses `73` as its own token),
-and `golden.rs` checks its packing against the frozen `messages.json`.
+2026-10-06 cleanup. The Rust codec's `parse_extra` matches `73` as its own token before the numeric-report branch,
+and `golden.rs` pins `K1ABC W1AW 73` to extra code 62 against the frozen `messages.json`.
 
 ### A related limitation: no roger bit
 

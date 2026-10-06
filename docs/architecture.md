@@ -102,8 +102,7 @@ retired browser/PWA transceiver (whose TypeScript codec produced `fixtures/golde
 and `z30-py`, PyO3 bindings through which `research/paired_receiver.py` measured `decode_slot`
 against the oracle. No crate depended on any of them. All of them were deleted
 ([`audit/2026-10-06-codebase-cleanup/`](../audit/2026-10-06-codebase-cleanup/REMOVAL_PLAN.md);
-recoverable from commit `acfce5e`), because a second implementation that nothing ships can only
-diverge from the first. What they established is kept as data:
+recoverable from commit `acfce5e`), because nothing shipped used them. What they established is kept as data:
 
 ```text
 (deleted oracle and TS codec) --generated, once--> fixtures/golden (frozen, FROZEN.sha256) --tests--> crates/

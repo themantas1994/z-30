@@ -181,8 +181,12 @@ interoperability with every existing station. On top of sections 1–5 it requir
    oracle, which defined v1 and was deleted in the 2026-10-06 cleanup; they cannot be
    regenerated and are pinned byte for byte by `fixtures/golden/FROZEN.sha256`. They are never
    edited by hand or replaced. A new version's vectors come from a reviewed generator committed
-   with them, sit beside the v1 set, and are hash-pinned in the same commit with the reason. The
-   v1 vectors remain for as long as v1 is supported.
+   with them under `research/golden/` (outside the application, where CI's hygiene job allows
+   Python), are written to their own directory beside the v1 set (`fixtures/golden/v2/`, with
+   its own `FROZEN.sha256`), and are hash-pinned in the same commit with the reason. The
+   generator should be independent of `crates/` - that independence is what the v1 oracle gave
+   and what a copy of the Rust code would not. The v1 vectors remain for as long as v1 is
+   supported.
 3. **A version bump**: `z30_protocol::PROTOCOL_VERSION` (`crates/z30-protocol/src/lib.rs`,
    reported by `z30 --version` and the GUI), the workspace version in `Cargo.toml`, and a
    release note stating that the change is not compatible with earlier versions.

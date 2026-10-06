@@ -68,8 +68,10 @@ rules that matter most:
   `research/results/<commit>/`, its seed, frame count, channel and interval, and says it is a
   simulation until hardware says otherwise.
 - **The golden vectors are frozen.** Their generator is gone, so `fixtures/golden/` is never
-  edited or regenerated; CI checks every byte against `fixtures/golden/FROZEN.sha256`. If the
-  Rust side disagrees with a vector, the Rust side is wrong.
+  edited or regenerated; CI checks every byte against `fixtures/golden/FROZEN.sha256`. If a
+  golden test fails, the Rust side is wrong. Where the oracle itself was the defect (OSD, SPEC
+  §7.1; the packer's silent transformations, SPEC §6), the vectors keep the oracle's behaviour
+  and the tests encode the documented deviation.
 - Conventional commits: `feat(dsp):`, `fix(engine):`, `docs(wiki):`.
 
 ## Documentation

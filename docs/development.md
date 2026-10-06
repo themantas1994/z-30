@@ -97,7 +97,9 @@ tied to source. See [benchmarking.md](benchmarking.md).
 ## CI
 
 `.github/workflows/rust.yml`, the production application, on Linux, Windows and macOS: fmt,
-clippy with warnings as errors, debug and release tests, release binaries with CM108, a check
+clippy with warnings as errors, tests (test profile, opt-level 3) on every platform and
+release-profile tests on Linux in the MSRV job and on every platform in `release.yml` (version
+tags and release-path pull requests), release binaries with CM108, a check
 that each binary reports the commit it was built from (not a dirty tree) and its CM108 feature,
 a scan of the release binaries for the old W1AW default, a CLI encode → decode round trip and a
 refusal check. Then: the whole workspace on the declared MSRV (build, clippy, tests); and the

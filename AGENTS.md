@@ -69,7 +69,8 @@ wiki/                        operator docs
 fixtures/golden/             golden vectors from the deleted oracle and TS codec. FROZEN: they
                              cannot be regenerated; FROZEN.sha256 pins every byte. Never edited.
 research/                    summarize_suite.py, suite_results.py, compare_results.py,
-                             paired_mcnemar.py, lock_closure.py (stdlib only, fail closed; tests/),
+                             paired_mcnemar.py, lock_closure.py (stdlib only, fail closed; tests/ covers
+                             summarize, compare and paired_mcnemar),
                              results/<commit>/ (machine-readable results; never hand-edited)
 tests/vectors/               shared known-answer vectors (CRC, callsigns, dither), asserted by Rust
 hardware-validation/         records of hardware tests (none yet)
@@ -319,11 +320,14 @@ research tools) and `release.yml` (release archives).
 - **Rust MSRV is 1.95** (`Cargo.toml`): CI builds, runs clippy `-D warnings` and tests on it.
   `z30-protocol`, `z30-dsp` and `z30-engine` are `#![forbid(unsafe_code)]`. Clippy warnings are
   errors.
-- **Rust is the only implementation.** No second implementation of the protocol or the receiver
-  may come back beside `crates/` — two implementations can diverge, and the one that ships is the
-  one that counts (CI's `hygiene` job refuses the deleted stacks' directories, package-manager
-  files, Python outside `research/` and `audit/`, and JS/TS outside `audit/`). No fallback to
-  anything else may be added: a failure is reported, not worked around.
+- **Rust is the only runtime implementation.** The oracle, the browser runtime and the PyO3
+  bindings were deleted because nothing in production used them (2026-10-06 cleanup,
+  `audit/2026-10-06-codebase-cleanup/REMOVAL_PLAN.md`). What they pinned stays as frozen
+  vectors; the cost is that a protocol change can no longer be cross-checked against an
+  independent implementation already in the tree (`docs/research-process.md` §6 says where a new
+  version's generator goes). CI's `hygiene` job refuses the deleted stacks' directories,
+  package-manager files, Python outside `research/` and `audit/`, and JS/TS outside `audit/`. No
+  fallback to anything else may be added: a failure is reported, not worked around.
 - **The audio callback does not allocate** (`z30-io/tests/callback_alloc.rs`).
 - **Comments explain why, not what.** When you fix something subtle, leave the note naming the
   failure it prevents.

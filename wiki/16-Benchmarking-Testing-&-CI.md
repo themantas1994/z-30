@@ -109,7 +109,8 @@ suite takes about an hour on 4 cores (the `elapsed_s` of the ten `672cef9b3cdb` 
 
 ## What CI enforces
 
-- **`rust.yml`** — formatting, clippy, tests (debug and release) on Linux, Windows and macOS;
+- **`rust.yml`** — formatting, clippy, tests (test profile, opt-level 3) on Linux, Windows and
+  macOS, and release-profile tests on Linux in the MSRV job;
   the release binaries with CM108 PTT; `--version` names the commit and features; no real
   callsign in a binary; a CLI decode round trip; a message v1 cannot carry is refused; the
   **declared MSRV (1.95) builds, passes clippy -D warnings and passes the tests**; every suite benchmark runs through the shipped
@@ -121,7 +122,8 @@ suite takes about an hour on 4 cores (the `elapsed_s` of the ten `672cef9b3cdb` 
   frozen golden vectors unchanged against `FROZEN.sha256`; and the research tools' tests. The
   oracle, browser runtime, golden-regeneration and paired-harness jobs went with what they
   tested in the 2026-10-06 cleanup.
-- **`release.yml`** — on a version tag: tests on each platform, builds `z30` and `z30-gui`
+- **`release.yml`** — on a version tag (and as a dry run on pull requests that touch the release
+  files): release-profile tests on each platform, builds `z30` and `z30-gui`
   with CM108, writes `BUILDINFO.txt` from `--version`, refuses a dirty or mismatched build, and
   publishes archives with checksums.
 

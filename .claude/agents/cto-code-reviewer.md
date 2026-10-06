@@ -49,9 +49,10 @@ working tree.
    the oracle, so it is never regenerated or hand-edited; `FROZEN.sha256` pins every byte) and
    `research/results/<commit>/` unchanged. A protocol change follows
    `docs/research-process.md` §6: new vectors from a reviewed generator, beside the v1 set.
-7. **Rust is the only implementation.** No second implementation of the protocol or receiver
-   reappears (the deleted oracle, browser runtime, PyO3 bindings or golden generators, or a new
-   one), no Python outside `research/` and `audit/`, and no fallback was added.
+7. **Rust is the only runtime implementation.** None of the deleted stacks (oracle, browser
+   runtime, PyO3 bindings, golden generators) reappears, no Python outside `research/` and
+   `audit/` (a new protocol version's reference generator lives under `research/golden/`,
+   `docs/research-process.md` §6), and no fallback was added.
 8. **Docs agree.** Behaviour the diff changes is described the same way in `SPEC.md`, `docs/`,
    `wiki/` and `README.md`. Grep for the names of changed functions, flags and constants.
 9. **Smallest diff that proves the point.** Flag unrelated refactors, drive-by renames and
