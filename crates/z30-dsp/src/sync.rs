@@ -18,7 +18,7 @@
 use crate::baseband::{BB_NSPS, BB_RATE_HZ, SLOT_SAMPLES, SLOT_ZERO_INDEX};
 use crate::DSP_NSPS;
 use realfft::RealFftPlanner;
-use rustfft::num_complex::{Complex32, Complex64};
+use rustfft::num_complex::Complex32;
 use z30_protocol::{DT_SEARCH_SEC, FRAME_SEC, NUM_TONES, SYNC_POSITIONS, SYNC_TONES, TONE_SPACING_HZ, TOTAL_SYMBOLS};
 
 /// Spectrogram hops per symbol (40 ms at 6 kHz).
@@ -210,17 +210,6 @@ impl ToneTable {
         }
         ToneTable { tw }
     }
-
-    /// Correlation of 64 samples with tone `t`.
-    #[inline]
-    pub fn correlate(&self, x: &[Complex32], t: usize) -> Complex32 {
-        let w = &self.tw[t * BB_NSPS..(t + 1) * BB_NSPS];
-        let mut acc = Complex32::new(0.0, 0.0);
-        for m in 0..BB_NSPS {
-            acc += x[m] * w[m];
-        }
-        acc
-    }
 }
 
 /// Frequency-and-drift correction for baseband sample `j` of a frame (j = 0 at frame start):
@@ -374,9 +363,4 @@ fn fine_sync_grid(bb: &[Complex32], tones: &ToneTable, coarse_start: usize, max_
     // Stage 4: refine drift and frequency together.
     let d = search(bb, tones, d.start..=d.start, Grid::around(d.df_hz, 0.03, 3), Grid::around(d.drift_hz, 0.2, 2)).unwrap_or(d);
     (zero, Some(d))
-}
-
-/// Complex64 helper for callers that accumulate in double precision.
-pub fn c64(c: Complex32) -> Complex64 {
-    Complex64::new(c.re as f64, c.im as f64)
 }
