@@ -22,7 +22,7 @@ fn minus_22_db_blind_decodes_at_least_84_of_100_with_no_false_decodes() {
     let results: Vec<(u64, usize)> = (0..threads)
         .map(|t| {
             std::thread::spawn(move || {
-                use rand::Rng;
+                use rand::RngExt;
                 let rx = Receiver::new();
                 let (mut ok, mut false_decodes) = (0u64, 0usize);
                 let mut i = t;

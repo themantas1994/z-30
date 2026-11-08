@@ -477,7 +477,7 @@ fn score(rep: &SlotReport, payloads: &[[u8; 63]]) -> (usize, usize, usize, usize
 /// One station placed blind: tone 0 uniform over 210-2740 Hz, DT uniform over +-dt_max s,
 /// random carrier phase and payload. `tweak` sets the condition under test.
 fn blind_station(r: &mut ChannelRng, snr: f64, dt_max: f64) -> ([u8; 63], Station) {
-    use rand::Rng;
+    use rand::RngExt;
     let f0 = r.random_range(210.0..2740.0);
     let dt = if dt_max > 0.0 { r.random_range(-dt_max..dt_max) } else { 0.0 };
     z30_channel::random_station(r, f0, dt, snr)
@@ -744,7 +744,7 @@ fn impairments() -> Vec<Impairment> {
             "200 impulses at 50 x RMS",
             Some(|| -> Post {
                 Box::new(|x, r| {
-                    use rand::Rng;
+                    use rand::RngExt;
                     let a = 50.0 * rms(x);
                     for _ in 0..200 {
                         let at = r.random_range(0..x.len());
@@ -783,7 +783,7 @@ fn impair(frames: usize) -> Value {
 type BusySlot = (usize, usize, usize, usize, usize, f64, Vec<bool>);
 
 fn busy(slots: usize) -> Value {
-    use rand::Rng;
+    use rand::RngExt;
     let mut points = Vec::new();
     let configs: [(usize, f64, f64); 5] = [(5, -20.0, 0.0), (10, -20.0, 0.0), (20, -20.0, 0.0), (40, -20.0, 0.0), (20, -22.0, -16.0)];
     for (p, &(k, lo, hi)) in configs.iter().enumerate() {
@@ -842,7 +842,7 @@ fn busy(slots: usize) -> Value {
 
 /// Structured interference for the false-decode benchmark, added to sigma = 1 noise.
 fn interference(kind: usize, r: &mut ChannelRng, x: &mut [f32]) {
-    use rand::Rng;
+    use rand::RngExt;
     let n = x.len();
     let amp_for = |snr_db: f64| (2.0 * 10f64.powf(snr_db / 10.0) * 5000.0 / FS).sqrt();
     match kind {
@@ -930,7 +930,7 @@ fn false_decodes(slots: usize) -> Value {
         let per: Vec<(usize, usize)> = (0..slots)
             .into_par_iter()
             .map_init(Receiver::new, |rx, i| {
-                use rand::Rng;
+                use rand::RngExt;
                 let mut r = rng(frame_seed(8, p, i));
                 let cw = if kind == 4 {
                     (0..20).map(|_| (r.random_range(200.0..2800.0), r.random_range(-10.0..20.0))).collect()
@@ -980,7 +980,7 @@ fn sic(trials: usize) -> Value {
                 let res: Vec<(bool, bool, bool, usize, usize)> = (0..trials)
                     .into_par_iter()
                     .map_init(Receiver::new, |rx, i| {
-                        use rand::Rng;
+                        use rand::RngExt;
                         let mut r = rng(frame_seed(9, p, i));
                         let f = r.random_range(300.0..2600.0 - df);
                         let dt = r.random_range(-1.0..0.6);

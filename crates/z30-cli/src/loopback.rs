@@ -32,7 +32,7 @@
 #![forbid(clippy::disallowed_methods, clippy::disallowed_types)]
 #![forbid(unsafe_code)]
 
-use rand::Rng;
+use rand::RngExt;
 use rustfft::num_complex::Complex32;
 use rustfft::FftPlanner;
 use serde_json::{json, Value};
