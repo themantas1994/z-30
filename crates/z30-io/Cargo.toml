@@ -15,7 +15,7 @@ rtrb.workspace = true
 cpal = "0.18"
 hound = "3.5"
 serialport = { version = "4", default-features = false }
-rusqlite = { version = "0.40", features = ["bundled"] }
+rusqlite = { version = "0.41", features = ["bundled"] }
 hidapi = { version = "2.6", optional = true, default-features = false, features = ["linux-static-hidraw"] }
 
 [features]

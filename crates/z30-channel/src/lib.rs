@@ -9,7 +9,7 @@
 //! SNR convention (SPEC.md section 10): signal power over noise power in 2500 Hz, for real white
 //! noise of per-sample variance sigma^2 at rate fs: `SNR = P / (sigma^2 * 5000 / fs)`.
 
-use rand::{Rng, SeedableRng};
+use rand::{RngExt, SeedableRng};
 use rand_chacha::ChaCha8Rng;
 use rand_distr::{Distribution, StandardNormal};
 use rustfft::num_complex::Complex64;

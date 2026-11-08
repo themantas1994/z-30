@@ -70,7 +70,7 @@ fn subtracting_a_frame_that_is_not_there_removes_only_the_noise_projection_and_c
 }
 
 fn random_band(seed: u64, k: usize) -> (Band, Vec<[u8; 63]>) {
-    use rand::Rng;
+    use rand::RngExt;
     let mut r = rng(seed);
     let mut stations = Vec::new();
     let mut payloads = Vec::new();
