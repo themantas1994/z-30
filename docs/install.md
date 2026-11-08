@@ -121,8 +121,8 @@ z30 --migrate
 ```
 
 reads the old `station_config.json`, `config.json`, `logbook.json` / `logbook.adi` from the same
-data directory (`$Z30_HOME`, else `$XDG_CONFIG_HOME/z30`, else `~/.z30`), never modifies them,
-writes `config.toml` (only if none exists, unless `--force`) and imports the logbook into
+data directory (`$Z30_HOME`, else `$XDG_CONFIG_HOME/z30`, else `~/.z30`; a relative or empty `XDG_CONFIG_HOME`, `HOME` or `USERPROFILE` is ignored, falling back to the account's home directory), never modifies them,
+writes `config.toml` (only if none exists, unless `--force`; an unreadable one is first backed up to `config.toml.bak`, or `.bak.N`) and imports the logbook into
 `logbook.sqlite`. It prints what was imported, what was imported with a change and what was
 skipped, and why. Running it again imports nothing twice. It never imports an RF time-sync
 offset, self-test state, browser UI settings, or the old auto-logger's default grid and report;

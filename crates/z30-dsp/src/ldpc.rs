@@ -430,7 +430,9 @@ impl Decoder {
             return None;
         }
         let mut ranked: Vec<usize> = (0..K).filter(|&i| pinned.is_none_or(|p| !p[i])).collect();
-        ranked.sort_by(|&a, &b| fail.best_total[a].abs().partial_cmp(&fail.best_total[b].abs()).unwrap_or(std::cmp::Ordering::Equal));
+        // A total order: "NaN equals everything" is not one, and the standard sort may panic
+        // when its comparator is not. On |belief| (never -0.0) it orders as partial_cmp did.
+        ranked.sort_by(|&a, &b| fail.best_total[a].abs().total_cmp(&fail.best_total[b].abs()));
         let test = &ranked[..ranked.len().min(OSD_TEST_BITS)];
         let base: [u8; K] = info_of(&fail.best_cw);
         let mut best: Option<([u8; K], u8)> = None;
@@ -543,5 +545,20 @@ mod tests {
             assert_eq!(a.info, b.info);
             assert_eq!(a.iterations, b.iterations);
         }
+    }
+
+    #[test]
+    fn osd_ranks_beliefs_that_are_not_numbers_without_panicking_and_accepts_nothing_from_them() {
+        // Ranked with partial_cmp(..).unwrap_or(Equal), which is no order once a NaN is among
+        // the beliefs. A correlation with NaN channel LLRs is NaN, so no candidate is accepted.
+        let payload: Vec<u8> = (0..63).map(|i| (i % 3 == 0) as u8).collect();
+        let cw = encode_payload(&payload);
+        let mut beliefs = clean_llrs(&cw, 1.5);
+        for (i, b) in beliefs.iter_mut().enumerate() {
+            *b = if i % 4 == 0 { f32::NAN } else { *b * (1.0 + (i % 7) as f32 * 0.1) };
+        }
+        let fail = BpFailure { best_cw: cw, best_total: beliefs, min_syndrome: 2, iterations: 1 };
+        assert_eq!(Decoder::osd(&fail, &beliefs, None), None);
+        let _ = Decoder::new().decode(&beliefs, None);
     }
 }

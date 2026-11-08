@@ -72,6 +72,9 @@ impl FrameSpectra {
     /// Per-dimension noise variance of one bin, from the median of the out-of-signal bins
     /// (|n|^2 is exponential with mean 2 sigma^2; its median is 2 sigma^2 ln 2). A median, so
     /// another station in part of those bins does not inflate it.
+    ///
+    /// The medians here sort with `total_cmp`: `partial_cmp().unwrap()` panicked the receiver on
+    /// one NaN bin. On these energies (non-negative, never -0.0) it orders exactly as before.
     pub fn noise_sigma2(&self) -> f64 {
         let mut v: Vec<f32> = Vec::with_capacity(TOTAL_SYMBOLS * 31);
         for s in 0..TOTAL_SYMBOLS {
@@ -82,7 +85,7 @@ impl FrameSpectra {
             }
         }
         let mid = v.len() / 2;
-        let med = *v.select_nth_unstable_by(mid, |a, b| a.partial_cmp(b).unwrap()).1 as f64;
+        let med = *v.select_nth_unstable_by(mid, |a, b| a.total_cmp(b)).1 as f64;
         (med / (2.0 * std::f64::consts::LN_2)).max(1e-30)
     }
 
@@ -110,7 +113,7 @@ impl FrameSpectra {
             for (s, c) in col.iter_mut().enumerate() {
                 *c = self.tone(s, t).norm_sqr();
             }
-            let med = *col.select_nth_unstable_by(TOTAL_SYMBOLS / 2, |a, b| a.partial_cmp(b).unwrap()).1 as f64;
+            let med = *col.select_nth_unstable_by(TOTAL_SYMBOLS / 2, |a, b| a.total_cmp(b)).1 as f64;
             let est = med / (2.0 * std::f64::consts::LN_2);
             // 2x the global estimate is ~6 standard deviations of a 75-symbol median on pure
             // noise: only real stationary interference crosses it.
@@ -197,7 +200,7 @@ impl FrameSpectra {
             }
         }
         let mid = resid.len() / 2;
-        let med = *resid.select_nth_unstable_by(mid, |a, b| a.partial_cmp(b).unwrap()).1 as f64;
+        let med = *resid.select_nth_unstable_by(mid, |a, b| a.total_cmp(b)).1 as f64;
         let n_bin = (med / std::f64::consts::LN_2).max(1e-30);
         let s = (s_sum - n_bin * bias_sum) / TOTAL_SYMBOLS as f64;
         (s > 0.0).then(|| 10.0 * (s / n_bin).log10() - 10.0 * (2500.0 / TONE_SPACING_HZ).log10())
@@ -349,5 +352,27 @@ mod tests {
     #[test]
     fn coherence_weight_is_the_shipped_zero() {
         assert_eq!(RECEIVER_PILOT_COHERENCE, 0.0);
+    }
+
+    #[test]
+    fn the_noise_and_snr_medians_do_not_panic_on_bins_that_are_not_numbers() {
+        // `partial_cmp().unwrap()` in these medians panicked the receiver on one NaN bin.
+        let finite: Vec<Complex32> = (0..TOTAL_SYMBOLS * BB_NSPS)
+            .map(|i| Complex32::new(((i * 7919) % 101) as f32 / 101.0, ((i * 104_729) % 97) as f32 / 97.0))
+            .collect();
+        let mut some = finite.clone();
+        for (k, b) in some.iter_mut().enumerate().step_by(37) {
+            *b = Complex32::new([f32::NAN, f32::INFINITY, f32::NEG_INFINITY][k % 3], 0.0);
+        }
+        let all = vec![Complex32::new(f32::NAN, f32::NAN); TOTAL_SYMBOLS * BB_NSPS];
+        for bins in [some, all] {
+            let spectra = FrameSpectra { bins };
+            let _ = spectra.noise_sigma2();
+            let _ = spectra.tone_sigma2();
+            let _ = spectra.llrs_with(true);
+            let _ = spectra.llrs_with(false);
+            let _ = spectra.snr_db(&finite);
+            let _ = spectra.snr_db(&spectra.bins);
+        }
     }
 }

@@ -238,6 +238,7 @@ impl App {
                 Event::SlotMissed(s, why) => (format!("Slot {s} not decoded: {why:?}"), Color32::YELLOW),
                 Event::Rig(s) | Event::Audio(s) => (s, Color32::GRAY),
                 Event::Qso(s) => (format!("QSO: {s:?}"), Color32::GRAY),
+                Event::ConfigRejected(why) => (config_rejected_message(&why), Color32::RED),
                 _ => continue,
             };
             self.messages.push((text, color));
@@ -262,8 +263,8 @@ impl App {
             ));
             return;
         }
-        if let Err(e) = paths::save_config(&self.config_path, &self.draft) {
-            self.messages.push((format!("Could not save settings: {e}"), Color32::RED));
+        if let Err(e) = validate_then_save(&self.draft, |c| paths::save_config(&self.config_path, c)) {
+            self.messages.push((e, Color32::RED));
             return;
         }
         if hardware_changed {
@@ -290,8 +291,25 @@ impl App {
             let c = Box::new(self.draft.clone());
             self.send(Command::UpdateConfig(c));
         }
-        self.messages.push(("Settings saved.".into(), Color32::LIGHT_GREEN));
+        self.messages.push(("Settings saved and sent to the engine.".into(), Color32::LIGHT_GREEN));
     }
+}
+
+/// Smallest TX power the settings control offers, W. `Config::validate` refuses anything that is
+/// not finite and strictly above 0, so the control must never offer 0; 0.1 W is the smallest
+/// step the control displays. The validation rule itself is unchanged.
+const MIN_TX_POWER_W: f64 = 0.1;
+
+/// Validate a candidate configuration, and only if it passes hand it to `save`. A configuration
+/// the engine would refuse (`Config::validate`) is never written to disk.
+fn validate_then_save(cfg: &Config, save: impl FnOnce(&Config) -> Result<(), String>) -> Result<(), String> {
+    cfg.validate().map_err(|e| format!("Settings NOT saved and nothing applied: {e}"))?;
+    save(cfg).map_err(|e| format!("Could not save settings: {e}"))
+}
+
+/// The visible message for an engine refusal of a configuration update.
+fn config_rejected_message(why: &str) -> String {
+    format!("The engine refused the settings change; nothing was applied: {why}")
 }
 
 fn utc_now() -> f64 {
@@ -734,10 +752,10 @@ fn settings_ui(ui: &mut egui::Ui, c: &mut Config, devices: &(Vec<String>, Vec<St
             // Unset stays unset (and is not logged); it is not shown as 0 W.
             let mut set = c.station.configured_tx_power_w.is_some();
             if ui.checkbox(&mut set, "set").changed() {
-                c.station.configured_tx_power_w = set.then_some(c.station.configured_tx_power_w.unwrap_or(0.0));
+                c.station.configured_tx_power_w = set.then_some(c.station.configured_tx_power_w.unwrap_or(MIN_TX_POWER_W));
             }
             if let Some(p) = c.station.configured_tx_power_w.as_mut() {
-                ui.add(egui::DragValue::new(p).range(0.0..=1500.0));
+                ui.add(egui::DragValue::new(p).range(MIN_TX_POWER_W..=1500.0));
             } else {
                 ui.label("not set");
             }
@@ -869,4 +887,56 @@ fn settings_ui(ui: &mut egui::Ui, c: &mut Config, devices: &(Vec<String>, Vec<St
     });
     ui.separator();
     ui.button("Apply and save").clicked()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::cell::Cell;
+
+    fn with_power(w: Option<f64>) -> Config {
+        let mut c = Config::default();
+        c.station.configured_tx_power_w = w;
+        c
+    }
+
+    #[test]
+    fn zero_watts_is_refused_before_any_save() {
+        let saved = Cell::new(false);
+        let r = validate_then_save(&with_power(Some(0.0)), |_| {
+            saved.set(true);
+            Ok(())
+        });
+        assert!(r.is_err());
+        assert!(!saved.get(), "an invalid candidate must not reach save");
+        assert!(r.unwrap_err().contains("configured_tx_power_w"));
+    }
+
+    #[test]
+    fn valid_candidate_reaches_save() {
+        let saved = Cell::new(false);
+        let r = validate_then_save(&with_power(Some(MIN_TX_POWER_W)), |_| {
+            saved.set(true);
+            Ok(())
+        });
+        assert!(r.is_ok());
+        assert!(saved.get());
+    }
+
+    #[test]
+    fn save_failure_is_reported() {
+        let r = validate_then_save(&with_power(None), |_| Err("disk full".into()));
+        assert!(r.unwrap_err().contains("disk full"));
+    }
+
+    #[test]
+    fn gui_minimum_power_passes_validate() {
+        assert!(with_power(Some(MIN_TX_POWER_W)).validate().is_ok());
+    }
+
+    #[test]
+    fn config_rejected_maps_to_a_visible_error() {
+        let m = config_rejected_message("bad power");
+        assert!(m.contains("refused") && m.contains("nothing was applied") && m.contains("bad power"));
+    }
 }

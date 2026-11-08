@@ -26,7 +26,7 @@ cargo build --release -p z30-cli -p z30-gui --features z30-cli/cm108,z30-gui/cm1
 ./target/release/z30-gui
 ```
 
-Configuration lives in `config.toml`, in `$Z30_HOME`, else `$XDG_CONFIG_HOME/z30`, else `~/.z30`.
+Configuration lives in `config.toml`, in `$Z30_HOME`, else `$XDG_CONFIG_HOME/z30`, else `~/.z30` (a relative or empty `XDG_CONFIG_HOME`, `HOME` or `USERPROFILE` is ignored, falling back to the account's home directory).
 That is the directory the retired browser/Python app used, so migration finds its files. The logbook is
 `logbook.sqlite` in the same place.
 
@@ -105,15 +105,23 @@ a scan of the release binaries for the old W1AW default, a CLI encode → decode
 refusal check. Then: the whole workspace on the declared MSRV (build, clippy, tests); and the
 benchmark suite at exploratory size with a provenance check on every result file.
 
-`.github/workflows/ci.yml`: `cargo audit` of `Cargo.lock` against the RustSec database; the
-hygiene checks that keep the retired runtime, the web bundle, the old installers and the deleted
-stacks (`legacy/`, the PyO3 bindings, the golden generators, package-manager files, Python
-outside `research/` and `audit/`, JS/TS outside `audit/`) out of the tree, and that
+`.github/workflows/ci.yml`: `cargo audit` of `Cargo.lock` against the RustSec database;
+`cargo deny --locked check licenses`, which checks the licence of every crate in `Cargo.lock`
+(all platforms, all features) against [`deny.toml`](../deny.toml): only the licences the graph
+needs, each compatible with z-30's MIT licence, and two named exceptions (serialport's MPL-2.0,
+egui's bundled fonts); the hygiene checks that keep the retired runtime, the web bundle, the
+old installers and the deleted stacks (`legacy/`, the PyO3 bindings, the golden generators,
+package-manager files, Python outside `research/` and `audit/`, JS/TS outside `audit/`) out of
+the tree, and that
 `fixtures/golden/` (and any version subdirectory) and `tests/vectors/` match their
 `FROZEN.sha256`, every file pinned; and the research tools' tests.
 
 `.github/workflows/release.yml`: per-platform release archives from a `v*` tag
 ([install.md](install.md)).
+
+Every workflow's token is read-only except the release job that publishes (`contents: write`).
+Third-party actions are pinned to a full commit SHA, with the tag it was resolved from in a
+comment; Dependabot updates both.
 
 ## House rules for the workspace
 

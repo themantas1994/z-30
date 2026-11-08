@@ -54,6 +54,8 @@ so aliases land above the z-30 passband
 20/147), 96 000, and so on. Over a long stream, the output count is exactly
 `in × out / in_rate` to within one sample.
 
+A NaN or infinite input sample is filtered as 0.0 and counted (`non_finite_inputs()`).
+
 `input_delay()` gives the input instant that output sample 0 represents, which is
 −1 − (N−1)/(2L) input samples for an N-tap prototype. The pipeline uses it so that every 6 kHz
 sample is dated at the moment it represents, not at the moment it left the filter. The

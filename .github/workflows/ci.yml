@@ -15,6 +15,10 @@ on:
 permissions:
   contents: read
 
+# Third-party actions are pinned to a full commit SHA, with the tag it was resolved from beside
+# it: a tag or a branch can be moved to other code after review. Dependabot's github-actions
+# updates move the SHA and the comment together.
+
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
@@ -27,9 +31,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
+        with:
+          toolchain: stable
       # A prebuilt binary: building cargo-audit from source took 2 min 44 s of this job's 3.
-      - uses: taiki-e/install-action@v2
+      - uses: taiki-e/install-action@3a3daafd3b7f23b8f65d9f5ba2db203fb59b79e2 # v2.90.2
         with:
           tool: cargo-audit
       - name: cargo audit
@@ -37,6 +43,25 @@ jobs:
         # The two pyo3 ignores (RUSTSEC-2026-0176/-0177) went with crates/z30-py, the only crate
         # that used it (2026-10-06 cleanup).
         run: cargo audit
+
+  rust-licences:
+    # Every crate in Cargo.lock, on every platform and with every feature, against deny.toml:
+    # only the licences the graph needs, each compatible with z-30's MIT licence, and two
+    # named exceptions (serialport's MPL-2.0, egui's bundled fonts). A dependency under any
+    # other licence fails here until deny.toml is changed in a reviewed commit.
+    name: Dependency licences (Rust, Cargo.lock)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
+        with:
+          toolchain: stable
+      # The version the policy was checked with; deny.toml's schema follows cargo-deny's.
+      - uses: taiki-e/install-action@3a3daafd3b7f23b8f65d9f5ba2db203fb59b79e2 # v2.90.2
+        with:
+          tool: cargo-deny@0.20.2
+      - name: cargo deny check licenses
+        run: cargo deny --locked check licenses
 
   hygiene:
     name: Repository hygiene and production separation

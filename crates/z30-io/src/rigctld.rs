@@ -4,20 +4,76 @@
 //! behind them (docs/safety.md: "an unkey queued behind a slow read is a transmitter still
 //! radiating"). Every socket operation has a timeout, so neither can hang the engine or the
 //! watchdog. A command whose reply is not `RPRT 0` is a failure, never a success.
+//!
+//! A reply is read with two bounds, because the peer is only trusted to be rigctld once it has
+//! answered like rigctld: each line is at most `MAX_LINE` bytes, and the whole reply must arrive
+//! within `TIMEOUT` of the command. A line that is too long, is cut off by the peer closing, is
+//! not text or carries control characters is an error, never a reply.
 
-use std::io::{BufRead, BufReader, Write};
+use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{TcpStream, ToSocketAddrs};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use z30_engine::ptt::{PttAck, PttError, PttLine};
 use z30_engine::rig::Reading;
 use z30_engine::runtime::RigControl;
 
 const TIMEOUT: Duration = Duration::from_millis(1500);
 
+/// The longest reply line accepted, its newline included. rigctld answers the commands sent here
+/// (`f`, `t`, `m`, `F`, `T`) with a frequency, a PTT state, a mode name, a passband or `RPRT n`:
+/// a few dozen bytes at most. Unbounded, a peer that never sent a newline made the client buffer
+/// everything it sent.
+pub const MAX_LINE: usize = 256;
+
+/// The reading half of a connection. Each read gets what is left of the reply's deadline as its
+/// timeout: a socket timeout alone restarts with every byte, so a peer sending a byte a second
+/// held a command (a CAT release included) for as long as it kept sending.
+struct ReplyReader {
+    stream: TcpStream,
+    deadline: Instant,
+}
+
+impl Read for ReplyReader {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        let left = self.deadline.saturating_duration_since(Instant::now());
+        if left.is_zero() {
+            return Err(std::io::Error::new(std::io::ErrorKind::TimedOut, "rigctld did not finish its reply in time"));
+        }
+        self.stream.set_read_timeout(Some(left))?;
+        self.stream.read(buf)
+    }
+}
+
+/// Reads one reply line of at most `MAX_LINE` bytes and returns it trimmed. Only a line that
+/// ends in a newline counts: a truncated `14074000` read as `1407` was a dial reading, and a
+/// cut-off `RPRT 0` a confirmed key or release.
+fn read_reply_line(r: &mut impl BufRead) -> Result<String, String> {
+    let mut raw = Vec::new();
+    let n = r.by_ref().take(MAX_LINE as u64).read_until(b'\n', &mut raw).map_err(|e| e.to_string())?;
+    match raw.last() {
+        None => return Err("rigctld closed the connection".into()),
+        Some(b'\n') => {
+            raw.pop();
+        }
+        Some(_) if n >= MAX_LINE => return Err(format!("rigctld sent a line longer than {MAX_LINE} bytes")),
+        Some(_) => return Err("rigctld closed the connection in the middle of a line".into()),
+    }
+    if raw.last() == Some(&b'\r') {
+        raw.pop();
+    }
+    let line = String::from_utf8(raw).map_err(|_| "rigctld sent a line that is not UTF-8 text".to_string())?;
+    // A mode name is shown and logged as received; a peer must not be able to put terminal
+    // escapes or NULs there.
+    if line.chars().any(char::is_control) {
+        return Err(format!("rigctld sent a line with control characters: {line:?}"));
+    }
+    Ok(line.trim().to_string())
+}
+
 /// A rigctld connection that reconnects on demand.
 pub struct Rigctld {
     addr: String,
-    conn: Option<(TcpStream, BufReader<TcpStream>)>,
+    conn: Option<(TcpStream, BufReader<ReplyReader>)>,
 }
 
 impl Rigctld {
@@ -35,24 +91,22 @@ impl Rigctld {
         s.set_read_timeout(Some(TIMEOUT)).map_err(|e| e.to_string())?;
         s.set_write_timeout(Some(TIMEOUT)).map_err(|e| e.to_string())?;
         s.set_nodelay(true).ok();
-        let r = BufReader::new(s.try_clone().map_err(|e| e.to_string())?);
+        let r = BufReader::new(ReplyReader { stream: s.try_clone().map_err(|e| e.to_string())?, deadline: Instant::now() });
         self.conn = Some((s, r));
         Ok(())
     }
 
-    /// Sends one command and reads `lines` reply lines. Any error drops the connection.
+    /// Sends one command and reads `lines` reply lines, all within `TIMEOUT` of the command and
+    /// each at most `MAX_LINE` bytes. Any error drops the connection.
     pub fn command(&mut self, cmd: &str, lines: usize) -> Result<Vec<String>, String> {
         self.connect()?;
         let result = (|| {
             let (w, r) = self.conn.as_mut().unwrap();
             w.write_all(format!("{cmd}\n").as_bytes()).map_err(|e| e.to_string())?;
+            r.get_mut().deadline = Instant::now() + TIMEOUT;
             let mut out = Vec::new();
             for _ in 0..lines {
-                let mut line = String::new();
-                if r.read_line(&mut line).map_err(|e| e.to_string())? == 0 {
-                    return Err("rigctld closed the connection".to_string());
-                }
-                let line = line.trim().to_string();
+                let line = read_reply_line(r)?;
                 if line.starts_with("RPRT") && line != "RPRT 0" {
                     return Err(format!("rigctld refused \"{cmd}\": {line}"));
                 }
@@ -125,7 +179,9 @@ impl PttLine for RigctldPtt {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::Read;
     use std::net::TcpListener;
+    use std::time::Instant;
 
     /// A fake rigctld: answers f/F/t/T/m like Hamlib, and refuses one frequency.
     fn fake_rigctld() -> (u16, std::thread::JoinHandle<Vec<String>>) {
@@ -240,5 +296,207 @@ mod tests {
         let e = RigctldPtt::connect("127.0.0.1", port).err().expect("a refused release at start-up is an error");
         assert!(e.contains("did not accept the release"), "{e}");
         assert_eq!(h.join().unwrap().trim(), "T 0");
+    }
+
+    /// A one-connection peer that runs `script` on the accepted socket (reader, writer).
+    fn peer<T: Send + 'static>(
+        script: impl FnOnce(BufReader<TcpStream>, TcpStream) -> T + Send + 'static,
+    ) -> (u16, std::thread::JoinHandle<T>) {
+        let l = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = l.local_addr().unwrap().port();
+        let h = std::thread::spawn(move || {
+            let (s, _) = l.accept().unwrap();
+            script(BufReader::new(s.try_clone().unwrap()), s)
+        });
+        (port, h)
+    }
+
+    fn next_command(r: &mut BufReader<TcpStream>) -> String {
+        let mut line = String::new();
+        r.read_line(&mut line).unwrap();
+        line.trim().to_string()
+    }
+
+    /// Writes `bytes` one at a time, `gap` apart; stops at the first write the client refuses.
+    fn trickle(w: &mut TcpStream, bytes: &[u8], gap: Duration) {
+        for b in bytes {
+            if w.write_all(std::slice::from_ref(b)).is_err() {
+                return;
+            }
+            std::thread::sleep(gap);
+        }
+    }
+
+    #[test]
+    fn a_reply_split_across_writes_is_read_whole() {
+        let (port, h) = peer(|mut r, mut w| {
+            assert_eq!(next_command(&mut r), "f");
+            w.write_all(b"1407").unwrap();
+            std::thread::sleep(Duration::from_millis(50));
+            w.write_all(b"6000\r\n").unwrap();
+            assert_eq!(next_command(&mut r), "m");
+            w.write_all(b"PKTUSB\n30").unwrap();
+            std::thread::sleep(Duration::from_millis(50));
+            w.write_all(b"00\n").unwrap();
+        });
+        let mut rig = Rigctld::new("127.0.0.1", port);
+        assert_eq!(rig.command("f", 1).unwrap(), vec!["14076000"]);
+        assert_eq!(rig.command("m", 2).unwrap(), vec!["PKTUSB", "3000"]);
+        h.join().unwrap();
+    }
+
+    #[test]
+    fn an_empty_line_is_neither_a_frequency_nor_a_confirmation() {
+        let (port, h) = peer(|mut r, mut w| {
+            assert_eq!(next_command(&mut r), "f");
+            w.write_all(b"\n").unwrap();
+            assert_eq!(next_command(&mut r), "f");
+            w.write_all(b"\n").unwrap();
+        });
+        let mut rig = Rigctld::new("127.0.0.1", port);
+        assert_eq!(rig.command("f", 1).unwrap(), vec![""], "an empty line is a complete line");
+        let e = rig.read().unwrap_err();
+        assert!(e.contains("unexpected frequency reply"), "{e}");
+        h.join().unwrap();
+        let (port, h) = peer(|mut r, mut w| {
+            assert_eq!(next_command(&mut r), "T 1");
+            w.write_all(b"\n").unwrap();
+        });
+        let e = RigctldPtt(Rigctld::new("127.0.0.1", port)).set(true).unwrap_err();
+        assert!(e.0.contains("not RPRT 0"), "{}", e.0);
+        h.join().unwrap();
+    }
+
+    #[test]
+    fn a_line_of_the_maximum_length_is_read_and_one_byte_longer_is_refused() {
+        let longest = format!("1{}", "0".repeat(MAX_LINE - 2));
+        let reply = format!("{longest}\n");
+        assert_eq!(reply.len(), MAX_LINE, "the limit counts the newline");
+        let (port, h) = peer(move |mut r, mut w| {
+            assert_eq!(next_command(&mut r), "f");
+            w.write_all(reply.as_bytes()).unwrap();
+            assert_eq!(next_command(&mut r), "f");
+            w.write_all(format!("1{}\n", "0".repeat(MAX_LINE - 1)).as_bytes()).unwrap();
+        });
+        let mut rig = Rigctld::new("127.0.0.1", port);
+        assert_eq!(rig.command("f", 1).unwrap(), vec![longest]);
+        let e = rig.command("f", 1).unwrap_err();
+        assert!(e.contains(&format!("longer than {MAX_LINE} bytes")), "{e}");
+        assert!(rig.conn.is_none(), "the connection is dropped, not left mid-line");
+        h.join().unwrap();
+    }
+
+    #[test]
+    fn an_endless_line_is_refused_after_max_line_bytes_without_buffering_the_rest() {
+        // Up to 64 MiB without a newline. The client must give up at MAX_LINE and close, so the
+        // peer's writes fail long before it has sent it all.
+        const TOTAL: usize = 64 << 20;
+        let (port, h) = peer(|mut r, mut w| {
+            assert_eq!(next_command(&mut r), "f");
+            w.set_write_timeout(Some(Duration::from_secs(10))).unwrap();
+            let chunk = vec![b'1'; 64 << 10];
+            let mut sent = 0;
+            while sent < TOTAL {
+                match w.write(&chunk) {
+                    Ok(n) => sent += n,
+                    Err(_) => break,
+                }
+            }
+            sent
+        });
+        let mut rig = Rigctld::new("127.0.0.1", port);
+        let e = rig.command("f", 1).unwrap_err();
+        assert!(e.contains(&format!("longer than {MAX_LINE} bytes")), "{e}");
+        drop(rig);
+        let sent = h.join().unwrap();
+        assert!(sent < TOTAL, "the client read the whole {sent}-byte line instead of stopping at {MAX_LINE}");
+    }
+
+    #[test]
+    fn a_line_cut_off_by_the_peer_is_not_a_reply() {
+        // A dial reading cut short used to be a dial reading: 14076000 read as 1407 Hz.
+        let (port, h) = peer(|mut r, mut w| {
+            assert_eq!(next_command(&mut r), "f");
+            w.write_all(b"1407").unwrap();
+        });
+        let mut rig = Rigctld::new("127.0.0.1", port);
+        let e = rig.read().unwrap_err();
+        assert!(e.contains("in the middle of a line"), "{e}");
+        h.join().unwrap();
+        // And a cut-off success report used to confirm a release.
+        let (port, h) = peer(|mut r, mut w| {
+            assert_eq!(next_command(&mut r), "T 0");
+            w.write_all(b"RPRT 0").unwrap();
+        });
+        let e = RigctldPtt(Rigctld::new("127.0.0.1", port)).set(false).unwrap_err();
+        assert!(e.0.contains("in the middle of a line"), "{}", e.0);
+        h.join().unwrap();
+        // A peer that closes before sending anything.
+        let (port, h) = peer(|mut r, _w| next_command(&mut r));
+        let e = Rigctld::new("127.0.0.1", port).command("f", 1).unwrap_err();
+        assert!(e.contains("closed the connection"), "{e}");
+        assert_eq!(h.join().unwrap(), "f");
+    }
+
+    #[test]
+    fn malformed_lines_are_refused() {
+        let (port, h) = peer(|mut r, mut w| {
+            assert_eq!(next_command(&mut r), "f");
+            w.write_all(b"\xff\xfe14076000\n").unwrap();
+        });
+        let e = Rigctld::new("127.0.0.1", port).command("f", 1).unwrap_err();
+        assert!(e.contains("UTF-8"), "{e}");
+        h.join().unwrap();
+        // A mode with a terminal escape in it is not a mode: read() reports none rather than
+        // passing it on to the screen and the log.
+        let (port, h) = peer(|mut r, mut w| {
+            for reply in [&b"14076000\n"[..], b"0\n", b"PKT\x1b[2JUSB\n3000\n"] {
+                next_command(&mut r);
+                if w.write_all(reply).is_err() {
+                    return;
+                }
+            }
+        });
+        let mut rig = Rigctld::new("127.0.0.1", port);
+        assert_eq!(rig.read().unwrap(), Reading { dial_hz: Some(14_076_000.0), ptt: Some(false), mode: None });
+        h.join().unwrap();
+        let (port, h) = peer(|mut r, mut w| {
+            assert_eq!(next_command(&mut r), "T 0");
+            w.write_all(b"RPRT 0\0\n").unwrap();
+        });
+        let e = RigctldPtt(Rigctld::new("127.0.0.1", port)).set(false).unwrap_err();
+        assert!(e.0.contains("control characters"), "{}", e.0);
+        h.join().unwrap();
+    }
+
+    #[test]
+    fn a_silent_peer_times_out() {
+        let (port, h) = peer(|mut r, _w| {
+            assert_eq!(next_command(&mut r), "T 0");
+            // Hold the connection open, answering nothing, until the client gives up.
+            let mut rest = Vec::new();
+            let _ = r.read_to_end(&mut rest);
+        });
+        let t = Instant::now();
+        assert!(RigctldPtt(Rigctld::new("127.0.0.1", port)).set(false).is_err());
+        let took = t.elapsed();
+        assert!(took >= TIMEOUT - Duration::from_millis(100) && took < TIMEOUT + Duration::from_secs(1), "{took:?}");
+        h.join().unwrap();
+    }
+
+    #[test]
+    fn a_peer_that_trickles_bytes_cannot_stretch_a_reply_past_the_timeout() {
+        // A byte every 300 ms restarts a per-read timeout every time: a reader with only that
+        // waits out the whole 5 s reply and then counts it as a confirmed release.
+        let (port, h) = peer(|mut r, mut w| {
+            assert_eq!(next_command(&mut r), "T 0");
+            trickle(&mut w, b"          RPRT 0\n", Duration::from_millis(300));
+        });
+        let t = Instant::now();
+        let r = RigctldPtt(Rigctld::new("127.0.0.1", port)).set(false);
+        let took = t.elapsed();
+        assert!(r.is_err(), "a reply that took {took:?} was accepted: {r:?}");
+        assert!(took < TIMEOUT + Duration::from_secs(1), "{took:?}");
+        h.join().unwrap();
     }
 }

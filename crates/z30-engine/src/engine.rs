@@ -112,6 +112,10 @@ pub struct Engine {
     ptt_release_unconfirmed: Option<String>,
     /// The radio refused a set-frequency for the current dial and nothing has confirmed it.
     dial_refused: Option<u64>,
+    /// The runtime opened its PTT line, rig control and audio devices from this configuration.
+    hardware_opened: bool,
+    /// The runtime's last report of the PTT line (`note_ptt`).
+    ptt_keyed: bool,
 }
 
 impl Engine {
@@ -138,6 +142,8 @@ impl Engine {
             output_fault: None,
             ptt_release_unconfirmed: None,
             dial_refused: None,
+            hardware_opened: false,
+            ptt_keyed: false,
         };
         e.rebuild_sequencer();
         if let Some(d) = e.dial {
@@ -220,11 +226,46 @@ impl Engine {
         self.active_tx.is_some()
     }
 
+    /// The runtime opened the PTT line, rig control and audio devices from the current
+    /// configuration. From now on an update cannot change the PTT, rig or audio settings (the
+    /// transmit level included: the GUI applies them all by restarting the station). The line,
+    /// the rig connection and the devices are opened only when a runtime starts, so the gate
+    /// would otherwise approve against a PTT method or rig other than the ones the station holds.
+    pub(crate) fn hardware_opened(&mut self) {
+        self.hardware_opened = true;
+    }
+
+    /// Why `new` must not replace the configuration, if it must not. Decided in full before
+    /// anything changes, so a refused update leaves the engine exactly as it was.
+    fn config_update_refusal(&self, new: &Config) -> Option<String> {
+        if let Err(why) = new.validate() {
+            return Some(format!("settings not applied: {why}"));
+        }
+        let old = &self.config;
+        if new.ptt == old.ptt && new.rig == old.rig && new.audio == old.audio {
+            return None;
+        }
+        let held = if self.hardware_opened {
+            "the running station opened its PTT line, rig control and audio devices from the current settings; restart the station to change them"
+        } else if self.ptt_keyed || self.ptt_release_unconfirmed.is_some() || self.active_tx.is_some() {
+            "the transmitter is keyed or its PTT release is not confirmed"
+        } else {
+            return None;
+        };
+        Some(format!("PTT, rig and audio settings not applied: {held}"))
+    }
+
     /// Applies a command. Returns true if the runtime must abandon any planned or keyed
     /// transmission immediately.
     pub fn apply(&mut self, cmd: Command, now_ms: u64) -> bool {
         match cmd {
             Command::UpdateConfig(c) => {
+                // Refused whole: nothing of a refused update is applied, and the transmission the
+                // gate approved under the configuration still in force goes on.
+                if let Some(why) = self.config_update_refusal(&c) {
+                    self.events.push(Event::ConfigRejected(why));
+                    return false;
+                }
                 let dial = c.operating.dial_hz;
                 self.config = Arc::new(*c);
                 self.rebuild_sequencer();
@@ -436,8 +477,9 @@ impl Engine {
         self.rig.go_offline(reason);
     }
 
-    /// Records a PTT command for the rig's settle window.
+    /// Records a PTT command for the rig's settle window, and whether the line is keyed.
     pub fn note_ptt(&mut self, keyed: bool, now_ms: u64) {
+        self.ptt_keyed = keyed;
         self.rig.note_requested_ptt(keyed, now_ms);
     }
 
@@ -610,8 +652,10 @@ impl Engine {
 
     /// The immutable view for user interfaces.
     pub fn snapshot(&self, now_ms: u64) -> EngineSnapshot {
-        let mut dts: Vec<f64> = self.decodes.iter().rev().take(30).map(|d| d.dt_sec).collect();
-        dts.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        // Only DTs that are numbers: a NaN in a report panicked this sort on the control thread
+        // (`partial_cmp().unwrap()`), and a median of non-numbers is no measurement.
+        let mut dts: Vec<f64> = self.decodes.iter().rev().map(|d| d.dt_sec).filter(|dt| dt.is_finite()).take(30).collect();
+        dts.sort_by(f64::total_cmp);
         EngineSnapshot {
             config: self.config.clone(),
             decodes: self.decodes.iter().cloned().collect(),

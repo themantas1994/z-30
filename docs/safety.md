@@ -165,7 +165,7 @@ exclusions keep it from grounding stations that work, and each has a test:
 Each field of a reading (dial, PTT, mode) has its own freshness: a poll that could not read the
 mode does not make an old mode count as fresh (`gate_contract.rs::f18_a_mode_the_poll_did_not_read_is_not_re_dated_as_fresh`;
 it used to, audit F-18). The rig thread polls every `[rig] poll_interval_ms` (1000 ms by default,
-never faster than 250 ms, `MIN_POLL_INTERVAL_MS`) and starts no CAT traffic, poll or
+never faster than 250 ms nor slower than 3000 ms, `MIN_POLL_INTERVAL_MS`, `MAX_POLL_INTERVAL_MS`) and starts no CAT traffic, poll or
 set-frequency, within the 100 ms PTT settle window (`PTT_SETTLE_MS`) after a PTT change
 (`r5`; `tx_runtime.rs::f18_the_rig_thread_polls_at_the_configured_interval`,
 `f18_no_poll_starts_inside_the_ptt_settle_window_during_a_transmission`). Before the 2026-09-28
@@ -319,7 +319,7 @@ Each defends against a different failure. Do not merge them.
    `rigctld::tests::f17_the_cat_ptt_connection_is_open_and_released_before_the_first_key`,
    `m2_a_rigctld_that_refuses_the_start_up_release_is_not_a_working_ptt`). The GUI behaviour is
    checked by inspection only (there is no GUI test harness).
-4. **Hardware.** Serial RTS/DTR are dropped by the OS when the port closes, even after SIGKILL.
+4. **Hardware.** Serial RTS/DTR are dropped by the OS when the port closes, even after SIGKILL. That releases an active-high line only. Known open safety item: with `active_high = false`, closing the serial port may key the radio (the OS drops RTS/DTR on close, which for an active-low line is the keyed level). Not yet verified on hardware; do not rely on active-low serial PTT for safety until it is.
 
 What no software layer can cover is SIGKILL or a power cut to the computer while a **CAT- or
 CM108-keyed** radio stays powered. **Enable the radio's own transmit time-out timer.**
