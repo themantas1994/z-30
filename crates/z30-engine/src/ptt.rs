@@ -15,6 +15,11 @@
 //!   and a new key is refused. Before this the flag dropped first, so a refused release left the
 //!   controller, the watchdog and Drop all believing the radio was released while it stayed
 //!   keyed until its own time-out timer (2026-09-28 audit F-01).
+//! - **A keyed state always carries its own watchdog deadline.** State and deadline are one
+//!   atomic word, changed together. As two atomics, a release stored `Released` and then cleared
+//!   the deadline in a second store, so a key armed between the two had its deadline wiped and
+//!   that transmission ran with no watchdog; and the watchdog acted on whatever was keyed when it
+//!   got to it, so a tick that read an expired period could release the next one.
 //! - **Three independent stuck-transmitter layers,** each defending a different failure:
 //!   1. the engine's own TX state machine ends every frame and unkeys;
 //!   2. a watchdog thread, sharing nothing with the engine loop but the line, unkeys at
@@ -35,7 +40,7 @@
 
 use std::cell::Cell;
 use std::panic::{catch_unwind, AssertUnwindSafe};
-use std::sync::atomic::{AtomicBool, AtomicU64, AtomicU8, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock, TryLockError, Weak};
 use std::time::Duration;
 
@@ -125,6 +130,28 @@ const RELEASED: u8 = 0;
 const KEYED: u8 = 1;
 const RELEASE_PENDING: u8 = 2;
 
+/// The controller's state and the keyed period's watchdog deadline share one word: the state in
+/// the top two bits, the deadline (monotonic ms) below. A thread that sees `Keyed` sees the
+/// deadline the key that made it armed, never none and never an earlier period's.
+const STATE_SHIFT: u32 = 62;
+/// The latest deadline the word holds, ms (about 146 million years of monotonic time). A key
+/// whose deadline would be later gets this one, which is earlier: never later than now + limit.
+const DEADLINE_MAX: u64 = (1 << STATE_SHIFT) - 1;
+/// `Released`; the deadline bits are unused while released.
+const RELEASED_WORD: u64 = (RELEASED as u64) << STATE_SHIFT;
+
+fn pack(state: u8, deadline_ms: u64) -> u64 {
+    ((state as u64) << STATE_SHIFT) | (deadline_ms & DEADLINE_MAX)
+}
+
+fn state_bits(word: u64) -> u8 {
+    (word >> STATE_SHIFT) as u8
+}
+
+fn deadline_bits(word: u64) -> u64 {
+    word & DEADLINE_MAX
+}
+
 fn state_of(v: u8) -> PttState {
     match v {
         RELEASED => PttState::Released,
@@ -146,8 +173,8 @@ fn this_thread_is_driving() -> bool {
 
 struct Shared {
     line: Mutex<Box<dyn PttLine>>,
-    state: AtomicU8,
-    deadline_ms: AtomicU64,
+    /// State and watchdog deadline, packed by `pack`.
+    status: AtomicU64,
     watchdog_fired: AtomicBool,
     /// Set by the watchdog when it fires; cleared by `take_watchdog_release`.
     watchdog_unreported: AtomicBool,
@@ -184,9 +211,15 @@ impl Shared {
         }
     }
 
+    fn state(&self) -> u8 {
+        state_bits(self.status.load(Ordering::SeqCst))
+    }
+
     fn mark_release_pending(&self) {
         // Released stays released (nothing to undo); anything else may be on the air.
-        let _ = self.state.compare_exchange(KEYED, RELEASE_PENDING, Ordering::SeqCst, Ordering::SeqCst);
+        let _ = self
+            .status
+            .try_update(Ordering::SeqCst, Ordering::SeqCst, |w| (state_bits(w) == KEYED).then(|| pack(RELEASE_PENDING, deadline_bits(w))));
     }
 
     /// Drives a release on a line the caller holds and records the outcome. Only a confirmed
@@ -200,11 +233,16 @@ impl Shared {
         let r = Self::drive(line, false);
         match &r {
             Ok(_) => {
-                self.state.store(RELEASED, Ordering::SeqCst);
-                self.deadline_ms.store(u64::MAX, Ordering::SeqCst);
+                // `Released` and the cleared deadline in one store. Only the holder of the line
+                // takes the word out of `ReleasePending`, so nothing else changed it since the
+                // mark above, except a key armed meanwhile on a line that was already released:
+                // that key is left alone, and drives its line after this release, under the lock.
+                let _ = self.status.try_update(Ordering::SeqCst, Ordering::SeqCst, |w| (state_bits(w) != KEYED).then_some(RELEASED_WORD));
+                #[cfg(test)]
+                hooks::reach(hooks::Point::ReleasePublished);
             }
             Err(e) => {
-                self.state.store(RELEASE_PENDING, Ordering::SeqCst);
+                self.status.store(pack(RELEASE_PENDING, 0), Ordering::SeqCst);
                 self.release_failures.fetch_add(1, Ordering::SeqCst);
                 *self.last_release_error.lock().unwrap_or_else(|p| p.into_inner()) = Some(e.0.clone());
             }
@@ -214,12 +252,12 @@ impl Shared {
 
     /// A release that waits for the line (normal and replacement paths).
     fn release(&self, cause: ReleaseCause) -> Result<PttAck, PttError> {
-        if self.state.load(Ordering::SeqCst) == RELEASED {
+        if self.state() == RELEASED {
             return Ok(PttAck::Confirmed);
         }
         self.mark_release_pending();
         let mut line = self.lock_line();
-        if self.state.load(Ordering::SeqCst) == RELEASED {
+        if self.state() == RELEASED {
             // Another thread confirmed it while this one waited.
             return Ok(PttAck::Confirmed);
         }
@@ -230,7 +268,7 @@ impl Shared {
     /// current thread may be the one holding it. If the line cannot be reached the state is
     /// left `ReleasePending`, which the watchdog retries.
     fn release_bounded(&self, cause: ReleaseCause, wait_ms: u64) -> bool {
-        if self.state.load(Ordering::SeqCst) == RELEASED {
+        if self.state() == RELEASED {
             return true;
         }
         self.mark_release_pending();
@@ -238,7 +276,7 @@ impl Shared {
         let t0 = std::time::Instant::now();
         loop {
             if let Some(mut line) = self.try_lock_line() {
-                if self.state.load(Ordering::SeqCst) == RELEASED {
+                if self.state() == RELEASED {
                     return true;
                 }
                 return self.release_locked(&mut line, cause).is_ok();
@@ -316,8 +354,7 @@ impl PttController {
     pub fn with_limit(line: Box<dyn PttLine>, clock: Arc<dyn MonotonicClock>, limit_ms: u64) -> Self {
         let shared = Arc::new(Shared {
             line: Mutex::new(line),
-            state: AtomicU8::new(RELEASED),
-            deadline_ms: AtomicU64::new(u64::MAX),
+            status: AtomicU64::new(RELEASED_WORD),
             watchdog_fired: AtomicBool::new(false),
             watchdog_unreported: AtomicBool::new(false),
             release_failures: AtomicU64::new(0),
@@ -330,21 +367,22 @@ impl PttController {
     }
 
     /// Keys the transmitter. The watchdog deadline is armed BEFORE the line is driven, so a
-    /// failure inside the driver still leaves a deadline that will unkey; and it is armed only
-    /// on the released -> keyed transition, so keying an already keyed line cannot extend the
-    /// keyed period past `MAX_TX_SECONDS` (F-44: a second key used to re-arm it).
+    /// failure inside the driver still leaves a deadline that will unkey; it is armed in the
+    /// same atomic step as the keyed state, so no thread sees one without the other; and it is
+    /// armed only on the released -> keyed transition, so keying an already keyed line cannot
+    /// extend the keyed period past `MAX_TX_SECONDS` (F-44: a second key used to re-arm it).
     ///
     /// Refused, without touching the line, while a previous release is unconfirmed: a line
     /// that may already be keyed is not keyed again (F-01).
     pub fn key(&self) -> Result<PttAck, PttError> {
         let s = &self.shared;
         let now = self.clock.now_ms();
-        match s.state.compare_exchange(RELEASED, KEYED, Ordering::SeqCst, Ordering::SeqCst) {
-            Ok(_) => {
-                s.deadline_ms.store(now + s.limit_ms, Ordering::SeqCst);
-                s.watchdog_fired.store(false, Ordering::SeqCst);
-            }
-            Err(KEYED) => {}
+        // Saturating and capped to what the word holds: a clock near the end of its range gives
+        // an earlier deadline, never a later one, a wrapped one or an overflow panic.
+        let armed = pack(KEYED, now.saturating_add(s.limit_ms).min(DEADLINE_MAX));
+        match s.status.try_update(Ordering::SeqCst, Ordering::SeqCst, |w| (state_bits(w) == RELEASED).then_some(armed)) {
+            Ok(_) => s.watchdog_fired.store(false, Ordering::SeqCst),
+            Err(w) if state_bits(w) == KEYED => {}
             Err(_) => {
                 return Err(PttError(format!(
                     "refusing to key: the previous release was not confirmed by the hardware ({})",
@@ -352,8 +390,10 @@ impl PttController {
                 )))
             }
         }
+        #[cfg(test)]
+        hooks::reach(hooks::Point::KeyArmed);
         let mut line = s.lock_line();
-        if s.state.load(Ordering::SeqCst) != KEYED {
+        if s.state() != KEYED {
             // Released (watchdog, halt, emergency) while this thread waited for the line.
             return Err(PttError("the transmitter was released before the key was sent".into()));
         }
@@ -364,7 +404,7 @@ impl PttController {
             return Err(PttError("refusing to key: the process is exiting or the station is stopping".into()));
         }
         let r = Shared::drive(&mut line, true);
-        if r.is_err() || s.state.load(Ordering::SeqCst) != KEYED || NO_MORE_KEYS.load(Ordering::SeqCst) || s.closed.load(Ordering::SeqCst) {
+        if r.is_err() || s.state() != KEYED || NO_MORE_KEYS.load(Ordering::SeqCst) || s.closed.load(Ordering::SeqCst) {
             // A key that never reached the hardware, or one that raced a halt: the release is
             // sent in case the line half-changed, and must itself be confirmed.
             let _ = s.release_locked(&mut line, ReleaseCause::Emergency);
@@ -420,7 +460,7 @@ impl PttController {
 
     /// The controller's state.
     pub fn state(&self) -> PttState {
-        state_of(self.shared.state.load(Ordering::SeqCst))
+        state_of(self.shared.state())
     }
 
     /// Releases the hardware refused, since the controller was created.
@@ -451,11 +491,21 @@ impl PttController {
     pub fn watchdog_tick(&self) -> bool {
         let s = &self.shared;
         let now = self.clock.now_ms();
-        match s.state.load(Ordering::SeqCst) {
-            KEYED if now >= s.deadline_ms.load(Ordering::SeqCst) => {
+        let word = s.status.load(Ordering::SeqCst);
+        match state_bits(word) {
+            KEYED if now >= deadline_bits(word) => {
+                #[cfg(test)]
+                hooks::reach(hooks::Point::WatchdogDecided);
+                // Only the keyed period whose deadline was read: if it has been released and
+                // another keyed since, the word differs and the new period keeps its own
+                // deadline. Marking whatever was keyed by now released the next transmission on
+                // the previous one's deadline.
+                let pending = pack(RELEASE_PENDING, deadline_bits(word));
+                if s.status.compare_exchange(word, pending, Ordering::SeqCst, Ordering::SeqCst).is_err() {
+                    return false;
+                }
                 s.watchdog_fired.store(true, Ordering::SeqCst);
                 s.watchdog_unreported.store(true, Ordering::SeqCst);
-                s.mark_release_pending();
                 if let Some(mut line) = s.try_lock_line() {
                     let _ = s.release_locked(&mut line, ReleaseCause::Watchdog);
                 }
@@ -463,7 +513,7 @@ impl PttController {
             }
             RELEASE_PENDING => {
                 if let Some(mut line) = s.try_lock_line() {
-                    if s.state.load(Ordering::SeqCst) == RELEASE_PENDING {
+                    if s.state() == RELEASE_PENDING {
                         let _ = s.release_locked(&mut line, ReleaseCause::Retry);
                     }
                 }
@@ -510,7 +560,7 @@ impl PttController {
 
 impl Drop for Shared {
     fn drop(&mut self) {
-        if *self.state.get_mut() != RELEASED {
+        if state_bits(*self.status.get_mut()) != RELEASED {
             let line = self.line.get_mut().unwrap_or_else(|p| p.into_inner());
             let _ = Shared::drive(line, false);
         }
@@ -545,5 +595,253 @@ impl PttLine for VoxPtt {
 
     fn describe(&self) -> String {
         "VOX (radio keys on audio; not verifiable)".into()
+    }
+}
+
+/// Pause points inside the state machine, for the unit tests below: each runs a closure the test
+/// set on the current thread, once, so that another action lands exactly where a race needs it.
+/// Test builds only.
+#[cfg(test)]
+mod hooks {
+    use std::cell::RefCell;
+
+    #[derive(Clone, Copy, PartialEq, Eq)]
+    pub(super) enum Point {
+        /// `key` has armed (state and deadline published) and has not yet taken the line.
+        KeyArmed,
+        /// `release_locked` has published a confirmed release and still holds the line.
+        ReleasePublished,
+        /// `watchdog_tick` has read a keyed period past its deadline and not yet acted on it.
+        WatchdogDecided,
+    }
+
+    type Hook = (Point, Box<dyn FnOnce()>);
+
+    thread_local! {
+        static HOOK: RefCell<Option<Hook>> = const { RefCell::new(None) };
+    }
+
+    /// Runs `f` the next time this thread reaches `at`.
+    pub(super) fn on_next(at: Point, f: impl FnOnce() + 'static) {
+        HOOK.with(|h| *h.borrow_mut() = Some((at, Box::new(f))));
+    }
+
+    pub(super) fn reach(at: Point) {
+        let hook = HOOK.try_with(|h| {
+            let mut h = h.borrow_mut();
+            if h.as_ref().is_some_and(|(p, _)| *p == at) {
+                h.take().map(|(_, f)| f)
+            } else {
+                None
+            }
+        });
+        if let Ok(Some(f)) = hook {
+            f();
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    //! A key racing the releases that run on other threads (normal end, HALT, the watchdog's
+    //! retry and deadline), each driven to the exact interleaving with the pause points in
+    //! `hooks`. The invariant: no transmission is keyed without its own watchdog deadline, no
+    //! earlier period's deadline judges it, and no release decided for an earlier period ends it.
+    //! `tests/ptt_race_stress.rs` runs the same races without pauses.
+    use super::hooks::{on_next, Point};
+    use super::*;
+    use std::sync::mpsc;
+    use std::time::Instant;
+
+    const LIMIT_MS: u64 = 1_000;
+
+    #[derive(Clone, Default)]
+    struct Clock(Arc<AtomicU64>);
+
+    impl Clock {
+        fn set(&self, ms: u64) {
+            self.0.store(ms, Ordering::SeqCst);
+        }
+    }
+
+    impl MonotonicClock for Clock {
+        fn now_ms(&self) -> u64 {
+            self.0.load(Ordering::SeqCst)
+        }
+    }
+
+    /// A line with a physical state; its next `refuse_releases` releases fail and change nothing.
+    #[derive(Clone, Default)]
+    struct Line {
+        on_air: Arc<AtomicBool>,
+        refuse_releases: Arc<AtomicU64>,
+    }
+
+    impl Line {
+        fn on_air(&self) -> bool {
+            self.on_air.load(Ordering::SeqCst)
+        }
+    }
+
+    impl PttLine for Line {
+        fn set(&mut self, keyed: bool) -> Result<PttAck, PttError> {
+            if !keyed && self.refuse_releases.load(Ordering::SeqCst) > 0 {
+                self.refuse_releases.fetch_sub(1, Ordering::SeqCst);
+                return Err(PttError("release refused (test)".into()));
+            }
+            self.on_air.store(keyed, Ordering::SeqCst);
+            Ok(PttAck::Confirmed)
+        }
+
+        fn describe(&self) -> String {
+            "test line".into()
+        }
+    }
+
+    fn controller() -> (PttController, Line, Clock) {
+        let (line, clock) = (Line::default(), Clock::default());
+        let ptt = PttController::with_limit(Box::new(line.clone()), Arc::new(clock.clone()), LIMIT_MS);
+        (ptt, line, clock)
+    }
+
+    fn wait_for(what: &str, f: impl Fn() -> bool) {
+        let t0 = Instant::now();
+        while !f() {
+            assert!(t0.elapsed() < Duration::from_secs(10), "timed out waiting for {what}");
+            std::thread::sleep(Duration::from_millis(1));
+        }
+    }
+
+    /// Runs `release` on one thread and, the moment that release is published while it still
+    /// holds the line, `key()` on another (the control thread keying the next slot): the key
+    /// arms, then waits for the line. Returns what the key returned.
+    fn key_as_a_release_is_published(
+        ptt: &PttController,
+        release: impl FnOnce(&PttController) + Send + 'static,
+    ) -> Result<PttAck, PttError> {
+        let (go, wait) = mpsc::channel::<()>();
+        let p = ptt.clone();
+        let keyer = std::thread::spawn(move || match wait.recv() {
+            Ok(()) => p.key(),
+            Err(_) => Err(PttError("the release was never published".into())),
+        });
+        let p = ptt.clone();
+        let releaser = std::thread::spawn(move || {
+            let watch = p.clone();
+            on_next(Point::ReleasePublished, move || {
+                let _ = go.send(());
+                wait_for("the key to arm", || watch.state() == PttState::Keyed);
+                // Time for the key to finish arming and block on the line: with state and
+                // deadline in two stores, the release's second store came after this point.
+                std::thread::sleep(Duration::from_millis(50));
+            });
+            release(&p);
+        });
+        releaser.join().expect("the releasing thread panicked");
+        keyer.join().expect("the keying thread panicked")
+    }
+
+    /// The transmission keyed at `keyed_at` is released by the watchdog at its own deadline, and
+    /// not before.
+    fn has_its_own_deadline(ptt: &PttController, line: &Line, clock: &Clock, keyed_at: u64) {
+        clock.set(keyed_at + LIMIT_MS - 1);
+        assert!(!ptt.watchdog_tick(), "released before its own deadline");
+        assert!(line.on_air());
+        clock.set(keyed_at + LIMIT_MS);
+        assert!(ptt.watchdog_tick(), "the transmission was keyed with no watchdog deadline");
+        assert!(!line.on_air(), "the watchdog did not release the line");
+        assert_eq!(ptt.state(), PttState::Released);
+    }
+
+    #[test]
+    fn a_key_armed_as_a_normal_release_completes_keeps_its_own_watchdog_deadline() {
+        let (ptt, line, clock) = controller();
+        ptt.key().unwrap();
+        clock.set(100);
+        let r = key_as_a_release_is_published(&ptt, |p| assert!(p.unkey().is_ok()));
+        assert!(r.is_ok(), "the next key was refused: {r:?}");
+        assert!(line.on_air());
+        assert_eq!(ptt.state(), PttState::Keyed);
+        has_its_own_deadline(&ptt, &line, &clock, 100);
+    }
+
+    #[test]
+    fn a_key_armed_as_a_halt_release_completes_keeps_its_own_watchdog_deadline() {
+        let (ptt, line, clock) = controller();
+        ptt.key().unwrap();
+        clock.set(100);
+        let r = key_as_a_release_is_published(&ptt, |p| assert!(p.request_release_now()));
+        assert!(r.is_ok(), "the next key was refused: {r:?}");
+        assert!(line.on_air());
+        has_its_own_deadline(&ptt, &line, &clock, 100);
+    }
+
+    #[test]
+    fn a_key_armed_as_the_watchdog_confirms_a_refused_release_keeps_its_own_watchdog_deadline() {
+        let (ptt, line, clock) = controller();
+        ptt.key().unwrap();
+        line.refuse_releases.store(1, Ordering::SeqCst);
+        assert!(ptt.unkey().is_err());
+        assert_eq!(ptt.state(), PttState::ReleasePending);
+        clock.set(100);
+        // The watchdog's retry is the release that completes.
+        let r = key_as_a_release_is_published(&ptt, |p| assert!(!p.watchdog_tick()));
+        assert!(r.is_ok(), "the next key was refused: {r:?}");
+        assert!(line.on_air());
+        assert_eq!(ptt.release_failures(), 1);
+        has_its_own_deadline(&ptt, &line, &clock, 100);
+    }
+
+    #[test]
+    fn a_watchdog_tick_that_read_an_expired_period_never_releases_the_next_one() {
+        let (ptt, line, clock) = controller();
+        ptt.key().unwrap();
+        clock.set(LIMIT_MS);
+        let p = ptt.clone();
+        // The tick has read the period as expired; before it acts, that period ends normally
+        // and the next slot is keyed. On this thread: the tick holds nothing at that point.
+        on_next(Point::WatchdogDecided, move || {
+            p.unkey().unwrap();
+            p.key().unwrap();
+        });
+        assert!(!ptt.watchdog_tick(), "the tick acted on a period that had already ended");
+        assert!(line.on_air(), "the next transmission was released on the previous one's deadline");
+        assert_eq!(ptt.state(), PttState::Keyed);
+        assert!(!ptt.watchdog_fired());
+        assert!(!ptt.take_watchdog_release(), "a watchdog release was reported that did not happen");
+        has_its_own_deadline(&ptt, &line, &clock, LIMIT_MS);
+    }
+
+    #[test]
+    fn a_deadline_armed_by_a_key_that_raced_a_halt_never_judges_the_next_key() {
+        let (ptt, line, clock) = controller();
+        clock.set(100);
+        let p = ptt.clone();
+        // HALT between the key arming and the key reaching the line.
+        on_next(Point::KeyArmed, move || assert!(p.request_release_now()));
+        assert!(ptt.key().is_err(), "a key released before it was sent says so");
+        assert!(!line.on_air(), "a key released before it was sent reached the line");
+        assert_eq!(ptt.state(), PttState::Released);
+        // Well past that key's deadline (100 + LIMIT_MS), the next key; a watchdog tick lands
+        // between its arming and its drive.
+        let rekey_at = 100 + 2 * LIMIT_MS;
+        clock.set(rekey_at);
+        let (p, fired) = (ptt.clone(), Arc::new(AtomicBool::new(false)));
+        let f = fired.clone();
+        on_next(Point::KeyArmed, move || f.store(p.watchdog_tick(), Ordering::SeqCst));
+        let r = ptt.key();
+        assert!(!fired.load(Ordering::SeqCst), "the watchdog judged the new key by an earlier key's deadline");
+        assert!(r.is_ok(), "the new key was released before it was sent: {r:?}");
+        assert!(line.on_air());
+        has_its_own_deadline(&ptt, &line, &clock, rekey_at);
+    }
+
+    #[test]
+    fn a_clock_at_the_end_of_its_range_arms_an_earlier_deadline_not_none_and_not_a_panic() {
+        let (ptt, line, clock) = controller();
+        clock.set(u64::MAX - 10);
+        ptt.key().unwrap();
+        assert!(ptt.watchdog_tick(), "a deadline past the end of the clock never fires");
+        assert!(!line.on_air());
     }
 }

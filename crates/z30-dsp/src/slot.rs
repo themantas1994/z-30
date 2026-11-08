@@ -128,6 +128,11 @@ pub struct SlotReport {
     pub passes: Vec<PassStats>,
     /// Total wall-clock time.
     pub elapsed_ms: f64,
+    /// Samples of the window that were NaN or infinite. Such a sample is not a measurement, and
+    /// one of them turns every bin of the slot FFT into NaN, so each was decoded as 0.0 - the
+    /// value the slot store gives audio it does not have. Non-zero means the audio source
+    /// delivered garbage for that many samples.
+    pub non_finite_samples: usize,
 }
 
 /// Reusable per-thread resources: FFT plans, modulator, tone table. Building these is the only
@@ -191,7 +196,10 @@ impl Receiver {
         let zero_spectra = FrameSpectra::new(&bb, &self.symfft, &zero);
         let bin_noise = 2.0 * zero_spectra.noise_sigma2() * z30_protocol::SYNC_SYMBOLS as f64;
         let best_metric = drifted.map_or(zero.metric, |d| d.metric.max(zero.metric));
-        if best_metric / bin_noise < cfg.min_fine_sync {
+        // Refuses a metric that is not a number too: finite samples large enough to overflow the
+        // f32 spectra leave NaN here, which `<` alone would let through to the LDPC decoder.
+        let fine = best_metric / bin_noise;
+        if fine.is_nan() || fine < cfg.min_fine_sync {
             return None;
         }
         let mut hypotheses = vec![(zero, Some(zero_spectra))];
@@ -248,7 +256,23 @@ impl Receiver {
         assert_eq!(samples.len(), SLOT_SAMPLES, "decode_slot takes the 27 s slot window at 6 kHz");
         let t_all = Instant::now();
         let mut report = SlotReport::default();
-        let mut residual = samples.to_vec();
+        // Silence for what is not a number: it adds no energy, no tone and no timing, so every
+        // decode still comes from real samples and must pass the LDPC code and the CRC. Rejecting
+        // the window instead would discard 27 s of good audio for one bad sample; clamping an
+        // infinity to full scale would inject a broadband impulse into every bin.
+        let mut non_finite = 0usize;
+        let mut residual: Vec<f32> = samples
+            .iter()
+            .map(|&v| {
+                if v.is_finite() {
+                    v
+                } else {
+                    non_finite += 1;
+                    0.0
+                }
+            })
+            .collect();
+        report.non_finite_samples = non_finite;
         // Regions subtracted in the previous pass: (f0, start). Later passes only look there,
         // because everywhere else the residual is unchanged and a deterministic decoder would
         // fail on it exactly as before.
@@ -330,4 +354,128 @@ impl Receiver {
 /// Convenience wrapper: builds a `Receiver` and decodes one slot.
 pub fn decode_slot(samples: &[f32], cfg: &RxConfig) -> SlotReport {
     Receiver::new().decode_slot(samples, cfg)
+}
+
+#[cfg(test)]
+mod tests {
+    //! Input the receiver must survive (AGENTS.md section 5: panic-free on arbitrary input). One
+    //! NaN sample made every bin of the slot FFT NaN, and the noise median's
+    //! `partial_cmp().unwrap()` (demod.rs) then panicked the decoder; finite samples whose power
+    //! overflows f32 panicked the coarse search's median (sync.rs) the same way.
+    use super::*;
+    use crate::baseband::SLOT_SAMPLES;
+    use z30_channel::{random_station, rng, synthesize, Band};
+    use z30_protocol::PAYLOAD_BITS;
+
+    const BAD: [f32; 3] = [f32::NAN, f32::INFINITY, f32::NEG_INFINITY];
+
+    /// One station at -10 dB in noise: far enough above threshold that a few samples of silence
+    /// cannot cost the decode.
+    fn one_station() -> (Vec<f32>, [u8; PAYLOAD_BITS]) {
+        let (payload, st) = random_station(&mut rng(4242), 1210.0, 0.2, -10.0);
+        (synthesize(&Band { stations: vec![st], noise: true, ..Default::default() }, &mut rng(4243)), payload)
+    }
+
+    fn decoded(rep: &SlotReport, payload: &[u8; PAYLOAD_BITS]) -> bool {
+        rep.decodes.iter().any(|d| d.info[..PAYLOAD_BITS] == payload[..])
+    }
+
+    /// What each decode reports, bit for bit.
+    type Fingerprint = (Vec<u8>, Option<u64>, u64, u64, u64, u8);
+
+    fn fingerprint(rep: &SlotReport) -> Vec<Fingerprint> {
+        rep.decodes
+            .iter()
+            .map(|d| (d.info.to_vec(), d.snr_db.map(f64::to_bits), d.dt_sec.to_bits(), d.freq_hz.to_bits(), d.drift_hz.to_bits(), d.pass))
+            .collect()
+    }
+
+    #[test]
+    fn a_nan_or_infinite_sample_at_the_window_start_middle_or_end_neither_panics_nor_costs_the_decode() {
+        let rx = Receiver::new();
+        let (x, payload) = one_station();
+        for at in [0, SLOT_SAMPLES / 2, SLOT_SAMPLES - 1] {
+            for bad in BAD {
+                let mut y = x.clone();
+                y[at] = bad;
+                let rep = rx.decode_slot(&y, &RxConfig::default());
+                assert!(decoded(&rep, &payload), "{bad} at {at}: the station was lost");
+                assert_eq!(rep.non_finite_samples, 1, "{bad} at {at}");
+            }
+        }
+    }
+
+    #[test]
+    fn non_finite_samples_are_decoded_exactly_as_silence_and_counted() {
+        let rx = Receiver::new();
+        let (x, payload) = one_station();
+        // 50 ms inside the frame, every kind mixed.
+        let burst = 60_000..60_300;
+        let (mut bad, mut silent) = (x.clone(), x);
+        for (k, i) in burst.clone().enumerate() {
+            bad[i] = BAD[k % 3];
+            silent[i] = 0.0;
+        }
+        let a = rx.decode_slot(&bad, &RxConfig::default());
+        let b = rx.decode_slot(&silent, &RxConfig::default());
+        assert!(decoded(&a, &payload));
+        assert_eq!(fingerprint(&a), fingerprint(&b));
+        assert_eq!((a.non_finite_samples, b.non_finite_samples), (burst.len(), 0));
+    }
+
+    #[test]
+    fn the_receiver_carries_on_after_a_corrupt_window_and_decodes_the_next_one_unchanged() {
+        let (x, payload) = one_station();
+        let fresh = Receiver::new().decode_slot(&x, &RxConfig::default());
+        let rx = Receiver::new();
+        // One NaN: the coarse search still finds candidates, so the demodulator meets the NaN
+        // spectra (scattering many bad samples zeroes the whole sync map and never gets there).
+        let mut y = x.clone();
+        y[SLOT_SAMPLES / 2] = f32::NAN;
+        let _ = rx.decode_slot(&y, &RxConfig::default());
+        let next = rx.decode_slot(&x, &RxConfig::default());
+        assert!(decoded(&next, &payload));
+        assert_eq!(fingerprint(&next), fingerprint(&fresh));
+    }
+
+    #[test]
+    fn a_window_of_nothing_but_nan_decodes_nothing_and_says_so() {
+        let rep = Receiver::new().decode_slot(&vec![f32::NAN; SLOT_SAMPLES], &RxConfig::default());
+        assert!(rep.decodes.is_empty());
+        assert_eq!(rep.non_finite_samples, SLOT_SAMPLES);
+    }
+
+    #[test]
+    fn a_silent_window_decodes_nothing() {
+        let rep = Receiver::new().decode_slot(&vec![0.0; SLOT_SAMPLES], &RxConfig::default());
+        assert!(rep.decodes.is_empty());
+        assert_eq!(rep.non_finite_samples, 0);
+    }
+
+    #[test]
+    fn finite_samples_too_large_for_the_f32_spectra_do_not_panic() {
+        // Finite, so nothing is replaced, but the spectra overflow to infinity and NaN inside:
+        // every ordering and gate on the way has to hold up anyway.
+        let rx = Receiver::new();
+        let (x, _) = one_station();
+        for scale in [1e20f64, 1e30, 1e300] {
+            let y: Vec<f32> = x.iter().map(|&v| (v as f64 * scale).clamp(f32::MIN as f64, f32::MAX as f64) as f32).collect();
+            let rep = rx.decode_slot(&y, &RxConfig::default());
+            assert_eq!(rep.non_finite_samples, 0, "scale {scale}");
+        }
+    }
+
+    // A window of the wrong length is a caller's bug, not input: decoded, it would put DT = 0 in
+    // the wrong place. It is refused loudly, never decoded misaligned.
+    #[test]
+    #[should_panic(expected = "decode_slot takes the 27 s slot window at 6 kHz")]
+    fn an_empty_window_is_refused_as_the_wrong_length() {
+        Receiver::new().decode_slot(&[], &RxConfig::default());
+    }
+
+    #[test]
+    #[should_panic(expected = "decode_slot takes the 27 s slot window at 6 kHz")]
+    fn a_short_window_is_refused_as_the_wrong_length() {
+        Receiver::new().decode_slot(&vec![0.0; SLOT_SAMPLES - 1], &RxConfig::default());
+    }
 }

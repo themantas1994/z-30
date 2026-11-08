@@ -75,7 +75,7 @@ stamps and counts; it never allocates or locks, and a test enforces that (see
 
 User interfaces own no radio state. They send `Command`s: `UpdateConfig`, `SetDial`,
 `SetAudioFrequencies`, `CallCq`, `Answer`, `EnableTx`, `HaltTx`, `Tune`, `ResetQso` and the
-rest of the enum. They render the latest `EngineSnapshot`, published through `ArcSwap`
+rest of the enum. A running station refuses an `UpdateConfig` that changes the PTT, rig or audio settings (and any change while the transmitter is keyed or a PTT release is unconfirmed): the engine answers `Event::ConfigRejected` and applies nothing. The GUI restarts the station for such a change. They render the latest `EngineSnapshot`, published through `ArcSwap`
 (latest wins) and consumed from a bounded event channel. The GUI never blocks the engine, and
 the engine never waits for the GUI. A frozen window cannot hold a transmitter keyed: the
 engine's own state machine, the watchdog thread and process-exit release are all independent

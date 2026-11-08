@@ -105,7 +105,7 @@ Four independent layers stop a stuck transmitter; each covers a different failur
 | The transmit timeline unkeys at the end of the frame | normal operation |
 | A watchdog thread releases the line at `MAX_TX_SECONDS` = 40 s (a frame is 24 s), independent of the engine and the GUI, and retries an unconfirmed release until it is confirmed; the limit is a compile-time constant; its release is always reported | a hung engine or GUI, a lost unkey |
 | A panic hook and SIGINT/SIGTERM/SIGHUP / console-close handlers release every line | crashes and normal termination |
-| The operating system drops RTS/DTR when the serial port closes | even SIGKILL, for serial PTT |
+| The operating system drops RTS/DTR when the serial port closes | even SIGKILL, for active-high serial PTT only; with `active_high = false` closing the port may key the radio (known open item, not yet verified on hardware) |
 
 **VOX is outside the watchdog.** With VOX there is no line to release; what bounds a VOX
 transmission, if the engine hangs, is only the audio queued for it (one 24 s frame).

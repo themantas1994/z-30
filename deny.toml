@@ -1,0 +1,41 @@
+# Licence policy for the dependency graph, checked by `cargo deny --locked check licenses`
+# (ci.yml, "Dependency licences"). Vulnerabilities are checked separately, by `cargo audit`.
+#
+# z-30 is MIT. The list below is not a general allowlist: it holds only the licences that the
+# crates in Cargo.lock actually need, each permissive and compatible with distributing z-30's
+# MIT-licensed source and binaries. A crate offering a choice ("MIT OR Apache-2.0 OR LGPL-2.1")
+# is satisfied by one listed alternative, so licences that only ever appear as an unused
+# alternative (the GPL and LGPL options of r-efi, self_cell and unescaper, and BSD-2-Clause,
+# BSD-3-Clause, 0BSD, Unlicense) are deliberately absent. A new dependency whose licence is not
+# here fails the check, and adding a licence is a reviewed change to this file.
+
+[graph]
+# Every platform's dependencies (no `targets` filter) and every feature: the release builds
+# turn on `cm108`, which brings in hidapi.
+all-features = true
+
+[licenses]
+allow = [
+    "MIT",
+    "Apache-2.0",
+    # clipboard-win, error-code (Windows clipboard, through egui).
+    "BSL-1.0",
+    # libloading.
+    "ISC",
+    # unicode-ident, which carries the Unicode data tables under this licence as well.
+    "Unicode-3.0",
+    # foldhash, slotmap, zlib-rs.
+    "Zlib",
+]
+# A listed licence that no crate in the graph mentions any more fails the check, so the list
+# shrinks with the graph. (It cannot see a licence that is mentioned but no longer needed.)
+unused-allowed-license = "deny"
+
+exceptions = [
+    # Weak, file-level copyleft. serialport is used as an unmodified library; MPL-2.0 covers its
+    # own source files, which stay available from crates.io, and does not extend to z-30's code.
+    { crate = "serialport", allow = ["MPL-2.0"] },
+    # The fonts egui bundles. Both font licences allow embedding the fonts in software under any
+    # licence; the fonts themselves keep their own licence.
+    { crate = "epaint_default_fonts", allow = ["OFL-1.1", "Ubuntu-font-1.0"] },
+]

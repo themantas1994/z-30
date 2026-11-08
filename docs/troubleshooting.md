@@ -127,7 +127,7 @@ The gate lists every reason (see [safety.md](safety.md)). The ones operators mee
   access to the device's `hidraw` node, usually through a udev rule matching vendor `0d8c`. An
   empty device path works only when exactly one C-Media device is present; with more, set the
   path of the radio interface (the error lists them).
-- **Polarity**: `active_high = false` keys by releasing the line. If the radio transmits and
+- **Polarity**: `active_high = false` keys by releasing the line. Known open safety item: with `active_high = false`, closing the serial port may key the radio (the OS drops RTS/DTR on close, which for an active-low line is the keyed level). Not yet verified on hardware; do not rely on active-low serial PTT for safety until it is. If the radio transmits and
   stays keyed when z-30 starts, the polarity is inverted. Stop and fix it before going further.
   A *brief* key-up as the station starts (or during `z30 --diagnostics`) can instead be the port
   asserting DTR/RTS when it is opened, before z-30 drives the line released; that is unmeasured
@@ -145,7 +145,8 @@ needs none of them.
 `logbook.adi` and never modifies them. It prints three sections - **Imported**, **Imported
 with a change** (and why), **Skipped** (and why) - and a logbook line with how many contacts
 were imported, already present and skipped. If `config.toml` already exists it is not
-replaced unless `--force` is given. Running it again is safe: a contact already in the vNext
+replaced unless `--force` is given; with `--force`, a file z-30 cannot read is first backed up to
+`config.toml.bak` (or `config.toml.bak.N`, never overwriting an earlier backup). Running it again is safe: a contact already in the vNext
 logbook (same call, start time and frequency) is not imported twice, and the configuration it
 builds is a pure function of the legacy files.
 

@@ -52,7 +52,7 @@ pub struct Spectrogram {
 impl Spectrogram {
     /// Hann-windowed, zero-padded 4x, hop 1/8 symbol, over `[lo_hz, hi_hz]`.
     pub fn new(samples: &[f32], lo_hz: f64, hi_hz: f64) -> Self {
-        assert_eq!(samples.len(), SLOT_SAMPLES);
+        assert_eq!(samples.len(), SLOT_SAMPLES, "a slot window is 27 s at 6 kHz");
         let bin_hz = crate::DSP_RATE_HZ / NFFT as f64;
         let col0 = (lo_hz / bin_hz).floor().max(0.0) as usize;
         let col1 = ((hi_hz / bin_hz).ceil() as usize).min(NFFT / 2);
@@ -122,13 +122,17 @@ impl Spectrogram {
                     num += self.power[r * self.width + c + SYNC_TONES[k] as usize * FREQ_OVERSAMPLE];
                     den += tone_sum[r * cols + c];
                 }
-                map[ti * cols + c] = if den > 0.0 { num * NUM_TONES as f32 / den } else { 0.0 };
+                // A reference that overflowed f32 (or held a NaN) measures nothing: 0, like a
+                // silent one. `num` is part of `den`, so a finite `den` means a finite ratio.
+                map[ti * cols + c] = if den > 0.0 && den.is_finite() { num * NUM_TONES as f32 / den } else { 0.0 };
             }
         }
-        // Normalise by the median so the threshold means the same thing on any band.
+        // Normalise by the median so the threshold means the same thing on any band. A total
+        // order, so no value can panic the sort (partial_cmp().unwrap() did on NaN); on these
+        // non-negative values it orders exactly as partial_cmp did.
         let mut sorted = map.clone();
         let mid = sorted.len() / 2;
-        let median = *sorted.select_nth_unstable_by(mid, |a, b| a.partial_cmp(b).unwrap()).1;
+        let median = *sorted.select_nth_unstable_by(mid, |a, b| a.total_cmp(b)).1;
         let norm = if median > 0.0 { 1.0 / median } else { 1.0 };
 
         let bin_hz = Self::bin_hz();
@@ -136,7 +140,9 @@ impl Spectrogram {
         for ti in 0..ntimes {
             for c in 0..cols {
                 let v = map[ti * cols + c];
-                if (v * norm) as f64 <= threshold {
+                let score = (v * norm) as f64;
+                // NaN is never a candidate (`<=` alone would let it through).
+                if score.is_nan() || score <= threshold {
                     continue;
                 }
                 let f0 = (self.col0 + c) as f64 * bin_hz;
@@ -165,7 +171,7 @@ impl Spectrogram {
                 }
             }
         }
-        peaks.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap().then(a.1.cmp(&b.1)).then(a.2.cmp(&b.2)));
+        peaks.sort_by(|a, b| b.0.total_cmp(&a.0).then(a.1.cmp(&b.1)).then(a.2.cmp(&b.2)));
         // Non-maximum suppression: within 2 bins (1.6 Hz) and 2 hops (80 ms) keep the strongest.
         let mut out: Vec<(usize, usize, f32)> = Vec::new();
         for (v, ti, c) in peaks {
@@ -363,4 +369,128 @@ fn fine_sync_grid(bb: &[Complex32], tones: &ToneTable, coarse_start: usize, max_
     // Stage 4: refine drift and frequency together.
     let d = search(bb, tones, d.start..=d.start, Grid::around(d.df_hz, 0.03, 3), Grid::around(d.drift_hz, 0.2, 2)).unwrap_or(d);
     (zero, Some(d))
+}
+
+#[cfg(test)]
+mod tests {
+    //! Edge cases of the coarse and fine search. The coarse search panicked on finite samples
+    //! whose power overflows f32: Inf / Inf put NaN in the sync map, and its median's
+    //! `partial_cmp().unwrap()` panicked. (A lone NaN or infinite sample makes its rows NaN,
+    //! which `den > 0.0` already mapped to 0.)
+    use super::*;
+    use crate::baseband::{Plans, SlotSpectrum, BB_DECIMATION, BB_SAMPLES};
+    use z30_channel::{random_station, rng, synthesize, Band};
+
+    const F0: f64 = 1210.0;
+    const DT: f64 = 0.2;
+    const BAD: [f32; 3] = [f32::NAN, f32::INFINITY, f32::NEG_INFINITY];
+    /// The last coarse start: one frame before the end of the slot baseband (DT = +1.5 s).
+    const LAST_START: usize = BB_SAMPLES - TOTAL_SYMBOLS * BB_NSPS;
+
+    fn one_station() -> Vec<f32> {
+        let (_, st) = random_station(&mut rng(4242), F0, DT, -10.0);
+        synthesize(&Band { stations: vec![st], noise: true, ..Default::default() }, &mut rng(4243))
+    }
+
+    fn coarse(x: &[f32]) -> Vec<Candidate> {
+        Spectrogram::new(x, 200.0, 2800.0).candidates(1.5, 50, 200.0, 2800.0)
+    }
+
+    fn finds_the_station(c: &[Candidate]) -> bool {
+        c.iter().any(|c| (c.f0_hz - F0).abs() <= 1.0 && (c.dt_sec - DT).abs() <= 0.05)
+    }
+
+    /// Every candidate is a number, inside the DT search and inside the band.
+    fn well_formed(c: &[Candidate]) -> bool {
+        c.iter().all(|c| {
+            c.sync.is_finite()
+                && c.sync > 1.5
+                && c.dt_sec.abs() <= DT_SEARCH_SEC + 1e-9
+                && c.f0_hz >= 200.0
+                && c.f0_hz + (NUM_TONES - 1) as f64 * TONE_SPACING_HZ <= 2800.0
+        })
+    }
+
+    #[test]
+    fn a_non_finite_sample_at_the_window_start_middle_or_end_never_panics_the_coarse_search() {
+        let x = one_station();
+        assert!(finds_the_station(&coarse(&x)));
+        // The middle sample lies in data symbol 36 of the frame, between sync groups, so at every
+        // position only spectrogram rows the station's sync does not use are lost.
+        for at in [0, SLOT_SAMPLES / 2, SLOT_SAMPLES - 1] {
+            for bad in BAD {
+                let mut y = x.clone();
+                y[at] = bad;
+                let c = coarse(&y);
+                assert!(well_formed(&c), "{bad} at {at}: {c:?}");
+                assert!(finds_the_station(&c), "{bad} at {at}: the station was lost");
+            }
+        }
+    }
+
+    #[test]
+    fn finite_samples_whose_power_overflows_f32_never_panic_the_coarse_search() {
+        let y: Vec<f32> = one_station().iter().map(|&v| v * 1e20).collect();
+        let c = coarse(&y);
+        assert!(well_formed(&c), "{c:?}");
+    }
+
+    #[test]
+    fn a_silent_window_has_no_candidates() {
+        assert_eq!(coarse(&vec![0.0; SLOT_SAMPLES]), vec![]);
+    }
+
+    #[test]
+    #[should_panic(expected = "a slot window is 27 s at 6 kHz")]
+    fn an_empty_window_is_refused_as_the_wrong_length() {
+        Spectrogram::new(&[], 200.0, 2800.0);
+    }
+
+    #[test]
+    #[should_panic(expected = "a slot window is 27 s at 6 kHz")]
+    fn a_short_window_is_refused_as_the_wrong_length() {
+        Spectrogram::new(&vec![0.0; SLOT_SAMPLES - 1], 200.0, 2800.0);
+    }
+
+    fn station_baseband() -> Vec<Complex32> {
+        let plans = Plans::new();
+        SlotSpectrum::new(&plans, &one_station()).baseband(&plans, F0).0
+    }
+
+    fn inside(s: &FineSync) -> bool {
+        s.start <= LAST_START && s.frac.abs() <= 0.5 && s.metric >= 0.0
+    }
+
+    #[test]
+    fn fine_sync_stays_inside_the_slot_from_the_first_to_the_last_coarse_start() {
+        // Coarse candidates span DT = -1.5 ..= +1.5 s, i.e. starts 0 ..= LAST_START.
+        let (tones, bb) = (ToneTable::new(), station_baseband());
+        for start in [0, LAST_START / 2, LAST_START] {
+            let (zero, drifted) = fine_sync(&bb, &tones, start, 4.0);
+            for s in std::iter::once(zero).chain(drifted) {
+                assert!(inside(&s), "coarse start {start}: {s:?}");
+            }
+        }
+        // At the station's own start it finds the station.
+        let start = ((SLOT_ZERO_INDEX as f64 + DT * crate::DSP_RATE_HZ) / BB_DECIMATION as f64).round() as usize;
+        let (zero, _) = fine_sync(&bb, &tones, start, 4.0);
+        assert!(zero.start.abs_diff(start) <= 1 && zero.df_hz.abs() < 0.1, "{zero:?}");
+    }
+
+    #[test]
+    fn fine_sync_does_not_panic_on_a_non_finite_baseband_sample_at_the_frame_start_middle_or_end() {
+        let (tones, clean) = (ToneTable::new(), station_baseband());
+        let start = ((SLOT_ZERO_INDEX as f64 + DT * crate::DSP_RATE_HZ) / BB_DECIMATION as f64).round() as usize;
+        let frame = TOTAL_SYMBOLS * BB_NSPS;
+        for at in [start, start + frame / 2, start + frame - 1] {
+            for bad in BAD {
+                let mut bb = clean.clone();
+                bb[at] = Complex32::new(bad, 0.0);
+                let (zero, drifted) = fine_sync(&bb, &tones, start, 4.0);
+                for s in std::iter::once(zero).chain(drifted) {
+                    assert!(s.start <= LAST_START && s.frac.abs() <= 0.5, "{bad} at {at}: {s:?}");
+                }
+            }
+        }
+    }
 }

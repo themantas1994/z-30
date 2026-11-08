@@ -11,7 +11,11 @@ use std::sync::Arc;
 /// What a user interface can ask for.
 #[derive(Clone, Debug)]
 pub enum Command {
-    /// Replace the configuration (validated; TX halts while keyed state is re-evaluated).
+    /// Replace the configuration. Checked in full first (`Config::validate`) and refused whole,
+    /// with `Event::ConfigRejected`, when it is invalid, or when it changes the PTT, rig or audio
+    /// settings while a runtime holds that hardware (they take effect only when a runtime starts)
+    /// or while the transmitter is keyed. An applied update ends any planned or keyed
+    /// transmission: the gate approved the old configuration, not this one.
     UpdateConfig(Box<Config>),
     /// Set the dial. It is sent to the radio when rig control is configured; it counts as
     /// "commanded" only once the radio acknowledges that command.
@@ -218,6 +222,8 @@ pub enum Event {
     Rig(String),
     /// Audio status changed (an output device failure or its recovery).
     Audio(String),
+    /// A configuration update was refused, and nothing in it was applied. Says why.
+    ConfigRejected(String),
 }
 
 /// What a transmission actually put on the air. Only `Complete` advances the QSO or is logged.

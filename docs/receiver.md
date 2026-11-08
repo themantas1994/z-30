@@ -89,7 +89,8 @@ assert zero duplicates on busy bands.
   receiver's own fit-residual ratio for each subtraction (`suppression_db`; **not** a physical
   suppression measurement, see [sic.md](sic.md)), and timings for the spectra, the candidates
   and SIC;
-- `elapsed_ms`.
+- `elapsed_ms`;
+- `non_finite_samples`: how many samples of the window were NaN or infinite. Each is decoded as 0.0 (silence) and counted, so the rest of the window still decodes; non-zero means the audio source delivered garbage. A WAV file with a non-finite sample is not decoded at all: `z30-io` refuses it with an error naming the file.
 
 ## Reported SNR, DT and frequency
 

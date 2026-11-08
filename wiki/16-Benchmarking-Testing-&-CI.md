@@ -117,9 +117,12 @@ suite takes about an hour on 4 cores (the `elapsed_s` of the ten `672cef9b3cdb` 
   every suite benchmark run through the shipped binary at exploratory size, recording its
   provenance. The MSRV job builds with the declared **Rust 1.95**, runs clippy with
   `-D warnings` and runs the release-profile tests.
-- **`ci.yml`**: `cargo audit` of `Cargo.lock`; repository hygiene (no build artefacts, no
-  package-manager files, a single `Cargo.lock`, no Python outside `research/` and `audit/`, no
-  JS/TS outside `audit/`, no unpublished suite result committed as the record); the frozen
+- **`ci.yml`**: `cargo audit` of `Cargo.lock`; the licence of every dependency checked against
+  `deny.toml` (`cargo deny --locked check licenses`: licences compatible with z-30's MIT
+  licence, with serialport's MPL-2.0 and egui's bundled fonts as named exceptions); repository
+  hygiene (no build artefacts, no package-manager files, a single `Cargo.lock`, no Python outside
+  `research/` and `audit/`, no JS/TS outside `audit/`, no unpublished suite result committed as
+  the record); the frozen
   golden and shared vectors checked against their `FROZEN.sha256`, with every file pinned; and
   the research tools' tests.
 - **`release.yml`** — on a version tag (and as a dry run on pull requests that touch the release

@@ -45,7 +45,7 @@ acknowledgement of that command lets a contact log the dial as "commanded", and 
 reading logs it as "reported by the radio".
 
 - The radio is polled every `poll_interval_ms` (`[rig]`, 1000 ms by default, never faster than
-  250 ms), and no command at all, poll or set-frequency, goes out within 100 ms of a PTT change
+  250 ms nor slower than 3000 ms), and no command at all, poll or set-frequency, goes out within 100 ms of a PTT change
   (some rigs cannot process CAT while switching). Dial, PTT and mode each count as fresh only
   for as long as the radio actually reported them.
 - **A refused set-frequency refuses transmission** (`RigRefusedDial`) until the radio reports
@@ -71,7 +71,7 @@ therefore be refused on an odd frequency; choose a dial that is a multiple of it
 | :--- | :--- | :--- | :--- |
 | `none` (default) | nothing | — | — transmission is refused (`PttNotConfigured`) |
 | `cat` | `rigctld` `T 1` / `T 0` on its own connection | yes: `RPRT 0` from rigctld | **no** — the radio stays keyed until its own time-out timer |
-| `serial` | RTS or DTR, either polarity | yes: the OS accepted the line change | yes — the OS drops RTS/DTR when the port closes |
+| `serial` | RTS or DTR, either polarity | yes: the OS accepted the line change | active high: yes, the OS drops RTS/DTR when the port closes. Active low: **known open safety item**, closing the port may key the radio; not yet verified on hardware, so do not rely on active-low serial PTT for safety |
 | `cm108` | CM108/CM119 GPIO 1–8 over USB HID (build feature, included in releases) | yes: the HID write succeeded | **no** — the GPIO holds its state |
 | `vox` | the transmit audio itself | **no**, and says so | yes — the audio stops |
 

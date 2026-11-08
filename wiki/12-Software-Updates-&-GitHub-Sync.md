@@ -12,7 +12,7 @@
   ```
 
 Your configuration (`config.toml`) and logbook (`logbook.sqlite`) live in the data directory
-(`$Z30_HOME`, else `$XDG_CONFIG_HOME/z30`, else `~/.z30`) and are not touched by an update.
+(`$Z30_HOME`, else `$XDG_CONFIG_HOME/z30`, else `~/.z30`; a relative or empty `XDG_CONFIG_HOME`, `HOME` or `USERPROFILE` is ignored) and are not touched by an update.
 
 ## No automatic update check
 

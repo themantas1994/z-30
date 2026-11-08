@@ -21,7 +21,7 @@ use crate::pipeline::{AudioBlock, RxPipeline};
 use crate::ptt::{MonotonicClock, PttController, PttLine, PttState};
 use crate::qso::QsoRecord;
 use crate::rig::Reading;
-use crate::rig::PTT_SETTLE_MS;
+use crate::rig::{DEFAULT_POLL_INTERVAL_MS, PTT_SETTLE_MS, READING_STALE_AFTER_MS};
 use crate::slots::{slot_of, slot_start, SlotEvent, SlotJob};
 use arc_swap::ArcSwap;
 use crossbeam_channel::{bounded, select, tick, Receiver, SendError, Sender, TrySendError};
@@ -113,6 +113,19 @@ pub const MAX_KEY_LATENESS_SEC: f64 = 0.5;
 pub const MAX_START_LATENESS_SEC: f64 = 0.5;
 /// Shortest rig poll interval honoured, ms: `poll_interval_ms` below this is raised to it.
 pub const MIN_POLL_INTERVAL_MS: u64 = 250;
+/// Longest rig poll interval honoured, ms: `poll_interval_ms` above this is lowered to it. A
+/// reading older than `READING_STALE_AFTER_MS` no longer vouches for the rig, so polled less often
+/// the readback the gate and the mid-frame check (F-45) rely on would lapse between polls; half
+/// that limit keeps two polls inside it, so a poll delayed by the PTT settle window or a slow or
+/// failed read does not let it lapse. Unbounded, `now + interval` overflowed (u64::MAX: a panic
+/// with overflow checks, a poll every loop pass without).
+pub const MAX_POLL_INTERVAL_MS: u64 = READING_STALE_AFTER_MS / 2;
+const _: () = assert!(MIN_POLL_INTERVAL_MS <= DEFAULT_POLL_INTERVAL_MS && DEFAULT_POLL_INTERVAL_MS <= MAX_POLL_INTERVAL_MS);
+
+/// `poll_interval_ms` brought within `MIN_POLL_INTERVAL_MS..=MAX_POLL_INTERVAL_MS`.
+pub fn clamp_poll_interval_ms(ms: u64) -> u64 {
+    ms.clamp(MIN_POLL_INTERVAL_MS, MAX_POLL_INTERVAL_MS)
+}
 /// How often a failed audio output is reopened while idle, ms.
 pub const OUTPUT_RECOVERY_INTERVAL_MS: u64 = 5_000;
 
@@ -432,6 +445,9 @@ impl RuntimeHandle {
             self.drop_elsewhere();
             return report;
         }
+        // Joined only once the release is confirmed, and the release never waits for these
+        // threads: the keying line is its own object (rigctld PTT has its own connection), so a
+        // rig thread wedged in a CAT read delays this return, not the release.
         for t in self.threads.drain(..) {
             let _ = t.join();
         }
@@ -532,9 +548,9 @@ pub struct RigPollSchedule {
 }
 
 impl RigPollSchedule {
-    /// A schedule for `poll_interval_ms` (raised to `MIN_POLL_INTERVAL_MS`).
+    /// A schedule for `poll_interval_ms`, brought within `MIN_POLL_INTERVAL_MS..=MAX_POLL_INTERVAL_MS`.
     pub fn new(poll_interval_ms: u64) -> Self {
-        RigPollSchedule { interval_ms: poll_interval_ms.max(MIN_POLL_INTERVAL_MS), next_ms: None }
+        RigPollSchedule { interval_ms: clamp_poll_interval_ms(poll_interval_ms), next_ms: None }
     }
 
     /// The interval in use, ms.
@@ -553,7 +569,9 @@ impl RigPollSchedule {
             return false;
         }
         if self.next_ms.is_none_or(|t| now_ms >= t) {
-            self.next_ms = Some(now_ms + self.interval_ms);
+            // Saturating: a clock at the end of its range schedules no further poll rather than
+            // panicking or wrapping into a poll every loop pass.
+            self.next_ms = Some(now_ms.saturating_add(self.interval_ms));
             return true;
         }
         false
@@ -569,6 +587,7 @@ pub fn start(config: Config, parts: RuntimeParts) -> RuntimeHandle {
     let watchdog = ptt.spawn_watchdog(Duration::from_millis(50));
     let poll_interval_ms = config.rig.poll_interval_ms;
     let mut engine = Engine::new(config);
+    engine.hardware_opened();
     engine.set_tx_hardware_problem(parts.tx_unavailable.clone());
     let snapshot = Arc::new(ArcSwap::from_pointee(engine.snapshot(mono.now_ms())));
     let rx_cfg = Arc::new(ArcSwap::from_pointee(engine.rx_config()));

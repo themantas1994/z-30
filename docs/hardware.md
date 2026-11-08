@@ -13,8 +13,8 @@ unverified rather than assumed. It uses
 Hamlib's own rig model and serial settings rather than reimplementing CAT.
 
 - **Readback** (`RigControl::read`): `f` (dial), `t` (PTT state), `m` (mode). The rig thread
-  polls every `[rig] poll_interval_ms` (1000 ms by default; a smaller value is raised to 250 ms,
-  `MIN_POLL_INTERVAL_MS`) and starts no CAT traffic, poll or set-frequency, within the 100 ms
+  polls every `[rig] poll_interval_ms` (1000 ms by default; a value outside 250..=3000 ms is brought
+  into that range: `MIN_POLL_INTERVAL_MS`, `MAX_POLL_INTERVAL_MS`) and starts no CAT traffic, poll or set-frequency, within the 100 ms
   PTT settle window after a PTT change. Each field has its own freshness, so a failed `m` query
   does not make an old mode count as fresh. The readings feed `RigStateTracker`, a port of
   WSJT-X's polling model: three polls to stabilise after a QSY, and a tolerance set by the rig's
@@ -30,7 +30,7 @@ Hamlib's own rig model and serial settings rather than reimplementing CAT.
   that is not running is reported then, as a transmit hardware problem that refuses
   transmission, rather than as a failed key in the middle of a slot. A connection lost later is
   re-established on demand.
-- Every socket operation has a 1.5 s timeout, and a reply other than `RPRT 0` is a failure,
+- Every socket operation has a 1.5 s timeout, the whole reply (not each read) must arrive within 1.5 s of the command, in lines of at most 256 bytes (`MAX_LINE`), and a reply other than `RPRT 0` is a failure,
   never a success. Any error drops the connection, and the next command reconnects.
 
 ## PTT methods
@@ -39,9 +39,11 @@ Hamlib's own rig model and serial settings rather than reimplementing CAT.
 | :--- | :--- | :--- | :--- |
 | `none` (default) | nothing | — | — (transmit is refused: `PttNotConfigured`) |
 | `cat` | rigctld `T 1`/`T 0` | yes: `RPRT 0` | **no**: the radio stays keyed until its own time-out |
-| `serial` | RTS or DTR, either polarity | yes: the OS accepted the line change | **yes**: the OS drops RTS/DTR when the port closes, even after SIGKILL |
+| `serial` | RTS or DTR, either polarity | yes: the OS accepted the line change | active high: **yes**, the OS drops RTS/DTR when the port closes, even after SIGKILL. Active low: **open safety item**, see the note below the table |
 | `cm108` | CM108/CM119 GPIO 1–8 over HID | yes: the HID write succeeded | **no**: a CM108 GPIO holds its state |
 | `vox` | the transmit audio itself | **no**: says so (`PttAck::Unverifiable`) | yes: the audio stops |
+
+Known open safety item: with `active_high = false`, closing the serial port may key the radio (the OS drops RTS/DTR on close, which for an active-low line is the keyed level). Not yet verified on hardware; do not rely on active-low serial PTT for safety until it is.
 
 What "confirms" means: the hardware or daemon accepted the command. It does not mean the
 radio is transmitting. Only the rig's own PTT readback (`t`, where the radio supports it) says

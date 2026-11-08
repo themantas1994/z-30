@@ -5,7 +5,8 @@
 //! them at runtime.
 
 use crate::bandplan::{LicenseClass, Region};
-use serde::{Deserialize, Serialize};
+use crate::runtime::{clamp_poll_interval_ms, MAX_POLL_INTERVAL_MS, MIN_POLL_INTERVAL_MS};
+use serde::{Deserialize, Deserializer, Serialize};
 
 /// Which slots this station transmits in.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -92,8 +93,15 @@ pub struct RigConfig {
     pub rigctld_host: String,
     /// rigctld port.
     pub rigctld_port: u16,
-    /// Poll interval, ms.
+    /// Poll interval, ms, within `MIN_POLL_INTERVAL_MS..=MAX_POLL_INTERVAL_MS`. A value outside
+    /// that range in a configuration file is brought to the nearer bound when it is read, as the
+    /// rig thread would; `Config::validate` refuses one set any other way.
+    #[serde(deserialize_with = "poll_interval_within_bounds")]
     pub poll_interval_ms: u64,
+}
+
+fn poll_interval_within_bounds<'de, D: Deserializer<'de>>(d: D) -> Result<u64, D::Error> {
+    u64::deserialize(d).map(clamp_poll_interval_ms)
 }
 
 impl Default for RigConfig {
@@ -202,6 +210,34 @@ pub struct Config {
 }
 
 impl Config {
+    /// Why this configuration cannot be applied, if it cannot: a value no setting can mean. What
+    /// the transmit gate refuses (no callsign, no PTT method, a zero level, ...) is not refused
+    /// here: an unconfigured station is a valid configuration that cannot transmit.
+    pub fn validate(&self) -> Result<(), String> {
+        let mut bad = Vec::new();
+        let poll = self.rig.poll_interval_ms;
+        if !(MIN_POLL_INTERVAL_MS..=MAX_POLL_INTERVAL_MS).contains(&poll) {
+            bad.push(format!("[rig] poll_interval_ms {poll} is outside {MIN_POLL_INTERVAL_MS}..={MAX_POLL_INTERVAL_MS}"));
+        }
+        let level = self.audio.tx_level;
+        if !(0.0..=1.0).contains(&level) {
+            bad.push(format!("[audio] tx_level {level} is not between 0 and 1 of full scale"));
+        }
+        for (name, hz) in [("rx_audio_hz", self.operating.rx_audio_hz), ("tx_audio_hz", self.operating.tx_audio_hz)] {
+            if !hz.is_finite() {
+                bad.push(format!("[operating] {name} {hz} is not a frequency"));
+            }
+        }
+        if let Some(w) = self.station.configured_tx_power_w.filter(|w| !(w.is_finite() && *w > 0.0)) {
+            bad.push(format!("[station] configured_tx_power_w {w} is not a power"));
+        }
+        if bad.is_empty() {
+            Ok(())
+        } else {
+            Err(bad.join("; "))
+        }
+    }
+
     /// The receiver configuration for `decode_slot`.
     pub fn rx_config(&self) -> z30_dsp::slot::RxConfig {
         z30_dsp::slot::RxConfig {

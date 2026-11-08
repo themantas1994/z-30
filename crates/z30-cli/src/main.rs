@@ -288,7 +288,10 @@ fn migrate(config_path: &Path, force: bool) -> Result<(), String> {
     if config_path.exists() && !force {
         println!("{} exists; not replaced (use --force). Proposed configuration below.", config_path.display());
     } else {
-        paths::save_config(config_path, &cfg)?;
+        // Reached with a file present only under --force: an unreadable one is backed up first.
+        if let Some(bak) = paths::save_config_replacing_unreadable(config_path, &cfg)? {
+            println!("{} could not be read; it was backed up to {} before being replaced", config_path.display(), bak.display());
+        }
         println!("wrote {}", config_path.display());
     }
     // Idempotent: a contact already in the vNext logbook is not imported again.

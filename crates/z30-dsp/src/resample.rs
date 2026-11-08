@@ -29,6 +29,8 @@ pub struct Resampler {
     phase_acc: u64,
     in_rate: u64,
     out_rate: u64,
+    /// Input samples that were NaN or infinite, cumulative (see `process`).
+    non_finite: u64,
 }
 
 impl Resampler {
@@ -73,7 +75,14 @@ impl Resampler {
             phase_acc: 0,
             in_rate: in_rate as u64,
             out_rate: out_rate as u64,
+            non_finite: 0,
         }
+    }
+
+    /// Input samples that were NaN or infinite since this resampler was made. Each was filtered
+    /// as 0.0; non-zero means the audio source delivered garbage.
+    pub fn non_finite_inputs(&self) -> u64 {
+        self.non_finite
     }
 
     /// Output sample `k` (counted from the first output) is centred on input sample
@@ -94,8 +103,23 @@ impl Resampler {
 
     /// Resamples `input`, appending to `out`. Keeps state between calls; the output sample
     /// count over a long stream is exactly `in * out_rate / in_rate` (to within one sample).
+    ///
+    /// A NaN or infinite input is filtered as 0.0 and counted (`non_finite_inputs`). Kept in the
+    /// history it made every output whose taps reached it NaN - a whole filter length, about 100
+    /// output samples (17 ms) from 48 kHz - and passed them on to the slot store and the
+    /// waterfall. As 0.0 it costs one input sample of silence, the value the slot store gives
+    /// audio it does not have.
     pub fn process(&mut self, input: &[f32], out: &mut Vec<f32>) {
-        self.history.extend_from_slice(input);
+        let mut non_finite = 0u64;
+        self.history.extend(input.iter().map(|&v| {
+            if v.is_finite() {
+                v
+            } else {
+                non_finite += 1;
+                0.0
+            }
+        }));
+        self.non_finite += non_finite;
         let tpp = self.taps_per_phase;
         // Output k uses high-rate index phase_acc; input index = phase_acc / up.
         loop {
@@ -166,6 +190,30 @@ mod tests {
             let (k, _) = out.iter().enumerate().fold((0, 0.0f32), |b, (i, &v)| if v > b.1 { (i, v) } else { b });
             let located = k as f64 * r.ratio() + r.input_delay();
             assert!((located - i0 as f64).abs() <= r.ratio(), "{rate}: {located} vs {i0}");
+        }
+    }
+
+    #[test]
+    fn a_non_finite_input_sample_is_filtered_as_silence_and_counted() {
+        for &rate in &[48_000u32, 44_100] {
+            let clean = tone(rate as f64, 1500.0, rate as usize);
+            for (i, bad) in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY].into_iter().enumerate() {
+                let at = 10_000 + 7_919 * i;
+                let (mut x, mut zeroed) = (clean.clone(), clean.clone());
+                x[at] = bad;
+                zeroed[at] = 0.0;
+                let mut a = Resampler::new(rate, 6000, Some(2850.0));
+                let mut b = Resampler::new(rate, 6000, Some(2850.0));
+                let (mut out, mut want) = (Vec::new(), Vec::new());
+                // In blocks, as the pipeline feeds it, so the sample also sits in the kept history.
+                for (ca, cb) in x.chunks(4800).zip(zeroed.chunks(4800)) {
+                    a.process(ca, &mut out);
+                    b.process(cb, &mut want);
+                }
+                assert!(out.iter().all(|v| v.is_finite()), "{rate} Hz, {bad}: non-finite output");
+                assert_eq!(out, want, "{rate} Hz, {bad}: not filtered as 0.0");
+                assert_eq!((a.non_finite_inputs(), b.non_finite_inputs()), (1, 0));
+            }
         }
     }
 
